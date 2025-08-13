@@ -64,7 +64,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.*;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.unchecked;
 import static java.net.HttpURLConnection.*;
 import static org.junit.Assert.assertEquals;
@@ -175,8 +174,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -319,8 +318,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -333,8 +332,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                         return new JsonQueryProcessor(
                                                 configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(),
                                                 cairoEngine,
-                                                workerPool.getWorkerCount(),
-                                                sharedWorkerCount
+                                                sharedQueryWorkerCount
                                         ) {
                                             @Override
                                             public void onRequestComplete(

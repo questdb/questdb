@@ -51,7 +51,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -336,6 +335,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return true;
+    }
+
+    @Override
     public @NotNull FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
     }
@@ -486,11 +490,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewMaxRefreshRetries() {
         return 10;
-    }
-
-    @Override
-    public long getMatViewMinRefreshInterval() {
-        return Timestamps.MINUTE_MICROS;
     }
 
     @Override
@@ -1232,7 +1231,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterFileOpenOpts() {
+    public int getWriterFileOpenOpts() {
         // In some places, we rely on the fact that data written via conventional IO
         // is immediately visible to mapped memory for the same area of a file. While this is the
         // case on Linux, it is absolutely not the case on Windows. We must not enable anything other
@@ -1342,6 +1341,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelReadParquetEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelTopKEnabled() {
         return true;
     }
 

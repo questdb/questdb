@@ -29,9 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
@@ -172,7 +172,7 @@ public class RecordToRowCopierUtils {
         int transferVarcharToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
-        int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cutlass/pgwire/modern/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
+        int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -206,7 +206,7 @@ public class RecordToRowCopierUtils {
         boolean needsArrayParser = isArrayParserRequired(from, to, toColumnFilter, n);
         if (needsArrayParser) {
             parserFieldIndex = asm.poolUtf8("parser");
-            parserDescIndex = asm.poolUtf8("Lio/questdb/cutlass/pgwire/modern/DoubleArrayParser;");
+            parserDescIndex = asm.poolUtf8("Lio/questdb/cairo/arr/DoubleArrayParser;");
             constructorNameIndex = asm.poolUtf8("<init>");
             constructorDescIndex = asm.poolUtf8("()V");
             doubleArrayParserClassIndex = asm.poolClass(DoubleArrayParser.class);

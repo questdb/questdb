@@ -39,10 +39,10 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -77,7 +77,7 @@ public class Table2IlpTest {
     private static DefaultCairoConfiguration configuration;
     private static CairoEngine engine;
     private static HttpServer httpServer;
-    private static IPGWireServer pgServer;
+    private static PGServer pgServer;
     private static LineTcpReceiver receiver;
     private static SqlExecutionContextImpl sqlExecutionContext;
     private static WorkerPool workerPool;
@@ -141,7 +141,7 @@ public class Table2IlpTest {
                         -1,
                         null);
         bindVariableService.clear();
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+        final PGConfiguration conf = new DefaultPGConfiguration() {
             @Override
             public int getSendBufferSize() {
                 return 512;
@@ -153,16 +153,10 @@ public class Table2IlpTest {
             }
         };
 
-        DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
+        DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
 
         workerPool = new WorkerPool(conf);
-        pgServer = IPGWireServer.newInstance(
-                conf,
-                engine,
-                workerPool,
-                registry,
-                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-        );
+        pgServer = new PGServer(conf, engine, workerPool, registry, () -> new SqlExecutionContextImpl(engine, 0));
 
         receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
@@ -278,7 +272,7 @@ public class Table2IlpTest {
         );
         new Table2IlpCopier().copyTable(params);
 
-        ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1);
+        ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0);
         job.run(0);
         TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
     }
@@ -488,7 +482,7 @@ public class Table2IlpTest {
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -507,8 +501,7 @@ public class Table2IlpTest {
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
@@ -522,8 +515,7 @@ public class Table2IlpTest {
                 server,
                 serverConfiguration,
                 cairoEngine,
-                workerPool,
-                sharedWorkerCount,
+                sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
         );

@@ -65,10 +65,10 @@ public class CountFunctionFactoryHelper {
                                            CairoConfiguration configuration,
                                            SqlExecutionContext sqlExecutionContext,
                                            IsRecordNotNull isRecordNotNull) throws SqlException {
-        factory.checkWindowParameter(position, sqlExecutionContext);
-        WindowContext windowContext = factory.windowContext;
-        long rowsLo = factory.rowsLo;
-        long rowsHi = factory.rowsHi;
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        windowContext.validate(position, factory.supportNullsDesc());
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();

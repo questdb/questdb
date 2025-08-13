@@ -179,7 +179,7 @@ public class LatestByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "LatestByAllIndexed\n" +
-                            "    Async index backward scan on: device_id workers: 1\n" +
+                            "    Async index backward scan on: device_id workers: 2\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
                             "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
@@ -592,7 +592,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "JOIN second_selection on (pair);",
                     null,
                     false,
-                    true
+                    false
             );
         });
     }
@@ -1502,7 +1502,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "xyz\t1\t42\n",
                         factory,
                         false,
-                        true
+                        false
                 );
             }
         });
