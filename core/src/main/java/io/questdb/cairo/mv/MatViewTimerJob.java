@@ -242,12 +242,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                         case Timer.PERIOD_REFRESH_TYPE:
                             // range hi boundary is inclusive
                             final MatViewDefinition viewDefinition = state.getViewDefinition();
-                            if (viewDefinition.isBaseTableTimestampTypeDefined()) {
-                                final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
-                                matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
-                            } else {
-                                LOG.info().$("skipping period refresh, base table timestamp type is undefined [view=").$(viewToken).I$();
-                            }
+                            final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
+                            matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
                             break;
                         case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
                             // Enqueue refresh intervals update only if the base table had new transactions

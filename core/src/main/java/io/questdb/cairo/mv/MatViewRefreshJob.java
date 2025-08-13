@@ -497,10 +497,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // call, so that all of them are at the same txn.
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
-                // Update the base table timestamp type to handle cases where the base table timestamp type
-                // has changed since the materialized view was created. This ensures that the view's
-                // timestamp sampler and drivers use the correct type.
-                viewDefinition.updateBaseTableTimestampType(baseTableReader.getMetadata().getTimestampType());
                 try {
                     walWriter.truncateSoft();
                     resetInvalidState(viewState, walWriter);
@@ -670,11 +666,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     assert factory != null;
                     assert copier != null;
-                    if (factory.getMetadata().getTimestampType() != walWriter.getMetadata().getTimestampType()) {
+                    final int timestampType = factory.getMetadata().getTimestampType();
+                    if (timestampType != walWriter.getMetadata().getTimestampType()) {
                         throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
                                 .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
                                 .put(", query=")
-                                .put(ColumnType.nameOf(factory.getMetadata().getTimestampType()))
+                                .put(ColumnType.nameOf(timestampType))
                                 .put(']');
                     }
 
@@ -690,7 +687,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long replacementTimestampHi = Long.MIN_VALUE;
 
                     while (intervalIterator.next()) {
-                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), factory.getMetadata().getTimestampType());
+                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), timestampType);
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
@@ -710,7 +707,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                         try (RecordCursor cursor = factory.getCursor(refreshSqlExecutionContext)) {
                             final Record record = cursor.getRecord();
-                            final TimestampDriver driver = ColumnType.getTimestampDriver(factory.getMetadata().getTimestampType());
+                            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                             while (cursor.hasNext()) {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
@@ -720,7 +717,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             .put(", actual=").ts(driver.getColumnType(), timestamp)
                                             .put(']');
                                 }
-                                TableWriter.Row row = walWriter.newRow(timestamp);
+                                final TableWriter.Row row = walWriter.newRow(timestamp);
                                 copier.copy(record, row);
                                 row.append();
                                 rowCount++;

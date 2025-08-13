@@ -64,8 +64,8 @@ public class MatViewDefinition implements Mutable {
     public static final int REFRESH_TYPE_TIMER = 1;
     private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
     private String baseTableName;
-    private volatile TimestampDriver baseTableTimestampDriver;
-    private volatile int baseTableTimestampType = ColumnType.UNDEFINED;
+    private TimestampDriver baseTableTimestampDriver;
+    private int baseTableTimestampType = ColumnType.UNDEFINED;
     private boolean deferred;
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
@@ -343,31 +343,12 @@ public class MatViewDefinition implements Mutable {
         );
     }
 
-    public boolean isBaseTableTimestampTypeDefined() {
-        return baseTableTimestampType != ColumnType.UNDEFINED;
-    }
-
     public boolean isDeferred() {
         return deferred;
     }
 
     public void setPeriodSampler(TimestampSampler periodSampler) {
         this.periodSampler = periodSampler;
-    }
-
-    // shouldn't be called concurrently
-    public void updateBaseTableTimestampType(int baseTableTimestampType) throws SqlException {
-        if (this.baseTableTimestampType == baseTableTimestampType) {
-            return; // no change
-        }
-        this.timestampSampler = TimestampSamplerFactory.getInstance(
-                baseTableTimestampDriver,
-                samplingInterval,
-                samplingIntervalUnit,
-                0
-        );
-        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
-        this.baseTableTimestampType = baseTableTimestampType;
     }
 
     public MatViewDefinition updateRefreshLimit(int refreshLimitHoursOrMonths) {
@@ -529,22 +510,16 @@ public class MatViewDefinition implements Mutable {
                     .put(']');
         }
 
-        final TableToken baseTable = engine.getTableTokenIfExists(baseTableNameStr);
-        int baseTableTimestampType = ColumnType.UNDEFINED;
-        // TODO(puzpuzpuz): double-check this statement
-        // It's safe not to set baseTableTimestampType when the base table doesn't exist.
-        // When the materialized view is refreshed fully, the baseTableTimestampType
-        // will be updated again from the actual base table.
-        if (baseTable != null) {
-            try (TableMetadata metadata = engine.getTableMetadata(baseTable)) {
-                baseTableTimestampType = metadata.getTimestampType();
-            }
+        // Mat view's and base table's timestamp types must always match.
+        final int timestampType;
+        try (TableMetadata metadata = engine.getTableMetadata(matViewToken)) {
+            timestampType = metadata.getTimestampType();
         }
 
         destDefinition.initDefinition(
                 refreshType,
                 deferred,
-                baseTableTimestampType,
+                timestampType,
                 matViewToken,
                 Chars.toString(matViewSql),
                 baseTableNameStr,
@@ -643,7 +618,6 @@ public class MatViewDefinition implements Mutable {
             this.rules = null;
         }
 
-        // todo: wrap this into driver code, calling Dates here is weird
         if (timeZoneOffset != null) {
             final long val = Dates.parseOffset(timeZoneOffset);
             if (val == Numbers.LONG_NULL) {
