@@ -1753,6 +1753,7 @@ public class MatViewTest extends AbstractCairoTest {
                     null,
                     false
             );
+
             // recreate the base table with a different timestamp type
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -1766,6 +1767,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
             drainQueues();
+
             // revalidate the view
             execute("refresh materialized view price_1h full;)");
             drainQueues();

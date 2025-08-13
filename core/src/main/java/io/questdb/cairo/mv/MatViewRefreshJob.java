@@ -710,7 +710,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                         try (RecordCursor cursor = factory.getCursor(refreshSqlExecutionContext)) {
                             final Record record = cursor.getRecord();
-                            final TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType());
+                            final TimestampDriver driver = ColumnType.getTimestampDriver(factory.getMetadata().getTimestampType());
                             while (cursor.hasNext()) {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {

@@ -95,6 +95,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private final int timerInterval;
+    private final long timerStartUs;
     private final String timerTimeZone;
     private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
@@ -104,7 +105,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private long timerStartUs;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,

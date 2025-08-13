@@ -64,8 +64,8 @@ public class MatViewDefinition implements Mutable {
     public static final int REFRESH_TYPE_TIMER = 1;
     private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
     private String baseTableName;
-    private TimestampDriver baseTableTimestampDriver;
-    private int baseTableTimestampType = ColumnType.UNDEFINED;
+    private volatile TimestampDriver baseTableTimestampDriver;
+    private volatile int baseTableTimestampType = ColumnType.UNDEFINED;
     private boolean deferred;
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
@@ -207,10 +207,6 @@ public class MatViewDefinition implements Mutable {
         return baseTableTimestampDriver;
     }
 
-    public int getBaseTableTimestampType() {
-        return baseTableTimestampType;
-    }
-
     public long getFixedOffset() {
         return fixedOffset;
     }
@@ -347,6 +343,10 @@ public class MatViewDefinition implements Mutable {
         );
     }
 
+    public boolean isBaseTableTimestampTypeDefined() {
+        return baseTableTimestampType != ColumnType.UNDEFINED;
+    }
+
     public boolean isDeferred() {
         return deferred;
     }
@@ -355,19 +355,19 @@ public class MatViewDefinition implements Mutable {
         this.periodSampler = periodSampler;
     }
 
+    // shouldn't be called concurrently
     public void updateBaseTableTimestampType(int baseTableTimestampType) throws SqlException {
-        // TODO(puzpuzpuz): this code is racy
         if (this.baseTableTimestampType == baseTableTimestampType) {
             return; // no change
         }
-        this.baseTableTimestampType = baseTableTimestampType;
-        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
         this.timestampSampler = TimestampSamplerFactory.getInstance(
                 baseTableTimestampDriver,
                 samplingInterval,
                 samplingIntervalUnit,
                 0
         );
+        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
+        this.baseTableTimestampType = baseTableTimestampType;
     }
 
     public MatViewDefinition updateRefreshLimit(int refreshLimitHoursOrMonths) {

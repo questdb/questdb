@@ -242,7 +242,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                         case Timer.PERIOD_REFRESH_TYPE:
                             // range hi boundary is inclusive
                             final MatViewDefinition viewDefinition = state.getViewDefinition();
-                            if (viewDefinition.getBaseTableTimestampType() != ColumnType.UNDEFINED) {
+                            if (viewDefinition.isBaseTableTimestampTypeDefined()) {
                                 final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
                                 matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
                             } else {
