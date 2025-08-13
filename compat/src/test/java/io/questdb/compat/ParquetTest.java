@@ -99,6 +99,16 @@ public class ParquetTest extends AbstractTest {
     }
 
     @Test
+    public void test2dArrayV1() throws Exception {
+        test2dArray(ParquetVersion.PARQUET_VERSION_V1);
+    }
+
+    @Test
+    public void test2dArrayV2() throws Exception {
+        test2dArray(ParquetVersion.PARQUET_VERSION_V2);
+    }
+
+    @Test
     public void testAllTypesColTopMiddlePartition() throws Exception {
         // column tops placed in the middle of the partition
         testPartitionDataConsistency("y", PartitionBy.MONTH, false);
@@ -250,11 +260,11 @@ public class ParquetTest extends AbstractTest {
         Assert.assertEquals(maxDefinitionLevel, descriptor.getMaxDefinitionLevel());
     }
 
-    private static void assertSchemaArray(ColumnDescriptor descriptor, String expectedName) {
+    private static void assertSchemaArray(ColumnDescriptor descriptor, String expectedName, int maxRepLevel, int maxDefLevel) {
         Assert.assertEquals(expectedName, descriptor.getPath()[0]);
         Assert.assertEquals(PrimitiveType.PrimitiveTypeName.DOUBLE, descriptor.getPrimitiveType().getPrimitiveTypeName());
-        Assert.assertEquals(1, descriptor.getMaxRepetitionLevel());
-        Assert.assertEquals(3, descriptor.getMaxDefinitionLevel());
+        Assert.assertEquals(maxRepLevel, descriptor.getMaxRepetitionLevel());
+        Assert.assertEquals(maxDefLevel, descriptor.getMaxDefinitionLevel());
     }
 
     private static void assertSchemaNonNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
@@ -345,7 +355,7 @@ public class ParquetTest extends AbstractTest {
                     List<ColumnDescriptor> columns = schema.getColumns();
                     Assert.assertEquals(2, schema.getColumns().size());
 
-                    assertSchemaArray(columns.get(0), "arr");
+                    assertSchemaArray(columns.get(0), "arr", 1, 3);
                     // designated ts is non-nullable
                     assertSchemaNonNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
 
@@ -373,6 +383,104 @@ public class ParquetTest extends AbstractTest {
                         Assert.assertNotNull(arr);
                         Assert.assertEquals(
                                 "[{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]",
+                                arr.toString()
+                        );
+                        actualRows++;
+                    }
+                    Assert.assertEquals(3, actualRows);
+                }
+            }
+        }
+    }
+
+    private void test2dArray(int parquetVersion) throws Exception {
+        final String ddl = "create table x as (select " +
+                " array[[1, 2, 3], [4, 5, 6], [7, 8, 9]] arr, " +
+                " timestamp_sequence(400000000000, 1000000000) ts" +
+                " from long_sequence(3)) timestamp(ts) partition by day";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+
+            // create new active partition
+            final String insert = "insert into x values (null, '1970-02-02T02:02:02.020202Z')";
+            serverMain.getEngine().execute(insert); // txn 2
+
+            serverMain.awaitTxn("x", 2);
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = serverMain.getEngine().getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                parquetPathStr = path.toString();
+                long start = System.nanoTime();
+
+                int partitionIndex = 0;
+                StringSink partitionName = new StringSink();
+                long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        10,
+                        DATA_PAGE_SIZE,
+                        parquetVersion
+                );
+
+                LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (
+                        ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
+                        ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()
+                ) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    FileMetaData fileMetaData = metadata.getFileMetaData();
+                    Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
+
+                    MessageType schema = fileMetaData.getSchema();
+                    List<ColumnDescriptor> columns = schema.getColumns();
+                    Assert.assertEquals(2, schema.getColumns().size());
+
+                    assertSchemaArray(columns.get(0), "arr", 2, 4);
+                    // designated ts is non-nullable
+                    assertSchemaNonNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
+
+                    long rowCount = 0;
+                    List<BlockMetaData> rowGroups = metadata.getBlocks();
+                    for (int i = 0; i < rowGroups.size(); i++) {
+                        BlockMetaData blockMetaData = rowGroups.get(i);
+                        long blockRowCount = blockMetaData.getRowCount();
+                        if (i == rowGroups.size() - 1) {
+                            Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
+                        } else {
+                            Assert.assertEquals(ROW_GROUP_SIZE, blockRowCount);
+                        }
+                        rowCount += blockRowCount;
+                        List<ColumnChunkMetaData> chunks = blockMetaData.getColumns();
+                        // arr
+                        assertNullCount(chunks, 0, 0);
+                    }
+                    Assert.assertEquals(rowCount, 3);
+
+                    long actualRows = 0;
+                    GenericRecord nextParquetRecord;
+                    while ((nextParquetRecord = parquetReader.read()) != null) {
+                        final Object arr = nextParquetRecord.get("arr");
+                        Assert.assertNotNull(arr);
+                        Assert.assertEquals(
+                                "[{\"list\": [{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]}, {\"list\": [{\"element\": 4.0}, {\"element\": 5.0}, {\"element\": 6.0}]}, {\"list\": [{\"element\": 7.0}, {\"element\": 8.0}, {\"element\": 9.0}]}]",
                                 arr.toString()
                         );
                         actualRows++;
@@ -682,7 +790,7 @@ public class ParquetTest extends AbstractTest {
             if (rawArrayEncoding) {
                 assertSchemaNullable(columns.get(41), "an_array_top", PrimitiveType.PrimitiveTypeName.BINARY);
             } else {
-                assertSchemaArray(columns.get(41), "an_array_top");
+                assertSchemaArray(columns.get(41), "an_array_top", 1, 3);
             }
             assertSchemaNullable(columns.get(42), "a_ip_top", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNullable(columns.get(43), "a_uuid_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);

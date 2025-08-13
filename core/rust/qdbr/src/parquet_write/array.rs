@@ -257,6 +257,7 @@ pub fn array_to_page(
         }
     }
 
+    let max_rep_level = dim as u32;
     let rep_levels_iter = (0..num_rows).flat_map(|i| {
         if i < column_top {
             RepLevelsIterator::new_single()
@@ -277,12 +278,14 @@ pub fn array_to_page(
         &mut buffer,
         rep_levels_iter,
         num_values,
-        dim as u32,
+        max_rep_level,
         options.version,
     )?;
 
     let repetition_levels_byte_length = buffer.len();
 
+    // max def level is the number of dimensions plus two optional fields
+    let max_def_level = (dim + 2) as u32;
     let def_levels_iter = (0..num_rows).flat_map(|i| {
         if i < column_top {
             DefLevelsIterator::new_single(0)
@@ -292,8 +295,7 @@ pub fn array_to_page(
                     if data.is_empty() {
                         DefLevelsIterator::new_single(1)
                     } else {
-                        // max def level is the number of dimensions plus two optional fields
-                        DefLevelsIterator::new(data, (dim + 2) as u32)
+                        DefLevelsIterator::new(data, max_def_level)
                     }
                 }
                 None => DefLevelsIterator::new_single(0),
@@ -304,7 +306,7 @@ pub fn array_to_page(
         &mut buffer,
         def_levels_iter,
         num_values,
-        (dim + 1) as u32,
+        max_def_level,
         options.version,
     )?;
 
