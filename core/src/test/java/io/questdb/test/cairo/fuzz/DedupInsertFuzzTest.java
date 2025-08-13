@@ -345,7 +345,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0.0,
                 0.5,
-                0.0
+                0.0,
+                0
         );
 
         setFuzzCounts(
@@ -382,7 +383,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0.0,
                 0.5,
-                0.5
+                0.5,
+                0
         );
 
         // Set isO3 to false to enforce unique timestamps inside the transactions,
@@ -421,7 +423,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0.0,
                 0.5,
-                0.0
+                0.0,
+                0
         );
 
         setFuzzCounts(
@@ -460,7 +463,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 // it is not trivial to build the result set of data to assert against with drop partitions
                 0,
                 0.4,
-                0.0
+                0.0,
+                0
         );
 
         setFuzzCounts(
