@@ -131,7 +131,7 @@ public class NanosFormatCompilerTest {
 
     @Test
     public void testDayOfYear() throws Exception {
-        assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000000000Z", "25, 11-2010");
+        assertThat("D, MM-yyyy", "2010-11-25T00:00:00.000000000Z", "25, 11-2010");
     }
 
     @Test
