@@ -635,6 +635,7 @@ public class MatViewDefinition implements Mutable {
             this.rules = null;
         }
 
+        // todo: wrap this into driver code, calling Dates here is weird
         if (timeZoneOffset != null) {
             final long val = Dates.parseOffset(timeZoneOffset);
             if (val == Numbers.LONG_NULL) {

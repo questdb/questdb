@@ -186,8 +186,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
                     TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
             ) {
-                ogMeta.load();
-                copyMeta.load();
+                ogMeta.loadMetadata();
+                copyMeta.loadMetadata();
                 assertEquals(ogMeta, copyMeta);
 
                 long structVersion;
@@ -251,7 +251,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 TableReaderMetadata metadata = new TableReaderMetadata(configuration)
         ) {
             TableToken tableToken = engine.verifyTableName(tableName);
-            metadata.load(path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$());
+            metadata.loadMetadata(path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$());
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -284,7 +284,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLoadFrom() throws Exception {
+    public void testLoadMetadataFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, ColumnType.TIMESTAMP_MICRO);
             final String tableName = "all2";
@@ -293,7 +293,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
                     TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
             ) {
-                ogMeta.load();
+                ogMeta.loadMetadata();
                 copyMeta.loadFrom(ogMeta);
                 assertEquals(ogMeta, copyMeta);
 
@@ -546,7 +546,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             String tableName = "all";
             int tableId;
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
-                metadata.load();
+                metadata.loadMetadata();
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
                     long structVersion;
@@ -577,7 +577,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
             // Check that table has same tableId.
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
-                metadata.load();
+                metadata.loadMetadata();
                 Assert.assertEquals(tableId, metadata.getTableId());
             }
         });

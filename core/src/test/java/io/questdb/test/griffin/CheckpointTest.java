@@ -1494,7 +1494,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                            metadata.load(path.$());
+                            metadata.loadMetadata(path.$());
                             // Assert _meta contents.
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());

@@ -288,7 +288,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         if (detachedMetaReader == null) {
                             detachedMetaReader = new TableReaderMetadata(cairoConfig);
                         }
-                        detachedMetaReader.load(path.$());
+                        detachedMetaReader.loadMetadata(path.$());
                         if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
                             if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
                                 try {
