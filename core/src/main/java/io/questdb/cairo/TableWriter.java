@@ -2318,10 +2318,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionO3SplitThreshold() {
-//        long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
-//        return splitMinSizeBytes /
-//                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata)));
-        return 1;
+        long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
+        return splitMinSizeBytes /
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata)));
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {

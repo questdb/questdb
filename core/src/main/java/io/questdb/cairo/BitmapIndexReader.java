@@ -92,16 +92,5 @@ public interface BitmapIndexReader extends Closeable {
             long columnTop
     );
 
-    default void of(
-            CairoConfiguration configuration,
-            @Transient Path path,
-            CharSequence columnName,
-            long columnNameTxn,
-            long columnTop
-    ) {
-        of(configuration, path, columnName, columnNameTxn, -1, columnTop);
-    }
-
-
     void reloadConditionally();
 }

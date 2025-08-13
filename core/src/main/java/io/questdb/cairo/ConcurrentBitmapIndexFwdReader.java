@@ -51,9 +51,10 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             Path path,
             CharSequence name,
             long columnNameTxn,
+            long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, columnTop);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
     }
 
     @Override
