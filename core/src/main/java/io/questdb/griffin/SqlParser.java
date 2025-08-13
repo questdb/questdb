@@ -903,7 +903,7 @@ public class SqlParser {
                                 model.setPartitionBy(partitionBy);
                                 break;
                             case CopyModel.COPY_OPTION_SIZE_LIMIT:
-                                // todo: parse human readable size
+                                // todo: add this when table writer has appropriate support for it
                                 throw SqlException.$(lexer.lastTokenPosition(), "size limit is not yet supported");
                             case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
                                 try {
