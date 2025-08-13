@@ -30,12 +30,6 @@ import io.questdb.std.Numbers;
 
 public interface WindowTimestampFunction extends WindowFunction {
     @Override
-    default long getDate(Record rec) {
-        final long value = getTimestamp(rec);
-        return value == Numbers.LONG_NULL ? value : value / 1000L;
-    }
-
-    @Override
     default double getDouble(Record rec) {
         final long val = getTimestamp(rec);
         return val != Numbers.LONG_NULL ? val : Double.NaN;

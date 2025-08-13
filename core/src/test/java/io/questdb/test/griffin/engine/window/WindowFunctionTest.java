@@ -3970,6 +3970,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadLagTimestampMixedDefaultValue() throws Exception {
+        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        assertMemoryLeak(() ->
+                {
+                    execute("create table x as (" +
+                            "select " +
+                            "timestamp_sequence(0, 1000000) as ts, " +
+                            "timestamp_sequence(0::timestamp_ns, 2000000000) as ts_ns " +
+                            "from long_sequence(5)" +
+                            ") timestamp(ts)");
+                    assertQuery(
+                            "ts\tts_ns\tlead\tlead1\tlag\tlag1\n" +
+                                    "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z\n" +
+                                    "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:06.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:01.000000000Z\n" +
+                                    "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:08.000000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z\n" +
+                                    "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:06.000000000Z\t1970-01-01T00:00:06.000000Z\t1970-01-01T00:00:03.000000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000000Z\n" +
+                                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:08.000000000Z\t1970-01-01T00:00:08.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\n",
+                            "select ts, ts_ns, lead(ts, 2, ts_ns) over(), lead(ts_ns, 2, ts) over(), lag(ts, 2, ts_ns) over(), lag(ts_ns, 2, ts) over() from x;",
+                            "ts",
+                            true,
+                            false
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
         // https://github.com/questdb/questdb/issues/4748
