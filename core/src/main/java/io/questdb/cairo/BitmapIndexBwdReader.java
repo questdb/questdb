@@ -59,6 +59,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nullCursor.nullCount = Math.min(columnTop, hi);
+            nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }
 
