@@ -74,7 +74,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private FilesFacade ff;
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType) {
-        super(timestampType == ColumnType.TIMESTAMP_MICRO ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
+        super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
         this.tableToken = tableToken;
     }
 
@@ -340,7 +340,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
-                        long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
+                        long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
                         minTimestamp = ff.readNonNegativeLong(fd, 0);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {

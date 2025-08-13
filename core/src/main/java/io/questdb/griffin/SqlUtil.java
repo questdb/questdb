@@ -30,8 +30,8 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -52,7 +52,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
@@ -82,16 +82,15 @@ public class SqlUtil {
         model.setArtificialStar(true);
     }
 
-    public static long castPGDates(CharSequence value, int fromColumnType, int toTimestampType) {
+    public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
         final int hi = value.length();
         for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
             try {
-                //
-                return IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
+                return driver.fromDate(IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE));
             } catch (NumericException ignore) {
             }
         }
-        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, toTimestampType);
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getColumnType());
     }
 
     public static CharSequence createExprColumnAlias(
@@ -266,11 +265,11 @@ public class SqlUtil {
                 case 's': // seconds
                     return interval;
                 case 'm': // minutes
-                    return interval * Timestamps.MINUTE_SECONDS;
+                    return interval * Micros.MINUTE_SECONDS;
                 case 'h': // hours
-                    return interval * Timestamps.HOUR_SECONDS;
+                    return interval * Micros.HOUR_SECONDS;
                 case 'd': // days
-                    return interval * Timestamps.DAY_SECONDS;
+                    return interval * Micros.DAY_SECONDS;
                 default:
                     break;
             }

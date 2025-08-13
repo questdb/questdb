@@ -139,9 +139,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -2863,7 +2863,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int refreshType,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable CharSequence timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -2881,7 +2881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 refreshType,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 Chars.toString(timerTimeZone),
                 periodLength,
                 periodLengthUnit,
@@ -2905,7 +2905,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMatViewRefreshTimer(long start, int interval, char unit) {
+    public void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         assert tableToken.isMatView();
 
         final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
@@ -2913,7 +2913,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
 
-        final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
+        final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, startUs);
         updateMatViewDefinition(newDefinition);
     }
 

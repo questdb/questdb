@@ -106,6 +106,29 @@ public class WalTxnDetails implements QuietCloseable {
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
+    public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
+        txnList.setCapacity(txnCount * 4L);
+
+        // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
+        long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
+        int txn;
+        for (txn = 0; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
+            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
+            max = Math.max(max, long1);
+            min = Math.min(min, long1);
+            txnList.add(long1);
+            txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
+        }
+        Vect.radixSortLongIndexAscChecked(
+                txnList.getAddress(),
+                txn,
+                txnList.getAddress() + txn * 2L * Long.BYTES,
+                min,
+                max
+        );
+        return txn;
+    }
+
     public static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
         WalEventCursor walEventCursor;
         try {
@@ -685,7 +708,7 @@ public class WalTxnDetails implements QuietCloseable {
                             if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
-                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestampUs());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, matViewDataInfo.getLastPeriodHi());
                             } else {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
@@ -725,29 +748,6 @@ public class WalTxnDetails implements QuietCloseable {
             txnOrder.resetCapacity();
         }
         return totalRowsLoaded;
-    }
-
-    public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
-        txnList.setCapacity(txnCount * 4L);
-
-        // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
-        long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
-        int txn;
-        for (txn = 0; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
-            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
-            max = Math.max(max, long1);
-            min = Math.min(min, long1);
-            txnList.add(long1);
-            txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
-        }
-        Vect.radixSortLongIndexAscChecked(
-                txnList.getAddress(),
-                txn,
-                txnList.getAddress() + txn * 2L * Long.BYTES,
-                min,
-                max
-        );
-        return txn;
     }
 
     private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {

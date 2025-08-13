@@ -73,7 +73,7 @@ public class NowFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            now = executionContext.getNow();
+            now = executionContext.getNow(getType());
         }
 
         @Override

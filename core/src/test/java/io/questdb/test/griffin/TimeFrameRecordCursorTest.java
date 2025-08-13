@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rows;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -112,7 +112,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -168,7 +168,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -183,7 +183,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -239,7 +239,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -291,7 +291,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             actualSink.put('\t');
                             actualSink.put(record.getBool(1));
                             actualSink.put('\t');
-                            TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                            MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                             actualSink.put('\n');
                         }
                     }
@@ -365,7 +365,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
             assertMemoryLeak(() -> {
                 execute(
                         "create table x as (select" +
-                                " timestamp_sequence(100000000, " + 365 * Timestamps.DAY_MICROS + ") t" +
+                                " timestamp_sequence(100000000, " + 365 * Micros.DAY_MICROS + ") t" +
                                 " from long_sequence(3)" +
                                 ") timestamp (t) partition by " + PartitionBy.toString(partitionBy)
                 );

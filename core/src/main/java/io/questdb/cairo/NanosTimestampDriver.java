@@ -66,24 +66,15 @@ import static io.questdb.std.datetime.nanotime.NanosFormatUtils.*;
 public class NanosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new NanosTimestampDriver();
     public static final int MAX_NANO_YEAR = 2261;
-    private static final PartitionAddMethod ADD_DD = Nanos::addDays;
-    private static final PartitionAddMethod ADD_HH = Nanos::addHours;
-    private static final PartitionAddMethod ADD_MM = Nanos::addMonths;
-    private static final PartitionAddMethod ADD_WW = Nanos::addWeeks;
-    private static final PartitionAddMethod ADD_YYYY = Nanos::addYears;
-    private static final TimestampCeilMethod CEIL_DD = Nanos::ceilDD;
-    private static final TimestampCeilMethod CEIL_HH = Nanos::ceilHH;
-    private static final TimestampCeilMethod CEIL_MI = Nanos::ceilMI;
-    private static final TimestampCeilMethod CEIL_MM = Nanos::ceilMM;
-    private static final TimestampCeilMethod CEIL_MR = Nanos::ceilMR;
-    private static final TimestampCeilMethod CEIL_MS = Nanos::ceilMS;
-    private static final TimestampCeilMethod CEIL_SS = Nanos::ceilSS;
-    private static final TimestampCeilMethod CEIL_WW = Nanos::ceilWW;
-    private static final TimestampCeilMethod CEIL_YYYY = Nanos::ceilYYYY;
     private static final DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
         public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             sink.putAscii(DEFAULT_PARTITION_NAME);
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_NANO;
         }
 
         @Override
@@ -96,47 +87,12 @@ public class NanosTimestampDriver implements TimestampDriver {
             return 0;
         }
     };
-    private static final TimestampFloorMethod FLOOR_CENTURY = Nanos::floorCentury;
-    private static final TimestampFloorMethod FLOOR_DD = Nanos::floorDD;
-    private static final TimestampFloorWithOffsetMethod FLOOR_DD_WITH_OFFSET = Nanos::floorDD;
-    private static final TimestampFloorWithStrideMethod FLOOR_DD_WITH_STRIDE = Nanos::floorDD;
-    private static final TimestampFloorMethod FLOOR_DECADE = Nanos::floorDecade;
-    private static final TimestampFloorMethod FLOOR_DOW = Nanos::floorDOW;
-    private static final TimestampFloorMethod FLOOR_HH = Nanos::floorHH;
-    private static final TimestampFloorWithOffsetMethod FLOOR_HH_WITH_OFFSET = Nanos::floorHH;
-    private static final TimestampFloorWithStrideMethod FLOOR_HH_WITH_STRIDE = Nanos::floorHH;
-    private static final TimestampFloorMethod FLOOR_MC = Nanos::floorMC;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MC_WITH_OFFSET = Nanos::floorMC;
-    private static final TimestampFloorWithStrideMethod FLOOR_MC_WITH_STRIDE = Nanos::floorMC;
-    private static final TimestampFloorMethod FLOOR_MI = Nanos::floorMI;
-    private static final TimestampFloorMethod FLOOR_MILLENNIUM = Nanos::floorMillennium;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MI_WITH_OFFSET = Nanos::floorMI;
-    private static final TimestampFloorWithStrideMethod FLOOR_MI_WITH_STRIDE = Nanos::floorMI;
-    private static final TimestampFloorMethod FLOOR_MM = Nanos::floorMM;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MM_WITH_OFFSET = Nanos::floorMM;
-    private static final TimestampFloorWithStrideMethod FLOOR_MM_WITH_STRIDE = Nanos::floorMM;
-    private static final TimestampFloorMethod FLOOR_MS = Nanos::floorMS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MS_WITH_OFFSET = Nanos::floorMS;
-    private static final TimestampFloorWithStrideMethod FLOOR_MS_WITH_STRIDE = Nanos::floorMS;
-    private static final TimestampFloorMethod FLOOR_NS = Nanos::floorNS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_NS_WITH_OFFSET = Nanos::floorNS;
-    private static final TimestampFloorWithStrideMethod FLOOR_NS_WITH_STRIDE = Nanos::floorNS;
-    private static final TimestampFloorMethod FLOOR_QUARTER = Nanos::floorQuarter;
-    private static final TimestampFloorMethod FLOOR_SS = Nanos::floorSS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_SS_WITH_OFFSET = Nanos::floorSS;
-    private static final TimestampFloorWithStrideMethod FLOOR_SS_WITH_STRIDE = Nanos::floorSS;
-    private static final TimestampFloorMethod FLOOR_WW = Nanos::floorWW;
-    private static final TimestampFloorWithOffsetMethod FLOOR_WW_WITH_OFFSET = Nanos::floorWW;
-    private static final TimestampFloorWithStrideMethod FLOOR_WW_WITH_STRIDE = Nanos::floorWW;
-    private static final TimestampFloorMethod FLOOR_YYYY = Nanos::floorYYYY;
-    private static final TimestampFloorWithOffsetMethod FLOOR_YYYY_WITH_OFFSET = Nanos::floorYYYY;
-    private static final TimestampFloorWithStrideMethod FLOOR_YYYY_WITH_STRIDE = Nanos::floorYYYY;
     private static final String MAX_NANO_TIMESTAMP_STR = "2261-12-31 23:59:59.999999999";
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, NanosFormatUtils.DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, NanosFormatUtils.HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, NanosFormatUtils.MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(Nanos::floorDD, NanosFormatUtils.DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(Nanos::floorHH, NanosFormatUtils.HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(Nanos::floorMM, NanosFormatUtils.MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, NanosFormatUtils.YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(Nanos::floorYYYY, NanosFormatUtils.YEAR_FORMAT);
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
     private NanosTimestampDriver() {
@@ -235,13 +191,53 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long addDays(long timestamp, int days) {
+        return Nanos.addDays(timestamp, days);
+    }
+
+    @Override
+    public long addHours(long timestamp, int hours) {
+        return Nanos.addHours(timestamp, hours);
+    }
+
+    @Override
+    public long addMicros(long timestamp, int micros) {
+        return Nanos.addMicros(timestamp, micros);
+    }
+
+    @Override
+    public long addMillis(long timestamp, int millis) {
+        return Nanos.addMillis(timestamp, millis);
+    }
+
+    @Override
+    public long addMinutes(long timestamp, int minutes) {
+        return Nanos.addMinutes(timestamp, minutes);
+    }
+
+    @Override
     public long addMonths(long timestamp, int months) {
         return Nanos.addMonths(timestamp, months);
     }
 
     @Override
+    public long addNanos(long timestamp, int nanos) {
+        return Nanos.addNanos(timestamp, nanos);
+    }
+
+    @Override
     public long addPeriod(long lo, char type, int period) {
         return Nanos.addPeriod(lo, type, period);
+    }
+
+    @Override
+    public long addSeconds(long timestamp, int seconds) {
+        return Nanos.addSeconds(timestamp, seconds);
+    }
+
+    @Override
+    public long addWeeks(long timestamp, int weeks) {
+        return Nanos.addWeeks(timestamp, weeks);
     }
 
     @Override
@@ -351,7 +347,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long from(long timestamp, int timestampType) {
-        if (timestampType != ColumnType.TIMESTAMP_MICRO) {
+        if (!ColumnType.isTimestampMicro(timestampType)) {
             return timestamp;
         }
         return CommonUtils.microsToNanos(timestamp);
@@ -549,6 +545,14 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getMicrosOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getMicrosOfSecond(timestamp);
+    }
+
+    @Override
     public int getMillennium(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
@@ -595,18 +599,26 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getNanosOfMicros(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getNanosOfMicros(timestamp);
+    }
+
+    @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return ADD_DD;
+                return Nanos::addDays;
             case MONTH:
-                return ADD_MM;
+                return Nanos::addMonths;
             case YEAR:
-                return ADD_YYYY;
+                return Nanos::addYears;
             case HOUR:
-                return ADD_HH;
+                return Nanos::addHours;
             case WEEK:
-                return ADD_WW;
+                return Nanos::addWeeks;
             default:
                 return null;
         }
@@ -616,15 +628,15 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return CEIL_DD;
+                return Nanos::ceilDD;
             case MONTH:
-                return CEIL_MM;
+                return Nanos::ceilMM;
             case YEAR:
-                return CEIL_YYYY;
+                return Nanos::ceilYYYY;
             case HOUR:
-                return CEIL_HH;
+                return Nanos::ceilHH;
             case WEEK:
-                return CEIL_WW;
+                return Nanos::ceilWW;
             default:
                 return null;
         }
@@ -654,15 +666,15 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return FLOOR_DD;
+                return Nanos::floorDD;
             case WEEK:
-                return FLOOR_WW;
+                return Nanos::floorWW;
             case MONTH:
-                return FLOOR_MM;
+                return Nanos::floorMM;
             case YEAR:
-                return FLOOR_YYYY;
+                return Nanos::floorYYYY;
             case HOUR:
-                return FLOOR_HH;
+                return Nanos::floorHH;
             default:
                 return null;
         }
@@ -712,23 +724,23 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getTimestampCeilMethod(char c) {
         switch (c) {
             case 'd':
-                return CEIL_DD;
+                return Nanos::ceilDD;
             case 'M':
-                return CEIL_MM;
+                return Nanos::ceilMM;
             case 'y':
-                return CEIL_YYYY;
+                return Nanos::ceilYYYY;
             case 'w':
-                return CEIL_WW;
+                return Nanos::ceilWW;
             case 'h':
-                return CEIL_HH;
+                return Nanos::ceilHH;
             case 'm':
-                return CEIL_MI;
+                return Nanos::ceilMI;
             case 's':
-                return CEIL_SS;
+                return Nanos::ceilSS;
             case 'T':
-                return CEIL_MS;
-            case 'n':
-                return CEIL_MR;
+                return Nanos::ceilMS;
+            case 'U':
+                return Nanos::ceilMR;
             default:
                 return null;
         }
@@ -776,33 +788,33 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getTimestampFloorMethod(String c) {
         switch (c) {
             case "century":
-                return FLOOR_CENTURY;
+                return Nanos::floorCentury;
             case "day":
-                return FLOOR_DD;
+                return Nanos::floorDD;
             case "week":
-                return FLOOR_DOW;
+                return Nanos::floorDOW;
             case "decade":
-                return FLOOR_DECADE;
+                return Nanos::floorDecade;
             case "hour":
-                return FLOOR_HH;
+                return Nanos::floorHH;
             case "microsecond":
-                return FLOOR_MC;
+                return Nanos::floorMC;
             case "minute":
-                return FLOOR_MI;
+                return Nanos::floorMI;
             case "month":
-                return FLOOR_MM;
+                return Nanos::floorMM;
             case "millisecond":
-                return FLOOR_MS;
+                return Nanos::floorMS;
             case "nanosecond":
-                return FLOOR_NS;
+                return Nanos::floorNS;
             case "millennium":
-                return FLOOR_MILLENNIUM;
+                return Nanos::floorMillennium;
             case "quarter":
-                return FLOOR_QUARTER;
+                return Nanos::floorQuarter;
             case "second":
-                return FLOOR_SS;
+                return Nanos::floorSS;
             case "year":
-                return FLOOR_YYYY;
+                return Nanos::floorYYYY;
             default:
                 return null;
         }
@@ -812,25 +824,25 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c) {
         switch (c) {
             case 'M':
-                return FLOOR_MM_WITH_OFFSET;
+                return Nanos::floorMM;
             case 'y':
-                return FLOOR_YYYY_WITH_OFFSET;
+                return Nanos::floorYYYY;
             case 'w':
-                return FLOOR_WW_WITH_OFFSET;
+                return Nanos::floorWW;
             case 'd':
-                return FLOOR_DD_WITH_OFFSET;
+                return Nanos::floorDD;
             case 'h':
-                return FLOOR_HH_WITH_OFFSET;
+                return Nanos::floorHH;
             case 'm':
-                return FLOOR_MI_WITH_OFFSET;
+                return Nanos::floorMI;
             case 's':
-                return FLOOR_SS_WITH_OFFSET;
+                return Nanos::floorSS;
             case 'T':
-                return FLOOR_MS_WITH_OFFSET;
+                return Nanos::floorMS;
             case 'U':
-                return FLOOR_MC_WITH_OFFSET;
+                return Nanos::floorMC;
             case 'n':
-                return FLOOR_NS_WITH_OFFSET;
+                return Nanos::floorNS;
             default:
                 return null;
         }
@@ -840,25 +852,25 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c) {
         switch (c) {
             case "day":
-                return FLOOR_DD_WITH_STRIDE;
+                return Nanos::floorDD;
             case "hour":
-                return FLOOR_HH_WITH_STRIDE;
+                return Nanos::floorHH;
             case "microsecond":
-                return FLOOR_MC_WITH_STRIDE;
+                return Nanos::floorMC;
             case "minute":
-                return FLOOR_MI_WITH_STRIDE;
+                return Nanos::floorMI;
             case "month":
-                return FLOOR_MM_WITH_STRIDE;
+                return Nanos::floorMM;
             case "millisecond":
-                return FLOOR_MS_WITH_STRIDE;
+                return Nanos::floorMS;
             case "nanosecond":
-                return FLOOR_NS_WITH_STRIDE;
+                return Nanos::floorNS;
             case "second":
-                return FLOOR_SS_WITH_STRIDE;
+                return Nanos::floorSS;
             case "week":
-                return FLOOR_WW_WITH_STRIDE;
+                return Nanos::floorWW;
             case "year":
-                return FLOOR_YYYY_WITH_STRIDE;
+                return Nanos::floorYYYY;
             default:
                 return null;
         }
@@ -869,28 +881,28 @@ public class NanosTimestampDriver implements TimestampDriver {
         switch (timeUnit) {
             case 'n':
                 // nanos
-                return new BaseTimestampSampler(interval);
+                return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
             case 'U':
                 // micros
-                return new BaseTimestampSampler(interval * Nanos.MICRO_NANOS);
+                return new BaseTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
             case 'T':
                 // millis
-                return new BaseTimestampSampler(Nanos.MILLI_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 's':
                 // seconds
-                return new BaseTimestampSampler(Nanos.SECOND_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'm':
                 // minutes
-                return new BaseTimestampSampler(Nanos.MINUTE_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'h':
                 // hours
-                return new BaseTimestampSampler(Nanos.HOUR_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'd':
                 // days
-                return new BaseTimestampSampler(Nanos.DAY_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'w':
                 // weeks
-                return new BaseTimestampSampler(Nanos.WEEK_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.WEEK_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'M':
                 // months
                 return new MonthTimestampNanosSampler((int) interval);
@@ -903,15 +915,19 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
-        if (srcTimestampType == ColumnType.TIMESTAMP_MICRO) {
+        if (ColumnType.isTimestampMicro(srcTimestampType)) {
             return CommonUtils::microsToNanos;
         }
         return null;
     }
 
     @Override
-    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
-        return Nanos.getTimezoneRules(locale, timezone);
+    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) {
+        try {
+            return Nanos.getTimezoneRules(locale, timezone);
+        } catch (NumericException e) {
+            throw CairoException.critical(0).put("invalid timezone: ").put(timezone);
+        }
     }
 
     @Override
@@ -1356,13 +1372,18 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public String toMSecString(long timestamp) {
+        return Nanos.toString(timestamp);
+    }
+
+    @Override
     public long toMicros(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.MICRO_NANOS;
     }
 
     @Override
-    public long toMinutes(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.MINUTE_NANOS;
+    public long toNanos(long timestamp) {
+        return timestamp;
     }
 
     @Override
@@ -1373,11 +1394,6 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long toSeconds(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.SECOND_NANOS;
-    }
-
-    @Override
-    public String toString(long timestamp) {
-        return Nanos.toString(timestamp);
     }
 
     @Override
@@ -1520,6 +1536,11 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
 
         @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_NANO;
+        }
+
+        @Override
         public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
             return parse(in, 0, in.length(), locale);
         }
@@ -1554,7 +1575,6 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     public static class IsoWeekPartitionFormat implements DateFormat {
-
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             long weekTime = timestamp - Nanos.floorWW(timestamp);
@@ -1585,6 +1605,11 @@ public class NanosTimestampDriver implements TimestampDriver {
                     }
                 }
             }
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_NANO;
         }
 
         @Override

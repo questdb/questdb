@@ -112,7 +112,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testBadInterval() throws Exception {
         assertException(
-                "select b, sum(a), k from x sample by 1min",
+                "select b, sum(a), k from x sample by 1hour",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -123,7 +123,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 37,
-                "Invalid unit: 1min"
+                "Invalid unit: 1hour"
         );
     }
 
@@ -3853,7 +3853,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = "Radix sort light\n" +
                 "  keys: [tstmp]\n" +
-                "    Filter filter: (tstmp>=1669852800000000000 and 0<length(sym)*tstmp::long)\n" +
+                "    Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)\n" +
                 "        Async JIT Group By workers: 1\n" +
                 "          keys: [tstmp,sym]\n" +
                 "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -3882,7 +3882,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym,ts1]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "          filter: (ts2>=1669852800000000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -4057,7 +4057,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4074,7 +4074,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
 
-            String plan = "Filter filter: (tstmp>=1669852800000000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4094,7 +4094,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4162,7 +4162,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000000Z'",
-                    "Filter filter: 1669857000000000000<ts\n" +
+                    "Filter filter: 2022-12-01T01:10:00.000000000Z<ts\n" +
                             "    Sample By\n" +
                             "      fill: prev\n" +
                             "      values: [first(v)]\n" +
@@ -5639,7 +5639,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: (timestamp_floor('day',now()),null)\n" +
+                    "  range: (timestamp_floor('day',now()),)\n" +
                     "  values: [count(*)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
@@ -7086,7 +7086,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0)) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
@@ -12248,8 +12248,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "not enough values"
+                101,
+                "insufficient fill values for SAMPLE BY FILL"
         );
     }
 

@@ -100,9 +100,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.MutableUtf16Sink;
@@ -157,30 +158,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
-    protected static final Clock defaultMicrosecondClock = new Clock() {
-        @Override
-        public int getClockTimestampType() {
-            return ColumnType.TIMESTAMP_MICRO;
-        }
-
-        @Override
-        public long getTicks() {
-            return currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-        }
-    };
-    protected static Clock testMicrosClock = defaultMicrosecondClock;
-    protected static final Clock defaultNanosecondClock = new Clock() {
-        @Override
-        public int getClockTimestampType() {
-            return ColumnType.TIMESTAMP_NANO;
-        }
-
-        @Override
-        public long getTicks() {
-            return currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
-        }
-    };
-    protected static Clock testNanoClock = defaultNanosecondClock;
+    protected static final MicrosecondClock defaultMicrosecondClock = (MicrosecondClock) () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
+    protected static final NanosecondClock defaultNanosecondClock = (NanosecondClock) () -> currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
+    protected static NanosecondClock testNanoClock = defaultNanosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
@@ -195,7 +176,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static long fdReuseCount;
     private static long memoryUsage = -1;
+    private static long mmapReuseCount;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -571,6 +554,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        fdReuseCount = Files.getFdReuseCount();
+        mmapReuseCount = Files.getMmapReuseCount();
+
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops,
         // which causes memory leak detector to fail should logger be
@@ -616,6 +602,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
+        LOG.info().$("fd reuse count=").$(Files.getFdReuseCount() - fdReuseCount)
+                .$(", mmap resuse count=").$(Files.getMmapReuseCount() - mmapReuseCount).$();
     }
 
     public static Utf8String utf8(CharSequence value) {
@@ -961,7 +949,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 sink.put(",");
             }
             sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
+            MicrosFormatUtils.appendDateTime(sink, timestamp);
             sink.put("', rowCount: ").put(rowCount);
             // Do not print name txn, it can be different in expected and actual table
             if (comparePartitionTxns) {
@@ -979,9 +967,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
         sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
         sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
         sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
         if (compareTruncateVersion) {
             sink.put("', dataVersion: ").put(txReader.getDataVersion());
         }
@@ -997,9 +985,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
         sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
         sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
         sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
         sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
         sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
         sink.put("}");
@@ -1247,11 +1235,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
             try {
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
-                CLOSEABLES.forEach(Misc::free);
             } catch (Throwable th) {
                 LOG.error().$("Error in test: ").$(th).$();
                 throw th;
             } finally {
+                CLOSEABLES.forEach(Misc::free);
                 forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;
             }
@@ -1476,9 +1464,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
-                    TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
+                    MicrosFormatUtils.appendDateTimeUSec(error, timestamp);
                     error.put(" current=");
-                    TimestampFormatUtils.appendDateTimeUSec(error, ts);
+                    MicrosFormatUtils.appendDateTimeUSec(error, ts);
 
                     Assert.fail(error.toString());
                 }
@@ -1558,8 +1546,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.execute(sqlText, sqlExecutionContext);
     }
 
-    protected static void execute(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.execute(dropSql, sqlExecutionContext);
+    protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute(sqlText, sqlExecutionContext);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {

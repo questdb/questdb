@@ -34,10 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class DayOfMonthFunctionFactory implements FunctionFactory {
 
@@ -49,7 +46,7 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new DayOfMonthFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
+        return new DayOfMonthFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     static final class DayOfMonthFunction extends IntFunction implements UnaryFunction {

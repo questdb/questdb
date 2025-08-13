@@ -24,10 +24,11 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -37,7 +38,7 @@ public class MicroTimestampSamplerTest {
 
     @Test
     public void testNextTimestamp() throws NumericException {
-        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.MINUTE_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Micros.MINUTE_MICROS, ColumnType.TIMESTAMP_MICRO);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -52,15 +53,15 @@ public class MicroTimestampSamplerTest {
         Assert.assertEquals(src.length, next.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }
 
     @Test
     public void testNextTimestampWithStep() throws NumericException {
-        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.SECOND_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Micros.SECOND_MICROS, ColumnType.TIMESTAMP_MICRO);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -75,15 +76,15 @@ public class MicroTimestampSamplerTest {
         Assert.assertEquals(src.length, next.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts, 3);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }
 
     @Test
     public void testPreviousTimestamp() throws NumericException {
-        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.HOUR_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Micros.HOUR_MICROS, ColumnType.TIMESTAMP_MICRO);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -98,41 +99,52 @@ public class MicroTimestampSamplerTest {
         Assert.assertEquals(src.length, prev.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long prevTs = sampler.previousTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
         }
     }
 
     @Test
     public void testRound() throws NumericException {
-        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.HOUR_MICROS);
-
         final String[] src = new String[]{
+                "1967-12-31T01:11:42.123456Z",
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T01:12:12.000001Z",
                 "2014-02-12T12:12:12.123456Z",
+                "2014-02-12T12:12:12.123456Z",
         };
         final String[] rounded = new String[]{
+                "1967-12-31T01:00:00.000000Z",
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T01:00:00.000000Z",
                 "2014-02-12T12:00:00.000000Z",
+                "2014-02-12T12:12:00.000000Z",
+        };
+        final long[] strides = new long[]{
+                Micros.HOUR_MICROS,
+                Micros.HOUR_MICROS,
+                Micros.HOUR_MICROS,
+                Micros.HOUR_MICROS,
+                Micros.MINUTE_MICROS,
         };
         Assert.assertEquals(src.length, rounded.length);
+        Assert.assertEquals(src.length, strides.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long roundedTs = sampler.round(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
+            final BaseTimestampSampler sampler = new BaseTimestampSampler(strides[i], ColumnType.TIMESTAMP_MICRO);
+            final long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
         }
     }
 
     @Test
     public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
-        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.HOUR_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Micros.HOUR_MICROS, ColumnType.TIMESTAMP_MICRO);
 
-        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+        long timestamp = MicrosFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
 
         for (int i = 0; i < 10; i++) {

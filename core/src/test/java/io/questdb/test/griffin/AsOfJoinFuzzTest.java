@@ -33,8 +33,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -191,7 +191,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         StringSink filter = new StringSink();
         if (exerciseIntervals) {
             int n = rnd.nextInt(5) + 1;
-            long baseTs = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            long baseTs = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             for (int i = 0; i < n; i++) {
                 if (i == 0) {
                     filter.put(" where ts between '");
@@ -200,11 +200,11 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 }
                 int startDays = rnd.nextInt(10 * (i + 1));
                 int endDays = startDays + rnd.nextInt(100) + 1;
-                long tsStart = baseTs + Timestamps.DAY_MICROS * startDays;
-                long tsEnd = baseTs + Timestamps.DAY_MICROS * endDays;
-                TimestampFormatUtils.appendDateTimeUSec(filter, tsStart);
+                long tsStart = baseTs + Micros.DAY_MICROS * startDays;
+                long tsEnd = baseTs + Micros.DAY_MICROS * endDays;
+                MicrosFormatUtils.appendDateTimeUSec(filter, tsStart);
                 filter.put("' and '");
-                TimestampFormatUtils.appendDateTimeUSec(filter, tsEnd);
+                MicrosFormatUtils.appendDateTimeUSec(filter, tsEnd);
                 filter.put("'");
             }
         }
@@ -331,8 +331,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     Assert.assertTrue(slaveTimestamp <= masterTimestamp);
 
                     if (maxTolerance != -1 && slaveTimestamp != Numbers.LONG_NULL) {
-                        long minSlaveTimestamp = masterTimestamp - (toleranceSeconds * Timestamps.SECOND_MICROS);
-                        Assert.assertTrue("Slave timestamp " + Timestamps.toString(slaveTimestamp) + " is less than minimum allowed " + Timestamps.toString(masterTimestamp),
+                        long minSlaveTimestamp = masterTimestamp - (toleranceSeconds * Micros.SECOND_MICROS);
+                        Assert.assertTrue("Slave timestamp " + Micros.toString(slaveTimestamp) + " is less than minimum allowed " + Micros.toString(masterTimestamp),
                                 slaveTimestamp >= minSlaveTimestamp);
                     }
                 }

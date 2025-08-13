@@ -52,11 +52,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableReaderMetadataTest extends AbstractCairoTest {
     private static final String stringColumnType = ColumnType.nameOf(ColumnType.STRING);
     private static final String varcharColumnType = ColumnType.nameOf(ColumnType.VARCHAR);
+    final Rnd rnd = TestUtils.generateRandom(null);
     private volatile Throwable exception = null;
+    private int timestampType;
 
     @Before
     public void setUp2() {
-        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
+        timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY, timestampType);
     }
 
     @Test
@@ -73,6 +76,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "xyz:" + stringColumnType + "\n";
         assertThat(expected, (w) -> w.addColumn("xyz", ColumnType.STRING));
     }
@@ -143,6 +147,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "int:INT\n";
 
         assertThat(expected,
@@ -166,6 +171,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + stringColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "bool2:BOOLEAN\n";
         assertThat(expected,
                 w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
@@ -179,7 +185,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     @Test
     public void testApplyTransitionFrom() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, ColumnType.TIMESTAMP_MICRO);
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, timestampType);
             final String tableName = "all2";
             final TableToken tableToken = engine.verifyTableName(tableName);
             try (
@@ -221,7 +227,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected,
                 w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
                 w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null)
@@ -270,6 +277,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "xyz:" + stringColumnType + "\n";
         assertThat(expected, (w) -> {
             w.removeColumn("double");
@@ -286,7 +294,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     @Test
     public void testLoadMetadataFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, ColumnType.TIMESTAMP_MICRO);
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, timestampType);
             final String tableName = "all2";
             final TableToken tableToken = engine.verifyTableName(tableName);
             try (
@@ -307,7 +315,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveAllColumns() throws Exception {
-        final String expected = "";
+        final String expected = "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected, (w) -> {
             w.removeColumn("int");
             w.removeColumn("short");
@@ -337,6 +345,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "str:" + stringColumnType + "\n";
         assertThat(expected,
                 w -> w.removeColumn("str"),
@@ -355,6 +364,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "str:" + stringColumnType + "\n" +
                 "short:INT\n";
         assertThat(expected,
@@ -378,7 +388,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("float")
@@ -396,7 +407,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected,
                 w -> w.removeColumn("date"),
                 w -> w.removeColumn("int")
@@ -416,7 +428,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         "bool:BOOLEAN\n" +
                         "bin:BINARY\n" +
                         "date:DATE\n" +
-                        "varchar:" + varcharColumnType + "\n";
+                        "varchar:" + varcharColumnType + "\n" +
+                        "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected, (w) -> w.removeColumn("int"));
     }
 
@@ -432,7 +445,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected, (w) -> w.removeColumn("date"));
     }
 
@@ -450,7 +464,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
 
         List<String> lines = new ArrayList<>(Arrays.asList(allColumns.split("\n")));
 
@@ -459,6 +474,9 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             if (removeIndex >= 0 && removeIndex < lines.size()) {
                 String line = lines.get(removeIndex);
                 String name = line.substring(0, line.indexOf(':'));
+                if (name.equals("timestamp")) {
+                    break;
+                }
 
                 lines.remove(removeIndex);
                 String expected = String.join("\n", lines);
@@ -482,7 +500,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("str"));
@@ -501,7 +520,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:" + varcharColumnType + "\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
     }
 
@@ -531,7 +551,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             engine.dropTableOrMatView(path, engine.verifyTableName("all"));
         }
-        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY, timestampType);
 
         // Test in one go
         runWithManipulators(expected, w -> {

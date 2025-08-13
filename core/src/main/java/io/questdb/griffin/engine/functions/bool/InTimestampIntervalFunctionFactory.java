@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -56,7 +57,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     public static class Func extends NegatableBooleanFunction implements BinaryFunction {
@@ -65,10 +66,10 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
         private final Function right;
         private final TimestampDriver timestampDriver;
 
-        public Func(Function left, Function right, CairoConfiguration configuration) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
-            leftTimestampType = ColumnType.getTimestampType(left.getType(), configuration);
+            leftTimestampType = ColumnType.getTimestampType(left.getType());
             timestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
         }
 
@@ -101,7 +102,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             getLeft().init(symbolTableSource, executionContext);
             int oldIntervalType = executionContext.getIntervalFunctionType();
             try {
-                executionContext.setIntervalFunctionType(ColumnType.getIntervalType(leftTimestampType));
+                executionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(leftTimestampType));
                 getRight().init(symbolTableSource, executionContext);
             } finally {
                 executionContext.setIntervalFunctionType(oldIntervalType);

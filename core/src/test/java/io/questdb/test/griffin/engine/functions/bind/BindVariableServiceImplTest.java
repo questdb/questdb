@@ -200,6 +200,19 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testDateVarSetToTimestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDate(0);
+            bindVariableService.setTimestampNano(0, 99999000001L);
+            Assert.assertEquals(99999, bindVariableService.getFunction(0).getDate(null));
+
+            bindVariableService.setTimestampNano(0, Numbers.LONG_NULL);
+            final long d = bindVariableService.getFunction(0).getDate(null);
+            Assert.assertEquals(Numbers.LONG_NULL, d);
+        });
+    }
+
+    @Test
     public void testDoubleIndexedOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setInt(2, 10);
@@ -506,6 +519,8 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(9990000011L, bindVariableService.getFunction(":x").getTimestamp(null));
             bindVariableService.setTimestamp("x", 9990000022L);
             Assert.assertEquals(9990000022L, bindVariableService.getFunction(":x").getTimestamp(null));
+            bindVariableService.setTimestampNano("x", 9990000033000L);
+            Assert.assertEquals(9990000033L, bindVariableService.getFunction(":x").getTimestamp(null));
         });
     }
 
@@ -865,6 +880,24 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetTimestampNSToStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.TIMESTAMP_NANO, 0);
+            try {
+                bindVariableService.setStr(0, "hello");
+                Assert.fail();
+            } catch (ImplicitCastException ignored) {
+            }
+            bindVariableService.setStr(0, "21");
+            Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
+            bindVariableService.setStr(0, null);
+            Assert.assertEquals(Numbers.LONG_NULL, bindVariableService.getFunction(0).getTimestamp(null));
+            bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");
+            Assert.assertEquals(1572505522000000000L, bindVariableService.getFunction(0).getTimestamp(null));
+        });
+    }
+
+    @Test
     public void testSetTimestampToByte() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.define(0, ColumnType.TIMESTAMP, 0);
@@ -872,6 +905,11 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(10, bindVariableService.getFunction(0).getTimestamp(null));
             bindVariableService.setByte(0, (byte) 22);
             Assert.assertEquals(22, bindVariableService.getFunction(0).getTimestamp(null));
+            bindVariableService.define(1, ColumnType.TIMESTAMP_NANO, 0);
+            bindVariableService.setByte(0, (byte) 19);
+            Assert.assertEquals(19, bindVariableService.getFunction(0).getTimestamp(null));
+            bindVariableService.setByte(0, (byte) 33);
+            Assert.assertEquals(33, bindVariableService.getFunction(0).getTimestamp(null));
         });
     }
 
@@ -900,6 +938,11 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(10, bindVariableService.getFunction(0).getTimestamp(null));
             bindVariableService.setShort(0, (short) 5);
             Assert.assertEquals(5, bindVariableService.getFunction(0).getTimestamp(null));
+
+            bindVariableService.setTimestampNano(1, 29L);
+            Assert.assertEquals(29, bindVariableService.getFunction(1).getTimestamp(null));
+            bindVariableService.setShort(1, (short) 50);
+            Assert.assertEquals(50, bindVariableService.getFunction(1).getTimestamp(null));
         });
     }
 
@@ -1002,19 +1045,72 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testTimestampNSVarSetToDate() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setTimestampNano(0);
+            bindVariableService.setDate(0, 99999001L);
+            Assert.assertEquals(99999001000000L, bindVariableService.getFunction(0).getTimestamp(null));
+
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            final long d = bindVariableService.getFunction(0).getTimestamp(null);
+            Assert.assertEquals(Numbers.LONG_NULL, d);
+        });
+    }
+
+    @Test
+    public void testTimestampNSVarSetToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setTimestampNano(0);
+            bindVariableService.setTimestampNano(0, 99999001L);
+            Assert.assertEquals(99999001, bindVariableService.getFunction(0).getTimestamp(null));
+
+            bindVariableService.setInt(0, 450);
+            Assert.assertEquals(450, bindVariableService.getFunction(0).getTimestamp(null));
+
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            final long d = bindVariableService.getFunction(0).getTimestamp(null);
+            Assert.assertEquals(Numbers.LONG_NULL, d);
+        });
+    }
+
+    @Test
+    public void testTimestampNSVarSetToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setTimestampNano(0);
+            bindVariableService.setTimestamp(0, 99999001L);
+            Assert.assertEquals(99999001000L, bindVariableService.getFunction(0).getTimestamp(null));
+        });
+    }
+
+    @Test
     public void testTimestampOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setLong("a", 10);
             Assert.assertEquals(10, bindVariableService.getFunction(":a").getLong(null));
             bindVariableService.setTimestamp("a", 5);
             Assert.assertEquals(5, bindVariableService.getFunction(":a").getLong(null));
+            bindVariableService.setTimestampNano("a", 2);
+            Assert.assertEquals(2, bindVariableService.getFunction(":a").getLong(null));
+        });
+    }
+
+    @Test
+    public void testTimestampVarSetToDate() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setTimestamp(0);
+            bindVariableService.setDate(0, 99999001L);
+            Assert.assertEquals(99999001000L, bindVariableService.getFunction(0).getTimestamp(null));
+
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            final long d = bindVariableService.getFunction(0).getTimestamp(null);
+            Assert.assertEquals(Numbers.LONG_NULL, d);
         });
     }
 
     @Test
     public void testTimestampVarSetToInt() throws Exception {
         assertMemoryLeak(() -> {
-            bindVariableService.setTimestamp(0, ColumnType.TIMESTAMP_MICRO);
+            bindVariableService.setTimestamp(0);
             bindVariableService.setTimestamp(0, 99999001L);
             Assert.assertEquals(99999001, bindVariableService.getFunction(0).getTimestamp(null));
 
@@ -1024,6 +1120,15 @@ public class BindVariableServiceImplTest {
             bindVariableService.setInt(0, Numbers.INT_NULL);
             final long d = bindVariableService.getFunction(0).getTimestamp(null);
             Assert.assertEquals(Numbers.LONG_NULL, d);
+        });
+    }
+
+    @Test
+    public void testTimestampVarSetToTimestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setTimestamp(0);
+            bindVariableService.setTimestampNano(0, 99999000001L);
+            Assert.assertEquals(99999000, bindVariableService.getFunction(0).getTimestamp(null));
         });
     }
 }

@@ -44,7 +44,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØi)";
 
     public static boolean isIntrusivelyOptimized(int columnType) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.INT:
@@ -85,7 +85,6 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
                 parseTargetType(position, args.getQuick(2)),
                 json,
                 path,
-                configuration.getDefaultTimestampType(),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }

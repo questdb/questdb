@@ -99,6 +99,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_FILTER_ENABLED("cairo.sql.parallel.filter.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED("cairo.sql.parallel.filter.pretouch.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD("cairo.sql.parallel.filter.pretouch.threshold"),
+    CAIRO_SQL_PARALLEL_TOP_K_ENABLED("cairo.sql.parallel.topk.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
@@ -451,12 +452,17 @@ public enum PropertyKey implements ConfigPropertyKey {
     QUERY_TIMEOUT("query.timeout"),
     QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED("query.within.latest.by.optimisation.enabled"),
     SHARED_WORKER_COUNT("shared.worker.count"),
-    SHARED_WORKER_AFFINITY("shared.worker.affinity"),
     SHARED_WORKER_HALT_ON_ERROR("shared.worker.haltOnError"),
     SHARED_WORKER_NAP_THRESHOLD("shared.worker.nap.threshold"),
     SHARED_WORKER_SLEEP_THRESHOLD("shared.worker.sleep.threshold"),
     SHARED_WORKER_SLEEP_TIMEOUT("shared.worker.sleep.timeout"),
     SHARED_WORKER_YIELD_THRESHOLD("shared.worker.yield.threshold"),
+    SHARED_NETWORK_WORKER_COUNT("shared.network.worker.count"),
+    SHARED_NETWORK_WORKER_AFFINITY("shared.network.worker.affinity"),
+    SHARED_QUERY_WORKER_COUNT("shared.query.worker.count"),
+    SHARED_QUERY_WORKER_AFFINITY("shared.query.worker.affinity"),
+    SHARED_WRITE_WORKER_COUNT("shared.write.worker.count"),
+    SHARED_WRITE_WORKER_AFFINITY("shared.write.worker.affinity"),
     TELEMETRY_ENABLED("telemetry.enabled"),
     TELEMETRY_DISABLE_COMPLETELY("telemetry.disable.completely"),
     TELEMETRY_QUEUE_CAPACITY("telemetry.queue.capacity"),
@@ -569,7 +575,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
-    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size");
+    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
+    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

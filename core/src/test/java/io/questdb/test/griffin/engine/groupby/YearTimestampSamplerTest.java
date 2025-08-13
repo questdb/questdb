@@ -25,20 +25,42 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
+import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class YearTimestampSamplerTest {
+    private static final String FIXED_PART = "-11-16T15:00:00.000000Z\n";
 
-    public static final String FIXED_PART = "-11-16T15:00:00.000000Z\n";
+    @Test
+    public void testRound() throws NumericException {
+        testRound(1, "2023-01-01T00:00:00.000000Z", "2023-01-01T00:00:00.000000Z");
+        testRound(1, "2023-01-01T00:00:00.000001Z", "2023-01-01T00:00:00.000000Z");
+        testRound(1, "2024-08-08T12:57:07.388314Z", "2024-01-01T00:00:00.000000Z");
+
+        testRound(2, "2024-01-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z");
+        testRound(2, "2025-08-08T12:57:07.388314Z", "2024-01-01T00:00:00.000000Z");
+        testRound(2, "2025-12-31T23:59:59.999999Z", "2024-01-01T00:00:00.000000Z");
+
+        testRound(10, "2020-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
+        testRound(10, "2024-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
+        testRound(10, "2025-12-31T23:59:59.999999Z", "2020-01-01T00:00:00.000000Z");
+
+        testRound(50, "1970-01-01T00:00:00.000000Z", "1970-01-01T00:00:00.000000Z");
+        testRound(50, "2051-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
+        testRound(100, "2024-01-01T00:00:00.000000Z", "1970-01-01T00:00:00.000000Z");
+        testRound(1000, "2025-12-31T23:59:59.999999Z", "1970-01-01T00:00:00.000000Z");
+    }
 
     @Test
     public void testSingleStep() throws NumericException {
-        testSampler(1,
+        testSampler(
+                1,
                 "2022" + FIXED_PART +
                         "2026" + FIXED_PART +
                         "2030" + FIXED_PART +
@@ -64,7 +86,8 @@ public class YearTimestampSamplerTest {
 
     @Test
     public void testTripleStep() throws NumericException {
-        testSampler(3,
+        testSampler(
+                3,
                 "2030" + FIXED_PART +
                         "2042" + FIXED_PART +
                         "2054" + FIXED_PART +
@@ -88,10 +111,23 @@ public class YearTimestampSamplerTest {
         );
     }
 
+    private void testRound(int stepYears, String timestamp, String expectedRounded) throws NumericException {
+        final YearTimestampMicrosSampler samplerUs = new YearTimestampMicrosSampler(stepYears);
+        samplerUs.setStart(0);
+        final long tsUs = MicrosFormatUtils.parseUTCTimestamp(timestamp);
+        final long expectedUs = MicrosFormatUtils.parseUTCTimestamp(expectedRounded);
+        Assert.assertEquals(expectedUs, samplerUs.round(tsUs));
+
+        final YearTimestampNanosSampler samplerNs = new YearTimestampNanosSampler(stepYears);
+        samplerNs.setStart(0);
+        final long tsNs = tsUs * Nanos.MICRO_NANOS;
+        Assert.assertEquals(expectedUs * Nanos.MICRO_NANOS, samplerNs.round(tsNs));
+    }
+
     private void testSampler(int stepSize, String expected) throws NumericException {
         StringSink sink = new StringSink();
         YearTimestampMicrosSampler sampler = new YearTimestampMicrosSampler(4);
-        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+        long timestamp = MicrosFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
         for (int i = 0; i < 20; i++) {
             long ts = sampler.nextTimestamp(timestamp, stepSize);

@@ -25,7 +25,7 @@
 package io.questdb;
 
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 import java.util.Map;
@@ -55,7 +55,7 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public Clock getMicrosecondClock() {
+    public MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
 

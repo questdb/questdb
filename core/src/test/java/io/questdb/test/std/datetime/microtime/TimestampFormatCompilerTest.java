@@ -31,9 +31,9 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -50,14 +50,14 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatCompilerTest {
 
-    private static final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+    private static final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
     private final static DateFormat REFERENCE = compiler.compile(CommonUtils.USEC_UTC_PATTERN);
     private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
 
     @BeforeClass
     public static void setUp() {
-        TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(1997, 1, 1, 0, 0));
+        MicrosFormatUtils.updateReferenceYear(Micros.toMicros(1997, 1, 1, 0, 0));
     }
 
     @Test
@@ -618,15 +618,15 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testGreedyYear2() throws Exception {
-        long referenceYear = TimestampFormatUtils.getReferenceYear();
+        long referenceYear = MicrosFormatUtils.getReferenceYear();
         try {
-            TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
+            MicrosFormatUtils.updateReferenceYear(Micros.toMicros(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
             assertThat("y-MM", "2055-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
-            TimestampFormatUtils.updateReferenceYear(referenceYear);
+            MicrosFormatUtils.updateReferenceYear(referenceYear);
         }
     }
 
@@ -834,13 +834,13 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testOperationUniqueness() {
 
-        Assert.assertTrue(TimestampFormatCompiler.getOpCount() > 0);
+        Assert.assertTrue(MicrosFormatCompiler.getOpCount() > 0);
 
         IntHashSet codeSet = new IntHashSet();
         CharSequenceHashSet nameSet = new CharSequenceHashSet();
-        for (int i = 0, n = TimestampFormatCompiler.getOpCount(); i < n; i++) {
-            String name = TimestampFormatCompiler.getOpName(i);
-            int code = TimestampFormatCompiler.getOpCode(name);
+        for (int i = 0, n = MicrosFormatCompiler.getOpCount(); i < n; i++) {
+            String name = MicrosFormatCompiler.getOpName(i);
+            int code = MicrosFormatCompiler.getOpCode(name);
             Assert.assertTrue(codeSet.add(code));
             Assert.assertTrue(nameSet.add(name));
         }
@@ -1044,7 +1044,7 @@ public class TimestampFormatCompilerTest {
 
     private void assertFormat(String expected, String pattern, String date, int mic) throws NumericException {
         sink.clear();
-        long micros = TimestampFormatUtils.parseTimestamp(date) + mic;
+        long micros = MicrosFormatUtils.parseTimestamp(date) + mic;
         get(pattern).format(micros, defaultLocale, "GMT", sink);
         TestUtils.assertEqualsIgnoreCase(expected, sink);
         sink.clear();
@@ -1071,10 +1071,10 @@ public class TimestampFormatCompilerTest {
 
     private void assertThat(String pattern, String expected, String input, DateLocale locale) throws NumericException {
         DateFormat format = get(pattern);
-        TestUtils.assertEquals(expected, Timestamps.toString(format.parse(input, locale)));
+        TestUtils.assertEquals(expected, Micros.toString(format.parse(input, locale)));
 
         DateFormat compiled = compiler.compile(pattern);
-        TestUtils.assertEquals(expected, Timestamps.toString(compiled.parse(input, locale)));
+        TestUtils.assertEquals(expected, Micros.toString(compiled.parse(input, locale)));
     }
 
     private void testAgainstJavaReferenceImpl(String pattern) throws Exception {

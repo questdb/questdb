@@ -57,7 +57,7 @@ public class TestTimestampCounterFactory implements FunctionFactory {
     ) {
         final Function tsFunc = args.getQuick(0);
         if (configuration.isDevModeEnabled()) {
-            return new Func(tsFunc, ColumnType.getTimestampType(tsFunc.getType(), configuration));
+            return new Func(tsFunc, ColumnType.getTimestampType(tsFunc.getType()));
         }
         return tsFunc;
     }

@@ -95,11 +95,11 @@ public class VarcharBindVariable extends VarcharFunction implements Mutable {
         return true;
     }
 
-    public void setTimestamp(long value) {
+    public void setTimestamp(long value, int timestampType) {
         isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf8Sink.clear();
-            ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).append(utf8Sink, value);
+            ColumnType.getTimestampDriver(timestampType).append(utf8Sink, value);
         }
     }
 

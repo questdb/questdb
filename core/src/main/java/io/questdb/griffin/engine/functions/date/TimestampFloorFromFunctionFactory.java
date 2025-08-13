@@ -59,12 +59,12 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
         final int stride = CommonUtils.getStrideMultiple(str, argPositions.getQuick(0));
         final char unit = CommonUtils.getStrideUnit(str, argPositions.getQuick(0));
         final Function timestampFunc = args.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
         long from = args.getQuick(2).getTimestamp(null);
         if (from == Numbers.LONG_NULL) {
             from = 0;
         } else {
-            from = ColumnType.getTimestampDriver(timestampType).from(from, ColumnType.getTimestampType(args.getQuick(2).getType(), configuration));
+            from = ColumnType.getTimestampDriver(timestampType).from(from, ColumnType.getTimestampType(args.getQuick(2).getType()));
         }
 
         switch (unit) {
@@ -77,6 +77,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             case 's':
             case 'T':
             case 'U':
+            case 'n':
                 return new TimestampFloorOffsetFunction(timestampFunc, unit, stride, from, timestampType);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");

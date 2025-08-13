@@ -169,7 +169,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated, String mvGroupFunction) throws Exception {

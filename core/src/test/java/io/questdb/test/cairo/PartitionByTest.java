@@ -187,10 +187,10 @@ public class PartitionByTest {
         long start = timestampDriver.fromDays(-366);
         for (int i = 0; i < 2 * 366; i++) {
             long timestamp = start + i * timestampDriver.fromDays(i);
-            String date = timestampDriver.toString(timestamp);
+            String date = timestampDriver.toMSecString(timestamp);
 
             long ceil = PartitionBy.getPartitionCeilMethod(timestampType, PartitionBy.WEEK).ceil(timestamp);
-            String ceilDate = timestampDriver.toString(ceil);
+            String ceilDate = timestampDriver.toMSecString(ceil);
             String message = "ceil(" + date + ")=" + ceilDate;
 
             Assert.assertEquals(message, 1, timestampDriver.getDayOfWeek(ceil));
@@ -202,7 +202,7 @@ public class PartitionByTest {
     @Test
     public void testDaySplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.DAY);
-        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000100" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000100Z", PartitionBy.DAY);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType) ? "2013-03-31T175501-123000100" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000100Z", PartitionBy.DAY);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.DAY);
     }
 
@@ -310,10 +310,10 @@ public class PartitionByTest {
         long start = timestampDriver.fromDays(-366);
         for (int i = 0; i < 2 * 366; i++) {
             long timestamp = start + timestampDriver.fromDays(i);
-            String date = timestampDriver.toString(timestamp);
+            String date = timestampDriver.toMSecString(timestamp);
 
             long floor = PartitionBy.getPartitionFloorMethod(timestampType, PartitionBy.WEEK).floor(timestamp);
-            String floorDate = timestampDriver.toString(floor);
+            String floorDate = timestampDriver.toMSecString(floor);
             String message = "floor(" + date + ")=" + floorDate;
 
             Assert.assertEquals(message, 1, timestampDriver.getDayOfWeek(floor));
@@ -325,9 +325,9 @@ public class PartitionByTest {
     @Test
     public void testHourSplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.HOUR);
-        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.HOUR);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType) ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.HOUR);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.HOUR);
-        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123020101" : "2013-03-31T175501-123020", "2013-03-31T17:55:01.123020101Z", PartitionBy.HOUR);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType) ? "2013-03-31T175501-123020101" : "2013-03-31T175501-123020", "2013-03-31T17:55:01.123020101Z", PartitionBy.HOUR);
         assertFormatAndParse("2013-03-31T00", "2013-03-31T00:00:00.000000Z", PartitionBy.HOUR);
     }
 
@@ -354,7 +354,7 @@ public class PartitionByTest {
     @Test
     public void testMonthSplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.MONTH);
-        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.MONTH);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType) ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.MONTH);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.MONTH);
         assertFormatAndParse("2013-03", "2013-03-01T00:00:00.000000Z", PartitionBy.MONTH);
     }
@@ -608,7 +608,7 @@ public class PartitionByTest {
     @Test
     public void testWeekSplit() throws NumericException {
         assertFormatAndParse("2023-W13", "2023-03-27T00:00:00.000000Z", PartitionBy.WEEK);
-        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2023-W13-1T175501-123000101" : "2023-W13-1T175501-123000", "2023-03-27T17:55:01.123000101Z", PartitionBy.WEEK);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType) ? "2023-W13-1T175501-123000101" : "2023-W13-1T175501-123000", "2023-03-27T17:55:01.123000101Z", PartitionBy.WEEK);
         assertFormatAndParse("2013-W09-5T17", "2013-03-01T17:00:00.000000Z", PartitionBy.WEEK);
         assertFormatAndParse("2013-W09-5", "2013-03-01T00:00:00.000000Z", PartitionBy.WEEK);
     }
@@ -616,7 +616,7 @@ public class PartitionByTest {
     @Test
     public void testYearSplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.YEAR);
-        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.YEAR);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType) ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.YEAR);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.YEAR);
         assertFormatAndParse("2013", "2013-01-01T00:00:00.000000Z", PartitionBy.YEAR);
     }

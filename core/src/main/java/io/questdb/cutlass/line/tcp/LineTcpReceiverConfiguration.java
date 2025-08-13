@@ -66,7 +66,7 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     FilesFacade getFilesFacade();
 
-    WorkerPoolConfiguration getIOWorkerPoolConfiguration();
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can

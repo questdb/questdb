@@ -24,21 +24,15 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 
-public class TestMicroClock implements Clock {
+public class TestMicroClock implements MicrosecondClock {
     private final long increment;
     private long micros;
 
     public TestMicroClock(long micros, long increment) {
         this.micros = micros;
         this.increment = increment * 1000;
-    }
-
-    @Override
-    public int getClockTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override

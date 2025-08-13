@@ -84,7 +84,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -120,17 +120,17 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 1);
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 16);
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
     }
 
     @Test
     public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.YEAR_10000 / 300, 265, 16);
+        testApply1RowCommitManyWriters(Micros.YEAR_10000 / 300, 265, 16);
     }
 
     @Test
@@ -1069,7 +1069,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = MicrosTimestampDriver.floor("2022-02-24");
-            long tsIncrement = Timestamps.MINUTE_MICROS;
+            long tsIncrement = Micros.MINUTE_MICROS;
 
             long ts = startTs;
             int totalRows = 2000;
@@ -1122,7 +1122,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
                     assertSql(
                             "count\tmin\tmax\n" +
-                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
+                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
                     );
                     assertSqlCursors("sm", "select * from sm order by id");
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
@@ -1936,7 +1936,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewDataInfo mvDataInfo = eventCursor.getMatViewDataInfo();
                 assertEquals(1, mvDataInfo.getLastRefreshBaseTableTxn());
-                assertEquals(2, mvDataInfo.getLastRefreshTimestamp());
+                assertEquals(2, mvDataInfo.getLastRefreshTimestampUs());
                 // last period value should be written along with replace range lo/hi timestamps
                 assertEquals(3, mvDataInfo.getLastPeriodHi());
                 assertEquals(4, mvDataInfo.getReplaceRangeTsLow());
@@ -1947,7 +1947,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewInvalidationInfo mvInfo = eventCursor.getMatViewInvalidationInfo();
                 assertEquals(6, mvInfo.getLastRefreshBaseTableTxn());
-                assertEquals(7, mvInfo.getLastRefreshTimestamp());
+                assertEquals(7, mvInfo.getLastRefreshTimestampMicros());
                 assertTrue(mvInfo.isInvalid());
                 TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
                 // last period and cached txn intervals values should be ignored
@@ -2016,7 +2016,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
@@ -3734,7 +3734,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, WAL_INDEX_FILE_NAME)) {
                         // Set errno to path does not exist
                         this.openRO(Path.getThreadLocal2("does-not-exist").$());
@@ -4139,7 +4139,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(segmentTxn, info.getStartRowID());
                         assertEquals(segmentTxn + 1, info.getEndRowID());
                         assertEquals(refreshTxn + segmentTxn, info.getLastRefreshBaseTableTxn());
-                        assertEquals(segmentTxn, info.getLastRefreshTimestamp());
+                        assertEquals(segmentTxn, info.getLastRefreshTimestampUs());
                     } else {
                         Assert.fail("MVData event should not be present in old format");
                     }
@@ -4425,7 +4425,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "count\tmin\tmax\n" +
-                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
             );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");

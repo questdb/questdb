@@ -30,14 +30,14 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -115,28 +115,20 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull io.questdb.std.datetime.Clock getMicrosecondClock() {
+    public @NotNull MicrosecondClock getMicrosecondClock() {
         return overrides.getTestMicrosClock();
     }
 
     @Override
     public @NotNull MillisecondClock getMillisecondClock() {
-        return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
+        MicrosecondClock microsecondClock = overrides.getTestMicrosClock();
+        return () -> microsecondClock.getTicks() / 1000L;
     }
 
     @Override
-    public @NotNull Clock getNanosecondClock() {
-        return new Clock() {
-            @Override
-            public int getClockTimestampType() {
-                return ColumnType.TIMESTAMP_NANO;
-            }
-
-            @Override
-            public long getTicks() {
-                return overrides.getTestMicrosClock().getTicks() * 1000L;
-            }
-        };
+    public NanosecondClock getNanosecondClock() {
+        MicrosecondClock microsecondClock = overrides.getTestMicrosClock();
+        return () -> microsecondClock.getTicks() * 1000L;
     }
 
     @Override

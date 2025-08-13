@@ -38,6 +38,9 @@ public class DateFormatFactory implements TimestampDateFormatFactory {
     private static final Function<CharSequence, DateFormat> mapper = DateFormatFactory::map;
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 
+    private DateFormatFactory() {
+    }
+
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
      * backed by ConcurrentHashMap, making method calls thread-safe and largely non-blocking.

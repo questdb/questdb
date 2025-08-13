@@ -76,7 +76,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
                     execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -116,7 +116,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
 
                     execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -157,7 +157,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
                     execute(
                             "2024-10-24T17:00:25.000000Z",
                             refreshJob,
@@ -201,7 +201,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:10.000000Z");
                 createMatView("2024-10-24T17:00:20.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
                     execute(
                             "2024-10-24T17:01:00.000000Z",
                             refreshJob,
@@ -290,6 +290,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 }

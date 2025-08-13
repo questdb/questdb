@@ -244,7 +244,7 @@ public class SymbolFunctionTest {
                 throw new UnsupportedOperationException();
             }
         }) {
-            Assert.assertEquals("2024-04-09T00:00:00.000Z", NanosTimestampDriver.INSTANCE.toString(symbolFunction.getTimestamp(null)));
+            Assert.assertEquals("2024-04-09T00:00:00.000Z", NanosTimestampDriver.INSTANCE.toMSecString(symbolFunction.getTimestamp(null)));
         }
     }
 }

@@ -45,6 +45,6 @@ public class LastTimestampGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+        return new LastTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 }

@@ -465,7 +465,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
-                            "            Sort light lo: 1\n" +
+                            "            Async Top K lo: 1 workers: 1\n" +
+                            "              filter: null\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
@@ -876,7 +877,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "from tab1 join tab2 on tab1.id = tab2.id\n" +
                             "order by a desc " +
                             "limit 10",
-                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    Sort\n" +
                             "      keys: [a desc]\n" +
                             "        SelectedRecord\n" +
@@ -913,7 +914,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "order by a desc, ts " +
                             "limit 10",
                     "SelectedRecord\n" +
-                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "        Sort\n" +
                             "          keys: [a desc, ts]\n" +
                             "            SelectedRecord\n" +
@@ -1076,7 +1077,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts]\n" +
                             "        SelectedRecord\n" +
@@ -1112,7 +1113,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [ts, s]\n" +
                             "        SelectedRecord\n" +
@@ -1148,7 +1149,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1185,7 +1186,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s1, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s1, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1221,7 +1222,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts]\n" +
                             "        SelectedRecord\n" +
@@ -1263,7 +1264,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 9\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            SortedSymbolIndex\n" +
@@ -1305,7 +1306,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            SortedSymbolIndex\n" +
@@ -1402,7 +1403,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts, ts1, s1]\n" +
                             "        SelectedRecord\n" +
@@ -1499,7 +1500,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            SortedSymbolIndex\n" +
@@ -1595,7 +1596,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [ts, s]\n" +
                             "        SelectedRecord\n" +
@@ -1692,7 +1693,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s1, s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [ts, s1, s, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1790,7 +1791,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1832,7 +1833,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 21\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1887,11 +1888,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    LIMIT 1000000;";
 
             assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Sort light lo: 1000000\n" +
-                    "  keys: [s, ts]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: t1\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Top K lo: 1000000 workers: 1\n" +
+                            "  filter: null\n" +
+                            "  keys: [s, ts]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t1\n"
+            );
 
             Misc.free(select(query, sqlExecutionContext));
         });
@@ -2105,15 +2110,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "on y2.LAST = y1.ts";
             String queryNew = query + " union \n" + query;
             final QueryModel model = compileModel(queryNew);
-            TestUtils.assertEquals("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
-                    "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
-                    "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
-                    "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
-                    "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
-                    " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
-                    "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
-                    "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                    "limit 1) y2 on y2.LAST = y1.ts)", model.toString0());
+            TestUtils.assertEquals(
+                    "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
+                            "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
+                            "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
+                            "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
+                            "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
+                            " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
+                            "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
+                            "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
+                            "limit 1) y2 on y2.LAST = y1.ts)",
+                    model.toString0()
+            );
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2129,13 +2137,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
-                            "            Sort light lo: 1\n" +
+                            "            Async Top K lo: 1 workers: 1\n" +
+                            "              filter: null\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: y2\n");
-
+                            "                        Frame forward scan on: y2\n"
+            );
         });
     }
 
@@ -3436,7 +3445,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: (null,'2018-01-31')\n" +
+                    "      range: (,'2018-01-31')\n" +
                     "      stride: '5d'\n" +
                     "      values: [null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3468,7 +3477,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
+                    "      range: ('2017-12-20',)\n" +
                     "      stride: '5d'\n" +
                     "      values: [null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3799,7 +3808,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(shouldSucceedParallel, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
+                    "      range: ('2017-12-20',)\n" +
                     "      stride: '5d'\n" +
                     "      values: [null,null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3814,7 +3823,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(shouldSucceedSequential, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: ('2017-12-20',null)\n" +
+                    "  range: ('2017-12-20',)\n" +
                     "  values: [avg(x),sum(x)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
@@ -4506,7 +4515,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
                         "                Async JIT Filter workers: 1\n" +
-                        "                  filter: ts2>=1\n" +
+                        "                  filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: cpu_ts\n"
@@ -4534,7 +4543,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "    Radix sort light\n" +
                         "      keys: [ts2]\n" +
                         "        Async JIT Filter workers: 1\n" +
-                        "          filter: ts2>=1\n" +
+                        "          filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: cpu_ts\n"
@@ -4628,7 +4637,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
                         "                Async JIT Filter workers: 1\n" +
-                        "                  filter: ts2>=1\n" +
+                        "                  filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: cpu_ts\n"

@@ -285,7 +285,7 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public boolean isWal() {
-        return writerThreadId == -1;
+        return tableToken.isWal();
     }
 
     public boolean isWriterInError() {

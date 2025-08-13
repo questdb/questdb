@@ -44,7 +44,7 @@ public class GenerateSeriesTimestampStringFunctionFactory implements FunctionFac
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function arg = args.getQuick(0);
         Function arg1 = args.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(arg.getType(), arg1.getType(), configuration);
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(arg.getType(), arg1.getType());
         return new CursorFunction(new GenerateSeriesTimestampStringRecordCursorFactory(timestampType, arg, arg1, args.getQuick(2), argPositions));
     }
 }

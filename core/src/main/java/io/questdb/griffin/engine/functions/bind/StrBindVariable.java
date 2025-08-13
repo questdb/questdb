@@ -99,11 +99,11 @@ public class StrBindVariable extends StrFunction implements Mutable {
         return true;
     }
 
-    public void setTimestamp(long value) {
+    public void setTimestamp(long value, int timestampType) {
         isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf16Sink.clear();
-            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             timestampDriver.append(utf16Sink, value);
             utf8Sink.clear();
             timestampDriver.append(utf8Sink, value);

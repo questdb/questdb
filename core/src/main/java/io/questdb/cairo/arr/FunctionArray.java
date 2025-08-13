@@ -38,7 +38,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     private ObjList<Function> functions;
     private Record record;
 
-    public FunctionArray(short elementType, int nDims) {
+    public FunctionArray(int elementType, int nDims) {
         setType(ColumnType.encodeArrayType(elementType, nDims));
         this.flatView = this;
     }

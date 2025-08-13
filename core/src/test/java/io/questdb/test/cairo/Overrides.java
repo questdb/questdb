@@ -32,13 +32,12 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.AbstractCairoTest;
 
@@ -54,18 +53,8 @@ public class Overrides {
     private final Properties properties = new Properties();
     private boolean changed = true;
     private long currentMicros = -1;
-    private final Clock defaultMicrosecondClock = new Clock() {
-        @Override
-        public int getClockTimestampType() {
-            return ColumnType.TIMESTAMP_MICRO;
-        }
-
-        @Override
-        public long getTicks() {
-            return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-        }
-    };
-    private Clock testMicrosClock = defaultMicrosecondClock;
+    private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private CairoConfiguration defaultConfiguration;
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
@@ -129,7 +118,7 @@ public class Overrides {
         return spinLockTimeout;
     }
 
-    public Clock getTestMicrosClock() {
+    public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
     }
 

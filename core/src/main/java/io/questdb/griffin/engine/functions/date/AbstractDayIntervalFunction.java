@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
@@ -32,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
@@ -88,8 +88,8 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
         // would lose precision for `end`). For `init` calls that are not from InTimestampIntervalFunctionFactory.Func,
         // the intervalType here must remain consistent with the intervalType used during function creation.
         intervalType = executionContext.getIntervalFunctionType();
-        timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
-        final long now = timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType());
+        timestampDriver = IntervalUtils.getTimestampDriverByIntervalType(intervalType);
+        final long now = executionContext.getNow(timestampDriver.getColumnType());
         final long start = timestampDriver.dayStart(now, shiftFromToday());
         final long end = timestampDriver.dayEnd(start);
         interval.of(start, end);

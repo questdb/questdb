@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
@@ -32,21 +33,40 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class TimestampFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final TimestampFunction function = new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
-        @Override
-        public long getTimestamp(Record rec) {
-            return 145000L;
-        }
+    private final TimestampDriver driver;
+    private final TimestampFunction function;
 
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-    };
+    public TimestampFunctionTest(int timestampType) {
+        this.function = new TimestampFunction(timestampType) {
+            @Override
+            public long getTimestamp(Record rec) {
+                return 145000L;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        };
+        this.driver = ColumnType.getTimestampDriver(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetArray() {
@@ -80,7 +100,7 @@ public class TimestampFunctionTest {
 
     @Test
     public void testGetDate() {
-        Assert.assertEquals(145, function.getDate(null));
+        Assert.assertEquals(driver.toDate(145000), function.getDate(null));
     }
 
     @Test

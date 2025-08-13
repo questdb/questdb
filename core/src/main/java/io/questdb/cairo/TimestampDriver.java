@@ -50,13 +50,30 @@ import static io.questdb.griffin.SqlUtil.castPGDates;
 
 public interface TimestampDriver {
 
+    long addDays(long timestamp, int days);
+
+    long addHours(long timestamp, int hours);
+
+    long addMicros(long timestamp, int micros);
+
+    long addMillis(long timestamp, int millis);
+
+    long addMinutes(long timestamp, int minutes);
+
     long addMonths(long timestamp, int months);
 
+    long addNanos(long timestamp, int nanos);
+
     long addPeriod(long lo, char type, int period);
+
+    long addSeconds(long timestamp, int seconds);
+
+    long addWeeks(long timestamp, int weeks);
 
     long addYears(long timestamp, int years);
 
     void append(CharSink<?> sink, long timestamp);
+
 
     default void appendMem(CharSequence value, MemoryA mem) {
         try {
@@ -97,6 +114,30 @@ public interface TimestampDriver {
     long from(Instant instant);
 
     long from(long timestamp, int timestampType);
+
+    default long from(long value, char unit) {
+        switch (unit) {
+            case 'n':
+                return fromNanos(value);
+            case 'u':
+            case 'U':
+                return fromMicros(value);
+            case 'T':
+                return fromMillis(value);
+            case 's':
+                return fromSeconds(value);
+            case 'm':
+                return fromMinutes((int) value);
+            case 'H':
+            case 'h':
+                return fromHours((int) value);
+            case 'd':
+                return fromDays((int) value);
+            case 'w':
+                return fromWeeks((int) value);
+        }
+        return 0;
+    }
 
     default long from(long ts, byte unit) {
         switch (unit) {
@@ -244,6 +285,14 @@ public interface TimestampDriver {
     long getMicrosOfMinute(long timestamp);
 
     /**
+     * Gets the microseconds within the second from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the microseconds within the second, or Numbers.INT_NULL if timestamp is null
+     */
+    int getMicrosOfSecond(long timestamp);
+
+    /**
      * Gets the millennium from a timestamp value.
      *
      * @param timestamp the timestamp value
@@ -282,6 +331,14 @@ public interface TimestampDriver {
      * @return the month of year (1-12), or Numbers.INT_NULL if timestamp is null
      */
     int getMonthOfYear(long timestamp);
+
+    /**
+     * Gets the nanoseconds within the microsecond from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the nanoseconds within the millisecond (0-999), or Numbers.INT_NULL if timestamp is null
+     */
+    int getNanosOfMicros(long timestamp);
 
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
@@ -348,7 +405,7 @@ public interface TimestampDriver {
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
-    TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException;
+    TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone);
 
     /**
      * Gets the week of year from a timestamp value.
@@ -380,7 +437,7 @@ public interface TimestampDriver {
             } catch (NumericException ignore) {
             }
 
-            return castPGDates(value, typeFrom, getColumnType());
+            return castPGDates(value, typeFrom, this);
         }
         return Numbers.LONG_NULL;
     }
@@ -404,7 +461,7 @@ public interface TimestampDriver {
 
             // all formats are ascii
             if (value.isAscii()) {
-                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, getColumnType());
+                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, this);
             }
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getColumnType());
         }
@@ -441,15 +498,15 @@ public interface TimestampDriver {
 
     long toHours(long timestamp);
 
+    String toMSecString(long timestamp);
+
     long toMicros(long timestamp);
 
-    long toMinutes(long timestamp);
+    long toNanos(long timestamp);
 
     long toNanosScale();
 
     long toSeconds(long timestamp);
-
-    String toString(long timestamp);
 
     long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 

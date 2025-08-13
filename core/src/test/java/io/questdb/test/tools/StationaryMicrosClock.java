@@ -24,16 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 
-public class StationaryMicrosClock implements Clock {
+public class StationaryMicrosClock implements MicrosecondClock {
     public static final StationaryMicrosClock INSTANCE = new StationaryMicrosClock();
-
-    @Override
-    public int getClockTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
-    }
 
     @Override
     public long getTicks() {

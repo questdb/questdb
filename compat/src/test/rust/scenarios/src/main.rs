@@ -314,7 +314,7 @@ fn extract_parameters(
                         "char" => Box::new(substituted),
 
                         // date is formatted as '2024-10-02' we need to create a timestamp (NaiveDateTime) out of it
-                        // why? QuestDB sends date columns over PGWire as Timestamps so when Rust PGWire client
+                        // why? QuestDB sends date columns over PGWire as Micros so when Rust PGWire client
                         // asks (PGWire DESCRIBE) server for a date column, server returns pretends it's a timestamp
                         // and the client refuses to set a date value to a timestamp column
                         "date" => Box::new(

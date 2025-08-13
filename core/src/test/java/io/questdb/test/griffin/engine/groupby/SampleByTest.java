@@ -55,7 +55,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -132,7 +132,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testBadInterval() throws Exception {
         assertException(
-                "select b, sum(a), k from x sample by 1min",
+                "select b, sum(a), k from x sample by 1hour",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -143,7 +143,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 37,
-                "Invalid unit: 1min"
+                "Invalid unit: 1hour"
         );
     }
 
@@ -4248,7 +4248,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = "Radix sort light\n" +
                 "  keys: [tstmp]\n" +
-                "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "    Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
                 "        Async JIT Group By workers: 1\n" +
                 "          keys: [tstmp,sym]\n" +
                 "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -4277,7 +4277,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym,ts1]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -4452,7 +4452,7 @@ public class SampleByTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4469,7 +4469,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4489,7 +4489,7 @@ public class SampleByTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4557,7 +4557,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
-                    "Filter filter: 1669857000000000<ts\n" +
+                    "Filter filter: 2022-12-01T01:10:00.000000Z<ts\n" +
                             "    Sample By\n" +
                             "      fill: prev\n" +
                             "      values: [first(v)]\n" +
@@ -4605,6 +4605,143 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSampleByFillNeedFix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE candles_market_spot_4_1m (" +
+                    "   candle_start_time TIMESTAMP," +
+                    "   candle_open_price DOUBLE," +
+                    "   candle_close_price DOUBLE," +
+                    "   candle_low_price DOUBLE," +
+                    "   candle_high_price DOUBLE," +
+                    "   candle_vwap DOUBLE," +
+                    "   candle_volume DOUBLE," +
+                    "   candle_trades_count INT," +
+                    "   candle_usd_volume DOUBLE," +
+                    "   computed_by VARCHAR," +
+                    "   created_at TIMESTAMP," +
+                    "   candle_symbol SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256" +
+                    ") timestamp(candle_start_time) PARTITION BY WEEK WAL " +
+                    "DEDUP UPSERT KEYS(candle_start_time,candle_symbol);");
+            execute("INSERT INTO candles_market_spot_4_1m VALUES\n" +
+                    "('2025-07-30 20:00:00', 0.00123, 0.00125, 0.00122, 0.00126, 0.00124, 1500, 45, 185.25, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 20:15:00', 0.00125, 0.00127, 0.00124, 0.00128, 0.00126, 1800, 52, 226.80, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 20:30:00', 0.00127, 0.00126, 0.00125, 0.00129, 0.00127, 2100, 61, 266.70, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 20:45:00', 0.00126, 0.00128, 0.00125, 0.00130, 0.00128, 1950, 58, 249.60, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 22:00:00', 0.00131, 0.00133, 0.00130, 0.00134, 0.00132, 2400, 72, 316.80, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 22:30:00', 0.00133, 0.00132, 0.00131, 0.00135, 0.00133, 2150, 63, 285.95, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 22:59:00', 0.00132, 0.00134, 0.00131, 0.00136, 0.00134, 2500, 75, 335.00, 'system', now(), 'LSKBTC');");
+            drainWalQueue();
+            assertQuery(
+                    "candle_start_time\tcandle_symbol\topen\tclose\tlow\thigh\tcandle_volume\tcandle_usd_volume\tcnt\n" +
+                            "2025-07-30T22:00:00.000000Z\tLSKBTC\t0.00131\t0.00134\t0.0013\t0.00136\t7050.0\t937.75\t210\n" +
+                            "2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.00128\t0.0\t0.0\t0\n" +
+                            "2025-07-30T20:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t7350.0\t928.35\t216\n",
+                    "with sq as (\n" +
+                            "  select\n" +
+                            "    candle_start_time,\n" +
+                            "    candle_symbol,\n" +
+                            "    first(candle_open_price) as open,\n" +
+                            "    last(candle_close_price) as close,\n" +
+                            "    min(candle_low_price) as low,\n" +
+                            "    max(candle_high_price) as high,\n" +
+                            "    sum(candle_volume) as candle_volume,\n" +
+                            "    sum(candle_usd_volume) as candle_usd_volume,\n" +
+                            "    sum(candle_trades_count) as cnt\n" +
+                            "  from\n" +
+                            "    candles_market_spot_4_1m\n" +
+                            "  where\n" +
+                            "    candle_start_time >= '2025-07-30 20:00:00'\n" +
+                            "    and candle_start_time <= '2025-07-30 23:00:00'\n" +
+                            "    and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0, 0, 0)\n" +
+                            "  order by\n" +
+                            "    candle_start_time desc\n" +
+                            ")\n" +
+                            "select\n" +
+                            "  candle_start_time,\n" +
+                            "  candle_symbol,\n" +
+                            "  open,\n" +
+                            "  close,\n" +
+                            "  low,\n" +
+                            "  case\n" +
+                            "    when cnt = 0 then close\n" +
+                            "    else high\n" +
+                            "  end as high,\n" +
+                            "  candle_volume,\n" +
+                            "  candle_usd_volume,\n" +
+                            "  cnt\n" +
+                            "from sq;",
+                    "candle_start_time###DESC",
+                    true
+            );
+
+            assertQuery(
+                    "candle_start_time\tcnt\n" +
+                            "2025-07-30T22:00:00.000000Z\t210\n" +
+                            "2025-07-30T21:00:00.000000Z\t0\n" +
+                            "2025-07-30T20:00:00.000000Z\t216\n",
+                    "with sq as (\n" +
+                            "  select\n" +
+                            "    candle_start_time,\n" +
+                            "    candle_symbol,\n" +
+                            "    first(candle_open_price) as open,   \n" +
+                            "    sum(candle_trades_count) as cnt   \n" +
+                            "  from\n" +
+                            "    candles_market_spot_4_1m \n" +
+                            "  where \n" +
+                            "    candle_start_time >= '2025-07-30 20:00:00'  \n" +
+                            "    and candle_start_time <= '2025-07-30 23:00:00'\n" +
+                            "    and candle_symbol = 'LSKBTC' sample by 1h fill(PREV,  0)\n" +
+                            "  order by \n" +
+                            "    candle_start_time desc\n" +
+                            ")\n" +
+                            "select\n" +
+                            "  candle_start_time,\n" +
+                            "  cnt\n" +
+                            "from sq;",
+                    "candle_start_time###DESC",
+                    true
+            );
+
+            assertException("with sq as (\n" +
+                            "  select\n" +
+                            "    candle_start_time,\n" +
+                            "    candle_symbol,\n" +
+                            "    first(candle_open_price) as open,\n" +
+                            "    last(candle_close_price) as close,\n" +
+                            "    min(candle_low_price) as low,\n" +
+                            "    max(candle_high_price) as high,\n" +
+                            "    sum(candle_volume) as candle_volume,\n" +
+                            "    sum(candle_usd_volume) as candle_usd_volume,\n" +
+                            "    sum(candle_trades_count) as cnt\n" +
+                            "  from\n" +
+                            "    candles_market_spot_4_1m\n" +
+                            "  where\n" +
+                            "    candle_start_time >= '2025-07-30 20:00:00'\n" +
+                            "    and candle_start_time <= '2025-07-30 23:00:00'\n" +
+                            "    and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0)\n" +
+                            "  order by\n" +
+                            "    candle_start_time desc\n" +
+                            ")\n" +
+                            "select\n" +
+                            "  candle_start_time,\n" +
+                            "  candle_symbol,\n" +
+                            "  open,\n" +
+                            "  close,\n" +
+                            "  low,\n" +
+                            "  case\n" +
+                            "    when cnt = 0 then close\n" +
+                            "    else high\n" +
+                            "  end as high,\n" +
+                            "  candle_volume,\n" +
+                            "  candle_usd_volume,\n" +
+                            "  cnt\n" +
+                            "from sq;",
+                    554,
+                    "insufficient fill values for SAMPLE BY FILL");
+        });
     }
 
     @Test
@@ -4837,7 +4974,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new BaseTimestampSampler(100L),
+                    new BaseTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
                     columns,
                     meta,
@@ -4878,7 +5015,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new BaseTimestampSampler(100L),
+                    new BaseTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
                     columns,
                     meta,
@@ -6115,7 +6252,7 @@ public class SampleByTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: (timestamp_floor('day',now()),null)\n" +
+                    "  range: (timestamp_floor('day',now()),)\n" +
                     "  values: [count(*)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
@@ -7800,7 +7937,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0)) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
@@ -12964,8 +13101,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "not enough values"
+                101,
+                "insufficient fill values for SAMPLE BY FILL"
         );
     }
 
@@ -14387,8 +14524,8 @@ public class SampleByTest extends AbstractCairoTest {
                                 row.putDouble(0, 42);
                                 row.putDouble(1, 42);
                                 row.putSym(2, (char) ('a' + i % 3));
-                                ts += Timestamps.SECOND_MICROS;
-                                row.putLong(3, ts / Timestamps.MILLI_MICROS);
+                                ts += Micros.SECOND_MICROS;
+                                row.putLong(3, ts / Micros.MILLI_MICROS);
                                 row.append();
                                 if ((i % batchSize) == 0) {
                                     writer.commit();

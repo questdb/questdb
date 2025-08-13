@@ -56,8 +56,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.Clock;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -74,8 +74,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -87,7 +87,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoConfiguration config;
     private final CairoEngine engine;
     private final WalMetrics metrics;
-    private final Clock microClock;
+    private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final BlockFileWriter mvStateWriter;
     private final OperationExecutor operationExecutor;
@@ -100,19 +100,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
-        operationExecutor = new OperationExecutor(engine, workerCount, sharedWorkerCount);
+        operationExecutor = new OperationExecutor(engine, sharedQueryWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
         metrics = engine.getMetrics().walMetrics();
-        tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
+        tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
         mvStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
@@ -622,7 +622,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
-                            info.getLastRefreshTimestamp(),
+                            info.getLastRefreshTimestampMicros(),
                             info.isInvalid(),
                             info.getInvalidationReason(),
                             info.getLastPeriodHi(),

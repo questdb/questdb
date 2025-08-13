@@ -47,7 +47,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
@@ -90,7 +90,7 @@ public class Bootstrap {
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
-    private final Clock microsecondClock;
+    private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
@@ -205,6 +205,8 @@ public class Bootstrap {
             } else {
                 config = configuration;
             }
+
+            Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
             LogLevel.init(config.getCairoConfiguration());
             if (LogLevel.TIMESTAMP_TIMEZONE != null) {
                 log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();
@@ -358,7 +360,7 @@ public class Bootstrap {
         return log;
     }
 
-    public Clock getMicrosecondClock() {
+    public MicrosecondClock getMicrosecondClock() {
         return microsecondClock;
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.CharSink;
@@ -49,6 +50,12 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     public long getApproxBucketSize() {
         return Nanos.MONTH_NANOS_APPROX * stepMonths;
     }
+
+    @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
 
     @Override
     public long nextTimestamp(long timestamp) {

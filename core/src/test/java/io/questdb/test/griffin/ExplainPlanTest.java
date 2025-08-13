@@ -166,6 +166,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -184,6 +185,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
+        testNanoClock = StationaryNanosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -2650,8 +2652,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 sqlExecutionContext.configureWindowContext(
                                         null, null, null, false,
                                         PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true,
-                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20,
-                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
+                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20,
+                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -3320,7 +3322,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) from (select * from a order by d limit 10)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
-                        "    Sort light lo: 10\n" +
+                        "    Async Top K lo: 10 workers: 1\n" +
+                        "      filter: null\n" +
                         "      keys: [d]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
@@ -3460,7 +3463,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select y, count(*) from di order by y desc limit 1",
-                "Long top K lo: 1\n" +
+                "Long Top K lo: 1\n" +
                         "  keys: [y desc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [y]\n" +
@@ -3477,7 +3480,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select y, count(*) c from di order by c limit 42",
-                "Long top K lo: 42\n" +
+                "Long Top K lo: 42\n" +
                         "  keys: [c asc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [y]\n" +
@@ -3496,7 +3499,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "create table di (x int, y long)",
                     "select y, count(*) c from di order by c limit 42",
-                    "Long top K lo: 42\n" +
+                    "Long Top K lo: 42\n" +
                             "  keys: [c asc]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [y]\n" +
@@ -4318,7 +4321,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select * from a latest on ts partition by s",
                 "LatestByAllIndexed\n" +
-                        "    Async index backward scan on: s workers: 1\n" +
+                        "    Async index backward scan on: s workers: 2\n" +
                         "    Frame backward scan on: a\n"
         );
     }
@@ -5946,10 +5949,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "                Row forward scan\n" +
                     "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
-                    "              functions: [915148800000000,null]\n" +
+                    "              functions: [1999-01-01T00:00:00.000000Z,null]\n" +
                     "                long_sequence count: 1\n" +
                     "        VirtualRecord\n" +
-                    "          functions: [1676851200000000,null]\n" +
+                    "          functions: [2023-02-20T00:00:00.000000Z,null]\n" +
                     "            long_sequence count: 1\n";
             assertPlanNoLeakCheck(query, expectedPlan);
             assertPlanNoLeakCheck(query + " order by timestamp", expectedPlan);
@@ -9472,7 +9475,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000)) [pre-touch]\n" +
+                        "  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z)) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9522,7 +9525,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where ts > '2020-03-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 1583020800000000<ts [pre-touch]\n" +
+                        "  filter: 2020-03-01T00:00:00.000000Z<ts [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9539,17 +9542,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWhereOrderByLimit() throws Exception {
+    public void testSelectWhereOrderByLimit1() throws Exception {
         assertPlan(
                 "create table xx ( x long, str string) ",
                 "select * from xx where str = 'A' order by str,x limit 10",
-                "Sort light lo: 10\n" +
+                "Async Top K lo: 10 workers: 1\n" +
+                        "  filter: str='A'\n" +
                         "  keys: [str, x]\n" +
-                        "    Async Filter workers: 1\n" +
-                        "      filter: str='A'\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: xx\n"
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
+        );
+    }
+
+    @Test
+    public void testSelectWhereOrderByLimit2() throws Exception {
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select * from xx where str is not null order by str,x limit 10",
+                "Async JIT Top K lo: 10 workers: 1\n" +
+                        "  filter: str is not null\n" +
+                        "  keys: [str, x]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
+        );
+    }
+
+    @Test
+    public void testSelectWhereOrderByLimit3() throws Exception {
+        assertPlan(
+                "create table xx ( x long, id uuid ) ",
+                "select * from xx order by id desc, x limit 10",
+                "Async Top K lo: 10 workers: 1\n" +
+                        "  filter: null\n" +
+                        "  keys: [id desc, x]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
         );
     }
 
@@ -9907,7 +9937,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000 and ts=1640995200000000) [pre-touch]\n" +
+                        "  filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9959,7 +9989,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or 1609459200000000<ts) [pre-touch]\n" +
+                        "  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10680,7 +10710,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts, l limit 10) order by ts, l",
                     "Sort light\n" +
                             "  keys: [ts, l]\n" +
-                            "    Sort light lo: 10\n" +
+                            "    Async Top K lo: 10 workers: 1\n" +
+                            "      filter: null\n" +
                             "      keys: [ts, l]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +

@@ -217,8 +217,8 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         MatViewDefinition viewDefinition = new MatViewDefinition();
         viewDefinition.init(
                 MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
-                ColumnType.TIMESTAMP_MICRO,
                 false,
+                ColumnType.TIMESTAMP_MICRO,
                 viewToken,
                 "x",
                 baseTableToken.getTableName(),

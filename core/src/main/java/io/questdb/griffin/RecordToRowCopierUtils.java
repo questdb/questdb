@@ -30,9 +30,9 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
@@ -133,7 +133,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
-        int transferStrToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;Lio/questdb/cairo/TimestampDriver;)V");
+        int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -173,10 +173,10 @@ public class RecordToRowCopierUtils {
         int transferUuidToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
         int transferVarcharToStrCol = asm.poolInterfaceMethod(TableWriter.Row.class, "putStrUtf8", "(ILio/questdb/std/str/DirectUtf8Sequence;)V");
         int transferVarcharToSymbolCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToSymbolCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
-        int transferVarcharToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;Lio/questdb/cairo/TimestampDriver;)V");
+        int implicitCastVarcharAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCastVarchar", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
-        int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cutlass/pgwire/modern/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
+        int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
         int getTimestampDriverRef = asm.poolMethod(ColumnType.class, "getTimestampDriver", "(I)Lio/questdb/cairo/TimestampDriver;");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
@@ -211,7 +211,7 @@ public class RecordToRowCopierUtils {
         boolean needsArrayParser = isArrayParserRequired(from, to, toColumnFilter, n);
         if (needsArrayParser) {
             parserFieldIndex = asm.poolUtf8("parser");
-            parserDescIndex = asm.poolUtf8("Lio/questdb/cutlass/pgwire/modern/DoubleArrayParser;");
+            parserDescIndex = asm.poolUtf8("Lio/questdb/cairo/arr/DoubleArrayParser;");
             constructorNameIndex = asm.poolUtf8("<init>");
             constructorDescIndex = asm.poolUtf8("()V");
             doubleArrayParserClassIndex = asm.poolClass(DoubleArrayParser.class);
@@ -279,8 +279,9 @@ public class RecordToRowCopierUtils {
             // calling `ColumnType.getTimestampDriver()` at runtime much times.
             if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
                 timestampTypeRef = fromColumnType_0 + 2 * i;
-            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE ||
-                    (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Date -> Timestamp or Timestamp -> Timestamp
+            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp
+                    fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
+                    (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
                 timestampTypeRef = toColumnType_0 + 2 * i;
             }
 
@@ -791,9 +792,8 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetVarchar);
-                            asm.ldc(toColumnType_0 + i * 2);
-                            asm.invokeStatic(getTimestampDriverRef);
-                            asm.invokeStatic(transferVarcharToTimestampCol);
+                            asm.invokeInterface(implicitCastVarcharAsTimestamp, 1);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(rGetVarchar);
@@ -885,9 +885,8 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetStrA);
-                            asm.ldc(toColumnType_0 + i * 2);
-                            asm.invokeStatic(getTimestampDriverRef);
-                            asm.invokeStatic(transferStrToTimestampCol);
+                            asm.invokeInterface(implicitCastStrAsTimestamp, 1);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:
@@ -1129,15 +1128,6 @@ public class RecordToRowCopierUtils {
 
     @SuppressWarnings("unused")
     // Called from dynamically generated bytecode
-    public static void transferStrToTimestampCol(TableWriter.Row row, int col, CharSequence seq, TimestampDriver driver) {
-        if (seq == null) {
-            return;
-        }
-        row.putTimestamp(col, driver.implicitCast(seq));
-    }
-
-    @SuppressWarnings("unused")
-    // Called from dynamically generated bytecode
     public static void transferStrToVarcharCol(TableWriter.Row row, int col, CharSequence str) {
         if (str == null) {
             return;
@@ -1186,15 +1176,6 @@ public class RecordToRowCopierUtils {
         StringSink threadLocalBuilder = Misc.getThreadLocalSink();
         threadLocalBuilder.put(seq);
         row.putSym(col, threadLocalBuilder);
-    }
-
-    @SuppressWarnings("unused")
-    // Called from dynamically generated bytecode
-    public static void transferVarcharToTimestampCol(TableWriter.Row row, int col, Utf8Sequence seq, TimestampDriver driver) {
-        if (seq == null) {
-            return;
-        }
-        row.putTimestamp(col, driver.implicitCastVarchar(seq));
     }
 
     @SuppressWarnings("unused")

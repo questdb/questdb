@@ -24,13 +24,14 @@
 
 package io.questdb.std.datetime.millitime;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -325,7 +326,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                         year = Dates.getYear(datetime);
                         leap = Dates.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendYear000(sink, year);
+                    MicrosFormatUtils.appendYear000(sink, year);
                     break;
 
                 // ERA
@@ -354,6 +355,11 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
             }
         }
+    }
+
+    @Override
+    public int getColumnType() {
+        return ColumnType.DATE;
     }
 
     @Override

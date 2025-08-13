@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -33,14 +32,12 @@ import io.questdb.std.ObjList;
 
 class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
-    private final CairoConfiguration configuration;
     private final CaseFunctionPicker picker;
 
-    public TimestampCaseFunction(CairoConfiguration configuration, CaseFunctionPicker picker, ObjList<Function> args, int columnType) {
+    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, int columnType) {
         super(columnType);
         this.picker = picker;
         this.args = args;
-        this.configuration = configuration;
     }
 
     @Override
@@ -51,6 +48,6 @@ class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     @Override
     public long getTimestamp(Record rec) {
         Function f = picker.pick(rec);
-        return timestampDriver.from(f.getTimestamp(rec), ColumnType.getTimestampType(f.getType(), configuration));
+        return timestampDriver.from(f.getTimestamp(rec), ColumnType.getTimestampType(f.getType()));
     }
 }

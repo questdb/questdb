@@ -56,7 +56,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final CharSequence part = args.getQuick(0).getStrA(null);
         final Function arg = args.getQuick(1);
-        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration));
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
 
         if (SqlKeywords.isCenturyKeyword(part)) {
             return new CenturyFunction(arg, driver);
@@ -256,15 +256,15 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class MicrosecondsFunction extends LongExtractFunction {
+    static final class MicrosecondsFunction extends IntExtractFunction {
         public MicrosecondsFunction(Function arg, TimestampDriver driver) {
             super(arg, driver);
         }
 
         @Override
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            return driver.getMicrosOfMinute(value);
+            return driver.getMicrosOfSecond(value);
         }
     }
 
@@ -280,15 +280,15 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class MillisecondsFunction extends LongExtractFunction {
+    static final class MillisecondsFunction extends IntExtractFunction {
         public MillisecondsFunction(Function arg, TimestampDriver driver) {
             super(arg, driver);
         }
 
         @Override
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            return driver.getMillisOfMinute(value);
+            return driver.getMillisOfSecond(value);
         }
     }
 

@@ -48,7 +48,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -107,7 +107,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
             send(lineData);
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\tlabel2\tlabel\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "room\twatts\ttimestamp\tlabel2\tlabel\n" +
                     "6C\t333\t1970-01-01T00:25:31.817901Z\tnull\t\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tnull\tLine\n" +
                     "6B\t22\t1970-01-01T00:27:11.817901Z\tnull\t\n" +
@@ -195,7 +196,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
             tm.col("room", ColumnType.SYMBOL);
             tm.col("watts", ColumnType.LONG);
-            if (timestampType == ColumnType.TIMESTAMP_MICRO) {
+            if (ColumnType.isTimestampMicro(timestampType)) {
                 tm.timestamp();
             } else {
                 tm.timestampNs();
@@ -204,7 +205,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             AbstractCairoTest.create(tm);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
-                TableWriter.Row row = writer.newRow(timestampType == ColumnType.TIMESTAMP_MICRO ? day1 / 1000 : day1);
+                TableWriter.Row row = writer.newRow(ColumnType.isTimestampMicro(timestampType) ? day1 / 1000 : day1);
                 row.putSym(0, "6A");
                 row.putLong(1, 100L);
                 row.append();
@@ -224,8 +225,10 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             send("plug,room=6A watts=125i " + day1 + "\n");
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\n" +
-                    "6A\t125\t2023-02-27T00:00:00.000000Z\n" : "room\twatts\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "room\twatts\ttimestamp\n" +
+                    "6A\t125\t2023-02-27T00:00:00.000000Z\n"
+                    : "room\twatts\ttimestamp\n" +
                     "6A\t125\t2023-02-27T00:00:00.000000000Z\n";
             assertTable(expected);
         }, true, 50L);
@@ -249,9 +252,11 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
             Assert.assertNull(exception);
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "room\twatts\ttimestamp\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
-                    "6C\t333\t1970-03-03T00:00:00.000000Z\n" : "room\twatts\ttimestamp\n" +
+                    "6C\t333\t1970-03-03T00:00:00.000000Z\n"
+                    : "room\twatts\ttimestamp\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000000Z\n" +
                     "6C\t333\t1970-03-03T00:00:00.000000000Z\n";
             assertTable(expected);
@@ -288,7 +293,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // re-send, this should re-add column label
             send(lineData);
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "label\troom\twatts\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "label\troom\twatts\ttimestamp\n" +
                     "Line\t6C\t666\t1970-01-01T00:25:31.817903Z\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
@@ -329,7 +335,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 );
                 Assert.assertNull(exception);
             }
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
                     "6A\t1\t1970-01-01T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
@@ -386,7 +393,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertNull(exception3);
 
 
-            assertTable(timestampType == ColumnType.TIMESTAMP_MICRO ? "label\troom\twatts\ttimestamp\n" +
+            assertTable(ColumnType.isTimestampMicro(timestampType)
+                    ? "label\troom\twatts\ttimestamp\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
@@ -429,10 +437,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
             Assert.assertNull(ex);
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "label\troom\twatts\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "label\troom\twatts\ttimestamp\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" : "label\troom\twatts\ttimestamp\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
+                    : "label\troom\twatts\ttimestamp\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902842Z\n" +
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902842Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999000Z\n";
@@ -466,7 +476,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n"
             );
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\tpower\ttimestamp\twatts\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "room\tpower\ttimestamp\twatts\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "6B\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
                     "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
@@ -500,7 +511,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineData
             );
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "room\tpower\ttimestamp\twatts\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "room\tpower\ttimestamp\twatts\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
                     "6B\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
@@ -520,7 +532,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testRandomColumnAddedDeleted() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         runInContext((server) -> {
             IntList columnsAdded = new IntList();
 
@@ -555,8 +567,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     }
 
                     String lineData = isSymbol
-                            ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000)
-                            : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
+                            ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Micros.MINUTE_MICROS * 20 * 1000)
+                            : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Micros.MINUTE_MICROS * 20 * 1000);
 
                     send(lineData);
                     columnsAdded.add(isSymbol ? i : -i);
@@ -611,7 +623,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "watts\tpower\ttimestamp\troom\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "watts\tpower\ttimestamp\troom\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
                     "22\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
@@ -667,7 +680,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     try {
                         startBarrier.await();
                         LOG.info().$("Busy waiting for writer ASYNC event ").$(alterOperationFuture).$();
-                        alterOperationFuture.await(25 * Timestamps.SECOND_MILLIS);
+                        alterOperationFuture.await(25 * Micros.SECOND_MILLIS);
                     } catch (SqlException exception) {
                         sqlException = exception;
                     } catch (Throwable e) {

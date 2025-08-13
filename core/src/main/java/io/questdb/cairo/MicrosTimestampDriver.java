@@ -43,10 +43,10 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -61,28 +61,19 @@ import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
+import static io.questdb.std.datetime.microtime.MicrosFormatUtils.*;
 
 public class MicrosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MicrosTimestampDriver();
-    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
-    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
-    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
-    private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;
-    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYears;
-    private static final TimestampCeilMethod CEIL_DD = Timestamps::ceilDD;
-    private static final TimestampCeilMethod CEIL_HH = Timestamps::ceilHH;
-    private static final TimestampCeilMethod CEIL_MI = Timestamps::ceilMI;
-    private static final TimestampCeilMethod CEIL_MM = Timestamps::ceilMM;
-    private static final TimestampCeilMethod CEIL_MR = Timestamps::ceilMR;
-    private static final TimestampCeilMethod CEIL_MS = Timestamps::ceilMS;
-    private static final TimestampCeilMethod CEIL_SS = Timestamps::ceilSS;
-    private static final TimestampCeilMethod CEIL_WW = Timestamps::ceilWW;
-    private static final TimestampCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     private static final DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
         public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             sink.putAscii(DEFAULT_PARTITION_NAME);
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override
@@ -96,46 +87,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     };
 
-    private static final TimestampFloorMethod FLOOR_CENTURY = Timestamps::floorCentury;
-    private static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
-    private static final TimestampFloorWithOffsetMethod FLOOR_DD_WITH_OFFSET = Timestamps::floorDD;
-    private static final TimestampFloorWithStrideMethod FLOOR_DD_WITH_STRIDE = Timestamps::floorDD;
-    private static final TimestampFloorMethod FLOOR_DECADE = Timestamps::floorDecade;
-    private static final TimestampFloorMethod FLOOR_DOW = Timestamps::floorDOW;
-    private static final TimestampFloorMethod FLOOR_HH = Timestamps::floorHH;
-    private static final TimestampFloorWithOffsetMethod FLOOR_HH_WITH_OFFSET = Timestamps::floorHH;
-    private static final TimestampFloorWithStrideMethod FLOOR_HH_WITH_STRIDE = Timestamps::floorHH;
-    private static final TimestampFloorMethod FLOOR_MC = Timestamps::floorMC;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MC_WITH_OFFSET = Timestamps::floorMC;
-    private static final TimestampFloorWithStrideMethod FLOOR_MC_WITH_STRIDE = Timestamps::floorMC;
-    private static final TimestampFloorMethod FLOOR_MI = Timestamps::floorMI;
-    private static final TimestampFloorMethod FLOOR_MILLENNIUM = Timestamps::floorMillennium;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MI_WITH_OFFSET = Timestamps::floorMI;
-    private static final TimestampFloorWithStrideMethod FLOOR_MI_WITH_STRIDE = Timestamps::floorMI;
-    private static final TimestampFloorMethod FLOOR_MM = Timestamps::floorMM;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MM_WITH_OFFSET = Timestamps::floorMM;
-    private static final TimestampFloorWithStrideMethod FLOOR_MM_WITH_STRIDE = Timestamps::floorMM;
-    private static final TimestampFloorMethod FLOOR_MS = Timestamps::floorMS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MS_WITH_OFFSET = Timestamps::floorMS;
-    private static final TimestampFloorWithStrideMethod FLOOR_MS_WITH_STRIDE = Timestamps::floorMS;
-    private static final TimestampFloorMethod FLOOR_NS = Timestamps::floorNS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_NS_WITH_OFFSET = Timestamps::floorNS;
-    private static final TimestampFloorWithStrideMethod FLOOR_NS_WITH_STRIDE = Timestamps::floorNS;
-    private static final TimestampFloorMethod FLOOR_QUARTER = Timestamps::floorQuarter;
-    private static final TimestampFloorMethod FLOOR_SS = Timestamps::floorSS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_SS_WITH_OFFSET = Timestamps::floorSS;
-    private static final TimestampFloorWithStrideMethod FLOOR_SS_WITH_STRIDE = Timestamps::floorSS;
-    private static final TimestampFloorMethod FLOOR_WW = Timestamps::floorWW;
-    private static final TimestampFloorWithOffsetMethod FLOOR_WW_WITH_OFFSET = Timestamps::floorWW;
-    private static final TimestampFloorWithStrideMethod FLOOR_WW_WITH_STRIDE = Timestamps::floorWW;
-    private static final TimestampFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
-    private static final TimestampFloorWithOffsetMethod FLOOR_YYYY_WITH_OFFSET = Timestamps::floorYYYY;
-    private static final TimestampFloorWithStrideMethod FLOOR_YYYY_WITH_STRIDE = Timestamps::floorYYYY;
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(Micros::floorDD, DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(Micros::floorHH, HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(Micros::floorMM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(Micros::floorYYYY, YEAR_FORMAT);
     private Clock clock = MicrosecondClockImpl.INSTANCE;
 
     private MicrosTimestampDriver() {
@@ -199,64 +155,104 @@ public class MicrosTimestampDriver implements TimestampDriver {
                         micr *= CommonUtils.tenPow(micrLim - pos);
 
                         // micros
-                        ts += (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS
-                                + min * Timestamps.MINUTE_MICROS
-                                + sec * Timestamps.SECOND_MICROS
+                        ts += (day - 1) * Micros.DAY_MICROS
+                                + hour * Micros.HOUR_MICROS
+                                + min * Micros.MINUTE_MICROS
+                                + sec * Micros.SECOND_MICROS
                                 + micr;
                     } else {
                         if (pos == lim) {
                             // seconds
-                            ts += (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS
-                                    + sec * Timestamps.SECOND_MICROS;
+                            ts += (day - 1) * Micros.DAY_MICROS
+                                    + hour * Micros.HOUR_MICROS
+                                    + min * Micros.MINUTE_MICROS
+                                    + sec * Micros.SECOND_MICROS;
                         } else {
                             throw NumericException.INSTANCE;
                         }
                     }
                 } else {
                     // minute
-                    ts += (day - 1) * Timestamps.DAY_MICROS
-                            + hour * Timestamps.HOUR_MICROS
-                            + min * Timestamps.MINUTE_MICROS;
+                    ts += (day - 1) * Micros.DAY_MICROS
+                            + hour * Micros.HOUR_MICROS
+                            + min * Micros.MINUTE_MICROS;
 
                 }
             } else {
                 // year + month + day + hour
-                ts += (day - 1) * Timestamps.DAY_MICROS
-                        + hour * Timestamps.HOUR_MICROS;
+                ts += (day - 1) * Micros.DAY_MICROS
+                        + hour * Micros.HOUR_MICROS;
             }
         } else {
             // year + month + day
-            ts += (day - 1) * Timestamps.DAY_MICROS;
+            ts += (day - 1) * Micros.DAY_MICROS;
         }
         return ts;
     }
 
     @Override
+    public long addDays(long timestamp, int days) {
+        return Micros.addDays(timestamp, days);
+    }
+
+    @Override
+    public long addHours(long timestamp, int hours) {
+        return Micros.addHours(timestamp, hours);
+    }
+
+    @Override
+    public long addMicros(long timestamp, int micros) {
+        return Micros.addMicros(timestamp, micros);
+    }
+
+    @Override
+    public long addMillis(long timestamp, int millis) {
+        return Micros.addMillis(timestamp, millis);
+    }
+
+    @Override
+    public long addMinutes(long timestamp, int minutes) {
+        return Micros.addMinutes(timestamp, minutes);
+    }
+
+    @Override
     public long addMonths(long timestamp, int months) {
-        return Timestamps.addMonths(timestamp, months);
+        return Micros.addMonths(timestamp, months);
+    }
+
+    @Override
+    public long addNanos(long timestamp, int nanos) {
+        return Micros.addNanos(timestamp, nanos);
     }
 
     @Override
     public long addPeriod(long lo, char type, int period) {
-        return Timestamps.addPeriod(lo, type, period);
+        return Micros.addPeriod(lo, type, period);
+    }
+
+    @Override
+    public long addSeconds(long timestamp, int seconds) {
+        return Micros.addSeconds(timestamp, seconds);
+    }
+
+    @Override
+    public long addWeeks(long timestamp, int weeks) {
+        return Micros.addWeeks(timestamp, weeks);
     }
 
     @Override
     public long addYears(long timestamp, int years) {
-        return Timestamps.addYears(timestamp, years);
+        return Micros.addYears(timestamp, years);
     }
 
     @Override
     public void append(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.appendDateTimeUSec(sink, timestamp);
+        MicrosFormatUtils.appendDateTimeUSec(sink, timestamp);
     }
 
     @Override
     public void appendPGWireText(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
+        MicrosFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
     }
 
     @Override
@@ -268,15 +264,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public long approxPartitionTimestamps(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.HOUR:
-                return Timestamps.HOUR_MICROS;
+                return Micros.HOUR_MICROS;
             case PartitionBy.DAY:
-                return Timestamps.DAY_MICROS;
+                return Micros.DAY_MICROS;
             case PartitionBy.WEEK:
-                return Timestamps.WEEK_MICROS;
+                return Micros.WEEK_MICROS;
             case PartitionBy.MONTH:
-                return Timestamps.MONTH_MICROS_APPROX;
+                return Micros.MONTH_MICROS_APPROX;
             case PartitionBy.YEAR:
-                return Timestamps.YEAR_MICROS_NONLEAP;
+                return Micros.YEAR_MICROS_NONLEAP;
             default:
                 throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
         }
@@ -284,14 +280,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long ceilYYYY(long timestamp) {
-        return Timestamps.ceilYYYY(timestamp);
+        return Micros.ceilYYYY(timestamp);
     }
 
     @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            MicrosFormatUtils.appendDateTimeUSec(sink, value);
             return true;
         }
         return false;
@@ -299,12 +295,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long dayEnd(long start) {
-        return start + Timestamps.DAY_MICROS - 1;
+        return start + Micros.DAY_MICROS - 1;
     }
 
     @Override
     public long dayStart(long now, int shiftDays) {
-        return Timestamps.floorDD(Timestamps.addDays(now, shiftDays));
+        return Micros.floorDD(Micros.addDays(now, shiftDays));
     }
 
     @Override
@@ -319,7 +315,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long floorYYYY(long timestamp) {
-        return Timestamps.floorYYYY(timestamp);
+        return Micros.floorYYYY(timestamp);
     }
 
     @Override
@@ -343,12 +339,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long from(Instant instant) {
-        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Timestamps.SECOND_MICROS), instant.getNano() / 1000);
+        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Micros.SECOND_MICROS), instant.getNano() / 1000);
     }
 
     @Override
     public long from(long timestamp, int timestampType) {
-        if (timestampType == ColumnType.TIMESTAMP_NANO) {
+        if (ColumnType.isTimestampNano(timestampType)) {
             return CommonUtils.nanosToMicros(timestamp);
         }
         return timestamp;
@@ -356,17 +352,17 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDate(long date) {
-        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * Timestamps.MILLI_MICROS;
+        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * Micros.MILLI_MICROS;
     }
 
     @Override
     public long fromDays(int days) {
-        return days * Timestamps.DAY_MICROS;
+        return days * Micros.DAY_MICROS;
     }
 
     @Override
     public long fromHours(int hours) {
-        return hours * Timestamps.HOUR_MICROS;
+        return hours * Micros.HOUR_MICROS;
     }
 
     @Override
@@ -376,54 +372,54 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromMillis(long millis) {
-        return millis * Timestamps.MILLI_MICROS;
+        return millis * Micros.MILLI_MICROS;
     }
 
     @Override
     public long fromMinutes(int minutes) {
-        return minutes * Timestamps.MINUTE_MICROS;
+        return minutes * Micros.MINUTE_MICROS;
     }
 
     @Override
     public long fromNanos(long nanos) {
-        return nanos == Numbers.LONG_NULL ? nanos : nanos / Timestamps.MICRO_NANOS;
+        return nanos == Numbers.LONG_NULL ? nanos : nanos / Micros.MICRO_NANOS;
     }
 
     @Override
     public long fromSeconds(long seconds) {
-        return seconds * Timestamps.SECOND_MICROS;
+        return seconds * Micros.SECOND_MICROS;
     }
 
     @Override
     public long fromWeeks(int weeks) {
-        return weeks * Timestamps.WEEK_MICROS;
+        return weeks * Micros.WEEK_MICROS;
     }
 
     @Override
     public TimestampAddMethod getAddMethod(char c) {
         switch (c) {
             case 'n':
-                return Timestamps::addNanos;
+                return Micros::addNanos;
             case 'u':
             case 'U':
-                return Timestamps::addMicros;
+                return Micros::addMicros;
             case 'T':
-                return Timestamps::addMillis;
+                return Micros::addMillis;
             case 's':
-                return Timestamps::addSeconds;
+                return Micros::addSeconds;
             case 'm':
-                return Timestamps::addMinutes;
+                return Micros::addMinutes;
             case 'H':
             case 'h': // compatibility with sample by syntax
-                return Timestamps::addHours;
+                return Micros::addHours;
             case 'd':
-                return Timestamps::addDays;
+                return Micros::addDays;
             case 'w':
-                return Timestamps::addWeeks;
+                return Micros::addWeeks;
             case 'M':
-                return Timestamps::addMonths;
+                return Micros::addMonths;
             case 'y':
-                return Timestamps::addYears;
+                return Micros::addYears;
             default:
                 return null;
         }
@@ -434,7 +430,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getCentury(timestamp);
+        return Micros.getCentury(timestamp);
     }
 
     @Override
@@ -447,10 +443,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        int year = Timestamps.getYear(timestamp);
+        int year = Micros.getYear(timestamp);
         boolean leap = CommonUtils.isLeapYear(year);
-        int month = Timestamps.getMonthOfYear(timestamp, year, leap);
-        return Timestamps.getDayOfMonth(timestamp, year, month, leap);
+        int month = Micros.getMonthOfYear(timestamp, year, leap);
+        return Micros.getDayOfMonth(timestamp, year, month, leap);
     }
 
     @Override
@@ -458,7 +454,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getDayOfWeek(timestamp);
+        return Micros.getDayOfWeek(timestamp);
     }
 
     @Override
@@ -466,7 +462,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getDayOfWeekSundayFirst(timestamp);
+        return Micros.getDayOfWeekSundayFirst(timestamp);
     }
 
     @Override
@@ -474,9 +470,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        int year = Timestamps.getYear(timestamp);
+        int year = Micros.getYear(timestamp);
         boolean isLeap = CommonUtils.isLeapYear(year);
-        int month = Timestamps.getMonthOfYear(timestamp, year, isLeap);
+        int month = Micros.getMonthOfYear(timestamp, year, isLeap);
         return CommonUtils.getDaysPerMonth(month, isLeap);
     }
 
@@ -485,7 +481,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getDecade(timestamp);
+        return Micros.getDecade(timestamp);
     }
 
     @Override
@@ -493,7 +489,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getDow(timestamp);
+        return Micros.getDow(timestamp);
     }
 
     @Override
@@ -501,7 +497,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getDoy(timestamp);
+        return Micros.getDoy(timestamp);
     }
 
     @Override
@@ -509,7 +505,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getHourOfDay(timestamp);
+        return Micros.getHourOfDay(timestamp);
     }
 
     @Override
@@ -522,7 +518,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getIsoYear(timestamp);
+        return Micros.getIsoYear(timestamp);
     }
 
     @Override
@@ -530,7 +526,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getMicrosOfMilli(timestamp);
+        return Micros.getMicrosOfMilli(timestamp);
     }
 
     @Override
@@ -538,7 +534,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        return Timestamps.getMicrosOfMinute(timestamp);
+        return Micros.getMicrosOfMinute(timestamp);
+    }
+
+    @Override
+    public int getMicrosOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Micros.getMicrosOfSecond(timestamp);
     }
 
     @Override
@@ -546,7 +550,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getMillennium(timestamp);
+        return Micros.getMillennium(timestamp);
     }
 
     @Override
@@ -554,7 +558,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        return Timestamps.getMillisOfMinute(timestamp);
+        return Micros.getMillisOfMinute(timestamp);
     }
 
     @Override
@@ -562,7 +566,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getMillisOfSecond(timestamp);
+        return Micros.getMillisOfSecond(timestamp);
     }
 
     @Override
@@ -570,7 +574,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getMinuteOfHour(timestamp);
+        return Micros.getMinuteOfHour(timestamp);
     }
 
     @Override
@@ -578,24 +582,32 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        int year = Timestamps.getYear(timestamp);
+        int year = Micros.getYear(timestamp);
         boolean isLeap = CommonUtils.isLeapYear(year);
-        return Timestamps.getMonthOfYear(timestamp, year, isLeap);
+        return Micros.getMonthOfYear(timestamp, year, isLeap);
+    }
+
+    @Override
+    public int getNanosOfMicros(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return 0;
     }
 
     @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return ADD_DD;
+                return Micros::addDays;
             case MONTH:
-                return ADD_MM;
+                return Micros::addMonths;
             case YEAR:
-                return ADD_YYYY;
+                return Micros::addYears;
             case HOUR:
-                return ADD_HH;
+                return Micros::addHours;
             case WEEK:
-                return ADD_WW;
+                return Micros::addWeeks;
             default:
                 return null;
         }
@@ -605,15 +617,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return CEIL_DD;
+                return Micros::ceilDD;
             case MONTH:
-                return CEIL_MM;
+                return Micros::ceilMM;
             case YEAR:
-                return CEIL_YYYY;
+                return Micros::ceilYYYY;
             case HOUR:
-                return CEIL_HH;
+                return Micros::ceilHH;
             case WEEK:
-                return CEIL_WW;
+                return Micros::ceilWW;
             default:
                 return null;
         }
@@ -643,15 +655,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return FLOOR_DD;
+                return Micros::floorDD;
             case WEEK:
-                return FLOOR_WW;
+                return Micros::floorWW;
             case MONTH:
-                return FLOOR_MM;
+                return Micros::floorMM;
             case YEAR:
-                return FLOOR_YYYY;
+                return Micros::floorYYYY;
             case HOUR:
-                return FLOOR_HH;
+                return Micros::floorHH;
             default:
                 return null;
         }
@@ -664,7 +676,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
         start = from(start, leftType);
         end = from(end, rightType);
-        return Timestamps.getPeriodBetween(unit, start, end);
+        return Micros.getPeriodBetween(unit, start, end);
     }
 
     @Override
@@ -672,7 +684,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getQuarter(timestamp);
+        return Micros.getQuarter(timestamp);
     }
 
     @Override
@@ -680,7 +692,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getSecondOfMinute(timestamp);
+        return Micros.getSecondOfMinute(timestamp);
     }
 
     @Override
@@ -697,23 +709,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getTimestampCeilMethod(char c) {
         switch (c) {
             case 'd':
-                return CEIL_DD;
+                return Micros::ceilDD;
             case 'M':
-                return CEIL_MM;
+                return Micros::ceilMM;
             case 'y':
-                return CEIL_YYYY;
+                return Micros::ceilYYYY;
             case 'w':
-                return CEIL_WW;
+                return Micros::ceilWW;
             case 'h':
-                return CEIL_HH;
+                return Micros::ceilHH;
             case 'm':
-                return CEIL_MI;
+                return Micros::ceilMI;
             case 's':
-                return CEIL_SS;
+                return Micros::ceilSS;
             case 'T':
-                return CEIL_MS;
-            case 'n':
-                return CEIL_MR;
+                return Micros::ceilMS;
+            case 'U':
+                return Micros::ceilMR;
             default:
                 return null;
         }
@@ -733,25 +745,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampDiffMethod getTimestampDiffMethod(char type) {
         switch (type) {
             case 'n':
-                return Timestamps::getNanosBetween;
+                return Micros::getNanosBetween;
             case 'u':
-                return Timestamps::getMicrosBetween;
+                return Micros::getMicrosBetween;
             case 'T':
-                return Timestamps::getMillisBetween;
+                return Micros::getMillisBetween;
             case 's':
-                return Timestamps::getSecondsBetween;
+                return Micros::getSecondsBetween;
             case 'm':
-                return Timestamps::getMinutesBetween;
+                return Micros::getMinutesBetween;
             case 'h':
-                return Timestamps::getHoursBetween;
+                return Micros::getHoursBetween;
             case 'd':
-                return Timestamps::getDaysBetween;
+                return Micros::getDaysBetween;
             case 'w':
-                return Timestamps::getWeeksBetween;
+                return Micros::getWeeksBetween;
             case 'M':
-                return Timestamps::getMonthsBetween;
+                return Micros::getMonthsBetween;
             case 'y':
-                return Timestamps::getYearsBetween;
+                return Micros::getYearsBetween;
             default:
                 return null;
         }
@@ -761,33 +773,33 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getTimestampFloorMethod(String c) {
         switch (c) {
             case "century":
-                return FLOOR_CENTURY;
+                return Micros::floorCentury;
             case "day":
-                return FLOOR_DD;
+                return Micros::floorDD;
             case "week":
-                return FLOOR_DOW;
+                return Micros::floorDOW;
             case "decade":
-                return FLOOR_DECADE;
+                return Micros::floorDecade;
             case "hour":
-                return FLOOR_HH;
+                return Micros::floorHH;
             case "microsecond":
-                return FLOOR_MC;
+                return Micros::floorMC;
             case "minute":
-                return FLOOR_MI;
+                return Micros::floorMI;
             case "month":
-                return FLOOR_MM;
+                return Micros::floorMM;
             case "millisecond":
-                return FLOOR_MS;
+                return Micros::floorMS;
             case "nanosecond":
-                return FLOOR_NS;
+                return Micros::floorNS;
             case "millennium":
-                return FLOOR_MILLENNIUM;
+                return Micros::floorMillennium;
             case "quarter":
-                return FLOOR_QUARTER;
+                return Micros::floorQuarter;
             case "second":
-                return FLOOR_SS;
+                return Micros::floorSS;
             case "year":
-                return FLOOR_YYYY;
+                return Micros::floorYYYY;
             default:
                 return null;
         }
@@ -797,25 +809,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c) {
         switch (c) {
             case 'M':
-                return FLOOR_MM_WITH_OFFSET;
+                return Micros::floorMM;
             case 'y':
-                return FLOOR_YYYY_WITH_OFFSET;
+                return Micros::floorYYYY;
             case 'w':
-                return FLOOR_WW_WITH_OFFSET;
+                return Micros::floorWW;
             case 'd':
-                return FLOOR_DD_WITH_OFFSET;
+                return Micros::floorDD;
             case 'h':
-                return FLOOR_HH_WITH_OFFSET;
+                return Micros::floorHH;
             case 'm':
-                return FLOOR_MI_WITH_OFFSET;
+                return Micros::floorMI;
             case 's':
-                return FLOOR_SS_WITH_OFFSET;
+                return Micros::floorSS;
             case 'T':
-                return FLOOR_MS_WITH_OFFSET;
+                return Micros::floorMS;
             case 'U':
-                return FLOOR_MC_WITH_OFFSET;
+                return Micros::floorMC;
             case 'n':
-                return FLOOR_NS_WITH_OFFSET;
+                return Micros::floorNS;
             default:
                 return null;
         }
@@ -825,25 +837,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c) {
         switch (c) {
             case "day":
-                return FLOOR_DD_WITH_STRIDE;
+                return Micros::floorDD;
             case "hour":
-                return FLOOR_HH_WITH_STRIDE;
+                return Micros::floorHH;
             case "microsecond":
-                return FLOOR_MC_WITH_STRIDE;
+                return Micros::floorMC;
             case "minute":
-                return FLOOR_MI_WITH_STRIDE;
+                return Micros::floorMI;
             case "month":
-                return FLOOR_MM_WITH_STRIDE;
+                return Micros::floorMM;
             case "millisecond":
-                return FLOOR_MS_WITH_STRIDE;
+                return Micros::floorMS;
             case "nanosecond":
-                return FLOOR_NS_WITH_STRIDE;
+                return Micros::floorNS;
             case "second":
-                return FLOOR_SS_WITH_STRIDE;
+                return Micros::floorSS;
             case "week":
-                return FLOOR_WW_WITH_STRIDE;
+                return Micros::floorWW;
             case "year":
-                return FLOOR_YYYY_WITH_STRIDE;
+                return Micros::floorYYYY;
             default:
                 return null;
         }
@@ -854,25 +866,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
         switch (timeUnit) {
             case 'U':
                 // micros
-                return new BaseTimestampSampler(interval);
+                return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
             case 'T':
                 // millis
-                return new BaseTimestampSampler(Timestamps.MILLI_MICROS * interval);
+                return new BaseTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 's':
                 // seconds
-                return new BaseTimestampSampler(Timestamps.SECOND_MICROS * interval);
+                return new BaseTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'm':
                 // minutes
-                return new BaseTimestampSampler(Timestamps.MINUTE_MICROS * interval);
+                return new BaseTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'h':
                 // hours
-                return new BaseTimestampSampler(Timestamps.HOUR_MICROS * interval);
+                return new BaseTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'd':
                 // days
-                return new BaseTimestampSampler(Timestamps.DAY_MICROS * interval);
+                return new BaseTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'w':
                 // weeks
-                return new BaseTimestampSampler(Timestamps.WEEK_MICROS * interval);
+                return new BaseTimestampSampler(Micros.WEEK_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'M':
                 // months
                 return new MonthTimestampMicrosSampler((int) interval);
@@ -885,15 +897,19 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
-        if (srcTimestampType == ColumnType.TIMESTAMP_NANO) {
+        if (ColumnType.isTimestampNano(srcTimestampType)) {
             return CommonUtils::nanosToMicros;
         }
         return null;
     }
 
     @Override
-    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
-        return Timestamps.getTimezoneRules(locale, timezone);
+    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) {
+        try {
+            return Micros.getTimezoneRules(locale, timezone);
+        } catch (NumericException e) {
+            throw CairoException.critical(0).put("invalid timezone: ").put(timezone);
+        }
     }
 
     @Override
@@ -901,7 +917,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getWeek(timestamp);
+        return Micros.getWeek(timestamp);
     }
 
     @Override
@@ -909,7 +925,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
         }
-        return Timestamps.getYear(timestamp);
+        return Micros.getYear(timestamp);
     }
 
     @Override
@@ -923,12 +939,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long monthsBetween(long hi, long lo) {
-        return Timestamps.getMonthsBetween(hi, lo);
+        return Micros.getMonthsBetween(hi, lo);
     }
 
     @Override
     public long parseAnyFormat(CharSequence token, int start, int len) throws NumericException {
-        return TimestampFormatUtils.tryParse(token, start, len);
+        return MicrosFormatUtils.tryParse(token, start, len);
     }
 
     @Override
@@ -988,54 +1004,54 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                 }
 
                                 // micros
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
+                                ts = Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + min * Micros.MINUTE_MICROS
+                                        + sec * Micros.SECOND_MICROS
                                         + micr
                                         + checkTimezoneTail(str, p, hi);
                             } else {
                                 // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
+                                ts = Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + min * Micros.MINUTE_MICROS
+                                        + sec * Micros.SECOND_MICROS
                                         + checkTimezoneTail(str, p, hi);
                             }
                         } else {
                             // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS;
+                            ts = Micros.yearMicros(year, l)
+                                    + Micros.monthOfYearMicros(month, l)
+                                    + (day - 1) * Micros.DAY_MICROS
+                                    + hour * Micros.HOUR_MICROS
+                                    + min * Micros.MINUTE_MICROS;
 
                         }
                     } else {
                         // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS;
+                        ts = Micros.yearMicros(year, l)
+                                + Micros.monthOfYearMicros(month, l)
+                                + (day - 1) * Micros.DAY_MICROS
+                                + hour * Micros.HOUR_MICROS;
 
                     }
                 } else {
                     // year + month + day
-                    ts = Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS;
+                    ts = Micros.yearMicros(year, l)
+                            + Micros.monthOfYearMicros(month, l)
+                            + (day - 1) * Micros.DAY_MICROS;
                 }
             } else {
                 // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                ts = (Micros.yearMicros(year, l) + Micros.monthOfYearMicros(month, l));
             }
         } else {
             // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+            ts = (Micros.yearMicros(year, l) + Micros.monthOfYearMicros(1, l));
         }
         return ts;
     }
@@ -1096,54 +1112,54 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                 }
 
                                 // micros
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
+                                ts = Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + min * Micros.MINUTE_MICROS
+                                        + sec * Micros.SECOND_MICROS
                                         + micr
                                         + checkTimezoneTail(str, p, hi);
                             } else {
                                 // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
+                                ts = Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + min * Micros.MINUTE_MICROS
+                                        + sec * Micros.SECOND_MICROS
                                         + checkTimezoneTail(str, p, hi);
                             }
                         } else {
                             // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS;
+                            ts = Micros.yearMicros(year, l)
+                                    + Micros.monthOfYearMicros(month, l)
+                                    + (day - 1) * Micros.DAY_MICROS
+                                    + hour * Micros.HOUR_MICROS
+                                    + min * Micros.MINUTE_MICROS;
 
                         }
                     } else {
                         // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS;
+                        ts = Micros.yearMicros(year, l)
+                                + Micros.monthOfYearMicros(month, l)
+                                + (day - 1) * Micros.DAY_MICROS
+                                + hour * Micros.HOUR_MICROS;
 
                     }
                 } else {
                     // year + month + day
-                    ts = Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS;
+                    ts = Micros.yearMicros(year, l)
+                            + Micros.monthOfYearMicros(month, l)
+                            + (day - 1) * Micros.DAY_MICROS;
                 }
             } else {
                 // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                ts = (Micros.yearMicros(year, l) + Micros.monthOfYearMicros(month, l));
             }
         } else {
             // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+            ts = (Micros.yearMicros(year, l) + Micros.monthOfYearMicros(1, l));
         }
         return ts;
     }
@@ -1179,18 +1195,18 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
-                                IntervalUtils.encodeInterval(Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS,
-                                        Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS
+                                IntervalUtils.encodeInterval(Micros.yearMicros(year, l)
+                                                + Micros.monthOfYearMicros(month, l)
+                                                + (day - 1) * Micros.DAY_MICROS
+                                                + hour * Micros.HOUR_MICROS
+                                                + min * Micros.MINUTE_MICROS
+                                                + sec * Micros.SECOND_MICROS,
+                                        Micros.yearMicros(year, l)
+                                                + Micros.monthOfYearMicros(month, l)
+                                                + (day - 1) * Micros.DAY_MICROS
+                                                + hour * Micros.HOUR_MICROS
+                                                + min * Micros.MINUTE_MICROS
+                                                + sec * Micros.SECOND_MICROS
                                                 + 999999,
                                         operation,
                                         out);
@@ -1198,17 +1214,17 @@ public class MicrosTimestampDriver implements TimestampDriver {
                         } else {
                             // minute
                             IntervalUtils.encodeInterval(
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS,
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + 59 * Timestamps.SECOND_MICROS
+                                    Micros.yearMicros(year, l)
+                                            + Micros.monthOfYearMicros(month, l)
+                                            + (day - 1) * Micros.DAY_MICROS
+                                            + hour * Micros.HOUR_MICROS
+                                            + min * Micros.MINUTE_MICROS,
+                                    Micros.yearMicros(year, l)
+                                            + Micros.monthOfYearMicros(month, l)
+                                            + (day - 1) * Micros.DAY_MICROS
+                                            + hour * Micros.HOUR_MICROS
+                                            + min * Micros.MINUTE_MICROS
+                                            + 59 * Micros.SECOND_MICROS
                                             + 999999,
                                     operation,
                                     out
@@ -1217,16 +1233,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     } else {
                         // year + month + day + hour
                         IntervalUtils.encodeInterval(
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS,
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + 59 * Timestamps.MINUTE_MICROS
-                                        + 59 * Timestamps.SECOND_MICROS
+                                Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS,
+                                Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + 59 * Micros.MINUTE_MICROS
+                                        + 59 * Micros.SECOND_MICROS
                                         + 999999,
                                 operation,
                                 out
@@ -1235,15 +1251,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 } else {
                     // year + month + day
                     IntervalUtils.encodeInterval(
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS,
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + 23 * Timestamps.HOUR_MICROS
-                                    + 59 * Timestamps.MINUTE_MICROS
-                                    + 59 * Timestamps.SECOND_MICROS
+                            Micros.yearMicros(year, l)
+                                    + Micros.monthOfYearMicros(month, l)
+                                    + (day - 1) * Micros.DAY_MICROS,
+                            Micros.yearMicros(year, l)
+                                    + Micros.monthOfYearMicros(month, l)
+                                    + (day - 1) * Micros.DAY_MICROS
+                                    + 23 * Micros.HOUR_MICROS
+                                    + 59 * Micros.MINUTE_MICROS
+                                    + 59 * Micros.SECOND_MICROS
                                     + 999999,
                             operation,
                             out
@@ -1252,13 +1268,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
             } else {
                 // year + month
                 IntervalUtils.encodeInterval(
-                        Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
-                        Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (CommonUtils.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
-                                + 23 * Timestamps.HOUR_MICROS
-                                + 59 * Timestamps.MINUTE_MICROS
-                                + 59 * Timestamps.SECOND_MICROS
+                        Micros.yearMicros(year, l) + Micros.monthOfYearMicros(month, l),
+                        Micros.yearMicros(year, l)
+                                + Micros.monthOfYearMicros(month, l)
+                                + (CommonUtils.getDaysPerMonth(month, l) - 1) * Micros.DAY_MICROS
+                                + 23 * Micros.HOUR_MICROS
+                                + 59 * Micros.MINUTE_MICROS
+                                + 59 * Micros.SECOND_MICROS
                                 + 999999,
                         operation,
                         out
@@ -1267,13 +1283,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
         } else {
             // year
             IntervalUtils.encodeInterval(
-                    Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
-                    Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(12, l)
-                            + (CommonUtils.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
-                            + 23 * Timestamps.HOUR_MICROS
-                            + 59 * Timestamps.MINUTE_MICROS
-                            + 59 * Timestamps.SECOND_MICROS
+                    Micros.yearMicros(year, l) + Micros.monthOfYearMicros(1, l),
+                    Micros.yearMicros(year, l)
+                            + Micros.monthOfYearMicros(12, l)
+                            + (CommonUtils.getDaysPerMonth(12, l) - 1) * Micros.DAY_MICROS
+                            + 23 * Micros.HOUR_MICROS
+                            + 59 * Micros.MINUTE_MICROS
+                            + 59 * Micros.SECOND_MICROS
                             + 999999,
                     operation,
                     out
@@ -1330,7 +1346,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 try {
                     // trim to the lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
-                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
+                    return Micros.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
                 } catch (NumericException ignore) {
                     throw expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
                 }
@@ -1351,7 +1367,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long toHours(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.HOUR_MICROS;
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Micros.HOUR_MICROS;
+    }
+
+    @Override
+    public String toMSecString(long timestamp) {
+        return Micros.toString(timestamp);
     }
 
     @Override
@@ -1360,48 +1381,43 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long toMinutes(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.MINUTE_MICROS;
+    public long toNanos(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? timestamp : timestamp * Micros.MICRO_NANOS;
     }
 
     @Override
     public long toNanosScale() {
-        return Timestamps.MICRO_NANOS;
+        return Micros.MICRO_NANOS;
     }
 
     @Override
     public long toSeconds(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.SECOND_MICROS;
-    }
-
-    @Override
-    public String toString(long timestamp) {
-        return Timestamps.toString(timestamp);
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Micros.SECOND_MICROS;
     }
 
     @Override
     public long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
-        return Timestamps.toTimezone(utcTimestamp, locale, timezone);
+        return Micros.toTimezone(utcTimestamp, locale, timezone);
     }
 
     @Override
     public String toUSecString(long micros) {
-        return Timestamps.toUSecString(micros);
+        return Micros.toUSecString(micros);
     }
 
     @Override
     public long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
-        return Timestamps.toUTC(localTimestamp, zoneRules);
+        return Micros.toUTC(localTimestamp, zoneRules);
     }
 
     @Override
     public long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
-        return Timestamps.toUTC(localTimestamp, locale, timezone);
+        return Micros.toUTC(localTimestamp, locale, timezone);
     }
 
     @Override
     public void validateBounds(long timestamp) {
-        if (Long.compareUnsigned(timestamp, Timestamps.YEAR_10000) >= 0) {
+        if (Long.compareUnsigned(timestamp, Micros.YEAR_10000) >= 0) {
             validateBounds0(timestamp);
         }
     }
@@ -1429,9 +1445,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
             if (CommonUtils.checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
                 CommonUtils.checkRange(min, 0, 59);
-                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+                return tzSign * (hour * Micros.HOUR_MICROS + min * Micros.MINUTE_MICROS);
             } else {
-                return tzSign * (hour * Timestamps.HOUR_MICROS);
+                return tzSign * (hour * Micros.HOUR_MICROS);
             }
         }
         throw NumericException.INSTANCE;
@@ -1460,9 +1476,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
             if (CommonUtils.checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
                 CommonUtils.checkRange(min, 0, 59);
-                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+                return tzSign * (hour * Micros.HOUR_MICROS + min * Micros.MINUTE_MICROS);
             } else {
-                return tzSign * (hour * Timestamps.HOUR_MICROS);
+                return tzSign * (hour * Micros.HOUR_MICROS);
             }
         }
         throw NumericException.INSTANCE;
@@ -1475,7 +1491,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         if (timestamp < TableWriter.TIMESTAMP_EPOCH) {
             throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
         }
-        if (timestamp >= Timestamps.YEAR_10000) {
+        if (timestamp >= Micros.YEAR_10000) {
             throw CairoException.nonCritical().put("designated timestamp beyond 9999-12-31 is not allowed");
         }
     }
@@ -1495,13 +1511,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
             if (overspill > 0) {
                 DAY_FORMAT.format(timestamp, locale, timeZoneName, sink);
-                long time = timestamp - (timestamp / Timestamps.DAY_MICROS) * Timestamps.DAY_MICROS;
+                long time = timestamp - (timestamp / Micros.DAY_MICROS) * Micros.DAY_MICROS;
 
                 if (time > 0) {
-                    int hour = (int) (time / Timestamps.HOUR_MICROS);
-                    int minute = (int) ((time % Timestamps.HOUR_MICROS) / Timestamps.MINUTE_MICROS);
-                    int second = (int) ((time % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
-                    int milliMicros = (int) (time % Timestamps.SECOND_MICROS);
+                    int hour = (int) (time / Micros.HOUR_MICROS);
+                    int minute = (int) ((time % Micros.HOUR_MICROS) / Micros.MINUTE_MICROS);
+                    int second = (int) ((time % Micros.MINUTE_MICROS) / Micros.SECOND_MICROS);
+                    int milliMicros = (int) (time % Micros.SECOND_MICROS);
 
                     sink.putAscii('T');
                     append0(sink, hour);
@@ -1519,6 +1535,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             } else {
                 baseFormat.format(timestamp, locale, timeZoneName, sink);
             }
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override
@@ -1541,33 +1562,32 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 CommonUtils.checkRange(month, 1, 12);
                 if (CommonUtils.checkLen2(p, hi)) {
                     int dayRange = CommonUtils.getDaysPerMonth(month, l);
-                    ts = Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l);
+                    ts = Micros.yearMicros(year, l) + Micros.monthOfYearMicros(month, l);
                     ts = parseDayTime(in, hi, p, ts, dayRange, 2);
                 } else {
                     // year + month
-                    ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                    ts = (Micros.yearMicros(year, l) + Micros.monthOfYearMicros(month, l));
                 }
             } else {
                 // year
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+                ts = (Micros.yearMicros(year, l) + Micros.monthOfYearMicros(1, l));
             }
             return ts;
         }
     }
 
     public static class IsoWeekPartitionFormat implements DateFormat {
-
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
-            long weekTime = timestamp - Timestamps.floorWW(timestamp);
+            long weekTime = timestamp - Micros.floorWW(timestamp);
             WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
 
             if (weekTime > 0) {
-                int dayOfWeek = (int) (weekTime / Timestamps.DAY_MICROS) + 1;
-                int hour = (int) ((weekTime % Timestamps.DAY_MICROS) / Timestamps.HOUR_MICROS);
-                int minute = (int) ((weekTime % Timestamps.HOUR_MICROS) / Timestamps.MINUTE_MICROS);
-                int second = (int) ((weekTime % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
-                int milliMicros = (int) (weekTime % Timestamps.SECOND_MICROS);
+                int dayOfWeek = (int) (weekTime / Micros.DAY_MICROS) + 1;
+                int hour = (int) ((weekTime % Micros.DAY_MICROS) / Micros.HOUR_MICROS);
+                int minute = (int) ((weekTime % Micros.HOUR_MICROS) / Micros.MINUTE_MICROS);
+                int second = (int) ((weekTime % Micros.MINUTE_MICROS) / Micros.SECOND_MICROS);
+                int milliMicros = (int) (weekTime % Micros.SECOND_MICROS);
 
                 sink.putAscii('-');
                 sink.put(dayOfWeek);
@@ -1587,6 +1607,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     }
                 }
             }
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override

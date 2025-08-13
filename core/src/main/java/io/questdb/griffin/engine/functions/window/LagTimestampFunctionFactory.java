@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -64,7 +65,7 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), args.getQuick(0).getType())) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
@@ -76,16 +77,24 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static class LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowTimestampFunction {
 
+        private final int defaultValueTimestampType;
+        private final TimestampDriver timestampDriver;
         private long lagValue;
 
         public LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+            if (defaultValueFunc != null) {
+                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValueFunc.getType());
+            } else {
+                this.defaultValueTimestampType = ColumnType.UNDEFINED;
+            }
         }
 
         @Override
         public boolean computeNext0(Record record) {
             if (count < offset) {
-                lagValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
+                lagValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
             } else {
                 lagValue = buffer.getLong((long) loIdx * Long.BYTES);
             }
@@ -95,6 +104,11 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 buffer.putLong((long) loIdx * Long.BYTES, l);
             }
             return respectNulls;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return timestampDriver.toDate(lagValue);
         }
 
         @Override
@@ -116,6 +130,8 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
 
     static class LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowTimestampFunction {
 
+        private final int defaultValueTimestampType;
+        private final TimestampDriver timestampDriver;
         private long lagValue;
 
         public LagOverPartitionFunction(Map map,
@@ -127,6 +143,17 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                                         Function defaultValue,
                                         long offset) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+            if (defaultValue != null) {
+                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValue.getType());
+            } else {
+                this.defaultValueTimestampType = ColumnType.UNDEFINED;
+            }
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return timestampDriver.toDate(lagValue);
         }
 
         @Override
@@ -149,7 +176,7 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         protected boolean computeNext0(long count, long offset, long startOffset, long firstIdx, Record record) {
             long l = arg.getTimestamp(record);
             if (count < offset) {
-                lagValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
+                lagValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
             } else {
                 lagValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
             }
@@ -162,16 +189,22 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowTimestampFunction {
-
+        private final TimestampDriver timestampDriver;
         private long value;
 
         public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
             super(partitionByRecord, arg, name, ignoreNulls);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
         @Override
         public void computeNext(Record record) {
             value = arg.getTimestamp(record);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return timestampDriver.toDate(arg.getTimestamp(rec));
         }
 
         @Override

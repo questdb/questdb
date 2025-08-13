@@ -24,12 +24,13 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
+import static io.questdb.std.datetime.microtime.Micros.toMicros;
 
 public class MonthTimestampMicrosSampler implements TimestampSampler {
     private final int stepMonths;
@@ -46,7 +47,12 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long getApproxBucketSize() {
-        return Timestamps.MONTH_MICROS_APPROX * stepMonths;
+        return Micros.MONTH_MICROS_APPROX * stepMonths;
+    }
+
+    @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -74,9 +80,9 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Timestamps.getYear(value);
+        int y = Micros.getYear(value);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(value, y, leap);
+        int m = Micros.getMonthOfYear(value, y, leap);
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
@@ -85,14 +91,14 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public void setStart(long timestamp) {
-        final int y = Timestamps.getYear(timestamp);
+        final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
-        this.startDay = Timestamps.getDayOfMonth(timestamp, y, Timestamps.getMonthOfYear(timestamp, y, leap), leap);
-        this.startHour = Timestamps.getHourOfDay(timestamp);
-        this.startMin = Timestamps.getMinuteOfHour(timestamp);
-        this.startSec = Timestamps.getSecondOfMinute(timestamp);
-        this.startMillis = Timestamps.getMillisOfSecond(timestamp);
-        this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+        this.startDay = Micros.getDayOfMonth(timestamp, y, Micros.getMonthOfYear(timestamp, y, leap), leap);
+        this.startHour = Micros.getHourOfDay(timestamp);
+        this.startMin = Micros.getMinuteOfHour(timestamp);
+        this.startSec = Micros.getSecondOfMinute(timestamp);
+        this.startMillis = Micros.getMillisOfSecond(timestamp);
+        this.startMicros = Micros.getMicrosOfMilli(timestamp);
     }
 
     @Override
@@ -101,9 +107,9 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     }
 
     private long addMonth(long timestamp, int monthCount) {
-        int y = Timestamps.getYear(timestamp);
+        int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(timestamp, y, leap);
+        int m = Micros.getMonthOfYear(timestamp, y, leap);
 
         int _y;
         int _m = m - 1 + monthCount;
@@ -130,11 +136,11 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
                 _d = maxDay;
             }
         }
-        long result = Timestamps.toMicros(_y, _m, _d);
-        result = Math.addExact(result, Math.multiplyExact(startHour, Timestamps.HOUR_MICROS));
-        result = Math.addExact(result, Math.multiplyExact(startMin, Timestamps.MINUTE_MICROS));
-        result = Math.addExact(result, Math.multiplyExact(startSec, Timestamps.SECOND_MICROS));
-        result = Math.addExact(result, Math.multiplyExact(startMillis, Timestamps.MILLI_MICROS));
+        long result = Micros.toMicros(_y, _m, _d);
+        result = Math.addExact(result, Math.multiplyExact(startHour, Micros.HOUR_MICROS));
+        result = Math.addExact(result, Math.multiplyExact(startMin, Micros.MINUTE_MICROS));
+        result = Math.addExact(result, Math.multiplyExact(startSec, Micros.SECOND_MICROS));
+        result = Math.addExact(result, Math.multiplyExact(startMillis, Micros.MILLI_MICROS));
         result = Math.addExact(result, startMicros);
         return result;
     }

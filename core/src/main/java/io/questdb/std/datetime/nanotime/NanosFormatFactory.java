@@ -37,6 +37,9 @@ public class NanosFormatFactory implements TimestampDateFormatFactory {
     public static NanosFormatFactory INSTANCE = new NanosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 
+    private NanosFormatFactory() {
+    }
+
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
      * backed by ConcurrentHashMap, making method calls thread-safe and largely non-blocking.

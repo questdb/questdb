@@ -40,9 +40,10 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -57,10 +58,10 @@ import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
-    long O_ASYNC = 0x40;
-    long O_DIRECT = 0x4000;
-    long O_NONE = 0;
-    long O_SYNC = 0x80;
+    int O_ASYNC = 0x40;
+    int O_DIRECT = 0x4000;
+    int O_NONE = 0;
+    int O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -198,10 +199,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    default int getDefaultTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
-    }
-
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -212,6 +209,8 @@ public interface CairoConfiguration {
 
     @NotNull
     FactoryProvider getFactoryProvider();
+
+    boolean getFileDescriptorCacheEnabled();
 
     int getFileOperationRetryCount();
 
@@ -286,8 +285,6 @@ public interface CairoConfiguration {
 
     int getMatViewMaxRefreshRetries();
 
-    long getMatViewMinRefreshInterval();
-
     long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
@@ -311,7 +308,7 @@ public interface CairoConfiguration {
     Metrics getMetrics();
 
     @NotNull
-    default Clock getMicrosecondClock() {
+    default MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
 
@@ -324,8 +321,7 @@ public interface CairoConfiguration {
 
     int getMkDirMode();
 
-    @NotNull
-    default Clock getNanosecondClock() {
+    default NanosecondClock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
 
@@ -669,7 +665,7 @@ public interface CairoConfiguration {
 
     long getWriterCommandQueueSlotSize();
 
-    long getWriterFileOpenOpts();
+    int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
 
@@ -722,6 +718,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelGroupByEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
+
+    boolean isSqlParallelTopKEnabled();
 
     boolean isTableTypeConversionEnabled();
 

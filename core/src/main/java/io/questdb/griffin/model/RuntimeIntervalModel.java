@@ -89,7 +89,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         // Evaluate intervals involving functions
         int oldIntervalType = sqlExecutionContext.getIntervalFunctionType();
         try {
-            sqlExecutionContext.setIntervalFunctionType(ColumnType.getIntervalType(timestampDriver.getColumnType()));
+            sqlExecutionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getColumnType()));
             addEvaluateDynamicIntervals(outIntervals, sqlExecutionContext);
         } finally {
             sqlExecutionContext.setIntervalFunctionType(oldIntervalType);
@@ -101,6 +101,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     @Override
     public void close() {
         Misc.freeObjList(dynamicRangeList);
+    }
+
+    @Override
+    public TimestampDriver getTimestampDriver() {
+        return timestampDriver;
     }
 
     @Override
@@ -299,13 +304,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             assert factory != null;
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 if (cursor.hasNext()) {
-                    return cursor.getRecord().getTimestamp(0);
+                    return timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
                 } else {
                     return Numbers.LONG_NULL;
                 }
             }
         } else {
-            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType, sqlExecutionContext.getCairoEngine().getConfiguration()));
+            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
     }
 

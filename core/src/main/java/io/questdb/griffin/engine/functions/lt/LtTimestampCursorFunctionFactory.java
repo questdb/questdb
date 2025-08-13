@@ -79,12 +79,12 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
         Function arg0 = args.getQuick(0);
-        int arg0Type = ColumnType.getTimestampType(arg0.getType(), configuration);
+        int arg0Type = ColumnType.getTimestampType(arg0.getType());
         int metadataType = metadata.getColumnType(0);
-        switch (metadata.getColumnType(0)) {
+        switch (ColumnType.tagOf(metadataType)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
-                int timestampType = Math.max(arg0Type, metadataType);
+                int timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
                 boolean leftNeedsConvert = arg0Type != timestampType;
                 if (leftNeedsConvert) {
                     return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), arg0Type);
@@ -96,7 +96,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             case ColumnType.VARCHAR:
                 return new VarcharCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             default:
-                throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
+                throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadataType));
         }
     }
 
@@ -253,7 +253,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0), executionContext.getCairoEngine().getConfiguration()));
+                    epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }

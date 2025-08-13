@@ -32,10 +32,13 @@ import io.questdb.std.datetime.DateFormat;
 import java.util.function.Function;
 
 public class MicrosFormatFactory implements TimestampDateFormatFactory {
-    private final static ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
+    private final static ThreadLocal<MicrosFormatCompiler> tlCompiler = ThreadLocal.withInitial(MicrosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = MicrosFormatFactory::map;
     public static MicrosFormatFactory INSTANCE = new MicrosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
+
+    private MicrosFormatFactory() {
+    }
 
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is

@@ -46,8 +46,6 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-
 public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -65,7 +63,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         final Function timestampFunc = args.getQuick(0);
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
 
         if (timezoneFunc.isConstant()) {
             return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
@@ -228,7 +226,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             if (l == Long.MIN_VALUE) {
                 try {
                     tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                            Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                     );
                     tzOffset = 0;
                 } catch (NumericException e) {

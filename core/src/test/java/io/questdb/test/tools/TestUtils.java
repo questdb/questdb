@@ -92,6 +92,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
@@ -127,6 +128,7 @@ import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -282,7 +284,7 @@ public final class TestUtils {
                     throw new AssertionError(String.format(
                             "Row %d column %s[%s] %s. Expected %s but found %s",
                             rowIndex, metadataActual.getColumnName(timestampIndex), timestampType,
-                            "timestamp mismatch", driver.toString(tsL), driver.toUSecString(tsR)
+                            "timestamp mismatch", driver.toMSecString(tsL), driver.toUSecString(tsR)
                     ));
                 }
 
@@ -1397,7 +1399,7 @@ public final class TestUtils {
     }
 
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
@@ -1515,6 +1517,17 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static long getMetricValue(CairoEngine engine, String tag) {
+        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
+            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
+            String[] lines = metricsSink.toString().split("\n");
+            Optional<String> metricsLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tag + ' ')).findFirst();
+            Assert.assertTrue(tag + " missing", metricsLine.isPresent());
+            return Long.parseLong(metricsLine.get().substring(tag.length() + 1));
+        }
     }
 
     public static String getPgConnectionUri(int pgPort) {
@@ -2030,7 +2043,7 @@ public final class TestUtils {
                     case ColumnType.TIMESTAMP:
                         TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
                         if (rr.getTimestamp(i) != lr.getTimestamp(i)) {
-                            Assert.assertEquals(driver.toString(rr.getTimestamp(i)), driver.toString(lr.getTimestamp(i)));
+                            Assert.assertEquals(driver.toMSecString(rr.getTimestamp(i)), driver.toMSecString(lr.getTimestamp(i)));
                         }
                         break;
                     case ColumnType.DOUBLE:
@@ -2421,6 +2434,7 @@ public final class TestUtils {
 
     public static class LeakCheck implements QuietCloseable {
         private final int addrInfoCount;
+        private final long cachedFileCount;
         private final long fileCount;
         private final String fileDebugInfo;
         private final long mem;
@@ -2437,6 +2451,7 @@ public final class TestUtils {
 
             Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
             fileCount = Files.getOpenFileCount();
+            cachedFileCount = Files.getOpenCachedFileCount();
             fileDebugInfo = Files.getOpenFdDebugInfo();
             Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
@@ -2454,10 +2469,14 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
-            if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals(
-                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
-                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+            if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
+                Assert.fail(
+                        "expected: cached file descriptors: " + cachedFileCount +
+                                ", expected OS file descriptors: " + fileCount +
+                                ", list: " + fileDebugInfo +
+                                " actual: cached file descriptors: " + Files.getOpenCachedFileCount() +
+                                ", OS file descriptors: " + Files.getOpenFileCount() +
+                                ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
 

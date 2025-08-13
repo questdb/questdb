@@ -57,6 +57,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -77,7 +78,7 @@ public class HttpQueryTestBuilder {
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
-    private io.questdb.std.datetime.Clock microsecondClock;
+    private MicrosecondClock microsecondClock;
     private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
@@ -138,7 +139,7 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public @NotNull io.questdb.std.datetime.Clock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
                     }
 
@@ -341,7 +342,7 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withMicrosecondClock(io.questdb.std.datetime.Clock clock) {
+    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
         this.microsecondClock = clock;
         return this;
     }

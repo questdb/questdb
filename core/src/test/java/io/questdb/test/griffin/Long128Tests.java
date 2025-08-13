@@ -157,7 +157,7 @@ public class Long128Tests extends AbstractCairoTest {
                         ")",
                 null,
                 false,
-                true
+                false
         );
     }
 
@@ -196,7 +196,7 @@ public class Long128Tests extends AbstractCairoTest {
                         ")",
                 null,
                 false,
-                true
+                false
         );
     }
 

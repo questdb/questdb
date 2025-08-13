@@ -30,7 +30,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -1223,7 +1223,7 @@ public class NumbersTest {
 
     @Test
     public void testParseLongDurationMicrosDay() throws Exception {
-        Assert.assertEquals(20 * Timestamps.DAY_MICROS, Numbers.parseLongDurationMicros("20d"));
+        Assert.assertEquals(20 * Micros.DAY_MICROS, Numbers.parseLongDurationMicros("20d"));
     }
 
     @Test(expected = NumericException.class)
@@ -1233,17 +1233,17 @@ public class NumbersTest {
 
     @Test
     public void testParseLongDurationMicrosHour() throws Exception {
-        Assert.assertEquals(20 * Timestamps.HOUR_MICROS, Numbers.parseLongDurationMicros("20h"));
+        Assert.assertEquals(20 * Micros.HOUR_MICROS, Numbers.parseLongDurationMicros("20h"));
     }
 
     @Test
     public void testParseLongDurationMicrosMinute() throws Exception {
-        Assert.assertEquals(20 * Timestamps.MINUTE_MICROS, Numbers.parseLongDurationMicros("20m"));
+        Assert.assertEquals(20 * Micros.MINUTE_MICROS, Numbers.parseLongDurationMicros("20m"));
     }
 
     @Test
     public void testParseLongDurationMicrosMonth() throws Exception {
-        Assert.assertEquals(20 * 30 * Timestamps.DAY_MICROS, Numbers.parseLongDurationMicros("20M"));
+        Assert.assertEquals(20 * 30 * Micros.DAY_MICROS, Numbers.parseLongDurationMicros("20M"));
     }
 
     @Test(expected = NumericException.class)
@@ -1288,17 +1288,17 @@ public class NumbersTest {
 
     @Test
     public void testParseLongDurationMicrosSecond() throws Exception {
-        Assert.assertEquals(20 * Timestamps.SECOND_MICROS, Numbers.parseLongDurationMicros("20s"));
+        Assert.assertEquals(20 * Micros.SECOND_MICROS, Numbers.parseLongDurationMicros("20s"));
     }
 
     @Test
     public void testParseLongDurationMicrosWeek() throws Exception {
-        Assert.assertEquals(20 * Timestamps.WEEK_MICROS, Numbers.parseLongDurationMicros("20w"));
+        Assert.assertEquals(20 * Micros.WEEK_MICROS, Numbers.parseLongDurationMicros("20w"));
     }
 
     @Test
     public void testParseLongDurationMicrosYear() throws Exception {
-        Assert.assertEquals(20 * 365 * Timestamps.DAY_MICROS, Numbers.parseLongDurationMicros("20y"));
+        Assert.assertEquals(20 * 365 * Micros.DAY_MICROS, Numbers.parseLongDurationMicros("20y"));
     }
 
     @Test(expected = NumericException.class)

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -76,6 +77,12 @@ public final class Constants {
                 }
                 return new NullArrayConstant(columnType);
             }
+            case ColumnType.TIMESTAMP:
+                return ColumnType.getTimestampDriver(columnType).getTimestampConstantNull();
+            case ColumnType.INTERVAL:
+                if (columnType != typeTag) {
+                    return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
+                }
             default:
                 return nullConstants.getQuick(typeTag);
         }
@@ -106,8 +113,6 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.TIMESTAMP_MICRO, TimestampConstant.TIMESTAMP_MICRO_NULL);
-        nullConstants.extendAndSet(ColumnType.TIMESTAMP_NANO, TimestampConstant.TIMESTAMP_NANO_NULL);
         nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
@@ -125,8 +130,6 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
         nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
         nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.RAW_NULL);
-        nullConstants.extendAndSet(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalConstant.TIMESTAMP_MICRO_NULL);
-        nullConstants.extendAndSet(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalConstant.TIMESTAMP_NANO_NULL);
         nullConstants.setPos(ColumnType.NULL + 1);
 
         typeConstants.put(ColumnType.INT, IntTypeConstant.INSTANCE);

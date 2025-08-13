@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.engine.groupby.MonthTimestampMicrosSampler;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -51,9 +51,9 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, next.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }
 
@@ -74,9 +74,9 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, next.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts, 3);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }
 
@@ -97,32 +97,43 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, prev.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long prevTs = sampler.previousTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
         }
     }
 
     @Test
     public void testRound() throws NumericException {
-        MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(1);
-
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2014-02-12T12:12:12.123456Z",
+                "2014-02-12T12:12:12.123456Z",
+                "2024-11-12T12:12:12.123456Z",
         };
         final String[] rounded = new String[]{
                 "2013-12-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2014-02-01T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2024-11-01T00:00:00.000000Z",
+        };
+        final int[] strides = new int[]{
+                1,
+                1,
+                1,
+                3,
+                10
         };
         Assert.assertEquals(src.length, rounded.length);
+        Assert.assertEquals(src.length, strides.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long roundedTs = sampler.round(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
+            final MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(strides[i]);
+            final long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
         }
     }
 
@@ -131,7 +142,7 @@ public class MonthTimestampSamplerTest {
         StringSink sink = new StringSink();
         MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(6);
 
-        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+        long timestamp = MicrosFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
 
         for (int i = 0; i < 20; i++) {

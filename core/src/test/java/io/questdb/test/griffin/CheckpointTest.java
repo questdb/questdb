@@ -55,7 +55,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1327,7 +1327,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     walWriter1.addColumn("C", ColumnType.INT);
                     walWriter1.commit();
 
-                    TableWriter.Row row = walWriter1.newRow(TimestampFormatUtils.parseTimestamp("2022-02-24T06:00:00.000000Z"));
+                    TableWriter.Row row = walWriter1.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:00:00.000000Z"));
 
                     row.putLong(0, 777L);
                     row.putSym(1, "XXX");
@@ -1340,7 +1340,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     row.append();
                     walWriter1.commit();
 
-                    TableWriter.Row row2 = walWriter2.newRow(TimestampFormatUtils.parseTimestamp("2022-02-24T06:01:00.000000Z"));
+                    TableWriter.Row row2 = walWriter2.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:01:00.000000Z"));
                     row2.putLong(0, 999L);
                     row2.putSym(1, "AAA");
                     row2.putSym(3, "BBB");

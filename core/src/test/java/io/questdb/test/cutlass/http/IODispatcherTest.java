@@ -118,7 +118,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
@@ -659,7 +659,7 @@ public class IODispatcherTest extends AbstractTest {
         getSimpleTester().run((engine, sqlExecutionContext) ->
                 testHttpClient.assertGet(
                         "{" +
-                                "\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\"," +
+                                "\"query\":\"select simulate_crash('P') \\n\\rfrom\\tlong_sequence(" + (numOfRows + 5) + ")\"," +
                                 "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
@@ -667,7 +667,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"error\":\"simulated cairo exception\", " +
                                 "\"errorPos\":222" +
                                 "}",
-                        "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
+                        "select simulate_crash('P') \n\rfrom\tlong_sequence(" + (numOfRows + 5) + ")"
                 )
         );
     }
@@ -9891,7 +9891,7 @@ public class IODispatcherTest extends AbstractTest {
                             );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            System.out.println("erm: " + index + ", ts=" + Micros.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }

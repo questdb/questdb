@@ -899,7 +899,7 @@ public class O3Test extends AbstractO3Test {
         // Read the partition while it's being merged
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "2020-02-05.") && Utf8s.containsAscii(name, Files.SEPARATOR + "last.d")) {
                     try {
                         TestUtils.assertSqlCursors(
@@ -1148,7 +1148,7 @@ public class O3Test extends AbstractO3Test {
 
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     long maxTimestamp = driver.parseFloorLiteral("2022-02-24") + driver.fromMicros(records * 1000L);
-                    CharSequence o3Ts = driver.toString(maxTimestamp - driver.fromMicros(2000));
+                    CharSequence o3Ts = driver.toMSecString(maxTimestamp - driver.fromMicros(2000));
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
 
                     // Check that there was an attempt to write a file bigger than 2GB

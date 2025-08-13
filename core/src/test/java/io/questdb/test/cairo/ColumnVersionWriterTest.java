@@ -35,8 +35,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -62,7 +62,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Path path = new Path();
                     ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), ColumnType.TIMESTAMP, true)
             ) {
-                long partitionTimestamp = Timestamps.DAY_MICROS * 2;
+                long partitionTimestamp = Micros.DAY_MICROS * 2;
                 int columnIndex = 3;
 
                 // Add column
@@ -129,8 +129,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     ColumnVersionWriter w = createColumnVersionWriter(path)
             ) {
                 long day1 = 0;
-                long day2 = Timestamps.DAY_MICROS;
-                long day3 = Timestamps.DAY_MICROS * 2;
+                long day2 = Micros.DAY_MICROS;
+                long day3 = Micros.DAY_MICROS * 2;
                 int columnIndex = 3;
                 int columnIndex1 = 1;
 
@@ -176,8 +176,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 int columnCount = 27;
                 for (int i = 0; i < columnCount; i++) {
-                    w.upsertDefaultTxnName(i, i, Timestamps.DAY_MICROS * i);
-                    w.upsertColumnTop(Timestamps.DAY_MICROS * i, i, i * 100);
+                    w.upsertDefaultTxnName(i, i, Micros.DAY_MICROS * i);
+                    w.upsertColumnTop(Micros.DAY_MICROS * i, i, i * 100);
                 }
 
                 w.commit();
@@ -346,7 +346,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 for (int i = 0; i < 3; i += 2) {
                     w.upsert(i, i % 10, -1, i * 10L);
                 }
-                w.upsertDefaultTxnName(4, 123, TimestampFormatUtils.parseTimestamp("2024-02-24T00:00:00.000000Z"));
+                w.upsertDefaultTxnName(4, 123, MicrosFormatUtils.parseTimestamp("2024-02-24T00:00:00.000000Z"));
 
                 w.commit();
 

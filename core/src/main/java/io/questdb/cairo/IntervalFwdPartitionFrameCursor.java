@@ -42,44 +42,61 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalFwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex, TimestampDriver timestampDriver) {
-        super(intervalModel, timestampIndex, timestampDriver);
+    public IntervalFwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+        super(intervalModel, timestampIndex);
     }
 
     @Override
-    public PartitionFrame next() {
+    public PartitionFrame next(long skipTarget) {
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount = reader.openPartition(partitionLo);
+            long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(partitionLo, rowCount);
 
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
-                final long partitionTimestampLo = timestampFinder.minTimestamp();
+                final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
                 // interval is wholly above partition, skip interval
-                if (partitionTimestampLo > intervalHi) {
+                if (partitionTimestampLoApprox > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHi = timestampFinder.maxTimestamp();
+                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
+                // interval is wholly below partition, skip partition
+                if (partitionTimestampHiApprox < intervalLo) {
+                    partitionLimit = 0;
+                    partitionLo++;
+                    continue;
+                }
 
                 LOG.debug()
                         .$("next [partition=").$(partitionLo)
-                        .$(", intervalLo=").$ts(timestampDriver, intervalLo)
-                        .$(", intervalHi=").$ts(timestampDriver, intervalHi)
-                        .$(", partitionHi=").$ts(timestampDriver, partitionTimestampHi)
+                        .$(", intervalLo=").$ts(intervalModel.getTimestampDriver(), intervalLo)
+                        .$(", intervalHi=").$ts(intervalModel.getTimestampDriver(), intervalHi)
+                        .$(", partitionHi=").$ts(intervalModel.getTimestampDriver(), partitionTimestampHiApprox)
                         .$(", partitionLimit=").$(partitionLimit)
                         .$(", rowCount=").$(rowCount)
                         .I$();
 
+                reader.openPartition(partitionLo);
+                timestampFinder.prepare();
+
+                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                // interval is wholly above partition, skip interval
+                if (partitionTimestampLoExact > intervalHi) {
+                    intervalsLo++;
+                    continue;
+                }
+
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
                 // interval is wholly below partition, skip partition
-                if (partitionTimestampHi < intervalLo) {
+                if (partitionTimestampHiExact < intervalLo) {
                     partitionLimit = 0;
                     partitionLo++;
                     continue;
@@ -88,7 +105,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 // calculate intersection
 
                 long lo;
-                if (partitionTimestampLo < intervalLo) {
+                if (partitionTimestampLoExact < intervalLo) {
                     // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
                     // and then do index + 1 to skip to top of where we need to be.
                     // We are not scanning up on the exact value of intervalLo because it may not exist. In which case
@@ -99,7 +116,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 final long hi;
-                if (partitionTimestampHi > intervalHi) {
+                if (partitionTimestampHiExact > intervalHi) {
                     hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
                 } else {
                     hi = rowCount;

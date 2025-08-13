@@ -70,6 +70,7 @@ public class NullConstantTest {
         Assert.assertEquals(LongConstant.NULL.getLong(null), constant.getLong(null));
         Assert.assertEquals(DateConstant.NULL.getDate(null), constant.getDate(null));
         Assert.assertEquals(TimestampConstant.TIMESTAMP_MICRO_NULL.getTimestamp(null), constant.getTimestamp(null));
+        Assert.assertEquals(TimestampConstant.TIMESTAMP_NANO_NULL.getTimestamp(null), constant.getTimestamp(null));
         Assert.assertEquals(ByteConstant.ZERO.getByte(null), constant.getByte(null));
         Assert.assertEquals(ShortConstant.ZERO.getShort(null), constant.getShort(null));
         Assert.assertEquals(CharConstant.ZERO.getChar(null), constant.getChar(null));

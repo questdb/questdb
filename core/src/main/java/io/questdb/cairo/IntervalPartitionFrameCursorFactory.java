@@ -35,7 +35,6 @@ import io.questdb.std.Misc;
 public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final int baseOrder;
     private final RuntimeIntrinsicIntervalModel intervalModel;
-    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private IntervalBwdPartitionFrameCursor bwdCursor;
     private IntervalFwdPartitionFrameCursor fwdCursor;
@@ -50,7 +49,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     ) {
         super(tableToken, metadataVersion, metadata);
         this.timestampIndex = timestampIndex;
-        this.timestampDriver = ColumnType.getTimestampDriver(metadata.getColumnType(timestampIndex));
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;
     }
@@ -69,13 +67,13 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         try {
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
-                    fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex, timestampDriver);
+                    fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex);
                 }
                 return fwdCursor.of(reader, executionContext);
             }
 
             if (bwdCursor == null) {
-                bwdCursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex, timestampDriver);
+                bwdCursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex);
             }
             return bwdCursor.of(reader, executionContext);
         } catch (Throwable th) {

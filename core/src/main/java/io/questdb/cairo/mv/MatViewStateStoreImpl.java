@@ -36,7 +36,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -54,7 +54,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     // The goal is to avoid sending excessive incremental refresh messages to the underlying queue.
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
-    private final Clock microsecondClock;
+    private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
     private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);

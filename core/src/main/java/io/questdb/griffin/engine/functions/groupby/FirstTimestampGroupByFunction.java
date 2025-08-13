@@ -89,7 +89,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);      // row id
-        columnTypes.add(ColumnType.TIMESTAMP); // value
+        columnTypes.add(timestampType); // value
     }
 
     @Override

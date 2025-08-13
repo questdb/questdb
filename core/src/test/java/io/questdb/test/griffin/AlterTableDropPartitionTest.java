@@ -37,7 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -435,7 +435,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
             }
             execute("insert into " + tableName + " " +
-                    "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
+                    "select timestamp_sequence('2020-01-01', " + Micros.HOUR_MICROS + "L) " +
                     "from long_sequence(50)");
 
             assertPartitionResult("count\n44\n", "2020-01-01");
@@ -629,7 +629,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropSplitMidPartition() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    createXSplit(Timestamps.DAY_MICROS / 300, 299); // 300 records per day
+                    createXSplit(Micros.DAY_MICROS / 300, 299); // 300 records per day
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
@@ -652,7 +652,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff,
                 () -> {
-                    createXSplit(Timestamps.DAY_MICROS / 300, 290);
+                    createXSplit(Micros.DAY_MICROS / 300, 290);
                     assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
 
                     try {
@@ -948,7 +948,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         try (TableReader ignore = engine.getReader(engine.verifyTableName("x"))) {
             try {
                 long nextTimestamp = MicrosTimestampDriver.floor("2018-01-01") + increment * splitAfter + 1;
-                String nextTsStr = Timestamps.toUSecString(nextTimestamp);
+                String nextTsStr = Micros.toUSecString(nextTimestamp);
                 execute("insert into x " +
                         "select" +
                         " cast(x as int) i," +

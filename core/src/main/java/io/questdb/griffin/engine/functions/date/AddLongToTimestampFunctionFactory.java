@@ -45,7 +45,7 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arg = args.getQuick(0);
-        return new AddLongFunc(arg, args.getQuick(1), ColumnType.getTimestampType(arg.getType(), configuration));
+        return new AddLongFunc(arg, args.getQuick(1), ColumnType.getTimestampType(arg.getType()));
     }
 
     private static class AddLongFunc extends TimestampFunction implements BinaryFunction {

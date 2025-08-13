@@ -41,7 +41,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TimestampAddFunctionFactory implements FunctionFactory {
 
@@ -56,7 +55,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
         int stride;
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
@@ -198,7 +197,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return Timestamps.addPeriod(timestamp, period, stride);
+            return timestampDriver.addPeriod(timestamp, period, stride);
         }
 
         @Override

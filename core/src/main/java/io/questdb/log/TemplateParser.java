@@ -31,7 +31,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8StringSink;
@@ -44,7 +44,7 @@ public class TemplateParser implements Sinkable {
 
     private static final String DATE_FORMAT_KEY = "date:";
     private static final int NIL = -1;
-    private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
+    private final MicrosFormatCompiler dateCompiler = new MicrosFormatCompiler();
     private final AtomicLong dateValue = new AtomicLong();
     private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();
     private final Utf8StringSink resolveSink = new Utf8StringSink();

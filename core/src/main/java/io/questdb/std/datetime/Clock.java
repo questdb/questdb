@@ -25,7 +25,5 @@
 package io.questdb.std.datetime;
 
 public interface Clock {
-    int getClockTimestampType();
-
     long getTicks();
 }

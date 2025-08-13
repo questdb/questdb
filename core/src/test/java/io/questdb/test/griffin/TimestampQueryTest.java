@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -153,7 +153,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -170,7 +170,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -187,7 +187,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -204,7 +204,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -221,7 +221,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -238,7 +238,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000001Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.000001Z'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -264,7 +264,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2020'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -281,7 +281,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp > '2019'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -297,7 +297,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2019'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -313,7 +313,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2021' <=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -330,7 +330,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2021'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -347,7 +347,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where '2020' <=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -363,7 +363,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp <'2020'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -379,7 +379,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2021' <  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -396,7 +396,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp <'2021'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -413,7 +413,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where '2019' <  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -444,7 +444,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2021'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -460,7 +460,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2019' >=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -477,7 +477,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where '2021-01-01' >=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -493,7 +493,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2021'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -509,7 +509,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2020' > timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -527,7 +527,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where '2021' >  timestamp";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -540,7 +540,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             final int count = 32;
             final int skip = 48;
             final int iterations = 10;
-            final long hour = Timestamps.HOUR_MICROS;
+            final long hour = Micros.HOUR_MICROS;
 
             String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
             execute(createStmt);
@@ -595,7 +595,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot where timestamp > now()";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -616,7 +616,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
             List<Object[]> datesArr = dates.collect(Collectors.toList());
 
-            final long hour = Timestamps.HOUR_MICROS;
+            final long hour = Micros.HOUR_MICROS;
             final long day = 24 * hour;
             compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
@@ -665,7 +665,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
                     "dts",
                     true,
-                    true
+                    false
             );
 
             assertQuery(
@@ -690,7 +690,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 null,
                 null,
                 true,
-                true,
+                false,
                 false
         );
     }
@@ -736,7 +736,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-20T00:00:00.000000Z\n" +
@@ -759,7 +759,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS * 30 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-12-19T00:00:00.000000Z\n" +
@@ -782,7 +782,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
+                    Micros.WEEK_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-26T00:00:00.000000Z\n" +
@@ -805,7 +805,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS * 365 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2023-11-19T00:00:00.000000Z\n" +
@@ -871,13 +871,13 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.00Z'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
             // 1 ms character
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.0Z'";
-            printSqlResult(expected, query, "timestamp", true, true);
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -893,7 +893,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12-31T23:59:59Z'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            printSqlResult(expected, query, "timestamp", true, false);
         });
     }
 
@@ -1379,7 +1379,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
                     "dts",
                     true,
-                    true
+                    false
             );
 
             assertQueryNoLeakCheck(
@@ -1470,7 +1470,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", true, true);
+        printSqlResult(expected, query, "ts", true, false);
         return (int) expectedCount;
     }
 }

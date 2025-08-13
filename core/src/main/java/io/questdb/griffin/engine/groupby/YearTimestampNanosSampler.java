@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
@@ -51,6 +52,11 @@ public class YearTimestampNanosSampler implements TimestampSampler {
     }
 
     @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public long nextTimestamp(long timestamp) {
         try {
             return addYears(timestamp, stepYears);
@@ -75,9 +81,10 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        final int y = Nanos.getYear(value);
+        int y = Nanos.getYear(value);
+        y = Nanos.EPOCH_YEAR_0 + ((y - Nanos.EPOCH_YEAR_0) / stepYears) * stepYears;
         return Nanos.toNanos(
-                y - y % stepYears,
+                y,
                 CommonUtils.isLeapYear(y),
                 startDay,
                 startMonth,

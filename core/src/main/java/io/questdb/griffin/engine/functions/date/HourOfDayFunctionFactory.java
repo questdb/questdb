@@ -46,7 +46,7 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new HourOfDayFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
+        return new HourOfDayFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     static final class HourOfDayFunction extends IntFunction implements UnaryFunction {

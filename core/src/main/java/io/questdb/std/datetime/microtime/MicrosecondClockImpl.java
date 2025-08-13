@@ -24,17 +24,11 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 
-public class MicrosecondClockImpl implements Clock {
-    public static final Clock INSTANCE = new MicrosecondClockImpl();
-
-    @Override
-    public int getClockTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
-    }
+public class MicrosecondClockImpl implements MicrosecondClock {
+    public static final MicrosecondClock INSTANCE = new MicrosecondClockImpl();
 
     @Override
     public long getTicks() {

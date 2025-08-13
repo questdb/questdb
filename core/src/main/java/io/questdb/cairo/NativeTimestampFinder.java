@@ -32,7 +32,11 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 public class NativeTimestampFinder implements TimestampFinder, Mutable {
     private MemoryR column;
+    private long maxTimestampApprox;
+    private long minTimestampApprox;
+    private TableReader reader;
     private long rowCount;
+    private int timestampColumnOffset;
 
     @Override
     public void clear() {
@@ -50,19 +54,37 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long maxTimestamp() {
+    public long maxTimestampApproxFromMetadata() {
+        return maxTimestampApprox;
+    }
+
+    @Override
+    public long maxTimestampExact() {
         return column.getLong((rowCount - 1) * 8);
     }
 
     @Override
-    public long minTimestamp() {
+    public long minTimestampApproxFromMetadata() {
+        return minTimestampApprox;
+    }
+
+    @Override
+    public long minTimestampExact() {
         return column.getLong(0);
     }
 
     public NativeTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
-        this.column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), timestampIndex));
+        this.timestampColumnOffset = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), timestampIndex);
+        this.reader = reader;
         this.rowCount = rowCount;
+        this.minTimestampApprox = reader.getPartitionMinTimestampFromMetadata(partitionIndex);
+        this.maxTimestampApprox = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
         return this;
+    }
+
+    @Override
+    public void prepare() {
+        this.column = reader.getColumn(timestampColumnOffset);
     }
 
     @Override

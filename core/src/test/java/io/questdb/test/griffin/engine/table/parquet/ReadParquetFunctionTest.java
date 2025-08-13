@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Files;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -128,7 +128,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " rnd_geohash(16) a_geo_int," +
                     " rnd_geohash(32) a_geo_long," +
                     " rnd_bin(10, 20, 2) a_bin," +
-                    " timestamp_sequence('2015', " + (Timestamps.AVG_YEAR_MICROS / 4) + ") as a_ts," +
+                    " timestamp_sequence('2015', " + (Micros.AVG_YEAR_MICROS / 4) + ") as a_ts," +
                     " timestamp_sequence('2015'::timestamp_ns, " + (Nanos.AVG_YEAR_NANOS / 4 + 123) + ") as a_ns," +
                     " from long_sequence(" + rows + ")) timestamp (a_ts) partition by YEAR");
 

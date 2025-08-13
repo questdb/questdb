@@ -41,6 +41,12 @@ import org.junit.Test;
 
 public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
+    public void testNanosField() throws SqlException {
+        // The "N+" specifier must accept nanoseconds, but the result type must still be `TIMESTAMP` (micros)
+        call("1970-01-01T00:00:00.123456789", "yyyy-MM-ddTHH:mm:ss.N+").andAssertTimestamp(123456);
+    }
+
+    @Test
     public void testNonCompliantDate() throws SqlException {
         call("2015 03/12 abc", "yyyy dd/MM").andAssertTimestamp(Numbers.LONG_NULL);
     }

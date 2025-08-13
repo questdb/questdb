@@ -25,13 +25,13 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayWriteState;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -50,34 +50,14 @@ public class ArrayBufferOverflowTest extends AbstractTest {
         AbstractTest.setUpStatic();
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public @NotNull io.questdb.std.datetime.Clock getMicrosecondClock() {
+            public @NotNull MicrosecondClock getMicrosecondClock() {
                 // this fixes the random seeds used by rnd_array()
-                return new Clock() {
-                    @Override
-                    public int getClockTimestampType() {
-                        return ColumnType.TIMESTAMP_MICRO;
-                    }
-
-                    @Override
-                    public long getTicks() {
-                        return 1234L;
-                    }
-                };
+                return () -> 1234L;
             }
 
             @Override
-            public @NotNull Clock getNanosecondClock() {
-                return new Clock() {
-                    @Override
-                    public int getClockTimestampType() {
-                        return ColumnType.TIMESTAMP_MICRO;
-                    }
-
-                    @Override
-                    public long getTicks() {
-                        return 5678L;
-                    }
-                };
+            public NanosecondClock getNanosecondClock() {
+                return () -> 5678L;
             }
         };
     }

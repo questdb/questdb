@@ -143,11 +143,10 @@ public final class ColumnType {
     private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
 
-
     private ColumnType() {
     }
 
-    public static short commonWideningType(short typeA, short typeB) {
+    public static int commonWideningType(int typeA, int typeB) {
         return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
@@ -158,8 +157,9 @@ public final class ColumnType {
                 : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
 
                 // cast long and timestamp to timestamp in unions instead of longs.
-                : ((typeA == TIMESTAMP) && (typeB == LONG)) ? TIMESTAMP
-                : ((typeA == LONG) && (typeB == TIMESTAMP)) ? TIMESTAMP
+                : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
+                : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
+                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
 
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
@@ -248,22 +248,19 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
-    public static int getIntervalType(int timestampType) {
-        assert isTimestamp(timestampType);
-        switch (timestampType) {
-            case TIMESTAMP_MICRO:
-                return INTERVAL_TIMESTAMP_MICRO;
-            case TIMESTAMP_NANO:
-                return INTERVAL_TIMESTAMP_NANO;
-            default:
-                return UNDEFINED;
-        }
+    public static int getHigherPrecisionTimestampType(int left, int right) {
+        int leftTimestampType = getTimestampType(left);
+        int rightTimestampType = getTimestampType(right);
+        int leftPriority = getTimestampTypePriority(leftTimestampType);
+        int rightPriority = getTimestampTypePriority(rightTimestampType);
+        // Return the timestamp type with higher precision using explicit priority
+        return leftPriority >= rightPriority ? leftTimestampType : rightTimestampType;
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short type = tagOf(timestampType);
         // todo null and UNDEFINED use MicrosTimestamp
-        if (type == ColumnType.NULL || type == UNDEFINED) {
+        if (type == NULL || type == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
 
@@ -278,61 +275,30 @@ public final class ColumnType {
         }
     }
 
-    public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
-        assert intervalType == INTERVAL_TIMESTAMP_MICRO || intervalType == INTERVAL_TIMESTAMP_NANO;
-        if (intervalType == INTERVAL_TIMESTAMP_MICRO) {
-            return MicrosTimestampDriver.INSTANCE;
-        } else {
-            return NanosTimestampDriver.INSTANCE;
-        }
-    }
-
-    public static int getTimestampType(int left, int right, CairoConfiguration configuration) {
-        left = getTimestampType(left, configuration);
-        right = getTimestampType(right, configuration);
-        return Math.max(left, right);
-    }
-
     /**
-     * Determines the (implicit) conversion rule from the other columnTypes to the Timestamp type.
+     * Determines the implicit conversion rule from the other columnTypes to the Timestamp type.
      * <p>
      * This conversion rule is consistent with the implementation of the {@link io.questdb.cairo.sql.Function#getTimestamp(Record)} of functions.
      *
-     * @param left          the input column type to convert
-     * @param configuration the Cairo configuration containing default timestamp type settings
+     * @param type the input column type to convert
      * @return the appropriate timestamp type for the input column type
      * <p>
      * Conversion rules:
      * - TIMESTAMP types: returned as-is to preserve existing precision
      * - DATE types: converted to {@link #TIMESTAMP_MICRO}
      * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO} for maximum precision when parsing timestamp strings
-     * - All other types: fall back to the configuration's default timestamp type
+     * - All other types(Long, Int and so on): converted to {@link #TIMESTAMP_MICRO}
      */
-    public static int getTimestampType(int left, CairoConfiguration configuration) {
-        switch (tagOf(left)) {
+    public static int getTimestampType(int type) {
+        switch (tagOf(type)) {
             case TIMESTAMP:
-                return left;
-            case DATE:
-                return ColumnType.TIMESTAMP_MICRO;
+                return type;
             case VARCHAR:
             case STRING:
             case SYMBOL:
                 return ColumnType.TIMESTAMP_NANO;
-            default:
-                return configuration.getDefaultTimestampType();
-        }
-    }
-
-    public static int getTimestampTypeByIntervalType(int intervalType) {
-        assert isInterval(intervalType);
-        switch (intervalType) {
-            case INTERVAL_RAW:
-            case INTERVAL_TIMESTAMP_MICRO:
-                return TIMESTAMP_MICRO;
-            case INTERVAL_TIMESTAMP_NANO:
-                return TIMESTAMP_NANO;
-            default:
-                return ColumnType.UNDEFINED;
+            default: // Date, Long, Int etc.
+                return ColumnType.TIMESTAMP_MICRO;
         }
     }
 
@@ -368,6 +334,8 @@ public final class ColumnType {
         // For example IntFunction has getDouble() method implemented and does not need
         // additional wrap function to CAST to double.
         // This is usually case for widening conversions.
+        fromType = tagOf(fromType);
+        toType = tagOf(toType);
         return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
                 // char can be short and short can be char for symmetry
                 || (fromType == CHAR && toType == SHORT)
@@ -458,7 +426,7 @@ public final class ColumnType {
     }
 
     public static boolean isParseableType(int colType) {
-        return colType == TIMESTAMP || colType == LONG256;
+        return isTimestamp(colType) || colType == LONG256;
     }
 
     public static boolean isPersisted(int columnType) {
@@ -493,9 +461,17 @@ public final class ColumnType {
         return ColumnType.tagOf(columnType) == TIMESTAMP;
     }
 
+    public static boolean isTimestampMicro(int timestampType) {
+        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_MICRO;
+    }
+
+    public static boolean isTimestampNano(int timestampType) {
+        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_NANO;
+    }
+
     public static boolean isToSameOrWider(int fromType, int toType) {
         return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(tagOf(fromType), tagOf(toType))
+                || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
@@ -604,6 +580,17 @@ public final class ColumnType {
 
     public static int typeOf(CharSequence name) {
         return nameTypeMap.get(name);
+    }
+
+    private static int getTimestampTypePriority(int timestampType) {
+        assert tagOf(timestampType) == TIMESTAMP;
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
+            case TIMESTAMP_MICRO:
+                return 1;
+            case TIMESTAMP_NANO:
+                return 2;
+        }
+        return 0;
     }
 
     private static boolean isArrayCast(int fromType, int toType) {

@@ -25,6 +25,7 @@ package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
@@ -56,7 +57,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 
 import java.util.Arrays;
@@ -471,7 +471,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(ColumnType.nameOf(columnType));
         }
 
-        int typeCode = bindVariableTypeCode(columnType);
+        int typeCode = bindVariableTypeCode(ColumnType.tagOf(columnType));
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(node.position)
                     .put("unsupported bind variable type: ")
@@ -737,7 +737,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 try {
                     // This is a hack for DATA column type. We use a TIMESTAMP specific driver to
                     // do the work and then derive millis
-                    putOperand(offset, IMM, I8_TYPE, ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorConstant(token) / Timestamps.MILLI_MICROS);
+                    putOperand(offset, IMM, I8_TYPE, MicrosTimestampDriver.INSTANCE.toDate(MicrosTimestampDriver.INSTANCE.parseFloorConstant(token)));
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }

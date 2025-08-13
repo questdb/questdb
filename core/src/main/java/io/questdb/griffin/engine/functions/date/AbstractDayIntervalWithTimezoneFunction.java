@@ -24,20 +24,18 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDayIntervalFunction implements UnaryFunction {
     protected final Function tzFunc;
@@ -56,7 +54,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         UnaryFunction.super.init(symbolTableSource, executionContext);
         intervalType = executionContext.getIntervalFunctionType();
-        this.timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
+        this.timestampDriver = IntervalUtils.getTimestampDriverByIntervalType(intervalType);
     }
 
     @Override
@@ -96,7 +94,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             // the timezone is a timezone name string
             final TimeZoneRules tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
                     Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                    RESOLUTION_MICROS
+                    timestampDriver.getTZRuleResolution()
             );
             final long offset = tzRules.getOffset(now);
             final long nowWithTz = now + offset;

@@ -40,11 +40,9 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
-import static io.questdb.std.datetime.microtime.Timestamps.SECOND_MILLIS;
-import static io.questdb.std.datetime.microtime.Timestamps.monthOfYearMicros;
+import static io.questdb.std.datetime.microtime.Micros.*;
 
 public final class Nanos {
-
     public static final long DAY_NANOS = 86_400_000_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_NANOS = (long) (365.2425 * DAY_NANOS);
     public static final long HOUR_NANOS = 3_600_000_000_000L;
@@ -57,6 +55,7 @@ public final class Nanos {
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final long YEAR_NANOS_LEAP = 366 * DAY_NANOS;
+    public static final int EPOCH_YEAR_0 = getYear(0);
 
     private Nanos() {
     }
@@ -81,7 +80,7 @@ public final class Nanos {
         return nanos + minutes * MINUTE_NANOS;
     }
 
-    public static long addMonths(final long nanos, int months) {
+    public static long addMonths(long nanos, int months) {
         if (months == 0) {
             return nanos;
         }
@@ -136,6 +135,8 @@ public final class Nanos {
                 return Nanos.addMonths(nanos, period);
             case 'y':
                 return Nanos.addYears(nanos, period);
+            case 'n':
+                return Nanos.addNanos(nanos, period);
             default:
                 return Numbers.LONG_NULL;
         }
@@ -247,6 +248,9 @@ public final class Nanos {
     }
 
     public static long floorDD(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorDD(nanos, stride);
+        }
         if (nanos < offset) {
             return offset;
         }
@@ -292,11 +296,14 @@ public final class Nanos {
         return nanos - nanos % (stride * HOUR_NANOS);
     }
 
-    public static long floorHH(long nanos, int stride, long offsetNanos) {
-        if (nanos < offsetNanos) {
-            return offsetNanos;
+    public static long floorHH(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorHH(nanos, stride);
         }
-        return (nanos - ((nanos - offsetNanos) % (stride * HOUR_NANOS)));
+        if (nanos < offset) {
+            return offset;
+        }
+        return (nanos - ((nanos - offset) % (stride * HOUR_NANOS)));
     }
 
     public static long floorMC(long nanos) {
@@ -315,8 +322,13 @@ public final class Nanos {
     }
 
     public static long floorMC(long nanos, int stride, long offset) {
-        long result = nanos - ((nanos - offset) % (stride * MICRO_NANOS));
-        return Math.min(result, nanos);
+        if (offset == 0) {
+            return floorMC(nanos, stride);
+        }
+        if (nanos < offset) {
+            return offset;
+        }
+        return nanos - ((nanos - offset) % (stride * MICRO_NANOS));
     }
 
     public static long floorMI(long nanos) {
@@ -327,8 +339,14 @@ public final class Nanos {
         return nanos - nanos % (stride * MINUTE_NANOS);
     }
 
-    public static long floorMI(long nanos, int stride, long offsetNanos) {
-        return nanos - ((nanos - offsetNanos) % (stride * MINUTE_NANOS));
+    public static long floorMI(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorMI(nanos, stride);
+        }
+        if (nanos < offset) {
+            return offset;
+        }
+        return nanos - ((nanos - offset) % (stride * MINUTE_NANOS));
     }
 
     public static long floorMM(long nanos) {
@@ -343,6 +361,12 @@ public final class Nanos {
     }
 
     public static long floorMM(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorMM(nanos, stride);
+        }
+        if (nanos < offset) {
+            return offset;
+        }
         final long monthsDiff = getMonthsBetween(nanos, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
@@ -365,9 +389,14 @@ public final class Nanos {
         return floorMR(nanos, 1);
     }
 
-    public static long floorMS(long nanos, int stride, long offsetNanos) {
-        long result = nanos - ((nanos - offsetNanos) % (stride * MILLI_NANOS));
-        return Math.min(result, nanos);
+    public static long floorMS(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorMS(nanos, stride);
+        }
+        if (nanos < offset) {
+            return offset;
+        }
+        return nanos - ((nanos - offset) % (stride * MILLI_NANOS));
     }
 
     public static long floorMS(long nanos) {
@@ -403,6 +432,12 @@ public final class Nanos {
     }
 
     public static long floorNS(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorNS(nanos, stride);
+        }
+        if (nanos < offset) {
+            return offset;
+        }
         return nanos - ((nanos - offset) % stride);
     }
 
@@ -433,6 +468,12 @@ public final class Nanos {
     }
 
     public static long floorSS(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorSS(nanos, stride);
+        }
+        if (nanos < offset) {
+            return offset;
+        }
         return nanos - ((nanos - offset) % (stride * SECOND_NANOS));
     }
 
@@ -453,19 +494,19 @@ public final class Nanos {
         return nanos - weekOffset;
     }
 
-    public static long floorWW(long nanos, int stride, long offsetNanos) {
-        if (offsetNanos == 0) {
+    public static long floorWW(long nanos, int stride, long offset) {
+        if (offset == 0) {
             return floorWW(nanos, stride);
         }
-        if (nanos < offsetNanos) {
-            return offsetNanos;
+        if (nanos < offset) {
+            return offset;
         }
-        long numWeeksToAdd = getWeeksBetween(offsetNanos, nanos);
+        long numWeeksToAdd = getWeeksBetween(offset, nanos);
         long modulo = numWeeksToAdd % stride;
         if (numWeeksToAdd < 1) {
-            return offsetNanos;
+            return offset;
         } else {
-            return addWeeks(offsetNanos, (int) (numWeeksToAdd - modulo));
+            return addWeeks(offset, (int) (numWeeksToAdd - modulo));
         }
     }
 
@@ -486,6 +527,9 @@ public final class Nanos {
     }
 
     public static long floorYYYY(long nanos, int stride, long offset) {
+        if (offset == 0) {
+            return floorYYYY(nanos, stride);
+        }
         if (nanos < offset) {
             return offset;
         }
@@ -590,9 +634,17 @@ public final class Nanos {
 
     public static int getMicrosOfMilli(long nanos) {
         if (nanos > -1) {
-            return (int) (nanos % MILLI_NANOS);
+            return (int) ((nanos / MICRO_NANOS) % MILLI_MICROS);
         } else {
-            return (int) (MILLI_NANOS - 1 + ((nanos + 1) % MILLI_NANOS));
+            return (int) (MILLI_MICROS - 1 + (int) (((nanos + 1) / MICRO_NANOS) % MILLI_MICROS));
+        }
+    }
+
+    public static int getMicrosOfSecond(long nanos) {
+        if (nanos > -1) {
+            return (int) ((nanos / MICRO_NANOS) % SECOND_MICROS);
+        } else {
+            return (int) (SECOND_MICROS - 1 + (int) (((nanos + 1) / MICRO_NANOS) % SECOND_MICROS));
         }
     }
 
@@ -684,11 +736,11 @@ public final class Nanos {
         return Math.abs(nanosA - nanosB);
     }
 
-    public static int getNanosOfMilli(long nanos) {
+    public static int getNanosOfMicros(long nanos) {
         if (nanos > -1) {
-            return (int) (nanos % MILLI_NANOS);
+            return (int) (nanos % MICRO_NANOS);
         } else {
-            return (int) (MILLI_NANOS - 1 + ((nanos + 1) % MILLI_NANOS));
+            return (int) (MICRO_NANOS - 1 + ((nanos + 1) % MICRO_NANOS));
         }
     }
 

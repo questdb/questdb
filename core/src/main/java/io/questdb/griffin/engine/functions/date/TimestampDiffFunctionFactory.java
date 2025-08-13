@@ -57,9 +57,9 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         final Function periodFunction = args.getQuick(0);
         final Function start = args.getQuick(1);
         final Function end = args.getQuick(2);
-        final int startType = ColumnType.getTimestampType(start.getType(), configuration);
-        final int endType = ColumnType.getTimestampType(end.getType(), configuration);
-        int timestampType = Math.max(startType, endType);
+        final int startType = ColumnType.getTimestampType(start.getType());
+        final int endType = ColumnType.getTimestampType(end.getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(startType, endType);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
 
         if (periodFunction.isConstant()) {
@@ -68,10 +68,10 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
 
             if (diffMethod != null) {
                 if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NULL) {
-                    return new DiffVarConstFunction(end, driver.from(start.getTimestamp(null), startType), diffMethod, driver, startType, period);
+                    return new DiffVarConstFunction(end, driver.from(start.getTimestamp(null), startType), diffMethod, driver, endType, period);
                 }
                 if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NULL) {
-                    return new DiffVarConstFunction(start, driver.from(end.getTimestamp(null), endType), diffMethod, driver, endType, period);
+                    return new DiffVarConstFunction(start, driver.from(end.getTimestamp(null), endType), diffMethod, driver, startType, period);
                 }
                 return new DiffVarVarFunction(start, end, driver, diffMethod, startType, endType, period);
             }

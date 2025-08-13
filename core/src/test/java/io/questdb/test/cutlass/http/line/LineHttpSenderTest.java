@@ -44,7 +44,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -1072,7 +1072,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     @Test
     public void testTimestampUpperBounds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            TimestampFormatCompiler timestampFormatCompiler = new TimestampFormatCompiler();
+            MicrosFormatCompiler timestampFormatCompiler = new MicrosFormatCompiler();
 
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"

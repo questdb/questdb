@@ -31,7 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -215,7 +215,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
@@ -237,7 +237,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS * 5 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS * 5 + ")::" + timestampTypeName + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -293,7 +293,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
@@ -452,11 +452,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
 
-            assertQuery(replaceTimestampSuffix("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n"
-                            + "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n"
-                            + "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n"
-                            + "2\t2024-06-12\tfalse\ttrue\t" + (timestampType == ColumnType.TIMESTAMP_MICRO ? 658 : 663) + "\t\t\n" +
-                            "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n", timestampTypeName),
+            assertQuery(
+                    replaceTimestampSuffix(
+                            "index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n" +
+                                    "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
+                                    "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
+                                    "2\t2024-06-12\tfalse\ttrue\t" + (ColumnType.isTimestampMicro(timestampType) ? 658 : 663) + "\t\t\n" +
+                                    "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+                            timestampTypeName
+                    ),
                     "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     false,
                     true
