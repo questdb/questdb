@@ -34,6 +34,11 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     private long columnTxn;
     private long partitionTxn;
 
+    public BitmapIndexFwdNullReader(long columnTxn, long partitionTxn) {
+        this.columnTxn = columnTxn;
+        this.partitionTxn = partitionTxn;
+    }
+
     @Override
     public long getColumnTop() {
         return 0;

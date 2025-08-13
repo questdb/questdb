@@ -873,10 +873,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         MemoryR col = columns.getQuick(globalIndex);
         if (col instanceof NullMemoryCMR) {
             if (direction == BitmapIndexReader.DIR_BACKWARD) {
-                reader = new BitmapIndexBwdNullReader();
+                reader = new BitmapIndexBwdNullReader(columnNameTxn, partitionTxn);
                 bitmapIndexes.setQuick(globalIndex, reader);
             } else {
-                reader = new BitmapIndexFwdNullReader();
+                reader = new BitmapIndexFwdNullReader(columnNameTxn, partitionTxn);
                 bitmapIndexes.setQuick(globalIndex + 1, reader);
             }
         } else {
