@@ -40,19 +40,13 @@ import io.questdb.test.tools.TestUtils;
 
 public class CreateTableTestUtils {
 
-    public static void createAllTable(CairoEngine engine, int partitionBy) {
-        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy);
+    public static void createAllTable(CairoEngine engine, int partitionBy, int timestampType) {
+        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).timestamp(timestampType);
         TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
         TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy, timestampType);
-        TestUtils.createTable(engine, model);
-    }
-
-
-    public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
-        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp();
         TestUtils.createTable(engine, model);
     }
 

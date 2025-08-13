@@ -72,7 +72,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
-                timestampColumnStr() +
+                ColumnType.nameOf(timestampType) +
                 "\nstr:" + ColumnType.nameOf(ColumnType.STRING) + "\n";
 
         assertThatTimestampRemains((w) -> {
@@ -105,7 +105,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "byte:BYTE\n" +
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
-                timestampColumnStr() +
+                ColumnType.nameOf(timestampType) +
                 "\nlong:LONG\n" +
                 "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                 "sym:SYMBOL\n" +
@@ -131,7 +131,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
-                timestampColumnStr() + "\n";
+                ColumnType.nameOf(timestampType) + "\n";
         assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 12, 11, 12);
     }
 
@@ -253,15 +253,5 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
             }
         });
-    }
-
-    private String timestampColumnStr() {
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return "timestamp:TIMESTAMP";
-            case ColumnType.TIMESTAMP_NANO:
-                return "timestamp:TIMESTAMP_NS";
-        }
-        return "";
     }
 }
