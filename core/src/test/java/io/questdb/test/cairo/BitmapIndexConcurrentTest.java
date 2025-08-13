@@ -24,160 +24,262 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class BitmapIndexConcurrentTest extends AbstractCairoTest {
+    private static final int MAX_ID = 100;
 
     @Test
     public void testConcurrentBitmapIndexAccess() throws Exception {
+        final Rnd masterRnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            // Create table with hourly partitioning and indexed symbol column
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+
             execute(
                     "CREATE TABLE trades (" +
+                            "  id INT," +
                             "  symbol SYMBOL INDEX," +
                             "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY HOUR"
+                            ") TIMESTAMP(ts) PARTITION BY HOUR WAL"
             );
 
-            // Prepopulate with 10 partitions and 1000 distinct symbols
             populateTable();
-
-            // Test concurrent access
-            testConcurrentOperations();
+            testConcurrentOperations(masterRnd);
         });
     }
 
     private void populateTable() {
-        // Generate 1000 distinct symbols across 10 partitions using TableWriter API
-        try (TableWriter w = TestUtils.getWriter(engine, "trades")) {
+        try (TableWriterAPI w = engine.getTableWriterAPI("trades", "initial population")) {
             long baseTimestamp = 1704067200000000L; // 2024-01-01T00:00:00.000000Z in micros
+            int currentId = 0;
 
             for (int partition = 0; partition < 10; partition++) {
-                long partitionTimestamp = baseTimestamp + (partition * 3600000000L); // Add hours in micros
+                long partitionTimestamp = baseTimestamp + (partition * 3600000000L);
 
                 for (int i = 1; i <= 100; i++) {
-                    TableWriter.Row r = w.newRow(partitionTimestamp + (i * 100000L)); // 100ms intervals
-                    r.putSym(0, "SYM" + i);
+                    TableWriter.Row r = w.newRow(partitionTimestamp + (i * 100000L));
+                    r.putInt(0, currentId % MAX_ID);
+                    r.putSym(1, "SYM" + i);
                     r.append();
+                    currentId++;
                 }
             }
             w.commit();
         }
+        drainWalQueue();
     }
 
-    private void testConcurrentOperations() throws Exception {
+    private void testConcurrentOperations(Rnd masterRnd) throws Exception {
+        final int numWriterThreads = 3;
+        final int numReaderThreads = 5;
+        final int numUpdateThreads = 1;
+        final long testDurationMs = 1_000;
+
+        final AtomicBoolean stopFlag = new AtomicBoolean(false);
+        final AtomicInteger totalInserts = new AtomicInteger(0);
+        final AtomicInteger totalQueries = new AtomicInteger(0);
+        final AtomicInteger totalUpdates = new AtomicInteger(0);
+        final AtomicInteger nextId = new AtomicInteger(1000);
         final AtomicInteger errorCount = new AtomicInteger(0);
-        final AtomicReference<String> lastError = new AtomicReference<>();
-        final long testDurationMs = 20_000; // Run for 20 seconds
+        final AtomicReference<Throwable> firstError = new AtomicReference<>();
 
-        Rnd rnd = new Rnd();
-        long startTime = System.currentTimeMillis();
-        int insertCount = 0;
-        int queryCount = 0;
+        final CyclicBarrier startBarrier = new CyclicBarrier(numWriterThreads + numReaderThreads + numUpdateThreads + 1);
+        final CountDownLatch completionLatch = new CountDownLatch(numWriterThreads + numReaderThreads + numUpdateThreads);
 
-        try (TableWriter w = TestUtils.getWriter(engine, "trades")) {
-            while (System.currentTimeMillis() - startTime < testDurationMs) {
+        ExecutorService executor = Executors.newFixedThreadPool(numWriterThreads + numReaderThreads + numUpdateThreads);
+
+        // Writer threads
+        for (int i = 0; i < numWriterThreads; i++) {
+            final int threadId = i;
+            final long seed0 = masterRnd.nextLong();
+            final long seed1 = masterRnd.nextLong();
+
+            executor.submit(() -> {
                 try {
-                    // Insert a batch of rows
-                    for (int batch = 0; batch < 10; batch++) {
-                        // Use random symbol from existing ones (SYM1 to SYM100)
-                        String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                    startBarrier.await();
 
-                        // Create out-of-order timestamp (random minutes in the past)
-                        long oooTimestamp = System.currentTimeMillis() * 1000L - (rnd.nextInt(600) * 60000000L); // micros
+                    Rnd rnd = new Rnd(seed0, seed1);
+                    try (TableWriterAPI w = engine.getTableWriterAPI("trades", "Concurrent Writer " + threadId)) {
+                        while (!stopFlag.get() && errorCount.get() == 0) {
+                            try {
+                                for (int batch = 0; batch < 10; batch++) {
+                                    int id = nextId.getAndIncrement() % MAX_ID;
+                                    String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                                    long oooTimestamp = System.currentTimeMillis() * 1000L - (rnd.nextInt(600) * 60000000L);
 
-                        TableWriter.Row r = w.newRow(oooTimestamp);
-                        r.putSym(0, randomSymbol);
-                        r.append();
-                        insertCount++;
-                    }
-
-                    // Commit batch
-                    w.commit();
-
-                    // Immediately validate with queries after each commit
-                    for (int q = 0; q < 5; q++) {
-                        // Use random symbol from existing ones (SYM1 to SYM100)
-                        String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
-
-                        String querySql = String.format(
-                                "SELECT symbol, count(*) FROM trades WHERE symbol = '%s' GROUP BY symbol",
-                                randomSymbol
-                        );
-
-                        // Execute query and validate results
-                        try (RecordCursorFactory factory = select(querySql)) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                int rowCount = 0;
-                                while (cursor.hasNext()) {
-                                    rowCount++;
-                                    if (rowCount > 1) {
-                                        errorCount.incrementAndGet();
-                                        lastError.set("Query returned more than one row for symbol: " + randomSymbol);
-                                        System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
-                                        Assert.fail(lastError.get());
-                                        return;
-                                    }
-
-                                    CharSequence resultSymbol = cursor.getRecord().getSymA(0);
-                                    if (!Chars.equals(resultSymbol, randomSymbol)) {
-                                        errorCount.incrementAndGet();
-                                        lastError.set("Expected symbol '" + randomSymbol + "' but got '" + resultSymbol + "'");
-                                        System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
-                                        Assert.fail(lastError.get());
-                                        return;
-                                    }
+                                    TableWriter.Row r = w.newRow(oooTimestamp);
+                                    r.putInt(0, id);
+                                    r.putSym(1, randomSymbol);
+                                    r.append();
                                 }
+                                w.commit();
+                                drainWalQueue();
+                                totalInserts.addAndGet(10);
 
-                                if (rowCount != 1) {
-                                    errorCount.incrementAndGet();
-                                    lastError.set("Expected exactly 1 row for symbol '" + randomSymbol + "' but got " + rowCount);
-                                    System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
-                                    Assert.fail(lastError.get());
-                                    return;
+                                if (rnd.nextInt(10) == 0) {
+                                    Os.sleep(rnd.nextInt(10));
                                 }
+                            } catch (Exception e) {
+                                errorCount.incrementAndGet();
+                                firstError.compareAndSet(null, e);
+                                e.printStackTrace();
                             }
                         }
-                        queryCount++;
-                    }
-
-                    if (insertCount % 100 == 0) {
-                        Thread.sleep(5); // Small pause after every 100 inserts
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
-                    lastError.set("Operation error: " + e.getMessage());
-                    System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
-                    Assert.fail(lastError.get());
-                    return;
+                    firstError.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    Path.clearThreadLocals();
+                    completionLatch.countDown();
                 }
-            }
+            });
         }
 
-        System.out.println("Test completed: " + insertCount + " inserts, " + queryCount + " queries");
+        // Update threads
+        for (int i = 0; i < numUpdateThreads; i++) {
+            final long seed0 = masterRnd.nextLong();
+            final long seed1 = masterRnd.nextLong();
 
-        // Validate results
-        Assert.assertEquals("Errors detected", 0, errorCount.get());
+            executor.submit(() -> {
+                try {
+                    startBarrier.await();
 
-        // Final validation query
-        try (RecordCursorFactory factory = select("SELECT count(*) FROM trades")) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue("Should have results", cursor.hasNext());
-                long count = cursor.getRecord().getLong(0);
-                Assert.assertTrue("Should have records", count > 1000); // Initial 1000 + inserted records
-                System.out.println("Final total count: " + count);
-            }
+                    Rnd rnd = new Rnd(seed0, seed1);
+                    while (!stopFlag.get() && errorCount.get() == 0) {
+                        try {
+                            int randomId = rnd.nextInt(MAX_ID);
+                            String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+
+                            String updateSql = String.format(
+                                    "UPDATE trades SET symbol = '%s' WHERE id = %d",
+                                    randomSymbol, randomId
+                            );
+
+                            execute(updateSql);
+                            drainWalQueue();
+                            totalUpdates.incrementAndGet();
+
+                            // UPDATE is slow, we cannot do it too frequently
+                            Os.sleep(rnd.nextInt(100) + 1);
+                        } catch (Exception e) {
+                            errorCount.incrementAndGet();
+                            firstError.compareAndSet(null, e);
+                            e.printStackTrace();
+                        }
+                    }
+                } catch (Exception e) {
+                    errorCount.incrementAndGet();
+                    firstError.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    Path.clearThreadLocals();
+                    completionLatch.countDown();
+                }
+            });
+        }
+
+        // Reader threads
+        for (int i = 0; i < numReaderThreads; i++) {
+            final int threadId = i;
+            // Generate unique seeds for this thread using masterRnd
+            final long seed0 = masterRnd.nextLong();
+            final long seed1 = masterRnd.nextLong();
+
+            executor.submit(() -> {
+                try {
+                    startBarrier.await(); // Wait for all threads to be ready
+
+                    Rnd rnd = new Rnd(seed0, seed1); // Unique deterministic seeds per thread
+                    while (!stopFlag.get() && errorCount.get() == 0) {
+                        try {
+                            String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                            String querySql = String.format(
+                                    "SELECT symbol, count(*) FROM trades WHERE symbol = '%s' GROUP BY symbol",
+                                    randomSymbol
+                            );
+
+                            try (RecordCursorFactory factory = select(querySql)) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    int rowCount = 0;
+                                    CharSequence foundSymbol = null;
+
+                                    while (cursor.hasNext()) {
+                                        rowCount++;
+                                        if (rowCount > 1) {
+                                            errorCount.incrementAndGet();
+                                            firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Multiple rows for symbol " + randomSymbol));
+                                            return;
+                                        }
+                                        foundSymbol = cursor.getRecord().getSymA(0);
+                                    }
+
+                                    if (rowCount == 1 && !Chars.equals(foundSymbol, randomSymbol)) {
+                                        errorCount.incrementAndGet();
+                                        firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Expected " + randomSymbol + " but got " + foundSymbol));
+                                        return;
+                                    }
+
+                                    // It's OK if rowCount is 0 or 1 (symbol might not exist yet or might exist)
+                                    totalQueries.incrementAndGet();
+                                }
+                            }
+
+                            Os.sleep(rnd.nextInt(5) + 1);
+                        } catch (Exception e) {
+                            errorCount.incrementAndGet();
+                            firstError.compareAndSet(null, e);
+                            e.printStackTrace();
+                        }
+                    }
+                } catch (Exception e) {
+                    errorCount.incrementAndGet();
+                    firstError.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    Path.clearThreadLocals();
+                    completionLatch.countDown();
+                }
+            });
+        }
+
+        startBarrier.await();
+        System.out.println("Started " + numWriterThreads + " writer threads, " + numUpdateThreads + " update threads, and " + numReaderThreads + " reader threads");
+
+        Thread.sleep(testDurationMs);
+        stopFlag.set(true);
+        boolean completed = completionLatch.await(60, TimeUnit.SECONDS);
+        Assert.assertTrue("Threads did not complete in time", completed);
+
+        executor.shutdown();
+        executor.awaitTermination(5, TimeUnit.SECONDS);
+
+        System.out.println("Test completed: " + totalInserts.get() + " inserts, " + totalUpdates.get() + " updates, " + totalQueries.get() + " queries");
+        if (errorCount.get() > 0) {
+            throw new AssertionError("Concurrent test failed with " + errorCount.get() + " errors. First error: ", firstError.get());
         }
     }
 }
