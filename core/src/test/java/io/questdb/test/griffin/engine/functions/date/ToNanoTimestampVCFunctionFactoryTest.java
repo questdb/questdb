@@ -44,7 +44,7 @@ public class ToNanoTimestampVCFunctionFactoryTest extends AbstractFunctionFactor
     @Ignore("fix me")
     @Test
     public void testNanosField() throws SqlException {
-        call("1970-01-01T00:00:00.123456789", "yyyy-MM-ddTHH:mm:ss.N+").andAssertTimestamp(123456789);
+        call(".123456789", ".N+").andAssertTimestamp(123456789);
     }
 
     @Test

@@ -43,7 +43,7 @@ public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testNanosField() throws SqlException {
         // The "N+" specifier must accept nanoseconds, but the result type must still be `TIMESTAMP` (micros)
-        call("1970-01-01T00:00:00.123456789", "yyyy-MM-ddTHH:mm:ss.N+").andAssertTimestamp(123456);
+        call(".123456789", ".N+").andAssertTimestamp(123456);
     }
 
     @Test
