@@ -260,6 +260,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         BitmapIndexReader reader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (reader != null) {
             if (reader.isOpen()) {
+                assert reader.getPartitionTxn() == partitionTxn;
+                assert reader.getColumnTxn() == columnNameTxn;
                 reader.reloadConditionally();
             } else {
                 int plen = path.size();
