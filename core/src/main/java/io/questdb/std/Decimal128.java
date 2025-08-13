@@ -663,11 +663,6 @@ public class Decimal128 implements Sinkable {
      * Negate this number in-place
      */
     public void negate() {
-        // Special case: negating zero should remain zero
-        if (this.high == 0 && this.low == 0) {
-            return;
-        }
-
         // Two's complement: invert all bits and add 1
         this.low = ~this.low + 1;
         this.high = ~this.high + (this.low == 0 ? 1 : 0);
