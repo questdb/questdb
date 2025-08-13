@@ -7897,7 +7897,7 @@ nodejs code:
                     statement.executeQuery();
                 } catch (PSQLException ex) {
                     caught = true;
-                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + (legacyMode ? " -> TIMESTAMP]" : " -> TIMESTAMP_NS"));
+                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP_NS");
                 }
             }
 
