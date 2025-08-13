@@ -34,6 +34,7 @@ import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.BitmapIndexTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -71,6 +72,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
         PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
 
         try {
+            BitmapIndexTest.create(configuration, path, "x", 64);
 
             rows.setCapacity(keyCount);
             GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
