@@ -268,7 +268,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 try {
                     reader.of(
                             configuration,
-                            pathGenNativePartition(getPartitionIndex(columnBase), partitionTxn),
+                            pathGenNativePartition(partitionIndex, partitionTxn),
                             metadata.getColumnName(columnIndex),
                             columnNameTxn,
                             partitionTxn,
