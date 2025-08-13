@@ -349,7 +349,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     return super.allocate(fd, size);
                 }
 
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, "completed.d")) {
                         this.fd = fd;

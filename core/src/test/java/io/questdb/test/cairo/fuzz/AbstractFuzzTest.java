@@ -195,7 +195,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
-                int size = rnd.nextInt(16 * 1024 * 1024);
+                int size = rnd.nextInt(8 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);

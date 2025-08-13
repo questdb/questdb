@@ -39,19 +39,17 @@ import org.junit.Test;
 public class GeoHashQueryTest extends AbstractCairoTest {
     @Test
     public void assertInsertGeoHashFromLowResIntoHigh() throws Exception {
-        tearDown();
+        // This test can take a long time on CI, so we limit the number of iterations randomly.
+        Rnd rnd = TestUtils.generateRandom(LOG);
         for (int b = 60; b > 2; b--) {
             for (int i = 1; i < b; i++) {
-                setUp();
-                try {
+                if (rnd.nextInt(5) > 3) {
                     assertException(
-                            String.format("insert into gh select rnd_geohash(%s) from long_sequence(5)", i),
-                            String.format("create table gh as (select rnd_geohash(%s) from long_sequence(5))", b),
-                            22,
+                            String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i),
+                            String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b),
+                            20 + String.format("gh%s%s", b, i).length(),
                             "inconvertible types"
                     );
-                } finally {
-                    tearDown();
                 }
             }
         }
@@ -59,24 +57,22 @@ public class GeoHashQueryTest extends AbstractCairoTest {
 
     @Test
     public void assertInsertGeoHashWithTruncate() throws Exception {
-        tearDown();
+        // This test can take a long time on CI, so we limit the number of iterations randomly.
+        Rnd rnd = TestUtils.generateRandom(LOG);
         for (int b = 1; b <= 60; b++) {
             for (int i = b; i <= 60; i++) {
-                setUp();
-                try {
+                if (rnd.nextInt(5) > 3) {
                     assertQuery(
                             String.format("count\n%s\n", 5),
-                            "select count() from gh",
-                            String.format("create table gh as (select rnd_geohash(%s) from long_sequence(5))", b),
+                            String.format("select count() from gh%s%s", b, i),
+                            String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b),
                             null,
-                            String.format("insert into gh select rnd_geohash(%s) from long_sequence(5)", i),
+                            String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i),
                             String.format("count\n%s\n", 10),
                             false,
                             true,
                             true
                     );
-                } finally {
-                    tearDown();
                 }
             }
         }

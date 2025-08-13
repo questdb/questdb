@@ -794,10 +794,15 @@ public final class Utf8s {
         return true;
     }
 
+    // checks 8 consequent bytes at once for non-ASCII chars, convenient for SWAR
+    public static boolean isAscii(long w) {
+        return (w & ASCII_MASK) == 0;
+    }
+
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
         for (; i + 7 < size; i += 8) {
-            if ((Unsafe.getUnsafe().getLong(ptr + i) & ASCII_MASK) != 0) {
+            if (isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
                 return false;
             }
         }
