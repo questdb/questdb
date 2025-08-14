@@ -60,7 +60,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -1319,8 +1318,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testDetachAttachSplitPartition() throws Exception {
-        // todo victor, need dive more
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         assertMemoryLeak(
                 () -> {
                     String tableName = "testDetachAttachSplitPartition";
@@ -1339,11 +1336,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2
                     );
 
+                    assertSql(replaceTimestampSuffix("count\tmin\tmax\n" +
+                            "500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z\n"), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-01'");
+                    assertSql(replaceTimestampSuffix("count\tmin\tmax\n" +
+                            "500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z\n"), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'");
+
                     try (TableReader ignore = getReader(token)) {
                         // Split partition by committing O3 to "2022-06-01"
-                        execute("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
+                        execute("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * " + (ColumnType.isTimestampMicro(timestampType) ? "1000000L" : "1000000000L") + " from " + tableName, sqlExecutionContext);
 
-                        Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
+                        Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(ColumnType.isTimestampMicro(timestampType) ? "2022-06-01T200057-183001.1" : "2022-06-01T200057-183000001.1").concat("ts.d");
                         FilesFacade ff = configuration.getFilesFacade();
                         Assert.assertTrue(ff.exists(path.$()));
 
