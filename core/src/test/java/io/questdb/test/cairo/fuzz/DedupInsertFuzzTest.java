@@ -46,7 +46,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
@@ -760,14 +759,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             } catch (SqlException e) {
                 Assert.fail("Failed to convert to parquet: " + e.getMessage());
             }
-        }
-    }
-
-    private long parseFloorPartialTimestamp(String from) {
-        try {
-            return MicrosTimestampDriver.floor(from);
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
         }
     }
 

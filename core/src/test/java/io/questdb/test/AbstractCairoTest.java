@@ -466,6 +466,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return AsOfJoinTest.TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
     }
 
+    public static long parseFloorPartialTimestamp(String toTs) {
+        try {
+            return MicrosTimestampDriver.floor(toTs);
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public static void printFactoryMemoryUsageDiff() {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             if (!FACTORY_TAGS[i]) {

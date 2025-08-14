@@ -63,6 +63,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -87,13 +88,11 @@ import static io.questdb.test.tools.TestUtils.generateRandom;
 @RunWith(Parameterized.class)
 public class MatViewTest extends AbstractCairoTest {
     private final int rowsPerQuery;
-    private final TimestampDriver timestampDriver;
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public MatViewTest(int rowsPerQuery, int timestampType) {
+    public MatViewTest(int rowsPerQuery, TestTimestampType timestampType) {
         this.rowsPerQuery = rowsPerQuery;
-        this.timestampType = ColumnType.nameOf(timestampType);
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        this.timestampType = timestampType;
     }
 
     @BeforeClass
@@ -104,15 +103,15 @@ public class MatViewTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    @Parameterized.Parameters(name = "rows_per_query={0}-{1}")
+    @Parameterized.Parameters(name = "rows_per_query={0},ts={1}")
     public static Collection<Object[]> testParams() {
         // only run a single combination per CI run
         final Rnd rnd = generateRandom(LOG);
 
         if (rnd.nextInt(100) > 50) {
-            return Arrays.asList(new Object[][]{{-1, ColumnType.TIMESTAMP_MICRO}, {-1, ColumnType.TIMESTAMP_NANO}});
+            return Arrays.asList(new Object[][]{{-1, TestTimestampType.MICRO}, {-1, TestTimestampType.NANO}});
         }
-        return Arrays.asList(new Object[][]{{1, ColumnType.TIMESTAMP_MICRO}, {1, ColumnType.TIMESTAMP_NANO}});
+        return Arrays.asList(new Object[][]{{1, TestTimestampType.MICRO}, {1, TestTimestampType.NANO}});
     }
 
     @Before
@@ -1496,8 +1495,8 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(baseToken);
             try (WalWriter writer = engine.getWalWriter(baseToken)) {
                 writer.commitWithParams(
-                        timestampDriver.parseFloorLiteral("2024-09-10T00:00:00.000000Z"),
-                        timestampDriver.parseFloorLiteral("2024-09-10T13:00"),
+                        timestampType.getDriver().parseFloorLiteral("2024-09-10T00:00:00.000000Z"),
+                        timestampType.getDriver().parseFloorLiteral("2024-09-10T13:00"),
                         WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 );
             }
@@ -1715,7 +1714,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableTimestampTypeChangeThrowError() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampDriver.getColumnType()));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -3177,8 +3176,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-27T23:30:00.000000Z");
-            final long step = timestampDriver.fromMicros(100000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-27T23:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(100000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3205,8 +3204,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = timestampDriver.parseFloorLiteral("2021-03-28T00:59:00.000000Z");
-            long step = timestampDriver.fromMicros(60 * 1000000L);
+            long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:59:00.000000Z");
+            long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
@@ -3232,8 +3231,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-28T01:00:00.000000Z");
-            final long step = timestampDriver.fromMicros(60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T01:00:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
@@ -3258,8 +3257,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-28T01:59:00.000000Z");
-            final long step = timestampDriver.fromMicros(60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T01:59:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
@@ -3285,8 +3284,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-27T23:01:00.000000Z");
-            final long step = timestampDriver.fromMicros(60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-27T23:01:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3310,8 +3309,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2020-10-23T20:30:00.000000Z");
-            final long step = timestampDriver.fromMicros(50 * 60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2020-10-23T20:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(50 * 60 * 1000000L);
             final int N = 120;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3339,8 +3338,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00' " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-26T20:30:00.000000Z");
-            final long step = timestampDriver.fromMicros(13 * 60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-26T20:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(13 * 60 * 1000000L);
             final int N = 1000;
             final int K = 25;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
@@ -3370,8 +3369,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-25T23:30:00.000000Z");
-            final long step = timestampDriver.fromMicros(50 * 60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-25T23:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(50 * 60 * 1000000L);
             final int N = 120;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3398,8 +3397,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/London'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-25T23:30:00.000000Z");
-            final long step = timestampDriver.fromMicros(50 * 60 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-25T23:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(50 * 60 * 1000000L);
             final int N = 120;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3427,8 +3426,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') and k between '2020-10-24 21:00:00' and '2020-10-25 05:00:00'" +
                     "sample by 1h align to calendar time zone 'Europe/London'";
 
-            final long startTs = timestampDriver.parseFloorLiteral("2020-10-23T20:30:00.000000Z");
-            final long step = timestampDriver.fromMicros(259 * 1000000L);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2020-10-23T20:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(259 * 1000000L);
             final int N = 1000;
             final int K = 25;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
@@ -3777,12 +3776,12 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final long viewStart = timestampDriver.fromMicros(start);
+            final long viewStart = timestampType.getDriver().fromMicros(start);
             // Create first and last mat view before all others to verify timer list sort logic.
-            createNthTimerMatView(timestampDriver, viewStart, 0);
-            createNthTimerMatView(timestampDriver, viewStart, (views - 1));
+            createNthTimerMatView(timestampType.getDriver(), viewStart, 0);
+            createNthTimerMatView(timestampType.getDriver(), viewStart, (views - 1));
             for (int i = 1; i < views - 1; i++) {
-                createNthTimerMatView(timestampDriver, viewStart, i);
+                createNthTimerMatView(timestampType.getDriver(), viewStart, i);
             }
 
             execute(
@@ -4473,8 +4472,8 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRecursiveInvalidation() throws Exception {
         assertMemoryLeak(() -> {
-            long startTs = timestampDriver.parseFloorLiteral("2025-02-18T00:00:00.000000Z");
-            long step = timestampDriver.fromMicros(100000000L);
+            long startTs = timestampType.getDriver().parseFloorLiteral("2025-02-18T00:00:00.000000Z");
+            long step = timestampType.getDriver().fromMicros(100000000L);
             final int N = 100;
 
             String tableName = "base";
@@ -4515,7 +4514,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("truncate table " + tableName);
-            long ts = timestampDriver.parseFloorLiteral("2025-05-17T00:00:00.000000Z");
+            long ts = timestampType.getDriver().parseFloorLiteral("2025-05-17T00:00:00.000000Z");
             execute("insert into " + tableName + " " + generateSelectSql(columns, ts, step, N, N));
 
             drainQueues();
@@ -4570,8 +4569,8 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRecursiveInvalidationOnDropMatView() throws Exception {
         assertMemoryLeak(() -> {
-            long startTs = timestampDriver.parseFloorLiteral("2025-02-18T00:00:00.000000Z");
-            long step = timestampDriver.fromMicros(10L);
+            long startTs = timestampType.getDriver().parseFloorLiteral("2025-02-18T00:00:00.000000Z");
+            long step = timestampType.getDriver().fromMicros(10L);
             final int N = 100;
 
             String tableName = "base";
@@ -4747,8 +4746,8 @@ public class MatViewTest extends AbstractCairoTest {
             // the newly inserted intervals should be in the cache
             Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
             final LongList expectedIntervals = new LongList();
-            expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-11T12:01"), timestampDriver.parseFloorLiteral("2024-09-11T12:02"));
-            expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-12T03:01"), timestampDriver.parseFloorLiteral("2024-09-12T23:02"));
+            expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-11T12:01"), timestampType.getDriver().parseFloorLiteral("2024-09-11T12:02"));
+            expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-12T03:01"), timestampType.getDriver().parseFloorLiteral("2024-09-12T23:02"));
             TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
 
             // at this point, new rows shouldn't be reflected in the view
@@ -4859,12 +4858,12 @@ public class MatViewTest extends AbstractCairoTest {
             final int intervalsSize = viewState.getRefreshIntervals().size();
             Assert.assertEquals(2 * capacity, intervalsSize);
             for (int i = 0; i < capacity - 1; i++) {
-                Assert.assertEquals(timestampDriver.fromSeconds(i), viewState.getRefreshIntervals().getQuick(2 * i));
-                Assert.assertEquals(timestampDriver.fromSeconds(i), viewState.getRefreshIntervals().getQuick(2 * i + 1));
+                Assert.assertEquals(timestampType.getDriver().fromSeconds(i), viewState.getRefreshIntervals().getQuick(2 * i));
+                Assert.assertEquals(timestampType.getDriver().fromSeconds(i), viewState.getRefreshIntervals().getQuick(2 * i + 1));
             }
             // The latest intervals should be squashed into the last one.
-            Assert.assertEquals(timestampDriver.fromSeconds(capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 2));
-            Assert.assertEquals(timestampDriver.fromSeconds(3 * capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 1));
+            Assert.assertEquals(timestampType.getDriver().fromSeconds(capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 2));
+            Assert.assertEquals(timestampType.getDriver().fromSeconds(3 * capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 1));
 
             // at this point, new rows shouldn't be reflected in the view
             assertQueryNoLeakCheck(
@@ -5141,8 +5140,8 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'PST') k, c";
             final String viewQuery = "select k, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42'";
-            final long startTs = timestampDriver.parseFloorLiteral("1970-01-03T00:20:00.000000Z");
-            final long step = timestampDriver.fromMicros(300000000);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("1970-01-03T00:20:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(300000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5165,8 +5164,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-28T00:15:00.000000Z");
-            final long step = timestampDriver.fromMicros(6 * 60000000);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5195,8 +5194,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
-            final long startTs = timestampDriver.parseFloorLiteral("2021-03-28T00:15:00.000000Z");
-            final long step = timestampDriver.fromMicros(6 * 60000000);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5233,8 +5232,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
-            final long startTs = timestampDriver.parseFloorLiteral("2021-10-31T00:15:00.000000Z");
-            final long step = timestampDriver.fromMicros(6 * 60000000);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-10-31T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5264,8 +5263,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin'";
-            final long startTs = timestampDriver.parseFloorLiteral("2021-10-31T00:15:00.000000Z");
-            final long step = timestampDriver.fromMicros(6 * 60000000);
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-10-31T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5307,8 +5306,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 90m align to calendar";
-            final long startTs = timestampDriver.fromMicros(172800000000L);
-            final long step = timestampDriver.fromMicros(300000000);
+            final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+            final long step = timestampType.getDriver().fromMicros(300000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5331,8 +5330,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 90m align to calendar with offset '00:42'";
-            final long startTs = timestampDriver.fromMicros(172800000000L);
-            final long step = timestampDriver.fromMicros(300000000);
+            final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+            final long step = timestampType.getDriver().fromMicros(300000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5600,7 +5599,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            createNthTimerMatView(timestampDriver, timestampDriver.fromMicros(start), 0);
+            createNthTimerMatView(timestampType.getDriver(), timestampType.getDriver().fromMicros(start), 0);
 
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -5760,7 +5759,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            createNthTimerMatView(timestampDriver, timestampDriver.fromMicros(start), 0);
+            createNthTimerMatView(timestampType.getDriver(), timestampType.getDriver().fromMicros(start), 0);
 
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -6096,7 +6095,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
         engine.execute(sqlText, sqlExecutionContext);
     }
 
@@ -6104,7 +6103,7 @@ public class MatViewTest extends AbstractCairoTest {
         return "select" +
                 " x + " + init + " as n," +
                 columns +
-                " timestamp_sequence(" + startTs + "::" + timestampType + ", " + step + ") k" +
+                " timestamp_sequence(" + startTs + "::" + timestampType.getTypeName() + ", " + step + ") k" +
                 " from" +
                 " long_sequence(" + count + ")";
     }
@@ -6114,14 +6113,14 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     private void testAlignToCalendarTimezoneOffset(final String timezone) throws Exception {
         final String viewName = "x_view";
         final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
-        final long startTs = timestampDriver.fromMicros(172800000000L);
-        final long step = timestampDriver.fromMicros(300000000);
+        final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+        final long step = timestampType.getDriver().fromMicros(300000000);
         final int N = 100;
         final int K = 5;
         updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -6832,14 +6831,6 @@ public class MatViewTest extends AbstractCairoTest {
         }
 
         Assert.assertEquals(0, remainingSize);
-    }
-
-    static long parseFloorPartialTimestamp(String toTs) {
-        try {
-            return MicrosTimestampDriver.floor(toTs);
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private static class TestRefreshParams {

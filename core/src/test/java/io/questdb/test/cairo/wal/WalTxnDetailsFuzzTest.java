@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -37,7 +36,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
@@ -341,14 +339,6 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         return new TableModel(configuration, tableName, PartitionBy.DAY)
                 .timestamp("ts")
                 .wal();
-    }
-
-    private static long parseFloorPartialTimestamp(String toTs) {
-        try {
-            return MicrosTimestampDriver.floor(toTs);
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private void assertTimestampEquals(String expected, long actual) {

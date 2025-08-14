@@ -62,6 +62,7 @@ import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
+import static io.questdb.test.AbstractCairoTest.parseFloorPartialTimestamp;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -175,13 +176,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     String tableName = "clear_test";
                     int port = serverMain.getHttpServerPort();
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .build()) {
-
+                    try (
+                            Sender sender = Sender.builder(Sender.Transport.HTTP)
+                                    .address("localhost:" + port)
+                                    .build()
+                    ) {
                         sender.table(tableName)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -257,7 +259,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                         sender.table(tableName)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -314,13 +316,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     String tableName = "reshape_3d_test";
                     int port = serverMain.getHttpServerPort();
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .build()) {
-
+                    try (
+                            Sender sender = Sender.builder(Sender.Transport.HTTP)
+                                    .address("localhost:" + port)
+                                    .build()
+                    ) {
                         sender.table(tableName)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -458,13 +461,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     String tableName = "reshape_1d_test";
                     int port = serverMain.getHttpServerPort();
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .build()) {
-
+                    try (
+                            Sender sender = Sender.builder(Sender.Transport.HTTP)
+                                    .address("localhost:" + port)
+                                    .build()
+                    ) {
                         sender.table(tableName)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -492,13 +496,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     String tableName = "reshape_test";
                     int port = serverMain.getHttpServerPort();
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .build()) {
-
+                    try (
+                            Sender sender = Sender.builder(Sender.Transport.HTTP)
+                                    .address("localhost:" + port)
+                                    .build()
+                    ) {
                         sender.table(tableName)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -515,13 +520,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .append(10.0).append(11.0).append(12.0);
 
                     String tableName2 = "reshape_test2";
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .build()) {
-
+                    try (
+                            Sender sender = Sender.builder(Sender.Transport.HTTP)
+                                    .address("localhost:" + port)
+                                    .build()
+                    ) {
                         sender.table(tableName2)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-23"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-23"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
@@ -551,13 +557,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     String tableName = "reshape_ndim_test";
                     int port = serverMain.getHttpServerPort();
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .build()) {
-
+                    try (
+                            Sender sender = Sender.builder(Sender.Transport.HTTP)
+                                    .address("localhost:" + port)
+                                    .build()
+                    ) {
                         sender.table(tableName)
                                 .doubleArray("arr", array)
-                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                                .at(parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
                         sender.flush();
                     }
 
