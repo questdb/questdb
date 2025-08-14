@@ -39,6 +39,22 @@ import java.math.RoundingMode;
  * Tests for the consolidated Decimal256 class
  */
 public class Decimal256Test {
+    @Test(expected = NumericException.class)
+    public void testAddOverflow() {
+        Decimal256 a = new Decimal256(Long.MAX_VALUE, 0, 0, 0, 0);
+        Decimal256 b = new Decimal256(1, 0, 0, 0, 0);
+        a.add(b);
+    }
+
+    @Test
+    public void testAddRescaleB() {
+        Decimal256 a = new Decimal256(0, 0, 0, 100, 2);
+        Decimal256 b = new Decimal256(0, 0, 0, 1, 0);
+        a.add(b);
+        Assert.assertEquals(200, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+    }
+
     @Test
     public void testAdditionFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
@@ -95,6 +111,13 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testCompareToDifferentSigns() {
+        Decimal256 a = Decimal256.fromLong(1L, 0);
+        Decimal256 b = Decimal256.fromLong(-1L, 0);
+        Assert.assertEquals(1, a.compareTo(b));
+    }
+
+    @Test
     public void testCompareToFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
 
@@ -117,6 +140,31 @@ public class Decimal256Test {
             } catch (NumericException ignore) {
             }
         }
+    }
+
+    @Test
+    public void testCompareToScaled() {
+        Decimal256 smaller = new Decimal256(0, 0, 0, 10, 1);
+        Decimal256 larger = new Decimal256(0, 0, 0, 200, 2);
+
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
+        Assert.assertEquals(0, smaller.compareTo(smaller));
+
+        smaller.of(0, 0, 10, 0, 1);
+        larger.of(0, 0, 200, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
+
+        smaller.of(0, 10, 0, 0, 1);
+        larger.of(0, 200, 0, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
+
+        smaller.of(10, 0, 0, 0, 1);
+        larger.of(200, 0, 0, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
     }
 
     @Test
@@ -183,6 +231,21 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testDivide() {
+        Decimal256 a = new Decimal256(0, 0, 0, 1000, 2);
+        Decimal256 b = new Decimal256(0, 0, 0, 3, 0);
+        a.divide(b, 2, RoundingMode.HALF_UP);
+        Assert.assertEquals(333, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal256(0, 0, 0, 10, 0);
+        b = new Decimal256(0, 0, 0, 300, 2);
+        a.divide(b, 2, RoundingMode.HALF_UP);
+        Assert.assertEquals(333, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test
     public void testDivide64() {
         Decimal256 a = Decimal256.fromDouble(123.456, 3);
         Decimal256 b = Decimal256.fromDouble(7.89, 2);
@@ -242,6 +305,13 @@ public class Decimal256Test {
         a.multiply(b);
     }
 
+    @Test(expected = NumericException.class)
+    public void testDivideInvalidScale() {
+        Decimal256 a = new Decimal256(0, 0, 0, 1, 0);
+        Decimal256 b = new Decimal256(0, 0, 0, 1, 50);
+        a.divide(b, 50, RoundingMode.HALF_UP);
+    }
+
     @Test
     public void testDivideLarge() {
         Decimal256 a = Decimal256.fromDouble(987654321.123456789, 9);
@@ -298,6 +368,82 @@ public class Decimal256Test {
         Decimal256 zero = Decimal256.fromDouble(0.0, 2);
 
         a.divide(zero, 2, RoundingMode.HALF_UP);
+    }
+
+    @Test
+    public void testDivisionCombinatorics() {
+        RoundingMode[] modes = new RoundingMode[]{
+                RoundingMode.HALF_UP,
+                RoundingMode.HALF_DOWN,
+                RoundingMode.HALF_EVEN,
+                RoundingMode.UNNECESSARY,
+                RoundingMode.FLOOR,
+                RoundingMode.CEILING,
+                RoundingMode.DOWN,
+                RoundingMode.UP
+        };
+        BigDecimal[] dividends = new BigDecimal[]{
+                new BigDecimal("-3.45"),
+                new BigDecimal("0.000987654321"),
+                new BigDecimal("1"),
+                new BigDecimal("10"),
+                new BigDecimal("123.456"),
+                new BigDecimal("123456.789101112"),
+                new BigDecimal("1234567891011121314151617181920212222324"),
+                new BigDecimal("123456789101112131415161718.19202122223242526272829"),
+        };
+        BigDecimal[] divisors = new BigDecimal[]{
+                new BigDecimal("-123.456"),
+                new BigDecimal("0"),
+                new BigDecimal("1"),
+                new BigDecimal("2"),
+                new BigDecimal("123.456"),
+                new BigDecimal("123456.789101112"),
+                new BigDecimal("1234567891011121314151617181920212222324"),
+                new BigDecimal("123456789101112131415161718.19202122223242526272829"),
+        };
+        int[] scales = new int[]{
+                0,
+                2,
+                6,
+                16,
+                32
+        };
+
+        for (RoundingMode roundingMode : modes) {
+            for (BigDecimal divisor : divisors) {
+                for (BigDecimal dividend : dividends) {
+                    for (int scale : scales) {
+                        Decimal256 a = Decimal256.fromBigDecimal(dividend);
+                        Decimal256 b = Decimal256.fromBigDecimal(divisor);
+                        if (divisor.compareTo(BigDecimal.ZERO) == 0) {
+                            try {
+                                a.divide(b, scale, roundingMode);
+                                Assert.fail("NumericException expected");
+                            } catch (NumericException e) {
+                                Assert.assertEquals("Division by zero", e.getMessage());
+                            }
+                            continue;
+                        }
+
+                        // Division might fail because of overflow during scaling
+                        try {
+                            a.divide(b, scale, roundingMode);
+                            BigDecimal expected = dividend.divide(divisor, scale, roundingMode);
+                            Assert.assertEquals(expected, a.toBigDecimal());
+                        } catch (NumericException e) {
+                            if (roundingMode == RoundingMode.UNNECESSARY && e.getMessage().equals("Rounding necessary")) {
+                                continue;
+                            }
+
+                            if (!e.getMessage().startsWith("Overflow")) {
+                                Assert.fail("NumericException Overflow expected, but was " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Test
@@ -479,6 +625,11 @@ public class Decimal256Test {
         Assert.assertEquals(2, a.getScale());
     }
 
+    @Test(expected = NumericException.class)
+    public void testInvalidScale() {
+        new Decimal256(0, 0, 0, 0, 100);
+    }
+
     @Test
     public void testIsNegative() {
         Decimal256 positive = new Decimal256(0, 0, 0, 100, 2);
@@ -603,11 +754,95 @@ public class Decimal256Test {
         }
     }
 
+    @Test
+    public void testMultiply() {
+        Decimal256 a = new Decimal256(0, 0, 0, 100, 2);
+        Decimal256 b = new Decimal256(0, 0, 0, 2, 0);
+        a.multiply(b);
+        Assert.assertEquals(200, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal256(0, 0, 0, 100, 2);
+        b = new Decimal256(0, 0, 2, 0, 0);
+        a.multiply(b);
+        Assert.assertEquals(0, a.getLl());
+        Assert.assertEquals(200, a.getLh());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal256(0, 0, 0, 100, 2);
+        b = new Decimal256(0, 2, 0, 0, 0);
+        a.multiply(b);
+        Assert.assertEquals(0, a.getLl());
+        Assert.assertEquals(0, a.getLh());
+        Assert.assertEquals(200, a.getHl());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal256(0, 0, 0, 100, 2);
+        b = new Decimal256(2, 0, 0, 0, 0);
+        a.multiply(b);
+        Assert.assertEquals(0, a.getLl());
+        Assert.assertEquals(0, a.getLh());
+        Assert.assertEquals(0, a.getHl());
+        Assert.assertEquals(200, a.getHh());
+        Assert.assertEquals(2, a.getScale());
+    }
+
     @Test(expected = NumericException.class)
     public void testMultiply128Overflow() {
         Decimal256 a = new Decimal256(0, Long.MAX_VALUE / 2, Long.MAX_VALUE, Long.MAX_VALUE, 0);
         Decimal256 b = new Decimal256(0, 0, 3, 0, 0);
         a.multiply(b);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow128() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.multiply(new Decimal256(0, 0, 2, 0, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow128B() {
+        Decimal256 m = new Decimal256(0, Long.MAX_VALUE, 0, 0, 0);
+        m.multiply(new Decimal256(0, 0, 2, 1, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow192() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.multiply(new Decimal256(0, 2, 0, 0, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow192B() {
+        Decimal256 m = new Decimal256(0, 0, Long.MAX_VALUE, 0, 0);
+        m.multiply(new Decimal256(0, 2, 0, 1, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow256() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.multiply(new Decimal256(2, 0, 0, 0, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow256B() {
+        Decimal256 m = new Decimal256(0, 0, 0, Long.MAX_VALUE, 0);
+        m.multiply(new Decimal256(2, 0, 0, 1, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow64() {
+        Decimal256 m = new Decimal256(Long.MAX_VALUE, 0, 0, 0, 0);
+        m.multiply(new Decimal256(0, 0, 0, Long.MAX_VALUE, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow64B() {
+        Decimal256 m = new Decimal256(Long.MAX_VALUE / 2, 0, 0, 0, 0);
+        m.multiply(new Decimal256(0, 0, 0, 3, 0));
     }
 
     @Test
@@ -659,6 +894,72 @@ public class Decimal256Test {
         } catch (NumericException e) {
             Assert.assertTrue(e.getMessage().contains("Overflow") || e.getMessage().contains("too large"));
         }
+    }
+
+    @Test
+    public void testRescale128() {
+        Decimal256 a = Decimal256.fromLong(1, 0);
+        a.rescale(30);
+        Assert.assertEquals("1.000000000000000000000000000000", a.toString());
+    }
+
+    @Test
+    public void testRescale192() {
+        Decimal256 a = Decimal256.fromLong(1, 0);
+        a.rescale(50);
+        Assert.assertEquals("1.00000000000000000000000000000000000000000000000000", a.toString());
+    }
+
+    @Test
+    public void testRescale256() {
+        Decimal256 a = Decimal256.fromLong(1, 0);
+        a.rescale(65);
+        Assert.assertEquals("1.00000000000000000000000000000000000000000000000000000000000000000", a.toString());
+    }
+
+    @Test
+    public void testRescale64() {
+        Decimal256 a = Decimal256.fromLong(1, 0);
+        a.rescale(10);
+        Assert.assertEquals("1.0000000000", a.toString());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testRescaleLess() {
+        Decimal256 a = new Decimal256(0, 0, 0, 100, 10);
+        a.rescale(5);
+    }
+
+    @Test
+    public void testRescaleNegative() {
+        Decimal256 a = Decimal256.fromLong(-10, 0);
+        a.rescale(2);
+        Assert.assertEquals(-1000, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflowHh() {
+        Decimal256 a = new Decimal256(100, 0, 0, 0, 0);
+        a.rescale(20);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflowHl() {
+        Decimal256 a = new Decimal256(0, 100, 0, 0, 0);
+        a.rescale(42);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflowLh() {
+        Decimal256 a = new Decimal256(0, 0, 100, 0, 0);
+        a.rescale(62);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflowLl() {
+        Decimal256 a = new Decimal256(0, 0, 0, 100, 0);
+        a.rescale(76);
     }
 
     @Test

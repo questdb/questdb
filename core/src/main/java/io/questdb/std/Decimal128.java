@@ -1093,8 +1093,12 @@ public class Decimal128 implements Sinkable {
      *
      * @param newScale The new scale (must be >= current scale)
      */
-    private void rescale(int newScale) {
-        assert newScale >= this.scale;
+    public void rescale(int newScale) {
+        validateScale(newScale);
+        if (newScale < this.scale) {
+            throw new IllegalArgumentException("New scale must be >= current scale");
+        }
+
         int scaleDiff = newScale - this.scale;
 
         boolean isNegative = isNegative();

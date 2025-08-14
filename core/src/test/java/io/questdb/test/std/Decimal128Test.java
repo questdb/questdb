@@ -39,6 +39,22 @@ import java.math.RoundingMode;
  * Tests for the consolidated Decimal128 class
  */
 public class Decimal128Test {
+    @Test(expected = NumericException.class)
+    public void testAddOverflow() {
+        Decimal128 a = new Decimal128(Long.MAX_VALUE, 0, 0);
+        Decimal128 b = new Decimal128(1, 0, 0);
+        a.add(b);
+    }
+
+    @Test
+    public void testAddRescaleB() {
+        Decimal128 a = new Decimal128(0, 100, 2);
+        Decimal128 b = new Decimal128(0, 1, 0);
+        a.add(b);
+        Assert.assertEquals(200, a.getLow());
+        Assert.assertEquals(2, a.getScale());
+    }
+
     @Test
     public void testAdditionFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
@@ -78,6 +94,13 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testCompareToDifferentSigns() {
+        Decimal128 a = Decimal128.fromLong(1L, 0);
+        Decimal128 b = Decimal128.fromLong(-1L, 0);
+        Assert.assertEquals(1, a.compareTo(b));
+    }
+
+    @Test
     public void testCompareToFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
 
@@ -100,6 +123,21 @@ public class Decimal128Test {
             } catch (NumericException ignore) {
             }
         }
+    }
+
+    @Test
+    public void testCompareToScaled() {
+        Decimal128 smaller = new Decimal128(0, 10, 1);
+        Decimal128 larger = new Decimal128(0, 200, 2);
+
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
+        Assert.assertEquals(0, smaller.compareTo(smaller));
+
+        smaller.of(10, 0, 1);
+        larger.of(200, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
     }
 
     @Test
@@ -162,6 +200,27 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testDivide() {
+        Decimal128 a = new Decimal128(0, 1000, 2);
+        Decimal128 b = new Decimal128(0, 3, 0);
+        a.divide(b, 2, RoundingMode.HALF_UP);
+        Assert.assertEquals(333, a.getLow());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal128(0, 10, 0);
+        b = new Decimal128(0, 300, 2);
+        a.divide(b, 2, RoundingMode.HALF_UP);
+        Assert.assertEquals(333, a.getLow());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal128(10, 0, 0);
+        b = new Decimal128(3, 0, 0);
+        a.divide(b, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(3, a.getLow());
+        Assert.assertEquals(0, a.getScale());
+    }
+
+    @Test
     public void testDivide64() {
         Decimal128 a = Decimal128.fromDouble(123.456, 3);
         Decimal128 b = Decimal128.fromDouble(7.89, 2);
@@ -173,6 +232,13 @@ public class Decimal128Test {
         Decimal128.divide(a, b, result, tgtScale, RoundingMode.HALF_UP);
         BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
         Assert.assertEquals(bdResult, result.toBigDecimal());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivideInvalidScale() {
+        Decimal128 a = new Decimal128(0, 1, 0);
+        Decimal128 b = new Decimal128(0, 1, 30);
+        a.divide(b, 30, RoundingMode.HALF_UP);
     }
 
     @Test
@@ -232,6 +298,49 @@ public class Decimal128Test {
         Decimal128 zero = Decimal128.fromDouble(0.0, 2);
 
         a.divide(zero, 2, RoundingMode.HALF_UP);
+    }
+
+    @Test
+    public void testDivisionCombinatorics() {
+        RoundingMode[] modes = new RoundingMode[]{RoundingMode.HALF_UP, RoundingMode.HALF_DOWN, RoundingMode.HALF_EVEN, RoundingMode.UNNECESSARY, RoundingMode.FLOOR, RoundingMode.CEILING, RoundingMode.DOWN, RoundingMode.UP};
+        BigDecimal[] dividends = new BigDecimal[]{new BigDecimal("-3.45"), new BigDecimal("0.000987654321"), new BigDecimal("1"), new BigDecimal("10"), new BigDecimal("123.456"), new BigDecimal("123456.789101112"), new BigDecimal("1234567891011121314"),};
+        BigDecimal[] divisors = new BigDecimal[]{new BigDecimal("-123.456"), new BigDecimal("0"), new BigDecimal("1"), new BigDecimal("2"), new BigDecimal("123.456"), new BigDecimal("123456.789101112"), new BigDecimal("12345678910111213141516171819202"),};
+        int[] scales = new int[]{0, 2, 6, 16};
+
+        for (RoundingMode roundingMode : modes) {
+            for (BigDecimal divisor : divisors) {
+                for (BigDecimal dividend : dividends) {
+                    for (int scale : scales) {
+                        Decimal128 a = Decimal128.fromBigDecimal(dividend);
+                        Decimal128 b = Decimal128.fromBigDecimal(divisor);
+                        if (divisor.compareTo(BigDecimal.ZERO) == 0) {
+                            try {
+                                a.divide(b, scale, roundingMode);
+                                Assert.fail("NumericException expected");
+                            } catch (NumericException e) {
+                                Assert.assertEquals("Division by zero", e.getMessage());
+                            }
+                            continue;
+                        }
+
+                        // Division might fail because of overflow during scaling
+                        try {
+                            a.divide(b, scale, roundingMode);
+                            BigDecimal expected = dividend.divide(divisor, scale, roundingMode);
+                            Assert.assertEquals(expected, a.toBigDecimal());
+                        } catch (NumericException e) {
+                            if (roundingMode == RoundingMode.UNNECESSARY && e.getMessage().equals("Rounding necessary")) {
+                                continue;
+                            }
+
+                            if (!e.getMessage().startsWith("Overflow")) {
+                                Assert.fail("NumericException Overflow expected, but was " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Test
@@ -398,6 +507,11 @@ public class Decimal128Test {
         Assert.assertEquals(2, a.getScale());
     }
 
+    @Test(expected = IllegalArgumentException.class)
+    public void testInvalidScale() {
+        new Decimal128(0, 0, 100);
+    }
+
     @Test
     public void testIsNegative() {
         Decimal128 positive = new Decimal128(0, 100, 2);
@@ -523,6 +637,47 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testMultiply() {
+        Decimal128 a = new Decimal128(0, 100, 2);
+        Decimal128 b = new Decimal128(0, 2, 0);
+        a.multiply(b);
+        Assert.assertEquals(200, a.getLow());
+        Assert.assertEquals(2, a.getScale());
+
+        a = new Decimal128(0, 100, 2);
+        b = new Decimal128(2, 0, 0);
+        a.multiply(b);
+        Assert.assertEquals(0, a.getLow());
+        Assert.assertEquals(200, a.getHigh());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow128() {
+        Decimal128 m = new Decimal128();
+        m.copyFrom(Decimal128.MAX_VALUE);
+        m.multiply(new Decimal128(2, 0, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow128B() {
+        Decimal128 m = new Decimal128(Long.MAX_VALUE, 0, 0);
+        m.multiply(new Decimal128(0, 2, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow64() {
+        Decimal128 m = new Decimal128(Long.MAX_VALUE, 0, 0);
+        m.multiply(new Decimal128(0, Long.MAX_VALUE, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflow64B() {
+        Decimal128 m = new Decimal128(Long.MAX_VALUE / 2, 0, 0);
+        m.multiply(new Decimal128(0, 3, 0));
+    }
+
+    @Test
     public void testNegativeArithmetic() {
         // Test with negative numbers
         Decimal128 a = Decimal128.fromDouble(-12.5, 1);
@@ -574,6 +729,46 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testRescale128() {
+        Decimal128 a = Decimal128.fromLong(1, 0);
+        a.rescale(30);
+        Assert.assertEquals("1.000000000000000000000000000000", a.toString());
+    }
+
+    @Test
+    public void testRescale64() {
+        Decimal128 a = Decimal128.fromLong(1, 0);
+        a.rescale(10);
+        Assert.assertEquals("1.0000000000", a.toString());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testRescaleLess() {
+        Decimal128 a = new Decimal128(0, 100, 10);
+        a.rescale(5);
+    }
+
+    @Test
+    public void testRescaleNegative() {
+        Decimal128 a = Decimal128.fromLong(-10, 0);
+        a.rescale(2);
+        Assert.assertEquals(-1000, a.getLow());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflowHigh() {
+        Decimal128 a = new Decimal128(100, 0, 0);
+        a.rescale(20);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflowLow() {
+        Decimal128 a = new Decimal128(0, 100, 0);
+        a.rescale(38);
+    }
+
+    @Test
     public void testRound() {
         // Test basic rounding from scale 3 to scale 2
         Decimal128 a = Decimal128.fromDouble(1.234, 3);
@@ -591,27 +786,16 @@ public class Decimal128Test {
         int targetScale = 2;
 
         // Test all rounding modes
-        java.math.RoundingMode[] modes = {
-                java.math.RoundingMode.UP,
-                java.math.RoundingMode.DOWN,
-                java.math.RoundingMode.CEILING,
-                java.math.RoundingMode.FLOOR,
-                java.math.RoundingMode.HALF_UP,
-                java.math.RoundingMode.HALF_DOWN,
-                java.math.RoundingMode.HALF_EVEN
-        };
+        java.math.RoundingMode[] modes = {java.math.RoundingMode.UP, java.math.RoundingMode.DOWN, java.math.RoundingMode.CEILING, java.math.RoundingMode.FLOOR, java.math.RoundingMode.HALF_UP, java.math.RoundingMode.HALF_DOWN, java.math.RoundingMode.HALF_EVEN};
 
         for (java.math.RoundingMode mode : modes) {
             Decimal128 a = Decimal128.fromDouble(testValue, originalScale);
             a.round(targetScale, mode);
 
             // Compare with BigDecimal reference
-            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue)
-                    .setScale(originalScale, java.math.RoundingMode.HALF_UP)
-                    .setScale(targetScale, mode);
+            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue).setScale(originalScale, java.math.RoundingMode.HALF_UP).setScale(targetScale, mode);
 
-            Assert.assertEquals("Rounding mode " + mode + " failed for " + testValue,
-                    reference, a.toBigDecimal());
+            Assert.assertEquals("Rounding mode " + mode + " failed for " + testValue, reference, a.toBigDecimal());
             Assert.assertEquals("Scale should be " + targetScale, targetScale, a.getScale());
         }
     }
@@ -623,15 +807,7 @@ public class Decimal128Test {
         final Rnd rnd = TestUtils.generateRandom(null);
 
         // All rounding modes except UNNECESSARY (which requires special handling)
-        java.math.RoundingMode[] roundingModes = {
-                java.math.RoundingMode.UP,
-                java.math.RoundingMode.DOWN,
-                java.math.RoundingMode.CEILING,
-                java.math.RoundingMode.FLOOR,
-                java.math.RoundingMode.HALF_UP,
-                java.math.RoundingMode.HALF_DOWN,
-                java.math.RoundingMode.HALF_EVEN
-        };
+        java.math.RoundingMode[] roundingModes = {java.math.RoundingMode.UP, java.math.RoundingMode.DOWN, java.math.RoundingMode.CEILING, java.math.RoundingMode.FLOOR, java.math.RoundingMode.HALF_UP, java.math.RoundingMode.HALF_DOWN, java.math.RoundingMode.HALF_EVEN};
 
         Decimal128 decimal = new Decimal128();
         for (int i = 0; i < iterations; i++) {
@@ -663,14 +839,7 @@ public class Decimal128Test {
             try {
                 originalBigDecimal = decimal.toBigDecimal();
             } catch (NumberFormatException e) {
-                String errorMsg = String.format(
-                        "Failed to convert original Decimal128 to BigDecimal at iteration %d:\n" +
-                                "Decimal128: high=0x%016x, low=0x%016x, scale=%d\n" +
-                                "toString()=%s\n" +
-                                "Error: %s",
-                        i, decimal.getHigh(), decimal.getLow(), decimal.getScale(),
-                        decimal, e.getMessage()
-                );
+                String errorMsg = String.format("Failed to convert original Decimal128 to BigDecimal at iteration %d:\n" + "Decimal128: high=0x%016x, low=0x%016x, scale=%d\n" + "toString()=%s\n" + "Error: %s", i, decimal.getHigh(), decimal.getLow(), decimal.getScale(), decimal, e.getMessage());
                 Assert.fail(errorMsg);
                 return; // unreachable but makes compiler happy
             }
@@ -687,38 +856,13 @@ public class Decimal128Test {
                 try {
                     actualBigDecimal = testDecimal.toBigDecimal();
                 } catch (NumberFormatException e) {
-                    String errorMsg = String.format(
-                            "Failed to convert result Decimal128 to BigDecimal at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "Result Decimal128: high=0x%016x, low=0x%016x, scale=%d\n" +
-                                    "toString()=%s\n" +
-                                    "Error: %s",
-                            i,
-                            originalBigDecimal.toPlainString(), decimal.getScale(),
-                            targetScale, roundingMode,
-                            testDecimal.getHigh(), testDecimal.getLow(), testDecimal.getScale(),
-                            testDecimal, e.getMessage()
-                    );
+                    String errorMsg = String.format("Failed to convert result Decimal128 to BigDecimal at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "Result Decimal128: high=0x%016x, low=0x%016x, scale=%d\n" + "toString()=%s\n" + "Error: %s", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, testDecimal.getHigh(), testDecimal.getLow(), testDecimal.getScale(), testDecimal, e.getMessage());
                     Assert.fail(errorMsg);
                     return; // unreachable but makes compiler happy
                 }
 
                 if (!expectedBigDecimal.equals(actualBigDecimal)) {
-                    String errorMsg = String.format(
-                            "Rounding mismatch at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "Expected: %s\n" +
-                                    "Actual: %s\n" +
-                                    "Original Decimal128: high=0x%016x, low=0x%016x, scale=%d",
-                            i,
-                            originalBigDecimal.toPlainString(), decimal.getScale(),
-                            targetScale, roundingMode,
-                            expectedBigDecimal.toPlainString(),
-                            actualBigDecimal.toPlainString(),
-                            decimal.getHigh(), decimal.getLow(), decimal.getScale()
-                    );
+                    String errorMsg = String.format("Rounding mismatch at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "Expected: %s\n" + "Actual: %s\n" + "Original Decimal128: high=0x%016x, low=0x%016x, scale=%d", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, expectedBigDecimal.toPlainString(), actualBigDecimal.toPlainString(), decimal.getHigh(), decimal.getLow(), decimal.getScale());
                     Assert.fail(errorMsg);
                 }
 
@@ -737,16 +881,7 @@ public class Decimal128Test {
                 }
 
                 if (!decimal128Threw) {
-                    String errorMsg = String.format(
-                            "BigDecimal threw NumericException but Decimal128 didn't at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "BigDecimal error: %s",
-                            i,
-                            originalBigDecimal.toPlainString(), decimal.getScale(),
-                            targetScale, roundingMode,
-                            e.getMessage()
-                    );
+                    String errorMsg = String.format("BigDecimal threw NumericException but Decimal128 didn't at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "BigDecimal error: %s", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, e.getMessage());
                     Assert.fail(errorMsg);
                 }
             }
@@ -781,20 +916,12 @@ public class Decimal128Test {
             java.math.BigDecimal resultBigDecimal = testDecimal.toBigDecimal();
 
             if (!originalBigDecimal.equals(resultBigDecimal)) {
-                String errorMsg = String.format(
-                        "UNNECESSARY mode changed value when no rounding needed at iteration %d:\n" +
-                                "Original: %s (scale=%d)\n" +
-                                "Result: %s (scale=%d)",
-                        i,
-                        originalBigDecimal.toPlainString(), currentScale,
-                        resultBigDecimal.toPlainString(), testDecimal.getScale()
-                );
+                String errorMsg = String.format("UNNECESSARY mode changed value when no rounding needed at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Result: %s (scale=%d)", i, originalBigDecimal.toPlainString(), currentScale, resultBigDecimal.toPlainString(), testDecimal.getScale());
                 Assert.fail(errorMsg);
             }
 
             // Verify scale unchanged
-            Assert.assertEquals("Scale should remain unchanged with UNNECESSARY mode",
-                    currentScale, testDecimal.getScale());
+            Assert.assertEquals("Scale should remain unchanged with UNNECESSARY mode", currentScale, testDecimal.getScale());
         }
     }
 
@@ -802,8 +929,7 @@ public class Decimal128Test {
     public void testRoundHalfEvenTieBreaking() {
         // Test HALF_EVEN tie-breaking specifically
         double[] testValues = {1.125, 1.135, 2.125, 2.135}; // Tie cases
-        java.math.BigDecimal[] expectedResults = {
-                java.math.BigDecimal.valueOf(1.12), // Round to even (2)
+        java.math.BigDecimal[] expectedResults = {java.math.BigDecimal.valueOf(1.12), // Round to even (2)
                 java.math.BigDecimal.valueOf(1.14), // Round to even (4)
                 java.math.BigDecimal.valueOf(2.12), // Round to even (2)
                 java.math.BigDecimal.valueOf(2.14)  // Round to even (4)
@@ -813,8 +939,7 @@ public class Decimal128Test {
             Decimal128 a = Decimal128.fromDouble(testValues[i], 3);
             a.round(2, java.math.RoundingMode.HALF_EVEN);
 
-            Assert.assertEquals("HALF_EVEN tie-breaking failed for " + testValues[i],
-                    expectedResults[i], a.toBigDecimal());
+            Assert.assertEquals("HALF_EVEN tie-breaking failed for " + testValues[i], expectedResults[i], a.toBigDecimal());
         }
     }
 
@@ -831,27 +956,16 @@ public class Decimal128Test {
         int originalScale = 3;
         int targetScale = 2;
 
-        java.math.RoundingMode[] modes = {
-                java.math.RoundingMode.UP,
-                java.math.RoundingMode.DOWN,
-                java.math.RoundingMode.CEILING,
-                java.math.RoundingMode.FLOOR,
-                java.math.RoundingMode.HALF_UP,
-                java.math.RoundingMode.HALF_DOWN,
-                java.math.RoundingMode.HALF_EVEN
-        };
+        java.math.RoundingMode[] modes = {java.math.RoundingMode.UP, java.math.RoundingMode.DOWN, java.math.RoundingMode.CEILING, java.math.RoundingMode.FLOOR, java.math.RoundingMode.HALF_UP, java.math.RoundingMode.HALF_DOWN, java.math.RoundingMode.HALF_EVEN};
 
         for (java.math.RoundingMode mode : modes) {
             Decimal128 a = Decimal128.fromDouble(testValue, originalScale);
             a.round(targetScale, mode);
 
             // Compare with BigDecimal reference
-            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue)
-                    .setScale(originalScale, java.math.RoundingMode.HALF_UP)
-                    .setScale(targetScale, mode);
+            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue).setScale(originalScale, java.math.RoundingMode.HALF_UP).setScale(targetScale, mode);
 
-            Assert.assertEquals("Rounding mode " + mode + " failed for negative " + testValue,
-                    reference, a.toBigDecimal());
+            Assert.assertEquals("Rounding mode " + mode + " failed for negative " + testValue, reference, a.toBigDecimal());
             Assert.assertEquals("Scale should be " + targetScale, targetScale, a.getScale());
         }
     }
@@ -1083,13 +1197,11 @@ public class Decimal128Test {
             inPlaceResult.negate();
 
             // Results should be identical
-            Assert.assertEquals("Static and in-place negate differ for value " + value,
-                    staticResult.toBigDecimal(), inPlaceResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place negate differ for value " + value, staticResult.toBigDecimal(), inPlaceResult.toBigDecimal());
 
             // Verify original is unchanged by static method - compare with fresh instance
             Decimal128 originalFresh = Decimal128.fromDouble(value, 3);
-            Assert.assertEquals("Static negate modified original for value " + value,
-                    originalFresh.toBigDecimal(), a.toBigDecimal());
+            Assert.assertEquals("Static negate modified original for value " + value, originalFresh.toBigDecimal(), a.toBigDecimal());
         }
     }
 
@@ -1169,8 +1281,7 @@ public class Decimal128Test {
             String stringRep = a.toString();
             java.math.BigDecimal bigDecimal = a.toBigDecimal();
 
-            Assert.assertEquals("toBigDecimal and toString should be consistent for " + value,
-                    stringRep, bigDecimal.toString());
+            Assert.assertEquals("toBigDecimal and toString should be consistent for " + value, stringRep, bigDecimal.toString());
         }
     }
 
@@ -1181,8 +1292,7 @@ public class Decimal128Test {
         java.math.BigDecimal bigDecimal = a.toBigDecimal();
 
         // BigDecimal should preserve the exact decimal representation
-        Assert.assertTrue("BigDecimal should preserve precision",
-                bigDecimal.toString().contains("123.456789"));
+        Assert.assertTrue("BigDecimal should preserve precision", bigDecimal.toString().contains("123.456789"));
 
         // Convert back and forth should be consistent
         java.math.BigDecimal expected = java.math.BigDecimal.valueOf(123.456789).setScale(6, java.math.RoundingMode.HALF_UP);
@@ -1410,8 +1520,7 @@ public class Decimal128Test {
             result.add(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place addition differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place addition differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 
@@ -1455,8 +1564,7 @@ public class Decimal128Test {
             result.divide(b, resultScale, RoundingMode.HALF_UP);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place division differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place division differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
             if (expected.compareTo(actual) != 0) {
@@ -1496,8 +1604,7 @@ public class Decimal128Test {
             result.modulo(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place modulo differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place modulo differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
             if (expected.compareTo(actual) != 0) {
@@ -1548,8 +1655,7 @@ public class Decimal128Test {
             result.multiply(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place multiplication differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place multiplication differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
             if (expected.compareTo(actual) != 0) {
@@ -1594,10 +1700,8 @@ public class Decimal128Test {
             Decimal128.subtract(a, b, staticResult);
 
             // Verify operands unchanged
-            Assert.assertEquals("Subtract modified first operand at iteration " + iteration,
-                    a.toBigDecimal(), a.toBigDecimal());
-            Assert.assertEquals("Subtract modified second operand at iteration " + iteration,
-                    b.toBigDecimal(), b.toBigDecimal());
+            Assert.assertEquals("Subtract modified first operand at iteration " + iteration, a.toBigDecimal(), a.toBigDecimal());
+            Assert.assertEquals("Subtract modified second operand at iteration " + iteration, b.toBigDecimal(), b.toBigDecimal());
 
             Decimal128 result = new Decimal128();
             result.copyFrom(a);
@@ -1606,8 +1710,7 @@ public class Decimal128Test {
             result.subtract(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place subtraction differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place subtraction differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 

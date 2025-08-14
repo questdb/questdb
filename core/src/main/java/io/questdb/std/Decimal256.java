@@ -2,7 +2,6 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigDecimal;
@@ -748,6 +747,33 @@ public class Decimal256 implements Sinkable {
         this.lh = lh;
         this.ll = ll;
         this.scale = scale;
+    }
+
+    /**
+     * Rescale this Decimal256 in place
+     *
+     * @param newScale The new scale (must be >= current scale)
+     */
+    public void rescale(int newScale) {
+        if (newScale < scale) {
+            throw new IllegalArgumentException("New scale must be >= current scale");
+        }
+
+        int scaleDiff = newScale - this.scale;
+
+        boolean isNegative = isNegative();
+        if (isNegative) {
+            negate();
+        }
+
+        // Multiply by 10^scaleDiff
+        multiplyByPowerOf10InPlace(scaleDiff);
+
+        if (isNegative) {
+            negate();
+        }
+
+        this.scale = newScale;
     }
 
     /**
@@ -1685,30 +1711,6 @@ public class Decimal256 implements Sinkable {
         for (int i = 0; i < 8; i++) {
             bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
         }
-    }
-
-    /**
-     * Rescale this Decimal256 in place
-     *
-     * @param newScale The new scale (must be >= current scale)
-     */
-    private void rescale(int newScale) {
-        assert newScale >= scale;
-        int scaleDiff = newScale - this.scale;
-
-        boolean isNegative = isNegative();
-        if (isNegative) {
-            negate();
-        }
-
-        // Multiply by 10^scaleDiff
-        multiplyByPowerOf10InPlace(scaleDiff);
-
-        if (isNegative) {
-            negate();
-        }
-
-        this.scale = newScale;
     }
 
     /**
