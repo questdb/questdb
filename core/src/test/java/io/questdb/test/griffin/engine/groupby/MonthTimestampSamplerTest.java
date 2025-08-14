@@ -55,7 +55,6 @@ public class MonthTimestampSamplerTest {
         });
     }
 
-
     @Test
     public void testNextTimestamp() throws Exception {
         TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
