@@ -38,25 +38,147 @@ import org.junit.Test;
  * Miscellaneous tests for tables with partitions in Parquet format.
  */
 public class ParquetTest extends AbstractCairoTest {
+    private static final String ARRAY_1D = "ARRAY[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]";
+    private static final String ARRAY_2D = "ARRAY[" +
+            "  [1.0, 2.0, 3.0]," +
+            "  [4.0, 5.0, 6.0]," +
+            "  [7.0, 8.0, 9.0]," +
+            "  [10.0, 11.0, 12.0]" +
+            "]";
+    private static final String ARRAY_3D = "ARRAY[" +
+            "  [" +
+            "    [1.0, 2.0, 3.0]," +
+            "    [4.0, 5.0, 6.0]," +
+            "    [7.0, 8.0, 9.0]" +
+            "  ]," +
+            "  [" +
+            "    [10.0, 11.0, 12.0]," +
+            "    [13.0, 14.0, 15.0]," +
+            "    [16.0, 17.0, 18.0]" +
+            "  ]," +
+            "  [" +
+            "    [19.0, 20.0, 21.0]," +
+            "    [22.0, 23.0, 24.0]," +
+            "    [25.0, 26.0, 27.0]" +
+            "  ]" +
+            "]";
+    private static final String ARRAY_4D = "ARRAY[" +
+            "  [" +
+            "    [" +
+            "      [1.0, 2.0]," +
+            "      [3.0, 4.0]" +
+            "    ]," +
+            "    [" +
+            "      [5.0, 6.0]," +
+            "      [7.0, 8.0]" +
+            "    ]" +
+            "  ]," +
+            "  [" +
+            "    [" +
+            "      [9.0, 10.0]," +
+            "      [11.0, 12.0]" +
+            "    ]," +
+            "    [" +
+            "      [13.0, 14.0]," +
+            "      [15.0, 16.0]" +
+            "    ]" +
+            "  ]" +
+            "]";
+    private static final String ARRAY_5D = "ARRAY[" +
+            "  [" +
+            "    [" +
+            "      [" +
+            "        [1.0, 2.0]," +
+            "        [3.0, 4.0]" +
+            "      ]," +
+            "      [" +
+            "        [5.0, 6.0]," +
+            "        [7.0, 8.0]" +
+            "      ]" +
+            "    ]," +
+            "    [" +
+            "      [" +
+            "        [9.0, 10.0]," +
+            "        [11.0, 12.0]" +
+            "      ]," +
+            "      [" +
+            "        [13.0, 14.0]," +
+            "        [15.0, 16.0]" +
+            "      ]" +
+            "    ]" +
+            "  ]," +
+            "  [" +
+            "    [" +
+            "      [" +
+            "        [17.0, 18.0]," +
+            "        [19.0, 20.0]" +
+            "      ]," +
+            "      [" +
+            "        [21.0, 22.0]," +
+            "        [23.0, 24.0]" +
+            "      ]" +
+            "    ]," +
+            "    [" +
+            "      [" +
+            "        [25.0, 26.0]," +
+            "        [27.0, 28.0]" +
+            "      ]," +
+            "      [" +
+            "        [29.0, 30.0]," +
+            "        [31.0, 32.0]" +
+            "      ]" +
+            "    ]" +
+            "  ]" +
+            "]";
 
     @Test
     public void test1dArray() throws Exception {
-        test1dArray(false);
+        testNdArray(1, ARRAY_1D, false);
     }
 
     @Test
     public void test1dArray_rawArrayEncoding() throws Exception {
-        test1dArray(true);
+        testNdArray(1, ARRAY_1D, true);
+    }
+
+    @Test
+    public void test2dArray() throws Exception {
+        testNdArray(2, ARRAY_2D, false);
+    }
+
+    @Test
+    public void test2dArray_rawArrayEncoding() throws Exception {
+        testNdArray(2, ARRAY_2D, true);
     }
 
     @Test
     public void test3dArray() throws Exception {
-        test3dArray(false);
+        testNdArray(3, ARRAY_3D, false);
     }
 
     @Test
     public void test3dArray_rawArrayEncoding() throws Exception {
-        test3dArray(true);
+        testNdArray(3, ARRAY_3D, true);
+    }
+
+    @Test
+    public void test4dArray() throws Exception {
+        testNdArray(4, ARRAY_4D, false);
+    }
+
+    @Test
+    public void test4dArray_rawArrayEncoding() throws Exception {
+        testNdArray(4, ARRAY_4D, true);
+    }
+
+    @Test
+    public void test5dArray() throws Exception {
+        testNdArray(5, ARRAY_5D, false);
+    }
+
+    @Test
+    public void test5dArray_rawArrayEncoding() throws Exception {
+        testNdArray(5, ARRAY_5D, true);
     }
 
     @Test
@@ -877,90 +999,6 @@ public class ParquetTest extends AbstractCairoTest {
         testTimeFilter(100);
     }
 
-    private void test1dArray(boolean rawArrayEncoding) throws Exception {
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
-
-        final String arr1 = "ARRAY[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]\n";
-        final String arr1exp = arr1
-                .replaceAll(" ", "")
-                .replaceAll("\n", "")
-                .replace("ARRAY", "");
-        assertMemoryLeak(() -> {
-            execute("create table x (a1 double[], ts timestamp) timestamp(ts) partition by month;");
-            execute("insert into x values(" + arr1 + ", '2024-01-10T00:00:00.000000Z');");
-            execute("insert into x values(" + arr1 + ", '2024-01-11T00:00:00.000000Z');");
-            execute("insert into x values(" + arr1 + ", '2024-02-10T00:00:00.000000Z');");
-            execute("insert into x values(array[], '2024-03-10T00:00:00.000000Z');");
-            execute("insert into x values(array[null], '2024-03-10T00:00:00.000000Z');");
-            execute("insert into x values(null, '2024-03-10T00:00:00.000000Z');");
-
-            final String expected = "a1\tts\n"
-                    + arr1exp + "\t2024-01-10T00:00:00.000000Z\n"
-                    + arr1exp + "\t2024-01-11T00:00:00.000000Z\n"
-                    + arr1exp + "\t2024-02-10T00:00:00.000000Z\n"
-                    + "[]\t2024-03-10T00:00:00.000000Z\n"
-                    + "[null]\t2024-03-10T00:00:00.000000Z\n"
-                    + "null\t2024-03-10T00:00:00.000000Z\n";
-            assertSql(expected, "x");
-
-            execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, "x");
-
-            execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, "x");
-        });
-    }
-
-    private void test3dArray(boolean rawArrayEncoding) throws Exception {
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
-
-        final String arr1 = "ARRAY[\n" +
-                "  [\n" +
-                "    [1.0, 2.0, 3.0],\n" +
-                "    [4.0, 5.0, 6.0],\n" +
-                "    [7.0, 8.0, 9.0]\n" +
-                "  ],\n" +
-                "  [\n" +
-                "    [10.0, 11.0, 12.0],\n" +
-                "    [13.0, 14.0, 15.0],\n" +
-                "    [16.0, 17.0, 18.0]\n" +
-                "  ],\n" +
-                "  [\n" +
-                "    [19.0, 20.0, 21.0],\n" +
-                "    [22.0, 23.0, 24.0],\n" +
-                "    [25.0, 26.0, 27.0]\n" +
-                "  ]\n" +
-                "]\n";
-        final String arr1exp = arr1
-                .replaceAll(" ", "")
-                .replaceAll("\n", "")
-                .replace("ARRAY", "");
-        assertMemoryLeak(() -> {
-            execute("create table x (a1 double[][][], ts timestamp) timestamp(ts) partition by month;");
-            execute("insert into x values(" + arr1 + ", '2024-04-10T00:00:00.000000Z');");
-            execute("insert into x values(" + arr1 + ", '2024-05-10T00:00:00.000000Z');");
-            execute("insert into x values(" + arr1 + ", '2024-06-10T00:00:00.000000Z');");
-            execute("insert into x values(array[[[]]], '2024-07-10T00:00:00.000000Z');");
-            execute("insert into x values(array[[[null]]], '2024-07-10T00:00:00.000000Z');");
-            execute("insert into x values(null, '2024-07-10T00:00:00.000000Z');");
-
-            final String expected = "a1\tts\n"
-                    + arr1exp + "\t2024-04-10T00:00:00.000000Z\n"
-                    + arr1exp + "\t2024-05-10T00:00:00.000000Z\n"
-                    + arr1exp + "\t2024-06-10T00:00:00.000000Z\n"
-                    + "[]\t2024-07-10T00:00:00.000000Z\n"
-                    + "[[[null]]]\t2024-07-10T00:00:00.000000Z\n"
-                    + "null\t2024-07-10T00:00:00.000000Z\n";
-            assertSql(expected, "x");
-
-            execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, "x");
-
-            execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, "x");
-        });
-    }
-
     private void testArrayColTops(boolean rawArrayEncoding) throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
 
@@ -997,6 +1035,45 @@ public class ParquetTest extends AbstractCairoTest {
                             "11\t2024-06-10T00:04:00.000000Z\t5\t[42.0]\n",
                     "x order by id"
             );
+        });
+    }
+
+    private void testNdArray(int dims, String arr, boolean rawArrayEncoding) throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
+
+        final String columnType = "double" + "[]".repeat(dims);
+        final String emptyArrayLiteral = "array[]";
+        final String singleNullArrayLiteral = "array" + "[".repeat(dims) + "null" + "]".repeat(dims);
+        final String singleNullArrayExpected = "[".repeat(dims) + "null" + "]".repeat(dims);
+
+        final String arrExpr = arr
+                .replaceAll(" ", "")
+                .replaceAll("\n", "")
+                .replace("ARRAY", "");
+
+        assertMemoryLeak(() -> {
+            execute("create table x (a1 " + columnType + ", ts timestamp) timestamp(ts) partition by month;");
+            execute("insert into x values(" + arr + ", '2024-01-10T00:00:00.000000Z');");
+            execute("insert into x values(" + arr + ", '2024-01-10T00:00:00.000000Z');");
+            execute("insert into x values(" + arr + ", '2024-02-10T00:00:00.000000Z');");
+            execute("insert into x values(" + emptyArrayLiteral + ", '2024-03-10T00:00:00.000000Z');");
+            execute("insert into x values(" + singleNullArrayLiteral + ", '2024-03-10T00:00:00.000000Z');");
+            execute("insert into x values(null, '2024-03-10T00:00:00.000000Z');");
+
+            final String expected = "a1\tts\n" +
+                    arrExpr + "\t2024-01-10T00:00:00.000000Z\n" +
+                    arrExpr + "\t2024-01-10T00:00:00.000000Z\n" +
+                    arrExpr + "\t2024-02-10T00:00:00.000000Z\n" +
+                    "[]\t2024-03-10T00:00:00.000000Z\n" +
+                    singleNullArrayExpected + "\t2024-03-10T00:00:00.000000Z\n" +
+                    "null\t2024-03-10T00:00:00.000000Z\n";
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to parquet where ts >= 0");
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to native where ts >= 0");
+            assertSql(expected, "x");
         });
     }
 
