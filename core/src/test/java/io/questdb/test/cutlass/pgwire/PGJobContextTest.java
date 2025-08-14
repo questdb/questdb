@@ -7948,8 +7948,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesTimestampRange() throws Exception {
-        // test is flapping in LEGACY mode
-        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
