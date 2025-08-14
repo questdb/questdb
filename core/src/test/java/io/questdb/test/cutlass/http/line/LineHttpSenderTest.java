@@ -198,7 +198,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testArrayConstructorValidation() {
         // Test negative dimensions in constructor
         try {
-            new DoubleArray(-1, 5);
+            new DoubleArray(-1, 5).close();
             Assert.fail("Should throw LineSenderException for negative dimension");
         } catch (LineSenderException e) {
             Assert.assertTrue(e.getMessage().contains("dimension length must not be negative"));
@@ -206,7 +206,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
         // Test empty shape
         try {
-            new DoubleArray();
+            new DoubleArray().close();
             Assert.fail("Should throw LineSenderException for empty shape");
         } catch (LineSenderException e) {
             Assert.assertTrue(e.getMessage().contains("Shape must have at least one dimension"));
@@ -215,7 +215,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         // Test dimension exceeding DIM_MAX_LEN
         int maxDim = (1 << 28) - 1; // ArrayView.DIM_MAX_LEN
         try {
-            new DoubleArray(maxDim + 1);
+            new DoubleArray(maxDim + 1).close();
             Assert.fail("Should throw LineSenderException for dimension exceeding max length");
         } catch (LineSenderException e) {
             Assert.assertTrue(e.getMessage().contains("dimension length out of range"));
@@ -227,7 +227,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             tooManyDims[i] = 2;
         }
         try {
-            new DoubleArray(tooManyDims);
+            new DoubleArray(tooManyDims).close();
             Assert.fail("Should throw LineSenderException for too many dimensions");
         } catch (LineSenderException e) {
             Assert.assertTrue(e.getMessage().contains("Maximum supported dimensionality is 32D"));
@@ -398,6 +398,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
             // Test empty shape for varargs reshape
             try {
+                //noinspection RedundantArrayCreation
                 array.reshape(new int[0]);
                 Assert.fail("Should throw LineSenderException for empty shape");
             } catch (LineSenderException e) {
@@ -751,7 +752,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1024"
             )) {
                 String tableName = "empty_arrays_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (a1 double[], a2 double[][], a3 double[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.ddl("CREATE TABLE " + tableName +
+                        " (a1 double[], a2 double[][], a3 double[][][], ts TIMESTAMP)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -784,12 +787,17 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     // Test 3D array with various zero dimensions
                     double[][][] partial3D_1 = createDoubleArray(2, 0, 0);
+                    sender.table(tableName)
+                            .doubleArray("a1", empty1D)
+                            .doubleArray("a2", empty2D)
+                            .doubleArray("a3", partial3D_1)
+                            .at(300000000000L, ChronoUnit.MICROS);
                     double[][][] partial3D_2 = createDoubleArray(2, 3, 0);
                     sender.table(tableName)
                             .doubleArray("a1", empty1D)
                             .doubleArray("a2", empty2D)
                             .doubleArray("a3", partial3D_2)
-                            .at(300000000000L, ChronoUnit.MICROS);
+                            .at(400000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
                 serverMain.awaitTxn(tableName, 3);
@@ -797,7 +805,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "a1\ta2\ta3\tts\n" +
                                 "[]\t[]\t[]\t1970-01-02T03:46:40.000000Z\n" +
                                 "[]\t[]\t[]\t1970-01-03T07:33:20.000000Z\n" +
-                                "[]\t[]\t[]\t1970-01-04T11:20:00.000000Z\n");
+                                "[]\t[]\t[]\t1970-01-04T11:20:00.000000Z\n" +
+                                "[]\t[]\t[]\t1970-01-05T15:06:40.000000Z\n");
             }
         });
     }
@@ -817,8 +826,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
-                        .build();
-                     DoubleArray a1 = new DoubleArray(0);
+                        .build()
                 ) {
                     double[] arr1d = createDoubleArray(0);
 
