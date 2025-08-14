@@ -95,7 +95,8 @@ mod tests {
 
         let mut vec = vec![];
 
-        encode_bool(&mut vec, iter, iter.size_hint().1.unwrap())?;
+        let len = iter.size_hint().1.unwrap();
+        encode_bool(&mut vec, iter, len)?;
 
         assert_eq!(vec, vec![(2 << 1 | 1), 0b10011101u8, 0b00011101]);
 
@@ -106,11 +107,12 @@ mod tests {
     fn bool_from_iter() -> std::io::Result<()> {
         let mut vec = vec![];
 
-        let iter = vec![true, true, true, true, true, true, true, true].into_iter();
+        let values = vec![true, true, true, true, true, true, true, true];
+        let iter = values.into_iter();
         encode_bool(
             &mut vec,
             iter,
-            iter.size_hint().1.unwrap()
+            values.len(),
         )?;
 
         assert_eq!(vec, vec![(1 << 1 | 1), 0b11111111]);
@@ -121,7 +123,8 @@ mod tests {
     fn test_encode_u32() -> std::io::Result<()> {
         let mut vec = vec![];
 
-        encode_u32(&mut vec, vec![0, 1, 2, 1, 2, 1, 1, 0, 3].into_iter(), iter.size_hint().1.unwrap(), 2)?;
+        let values = vec![0, 1, 2, 1, 2, 1, 1, 0, 3];
+        encode_u32(&mut vec, values.into_iter(), values.len(), 2)?;
 
         assert_eq!(
             vec,
@@ -134,9 +137,9 @@ mod tests {
     fn test_encode_u32_large() -> std::io::Result<()> {
         let mut vec = vec![];
 
-        let values = (0..128).map(|x| x % 4);
+        let values: Vec<_> = (0..128).map(|x| x % 4).collect();
 
-        encode_u32(&mut vec, values, values.size_hint().1.unwrap(), 2)?;
+        encode_u32(&mut vec, values.into_iter(), values.len(), 2)?;
 
         let length = 128;
         let expected = 0b11_10_01_00u8;
@@ -150,10 +153,10 @@ mod tests {
 
     #[test]
     fn test_u32_other() -> std::io::Result<()> {
-        let values = vec![3, 3, 0, 3, 2, 3, 3, 3, 3, 1, 3, 3, 3, 0, 3].into_iter();
+        let values = vec![3, 3, 0, 3, 2, 3, 3, 3, 3, 1, 3, 3, 3, 0, 3];
 
         let mut vec = vec![];
-        encode_u32(&mut vec, values, values.size_hint().1.unwrap(), 2)?;
+        encode_u32(&mut vec, values.into_iter(), values.len(), 2)?;
 
         let expected = vec![5, 207, 254, 247, 51];
         assert_eq!(expected, vec);

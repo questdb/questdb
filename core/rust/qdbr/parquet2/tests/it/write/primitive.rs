@@ -25,7 +25,7 @@ fn unzip_option<T: NativeType>(array: &[Option<T>]) -> Result<(Vec<u8>, Vec<u8>)
             false
         }
     });
-    let length = iter.size_hint().1?;
+    let length = array.len();
     encode_bool(&mut validity, iter, length)?;
 
     // write the length, now that it is known
