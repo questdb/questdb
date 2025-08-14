@@ -34,27 +34,26 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.QuietCloseable;
 
 /**
- * `AbstractArray` provides an interface for Java client users to create multi-dimensional arrays,
- * supporting up to 32 dimensions.
- * <p>It manages a contiguous block of memory to store the actual array data.
- * To prevent memory leaks, please ensure to invoke the {@link #close()} method after usage.
- * <p>Example of usage:
- * <pre>{@code
- *    // Creates a 2x3 matrix (2D array)
- *    DoubleArray matrix = new DoubleArray(2, 3);
+ * Use this class to prepare data for an N-dimensional array column in QuestDB.
+ * It manages a contiguous block of native memory to store the array data.
+ * To avoid leaking this memory, make sure you use it in a try-with-resources block,
+ * or call {@link #close()} explicitly.
+ * <p>
+ * Example of usage:
+ * <pre>
+ *    // Create a 2x3 array:
+ *    try (DoubleArray matrix = new DoubleArray(2, 3)) {
  *
- *    // Fill with data using append (row-major order)
- *    matrix.append(1.0).append(2.0).append(3.0)  // first row
- *          .append(4.0).append(5.0).append(6.0); // second row
+ *        // Append data in row-major order:
+ *        matrix.append(1.0).append(2.0).append(3.0)  // first row
+ *              .append(4.0).append(5.0).append(6.0); // second row
  *
- *    // Or set specific coordinates
- *    matrix.set(1.5, 0, 1);  // set element at row 0, column 1
+ *        // Or, set a value at specific coordinates:
+ *        matrix.set(1.5, 0, 1);  // set element at row 0, column 1
  *
- *    // Send to QuestDB
- *    sender.table("my_table").doubleArray("matrix_column", matrix).atNow();
- *
- *    // Remember to close when done
- *    matrix.close();
+ *        // Send to QuestDB
+ *        sender.table("my_table").doubleArray("matrix_column", matrix).atNow();
+ *    }
  * }</pre>
  */
 public abstract class AbstractArray implements QuietCloseable {
@@ -110,18 +109,16 @@ public abstract class AbstractArray implements QuietCloseable {
     /**
      * Resets the append position to the beginning of the array without modifying any data.
      * <p>
-     * This method only resets the internal append position counter. The actual array data
-     * remains unchanged. Subsequent {@code append()} calls will start overwriting from
-     * the first element.
+     * This method only resets the append position marker, and the array data remains unchanged.
+     * Subsequent {@code append()} calls will start overwriting from the first element.
      * <p>
      * <strong>Use cases:</strong>
      * <ul>
-     * <li>Error recovery after {@link Sender#cancelRow()} when array is partially filled</li>
-     * <li>Starting fresh without waiting for auto-wrapping behavior</li>
+     * <li>Reset the array after getting an error and/or calling {@link Sender#cancelRow()}</li>
+     * <li>Start fresh without relying on auto-wrapping behavior</li>
      * </ul>
-     * <p>
-     * <strong>Note:</strong> To change the array dimensions, use {@code reshape()} instead.
-     * This method only resets the position within the current shape.
+     * <strong>Note:</strong> to change the array dimensions, use {@code reshape()}.
+     * This method only resets the position while maintaining the array shape.
      *
      * @see #reshape(int...)
      */
@@ -133,15 +130,15 @@ public abstract class AbstractArray implements QuietCloseable {
     /**
      * Closes this array and releases all associated native memory resources.
      * <p>
-     * <strong>Important:</strong> After calling this method, the array becomes unusable.
+     * <strong>Important:</strong> after calling this method, the array becomes unusable.
      * Any subsequent operations (append, set, reshape, etc.) will result in undefined
      * behavior or exceptions.
      * <p>
-     * This method is idempotent - calling it multiple times has no additional effect.
+     * This method is idempotent &mdash; calling it multiple times has no additional effect.
      * <p>
-     * <strong>Memory Management:</strong> Since arrays use native memory, failing to call
-     * this method will result in memory leaks. Use try-with-resources or ensure explicit
-     * cleanup in finally blocks.
+     * <strong>Memory Management:</strong> since the class uses native memory, failing to call
+     * this method will result in a native memory leak. Use it inside try-with-resources, or
+     * call explicitly in a finally block.
      *
      * @see java.lang.AutoCloseable#close()
      */
@@ -154,11 +151,8 @@ public abstract class AbstractArray implements QuietCloseable {
     }
 
     /**
-     * Reshapes the array to the specified dimensions.
-     * <p>This method allows changing the array's shape after creation, enabling
-     * dynamic resizing based on runtime requirements.
-     * <br>
-     * Note: It resets the append position to the start of the array.
+     * Reshapes the array to the specified dimensions, and resets the append
+     * position to the start of the array.
      *
      * @param shape the new dimensions for the array
      * @throws LineSenderException if the array is already closed or shape has invalid dimensions
@@ -198,9 +192,8 @@ public abstract class AbstractArray implements QuietCloseable {
     }
 
     /**
-     * Reshapes the array to a single dimension with the specified length.
-     * <p>This is a convenience method for converting multi-dimensional arrays to
-     * one-dimensional arrays or resizing existing one-dimensional arrays without allocating an array for the shape.
+     * Reshapes the array to a single dimension with the specified length, and resets
+     * the append position to the start of the array.
      *
      * @param dimLen the length of the single dimension
      * @throws LineSenderException if the array is already closed or dimLen is negative
@@ -224,9 +217,8 @@ public abstract class AbstractArray implements QuietCloseable {
     }
 
     /**
-     * Reshapes the array to a two-dimensional array with the specified dimensions.
-     * <p>This is a convenience method for creating or reshaping to 2D arrays (matrices)
-     * without allocating an array for the shape.
+     * Reshapes the array to two dimensions with the specified lengths, and resets
+     * the append position to the start of the array.
      *
      * @param dim1 the length of the first dimension (rows)
      * @param dim2 the length of the second dimension (columns)
@@ -252,9 +244,8 @@ public abstract class AbstractArray implements QuietCloseable {
     }
 
     /**
-     * Reshapes the array to a three-dimensional array with the specified dimensions.
-     * <p>This is a convenience method for creating or reshaping to 3D arrays
-     * without allocating an array for the shape.
+     * Reshapes the array to three dimensions with the specified lengths, and resets
+     * the append position to the start of the array.
      *
      * @param dim1 the length of the first dimension
      * @param dim2 the length of the second dimension
