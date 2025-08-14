@@ -22,10 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.std.IntList;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 
-public interface TypeContainer {
-    IntList getPgInParameterTypeOIDs();
+import java.io.Closeable;
+
+public interface PGCircuitBreakerRegistry extends Closeable {
+    int add(NetworkSqlExecutionCircuitBreaker cb);
+
+    void cancel(int circuitBreakerIdx, int secret);
+
+    @Override
+    void close();
+
+    int getNewSecret();
+
+    void remove(int contextId);
 }

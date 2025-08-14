@@ -79,7 +79,7 @@ public class Vm {
         return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
-    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
 
@@ -103,7 +103,7 @@ public class Vm {
         return new MemoryPMARImpl(configuration);
     }
 
-    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
+    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, int opts) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }
 
@@ -118,7 +118,7 @@ public class Vm {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
         return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1, memoryTag, opts);
     }
 }

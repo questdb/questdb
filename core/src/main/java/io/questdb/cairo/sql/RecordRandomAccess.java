@@ -22,21 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-
-import java.io.Closeable;
-
-public interface CircuitBreakerRegistry extends Closeable {
-    int add(NetworkSqlExecutionCircuitBreaker cb);
-
-    void cancel(int circuitBreakerIdx, int secret);
-
-    @Override
-    void close();
-
-    int getNewSecret();
-
-    void remove(int contextId);
+public interface RecordRandomAccess {
+    /**
+     * Positions record at given row id. The row id must have been previously obtained from Record instance.
+     *
+     * @param record  to position
+     * @param atRowId rowid of the desired record
+     */
+    void recordAt(Record record, long atRowId);
 }

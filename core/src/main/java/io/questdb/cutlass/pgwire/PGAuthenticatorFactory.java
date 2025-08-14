@@ -22,9 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
-@FunctionalInterface
-interface PGResumeCallback {
-    void resume() throws Exception;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.SocketAuthenticator;
+
+public interface PGAuthenticatorFactory {
+    SocketAuthenticator getPgWireAuthenticator(
+            PGConfiguration configuration,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            PGCircuitBreakerRegistry registry,
+            OptionsListener optionsListener
+    );
 }

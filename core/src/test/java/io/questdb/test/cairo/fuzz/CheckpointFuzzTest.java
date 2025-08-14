@@ -72,18 +72,18 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         triggerFilePath = new Path();
     }
 
+    @AfterClass
+    public static void tearDownStatic() {
+        triggerFilePath = Misc.free(triggerFilePath);
+        AbstractFuzzTest.tearDownStatic();
+    }
+
     @Parameterized.Parameters(name = "V{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
                 {1},
                 {2},
         });
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        triggerFilePath = Misc.free(triggerFilePath);
-        AbstractFuzzTest.tearDownStatic();
     }
 
     @Before
@@ -110,7 +110,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0.5,
-                0.01
+                0.01,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -152,7 +153,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 1,
                 0.0,
-                0.01
+                0.01,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -291,7 +293,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
-                0.01
+                0.01,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -304,6 +307,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextInt(1_000_000),
                 5 + rnd.nextInt(10)
         );
+    }
+
+    private String getTestTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
 
     private void hardLinkCopyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
@@ -347,10 +354,6 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 dst.trimTo(dstLen);
             }
         }
-    }
-
-    private String getTestTableName() {
-        return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
 
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {

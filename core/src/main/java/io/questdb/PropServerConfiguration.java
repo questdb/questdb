@@ -56,7 +56,7 @@ import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
@@ -208,6 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
+    private final boolean fileDescriptorCacheEnabled;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
@@ -352,7 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
-    private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
+    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -430,6 +431,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
     private final boolean sqlParallelReadParquetEnabled;
+    private final boolean sqlParallelTopKEnabled;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlQueryRegistryPoolSize;
@@ -517,7 +519,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataAppendPageSize;
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
-    private final long writerFileOpenOpts;
+    private final int writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -610,7 +612,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgInsertCacheBlockCount;
     private boolean pgInsertCacheEnabled;
     private int pgInsertCacheRowCount;
-    private boolean pgLegacyModeEnabled;
     private int pgMaxBlobSizeOnQuery;
     private int pgNamedStatementCacheCapacity;
     private int pgNamedStatementLimit;
@@ -1262,10 +1263,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                // making it harder to pick legacy mode before legacy code is removed from the codebase
-                // diehards that have this set to "true" will automatically be upgraded to the new protocol implementation.
-                // If issues still persist we want to hear about them and this provides the thank you fallback mechanism
-                this.pgLegacyModeEnabled = "!true".equals(getString(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, "false"));
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
@@ -1407,7 +1404,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
-            long lopts = CairoConfiguration.O_NONE;
+            int lopts = CairoConfiguration.O_NONE;
             String[] opts = value.split("\\|");
             for (String opt : opts) {
                 int index = WRITE_FO_OPTS.keyIndex(opt.trim());
@@ -1418,6 +1415,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerFileOpenOpts = lopts;
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
+            this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -1719,6 +1717,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled) {
@@ -1859,8 +1858,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
-        return pgWireConfiguration;
+    public PGConfiguration getPGWireConfiguration() {
+        return pgConfiguration;
     }
 
     @Override
@@ -3017,6 +3016,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getFileDescriptorCacheEnabled() {
+            return fileDescriptorCacheEnabled;
+        }
+
+        @Override
         public int getFileOperationRetryCount() {
             return fileOperationRetryCount;
         }
@@ -3917,7 +3921,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getWriterFileOpenOpts() {
+        public int getWriterFileOpenOpts() {
             return writerFileOpenOpts;
         }
 
@@ -4024,6 +4028,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelReadParquetEnabled() {
             return sqlParallelReadParquetEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelTopKEnabled() {
+            return sqlParallelTopKEnabled;
         }
 
         @Override
@@ -5232,7 +5241,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGWireConfiguration implements PGWireConfiguration {
+    private class PropPGConfiguration implements PGConfiguration {
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -5512,11 +5521,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isInsertCacheEnabled() {
             return pgInsertCacheEnabled;
-        }
-
-        @Override
-        public boolean isLegacyModeEnabled() {
-            return pgLegacyModeEnabled;
         }
 
         @Override
@@ -5830,9 +5834,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     static {
-        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
-        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
-        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
-        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
+        WRITE_FO_OPTS.put("o_direct", CairoConfiguration.O_DIRECT);
+        WRITE_FO_OPTS.put("o_sync", CairoConfiguration.O_SYNC);
+        WRITE_FO_OPTS.put("o_async", CairoConfiguration.O_ASYNC);
+        WRITE_FO_OPTS.put("o_none", CairoConfiguration.O_NONE);
     }
 }
