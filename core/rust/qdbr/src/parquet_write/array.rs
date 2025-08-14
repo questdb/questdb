@@ -221,7 +221,7 @@ pub fn array_to_page(
     encoding: Encoding,
 ) -> ParquetResult<Page> {
     assert_eq!(
-        size_of::<ArrayAuxEntry>(),
+        mem::size_of::<ArrayAuxEntry>(),
         16,
         "size_of(ArrayAuxEntry) is not 16"
     );
@@ -429,7 +429,7 @@ pub fn array_to_raw_page(
     encoding: Encoding,
 ) -> ParquetResult<Page> {
     assert_eq!(
-        size_of::<ArrayAuxEntry>(),
+        mem::size_of::<ArrayAuxEntry>(),
         16,
         "size_of(ArrayAuxEntry) is not 16"
     );
