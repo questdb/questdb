@@ -27,5 +27,5 @@ pub const ARRAY_NDIMS_LIMIT: usize = 32;
 
 #[inline]
 pub fn align8b(v: usize) -> usize {
-    (v + 7) & !0x7
+    v.checked_add(7).expect("align8b overflow") & !0x7
 }

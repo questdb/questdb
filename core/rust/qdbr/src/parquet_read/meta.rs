@@ -5,7 +5,7 @@ use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use parquet2::metadata::{ColumnDescriptor, FileMetaData};
 use parquet2::read::read_metadata_with_size;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
-use parquet2::schema::types::{GroupConvertedType, ParquetType};
+use parquet2::schema::types::{GroupConvertedType, GroupLogicalType, ParquetType};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
@@ -202,11 +202,13 @@ fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
     match base_type {
         ParquetType::GroupType {
             field_info: _,
-            logical_type: _,
+            logical_type,
             converted_type,
             fields,
         } => {
-            if *converted_type != Some(GroupConvertedType::List) || fields.len() != 1 {
+            let is_list = *converted_type == Some(GroupConvertedType::List)
+                || *logical_type == Some(GroupLogicalType::List);
+            if !is_list || fields.len() != 1 {
                 return None;
             }
             cur_type = &fields[0];
