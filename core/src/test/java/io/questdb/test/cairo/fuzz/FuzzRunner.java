@@ -114,6 +114,7 @@ public class FuzzRunner {
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
+    private double symbolAccessValidationProb;
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
@@ -489,6 +490,7 @@ public class FuzzRunner {
                 tableDropProb,
                 setTtlProb,
                 replaceInsertProb,
+                symbolAccessValidationProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()
@@ -599,7 +601,8 @@ public class FuzzRunner {
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
-            double replaceInsertProb
+            double replaceInsertProb,
+            double symbolAccessValidationProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -616,6 +619,7 @@ public class FuzzRunner {
         this.tableDropProb = tableDropProb;
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
+        this.symbolAccessValidationProb = symbolAccessValidationProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -1247,7 +1251,8 @@ public class FuzzRunner {
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.0,
-                            0.05
+                            0.05,
+                            0.1 * rnd.nextDouble()
                     );
                 }
                 if (randomiseCounts) {

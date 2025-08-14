@@ -110,6 +110,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     0.3,
                     0.0,
                     0.3,
+                    0.0,
                     0.0
             );
 
@@ -879,7 +880,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 truncateProb,
                 0.0,
                 0.0,
-                0.1
+                0.1,
+                0.0
         );
     }
 
