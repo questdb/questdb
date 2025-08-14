@@ -302,7 +302,10 @@ public class TableWriterSegmentFileCache {
                 // Now that the FDs are used in the column objects, remove them from the cache.
                 // to avoid double close in case of exceptions.
                 walFdCache.removeAt(fdCacheKey);
-                walFdCacheSize--;
+                if (fdCacheKey < 0) {
+                    walFdCache.removeAt(fdCacheKey);
+                    walFdCacheSize--;
+                }
                 fds.clear();
                 walFdCacheListPool.push(fds);
             }
