@@ -2053,7 +2053,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
         } else {
             offset = utf8Sink.skipInt();
-            ColumnType.getTimestampDriver(timestampType).appendPGWireText(utf8Sink, timestamp);
+            ColumnType.getTimestampDriver(timestampType).appendToPGWireText(utf8Sink, timestamp);
             utf8Sink.putLenEx(offset);
         }
     }

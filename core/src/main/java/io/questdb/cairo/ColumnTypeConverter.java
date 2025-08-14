@@ -152,7 +152,7 @@ public class ColumnTypeConverter {
             case ColumnType.DATE:
                 return converterStr2Date;
             case ColumnType.TIMESTAMP:
-                return ColumnType.getTimestampDriver(dstColumnType)::appendMem;
+                return ColumnType.getTimestampDriver(dstColumnType)::appendToMem;
             case ColumnType.BOOLEAN:
                 return converterStr2Boolean;
             default:

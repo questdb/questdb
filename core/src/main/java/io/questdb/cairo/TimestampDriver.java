@@ -46,27 +46,38 @@ import org.jetbrains.annotations.Nullable;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.griffin.SqlUtil.castPGDates;
 
 public interface TimestampDriver {
+    static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
+        final CairoException ee = CairoException.critical(0).put('\'');
+        switch (partitionBy) {
+            case DAY:
+                ee.put(CommonUtils.DAY_PATTERN);
+                break;
+            case WEEK:
+                ee.put(CommonUtils.WEEK_PATTERN).put("' or '").put(CommonUtils.DAY_PATTERN);
+                break;
+            case MONTH:
+                ee.put(CommonUtils.MONTH_PATTERN);
+                break;
+            case YEAR:
+                ee.put(CommonUtils.YEAR_PATTERN);
+                break;
+            case HOUR:
+                ee.put(CommonUtils.HOUR_PATTERN);
+                break;
+        }
+        ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');
+        return ee;
+    }
 
     long addDays(long timestamp, int days);
 
-    long addHours(long timestamp, int hours);
-
-    long addMicros(long timestamp, int micros);
-
-    long addMillis(long timestamp, int millis);
-
-    long addMinutes(long timestamp, int minutes);
-
     long addMonths(long timestamp, int months);
 
-    long addNanos(long timestamp, int nanos);
-
-    long addPeriod(long lo, char type, int period);
-
-    long addSeconds(long timestamp, int seconds);
+    long addPeriod(long timestamp, char type, int stride);
 
     long addWeeks(long timestamp, int weeks);
 
@@ -74,8 +85,7 @@ public interface TimestampDriver {
 
     void append(CharSink<?> sink, long timestamp);
 
-
-    default void appendMem(CharSequence value, MemoryA mem) {
+    default void appendToMem(CharSequence value, MemoryA mem) {
         try {
             mem.putLong(parseFloorLiteral(value));
         } catch (NumericException e) {
@@ -83,7 +93,7 @@ public interface TimestampDriver {
         }
     }
 
-    void appendPGWireText(CharSink<?> sink, long timestamp);
+    void appendToPGWireText(CharSink<?> sink, long timestamp);
 
     PlanSink appendTypeToPlan(PlanSink sink);
 
@@ -278,14 +288,6 @@ public interface TimestampDriver {
     int getMicrosOfMilli(long timestamp);
 
     /**
-     * Gets the microseconds within the minute from a timestamp value.
-     *
-     * @param timestamp the timestamp value
-     * @return the microseconds within the minute, or Numbers.LONG_NULL if timestamp is null
-     */
-    long getMicrosOfMinute(long timestamp);
-
-    /**
      * Gets the microseconds within the second from a timestamp value.
      *
      * @param timestamp the timestamp value
@@ -300,14 +302,6 @@ public interface TimestampDriver {
      * @return the millennium, or Numbers.INT_NULL if timestamp is null
      */
     int getMillennium(long timestamp);
-
-    /**
-     * Gets the milliseconds within the minute from a timestamp value.
-     *
-     * @param timestamp the timestamp value
-     * @return the milliseconds within the minute, or Numbers.LONG_NULL if timestamp is null
-     */
-    long getMillisOfMinute(long timestamp);
 
     /**
      * Gets the milliseconds within the second from a timestamp value.

@@ -657,14 +657,6 @@ public final class Micros {
         }
     }
 
-    public static long getMicrosOfMinute(long micros) {
-        if (micros > -1) {
-            return micros % MINUTE_MICROS;
-        } else {
-            return MINUTE_MICROS - 1 + (micros + 1) % MINUTE_MICROS;
-        }
-    }
-
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
             return (int) (micros % SECOND_MICROS);
@@ -682,10 +674,6 @@ public final class Micros {
 
     public static long getMillisBetween(long a, long b) {
         return Math.abs(a - b) / MILLI_MICROS;
-    }
-
-    public static long getMillisOfMinute(long micros) {
-        return getMicrosOfMinute(micros) / 1000;
     }
 
     public static int getMillisOfSecond(long micros) {

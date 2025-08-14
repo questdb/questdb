@@ -97,29 +97,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private MicrosTimestampDriver() {
     }
 
-    public static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
-        final CairoException ee = CairoException.critical(0).put('\'');
-        switch (partitionBy) {
-            case DAY:
-                ee.put(CommonUtils.DAY_PATTERN);
-                break;
-            case WEEK:
-                ee.put(CommonUtils.WEEK_PATTERN).put("' or '").put(CommonUtils.DAY_PATTERN);
-                break;
-            case MONTH:
-                ee.put(CommonUtils.MONTH_PATTERN);
-                break;
-            case YEAR:
-                ee.put(CommonUtils.YEAR_PATTERN);
-                break;
-            case HOUR:
-                ee.put(CommonUtils.HOUR_PATTERN);
-                break;
-        }
-        ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');
-        return ee;
-    }
-
     public static long floor(CharSequence value) throws NumericException {
         return INSTANCE.parseFloorLiteral(value);
     }
@@ -196,43 +173,13 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long addHours(long timestamp, int hours) {
-        return Micros.addHours(timestamp, hours);
-    }
-
-    @Override
-    public long addMicros(long timestamp, int micros) {
-        return Micros.addMicros(timestamp, micros);
-    }
-
-    @Override
-    public long addMillis(long timestamp, int millis) {
-        return Micros.addMillis(timestamp, millis);
-    }
-
-    @Override
-    public long addMinutes(long timestamp, int minutes) {
-        return Micros.addMinutes(timestamp, minutes);
-    }
-
-    @Override
     public long addMonths(long timestamp, int months) {
         return Micros.addMonths(timestamp, months);
     }
 
     @Override
-    public long addNanos(long timestamp, int nanos) {
-        return Micros.addNanos(timestamp, nanos);
-    }
-
-    @Override
     public long addPeriod(long lo, char type, int period) {
         return Micros.addPeriod(lo, type, period);
-    }
-
-    @Override
-    public long addSeconds(long timestamp, int seconds) {
-        return Micros.addSeconds(timestamp, seconds);
     }
 
     @Override
@@ -251,7 +198,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public void appendPGWireText(CharSink<?> sink, long timestamp) {
+    public void appendToPGWireText(CharSink<?> sink, long timestamp) {
         MicrosFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
     }
 
@@ -530,14 +477,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long getMicrosOfMinute(long timestamp) {
-        if (timestamp == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
-        return Micros.getMicrosOfMinute(timestamp);
-    }
-
-    @Override
     public int getMicrosOfSecond(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
@@ -551,14 +490,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Micros.getMillennium(timestamp);
-    }
-
-    @Override
-    public long getMillisOfMinute(long timestamp) {
-        if (timestamp == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
-        return Micros.getMillisOfMinute(timestamp);
     }
 
     @Override
@@ -1336,7 +1267,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 hi = lo + Math.min(limit, partitionName.length());
             }
             if (hi - lo < limit) {
-                throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
+                throw TimestampDriver.expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
             }
             return fmtMethod.parse(partitionName, lo, hi, EN_LOCALE);
         } catch (NumericException e) {
@@ -1348,10 +1279,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     // convert timestamp to first day of the week
                     return Micros.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
                 } catch (NumericException ignore) {
-                    throw expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
+                    throw TimestampDriver.expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
                 }
             }
-            throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
+            throw TimestampDriver.expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
         }
     }
 
