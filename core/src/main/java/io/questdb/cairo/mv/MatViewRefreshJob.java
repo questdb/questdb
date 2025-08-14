@@ -687,7 +687,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long replacementTimestampHi = Long.MIN_VALUE;
 
                     while (intervalIterator.next()) {
-                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), timestampType);
+                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), viewDefinition.getBaseTableTimestampDriver().getColumnType());
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch

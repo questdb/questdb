@@ -5855,7 +5855,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         whereClause,
                         metadata,
                         preferredKeyColumn,
-                        readerTimestampIndex,
+                        metadata.getTimestampIndex(),
                         functionParser,
                         myMeta,
                         executionContext,
@@ -5908,7 +5908,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         intrinsicModel,
                         filter,
                         executionContext,
-                        readerTimestampIndex,
+                        metadata.getTimestampIndex(),
                         columnIndexes,
                         columnSizeShifts,
                         prefixes
@@ -5924,7 +5924,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         tableToken,
                         model.getMetadataVersion(),
                         intervalModel,
-                        readerTimestampIndex,
+                        metadata.getTimestampIndex(),
                         dfcFactoryMeta,
                         order
                 );
