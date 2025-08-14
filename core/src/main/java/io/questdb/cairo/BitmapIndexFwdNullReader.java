@@ -31,10 +31,22 @@ import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     private final NullCursor cursor = new NullCursor();
+    private long columnTxn;
+    private long partitionTxn;
+
+    public BitmapIndexFwdNullReader(long columnTxn, long partitionTxn) {
+        this.columnTxn = columnTxn;
+        this.partitionTxn = partitionTxn;
+    }
 
     @Override
     public long getColumnTop() {
         return 0;
+    }
+
+    @Override
+    public long getColumnTxn() {
+        return columnTxn;
     }
 
     @Override
@@ -67,6 +79,11 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
+    public long getPartitionTxn() {
+        return partitionTxn;
+    }
+
+    @Override
     public long getValueBaseAddress() {
         return 0;
     }
@@ -87,7 +104,9 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long unIndexedNullCount) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop) {
+        this.partitionTxn = partitionTxn;
+        this.columnTxn = columnNameTxn;
     }
 
     @Override
