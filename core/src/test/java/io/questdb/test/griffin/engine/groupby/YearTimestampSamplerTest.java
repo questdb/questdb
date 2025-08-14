@@ -24,12 +24,16 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -125,18 +129,26 @@ public class YearTimestampSamplerTest {
     }
 
     private void testSampler(int stepSize, String expected) throws NumericException {
+        testSampler(stepSize, expected, ColumnType.TIMESTAMP_MICRO);
+        testSampler(stepSize, expected, ColumnType.TIMESTAMP_NANO);
+    }
+
+    private void testSampler(int stepSize, String expected, int timestampType) throws NumericException {
         StringSink sink = new StringSink();
-        YearTimestampMicrosSampler sampler = new YearTimestampMicrosSampler(4);
-        long timestamp = MicrosFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+        TimestampSampler sampler = ColumnType.isTimestampMicro(timestampType)
+                ? new YearTimestampMicrosSampler(4)
+                : new YearTimestampNanosSampler(4);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        long timestamp = driver.parseFloorLiteral("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
         for (int i = 0; i < 20; i++) {
             long ts = sampler.nextTimestamp(timestamp, stepSize);
-            sink.putISODate(ts).put('\n');
+            sink.putISODate(driver, ts).put('\n');
             if (stepSize == 1) {
                 Assert.assertEquals(timestamp, sampler.previousTimestamp(ts));
             }
             timestamp = ts;
         }
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEquals(AbstractCairoTest.replaceTimestampSuffix(expected, ColumnType.nameOf(timestampType)), sink);
     }
 }

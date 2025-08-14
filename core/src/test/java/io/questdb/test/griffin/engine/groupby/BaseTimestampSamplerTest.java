@@ -26,7 +26,8 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -39,11 +40,11 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class MonthTimestampSamplerTest {
+public class BaseTimestampSamplerTest {
     private final TimestampDriver timestampDriver;
     private final int timestampType;
 
-    public MonthTimestampSamplerTest(int timestampType) {
+    public BaseTimestampSamplerTest(int timestampType) {
         this.timestampType = timestampType;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
@@ -55,20 +56,19 @@ public class MonthTimestampSamplerTest {
         });
     }
 
-
     @Test
-    public void testNextTimestamp() throws Exception {
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+    public void testNextTimestamp() throws NumericException {
+        BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromMinutes(1), timestampType);
 
         final String[] src = new String[]{
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2020-01-01T12:12:12.123456Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T00:00:00.000000000Z",
+                "2020-01-01T12:12:12.123456789Z",
         };
         final String[] next = new String[]{
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-01T00:00:00.000000Z",
-                "2020-02-01T00:00:00.000000Z",
+                "2013-12-31T00:01:00.000000000Z",
+                "2014-01-01T00:01:00.000000000Z",
+                "2020-01-01T12:13:12.123456789Z",
         };
         Assert.assertEquals(src.length, next.length);
 
@@ -80,18 +80,18 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
-    public void testNextTimestampWithStep() throws Exception {
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+    public void testNextTimestampWithStep() throws NumericException {
+        BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromSeconds(1), timestampType);
 
         final String[] src = new String[]{
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2020-01-01T12:12:12.123456Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T00:00:00.000000000Z",
+                "2020-01-01T12:12:59.123456789Z",
         };
         final String[] next = new String[]{
-                "2014-03-01T00:00:00.000000Z",
-                "2014-04-01T00:00:00.000000Z",
-                "2020-04-01T00:00:00.000000Z",
+                "2013-12-31T00:00:03.000000000Z",
+                "2014-01-01T00:00:03.000000000Z",
+                "2020-01-01T12:13:02.123456789Z",
         };
         Assert.assertEquals(src.length, next.length);
 
@@ -103,18 +103,18 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
-    public void testPreviousTimestamp() throws Exception {
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+    public void testPreviousTimestamp() throws NumericException {
+        BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromHours(1), timestampType);
 
         final String[] src = new String[]{
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2020-02-01T12:12:12.123456Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T00:00:00.000000000Z",
+                "2020-02-01T12:12:12.123456789Z",
         };
         final String[] prev = new String[]{
-                "2013-11-01T00:00:00.000000Z",
-                "2013-12-01T00:00:00.000000Z",
-                "2020-01-01T00:00:00.000000Z",
+                "2013-12-30T23:00:00.000000000Z",
+                "2013-12-31T23:00:00.000000000Z",
+                "2020-02-01T11:12:12.123456789Z",
         };
         Assert.assertEquals(src.length, prev.length);
 
@@ -126,33 +126,33 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
-    public void testRound() throws Exception {
+    public void testRound() throws NumericException {
         final String[] src = new String[]{
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-12T12:12:12.123456Z",
-                "2014-02-12T12:12:12.123456Z",
-                "2024-11-12T12:12:12.123456Z",
+                "1967-12-31T01:11:42.123456789Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T01:12:12.000000001Z",
+                "2014-02-12T12:12:12.123456789Z",
+                "2014-02-12T12:12:12.123456789Z",
         };
         final String[] rounded = new String[]{
-                "2013-12-01T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-01T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2024-11-01T00:00:00.000000Z",
+                "1967-12-31T01:00:00.000000000Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T01:00:00.000000000Z",
+                "2014-02-12T12:00:00.000000000Z",
+                "2014-02-12T12:12:00.000000000Z",
         };
-        final int[] strides = new int[]{
-                1,
-                1,
-                1,
-                3,
-                10
+        final long[] strides = new long[]{
+                timestampDriver.fromHours(1),
+                timestampDriver.fromHours(1),
+                timestampDriver.fromHours(1),
+                timestampDriver.fromHours(1),
+                timestampDriver.fromMinutes(1),
         };
         Assert.assertEquals(src.length, rounded.length);
         Assert.assertEquals(src.length, strides.length);
 
         for (int i = 0; i < src.length; i++) {
-            final TimestampSampler sampler = timestampDriver.getTimestampSampler(strides[i], 'M', 0);
+            final BaseTimestampSampler sampler = new BaseTimestampSampler(strides[i], timestampType);
             final long ts = timestampDriver.parseFloorLiteral(src[i]);
             final long roundedTs = sampler.round(ts);
             Assert.assertEquals(timestampDriver.parseFloorLiteral(rounded[i]), roundedTs);
@@ -160,14 +160,14 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(6, 'M', 0);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromHours(1), timestampType);
 
         long timestamp = timestampDriver.parseFloorLiteral("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 10; i++) {
             long ts = sampler.nextTimestamp(timestamp);
             sink.putISODate(timestampDriver, ts).put('\n');
             Assert.assertEquals(timestamp, sampler.previousTimestamp(ts));
@@ -175,27 +175,16 @@ public class MonthTimestampSamplerTest {
         }
 
         TestUtils.assertEquals(
-                AbstractCairoTest.replaceTimestampSuffix(
-                        "2019-05-16T15:00:00.000000Z\n" +
-                                "2019-11-16T15:00:00.000000Z\n" +
-                                "2020-05-16T15:00:00.000000Z\n" +
-                                "2020-11-16T15:00:00.000000Z\n" +
-                                "2021-05-16T15:00:00.000000Z\n" +
-                                "2021-11-16T15:00:00.000000Z\n" +
-                                "2022-05-16T15:00:00.000000Z\n" +
-                                "2022-11-16T15:00:00.000000Z\n" +
-                                "2023-05-16T15:00:00.000000Z\n" +
-                                "2023-11-16T15:00:00.000000Z\n" +
-                                "2024-05-16T15:00:00.000000Z\n" +
-                                "2024-11-16T15:00:00.000000Z\n" +
-                                "2025-05-16T15:00:00.000000Z\n" +
-                                "2025-11-16T15:00:00.000000Z\n" +
-                                "2026-05-16T15:00:00.000000Z\n" +
-                                "2026-11-16T15:00:00.000000Z\n" +
-                                "2027-05-16T15:00:00.000000Z\n" +
-                                "2027-11-16T15:00:00.000000Z\n" +
-                                "2028-05-16T15:00:00.000000Z\n" +
-                                "2028-11-16T15:00:00.000000Z\n", ColumnType.nameOf(timestampType)),
+                AbstractCairoTest.replaceTimestampSuffix("2018-11-16T16:00:00.000000Z\n" +
+                        "2018-11-16T17:00:00.000000Z\n" +
+                        "2018-11-16T18:00:00.000000Z\n" +
+                        "2018-11-16T19:00:00.000000Z\n" +
+                        "2018-11-16T20:00:00.000000Z\n" +
+                        "2018-11-16T21:00:00.000000Z\n" +
+                        "2018-11-16T22:00:00.000000Z\n" +
+                        "2018-11-16T23:00:00.000000Z\n" +
+                        "2018-11-17T00:00:00.000000Z\n" +
+                        "2018-11-17T01:00:00.000000Z\n", ColumnType.nameOf(timestampType)),
                 sink
         );
     }

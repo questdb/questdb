@@ -3894,12 +3894,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            RecordMetadata m = ColumnType.isTimestampMicro(timestampType) ? unindexedMetadata : unindexedMetadataNanos;
             return e.extract(
                     column -> column,
                     compiler.testParseExpression(seq, queryModel),
-                    unindexedMetadata,
+                    m,
                     preferredColumn,
-                    unindexedMetadata.getTimestampIndex(),
+                    m.getTimestampIndex(),
                     functionParser,
                     metadata,
                     sqlExecutionContext,
