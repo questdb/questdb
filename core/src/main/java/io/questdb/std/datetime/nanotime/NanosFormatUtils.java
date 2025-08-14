@@ -236,8 +236,8 @@ public class NanosFormatUtils {
         if (year > 1677 && year < 2262) {
             boolean leap = CommonUtils.isLeapYear(year);
 
-            // wrong month (month = -1 is special case for day-of-year)
-            if (month != -1 && (month < 1 || month > 12)) {
+            // wrong month
+            if (month < 1 || month > 12) {
                 throw NumericException.INSTANCE;
             }
 
@@ -258,20 +258,9 @@ public class NanosFormatUtils {
                 }
             }
 
-            if (day < 1) {
+            // wrong day of month
+            if (day < 1 || day > CommonUtils.getDaysPerMonth(month, leap)) {
                 throw NumericException.INSTANCE;
-            }
-            if (month != -1) {
-                // normal month/day validation
-                if (day > CommonUtils.getDaysPerMonth(month, leap)) {
-                    throw NumericException.INSTANCE;
-                }
-            } else {
-                // day-of-year validation (month = -1 signals day-of-year usage)
-                int maxDayOfYear = leap ? 366 : 365;
-                if (day > maxDayOfYear) {
-                    throw NumericException.INSTANCE;
-                }
             }
 
             if (minute < 0 || minute > 59) {
@@ -296,18 +285,10 @@ public class NanosFormatUtils {
                 day = Nanos.getDayOfMonth(firstDayOfIsoWeekNanos, year, month, CommonUtils.isLeapYear(year));
             }
 
-            long outNanos = Nanos.yearNanos(year, leap);
-
-            if (month != -1) {
-                // standard month/day computation
-                outNanos += Nanos.monthOfYearNanos(month, leap) + (long) (day - 1) * Nanos.DAY_NANOS;
-            } else {
-                // day-of-year computation (month = -1 signals day-of-year usage)
-                outNanos += (long) (day - 1) * Nanos.DAY_NANOS;
-            }
-
-            // add time components
-            outNanos += (long) hour * Nanos.HOUR_NANOS
+            long outNanos = Nanos.yearNanos(year, leap)
+                    + Nanos.monthOfYearNanos(month, leap)
+                    + (long) (day - 1) * Nanos.DAY_NANOS
+                    + (long) hour * Nanos.HOUR_NANOS
                     + (long) minute * Nanos.MINUTE_NANOS
                     + (long) second * Nanos.SECOND_NANOS
                     + (long) millis * Nanos.MILLI_NANOS

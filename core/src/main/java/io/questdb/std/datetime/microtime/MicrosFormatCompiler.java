@@ -986,30 +986,13 @@ public class MicrosFormatCompiler {
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_WEEK);
                     break;
                 case OP_WEEK_OF_YEAR:
-                    stackState &= ~(1 << LOCAL_TEMP_LONG);
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iload(P_HI);
-                    asm.invokeStatic(parseIntSafelyIndex);
-                    asm.lstore(LOCAL_TEMP_LONG);
-                    addTempToPos(decodeLenIndex);
-                    break;
                 case OP_DAY_OF_YEAR:
-                    stackState &= ~(1 << LOCAL_DAY);
-                    stackState &= ~(1 << LOCAL_MONTH);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     asm.aload(P_INPUT_STR);
                     asm.iload(LOCAL_POS);
                     asm.iload(P_HI);
                     asm.invokeStatic(parseIntSafelyIndex);
                     asm.lstore(LOCAL_TEMP_LONG);
-                    // Extract int value from parsed long and store in LOCAL_DAY (reused for day-of-year)
-                    asm.lload(LOCAL_TEMP_LONG);
-                    asm.invokeStatic(decodeIntIndex);
-                    asm.istore(LOCAL_DAY);
-                    // Set month to -1 to signal day-of-year usage
-                    asm.iconst(-1);
-                    asm.istore(LOCAL_MONTH);
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_DAY_OF_WEEK:
@@ -1749,11 +1732,6 @@ public class MicrosFormatCompiler {
                     break;
                 case OP_DAY_NAME_LONG:
                 case OP_DAY_NAME_SHORT:
-                    result |= (1 << LOCAL_TEMP_LONG);
-                    break;
-                case OP_DAY_OF_YEAR:
-                    result |= (1 << LOCAL_DAY);
-                    result |= (1 << LOCAL_MONTH);
                     result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 case OP_MONTH_GREEDY:
