@@ -44,13 +44,12 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_group_levels, encode_primitive_def_levels, BinaryMaxMinStats,
-    ExactSizedIter,
+    build_plain_page, encode_group_levels, encode_primitive_def_levels, ExactSizedIter,
 };
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 
-// Helper struct for streaming array data parsing
+// Helper struct for array data access
 struct ArrayDataParser<'a> {
     data: &'a [u8],
     shape_size: usize,
@@ -76,7 +75,7 @@ impl<'a> ArrayDataParser<'a> {
     }
 }
 
-// Helper struct for streaming raw array data parsing
+// Helper struct for raw array data access
 struct RawArrayDataParser<'a> {
     data: &'a [u8],
 }
@@ -460,14 +459,12 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
-
     match encoding {
         Encoding::Plain => {
-            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer, &mut stats);
+            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer);
         }
         Encoding::DeltaLengthByteArray => {
-            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer, &mut stats);
+            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer);
         }
         _ => {
             return Err(fmt_err!(
@@ -501,14 +498,12 @@ fn encode_raw_plain_streaming(
     aux: &[ArrayAuxEntry],
     raw_parser: &RawArrayDataParser,
     buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
 ) {
     for entry in aux.iter() {
         if let Some(arr) = raw_parser.get_raw_array_data(entry) {
             let len = (arr.len() as u32).to_le_bytes();
             buffer.extend_from_slice(&len);
             buffer.extend_from_slice(arr);
-            stats.update(arr);
         }
     }
 }
@@ -518,7 +513,6 @@ fn encode_raw_delta_streaming(
     raw_parser: &RawArrayDataParser,
     null_count: usize,
     buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
 ) {
     // First pass: collect lengths
     let lengths = aux
@@ -532,31 +526,7 @@ fn encode_raw_delta_streaming(
     for entry in aux.iter() {
         if let Some(arr) = raw_parser.get_raw_array_data(entry) {
             buffer.extend_from_slice(arr);
-            stats.update(arr);
         }
-    }
-}
-
-// Legacy functions kept for compatibility (now unused)
-#[allow(dead_code)]
-fn encode_raw_plain(arr_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>) {
-    for arr in arr_slices.iter().filter_map(|&option| option) {
-        let len = (arr.len() as u32).to_le_bytes();
-        buffer.extend_from_slice(&len);
-        buffer.extend_from_slice(arr);
-    }
-}
-
-#[allow(dead_code)]
-fn encode_raw_delta(arr_slices: &[Option<&[u8]>], null_count: usize, buffer: &mut Vec<u8>) {
-    let lengths = arr_slices
-        .iter()
-        .filter_map(|&option| option)
-        .map(|arr| arr.len() as i64);
-    let lengths = ExactSizedIter::new(lengths, arr_slices.len() - null_count);
-    delta_bitpacked::encode(lengths, buffer);
-    for arr in arr_slices.iter().filter_map(|&option| option) {
-        buffer.extend_from_slice(arr);
     }
 }
 
