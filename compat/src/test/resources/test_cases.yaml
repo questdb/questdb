@@ -2,6 +2,17 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Test Array in binding var in a function
+    description: Test inserting and selecting empty array.
+    steps:
+      - action: query
+        query: "select array_position($[1], 2.0) from long_sequence(1)"
+        parameters:
+          - value: "{1.0, 2.0, 3.0}"
+            type: "ARRAY_FLOAT8"
+        expect:
+          result_contains:
+            - [ 2 ]
   - name: Test Empty Array
     description: Test inserting and selecting empty array.
     prepare:
