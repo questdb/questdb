@@ -2,7 +2,6 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigDecimal;
@@ -158,6 +157,8 @@ public class Decimal128 implements Sinkable {
             17L, // 10^37
             1L, // 10^38
     };
+    // holders for in-place mutations that doesn't have a mutable structure available
+    private static final ThreadLocal<Decimal128> tl = new ThreadLocal<>(Decimal128::new);
     private transient long compact;  // Compact representation for values fitting in a signed long
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
@@ -217,37 +218,6 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Performs a division using Knuth 4.3.1D algorithm, storing the quotient in dividend.
-     *
-     * @param dividend     Decimal128 that will be divided.
-     * @param divisorHigh  High 64-bit part of the divisor.
-     * @param divisorLow   Low 64-bit part of the divisor.
-     * @param roundingMode How the quotient will be rounded if a remainder is present.
-     */
-    public static void divideKnuth(Decimal128 dividend, long divisorHigh, long divisorLow, boolean negResult, RoundingMode roundingMode) {
-        long dividendHigh = dividend.high;
-        long dividendLow = dividend.low;
-
-        // We're going to switch on the closest case possible to reduce the number of operations/branches.
-        // We're unrolling the D2-D7 loop, Knuth relies on narrowing division ("64-bit/32-bit" giving a 32-bit quotient and 32-bit reminder).
-        // To match this, we would need to split our long in ints at each step.
-        // here m = 0 and n = 4
-        if (divisorHigh != 0) {
-            if (divisorHigh >= B || divisorHigh < 0) {
-                divideKnuthXx128(dividend, dividendHigh, dividendLow, divisorHigh, divisorLow, negResult, roundingMode);
-            } else {
-                divideKnuthXx96(dividend, dividendHigh, dividendLow, divisorHigh, divisorLow, negResult, roundingMode);
-            }
-        } else {
-            if (divisorLow >= B || divisorLow < 0) {
-                divideKnuthXxLong(dividend, dividendHigh, dividendLow, divisorLow, negResult, roundingMode);
-            } else {
-                divideKnuthXxWord(dividend, dividendHigh, dividendLow, divisorLow, negResult, roundingMode);
-            }
-        }
-    }
-
-    /**
      * Create a Decimal128 from a BigDecimal value.
      *
      * @param value the BigDecimal value to convert
@@ -255,6 +225,10 @@ public class Decimal128 implements Sinkable {
      * @throws IllegalArgumentException if scale is invalid
      */
     public static Decimal128 fromBigDecimal(BigDecimal value) {
+        if (value == null) {
+            throw new IllegalArgumentException("BigDecimal value cannot be null");
+        }
+
         int scale = value.scale();
         long hi;
         long lo;
@@ -264,6 +238,9 @@ public class Decimal128 implements Sinkable {
             // our format.
             bi = bi.multiply(new BigInteger("10").pow(-scale));
             scale = 0;
+        }
+        if (bi.bitLength() > 127) {
+            throw NumericException.instance().put("Overflow");
         }
         lo = bi.longValue();
         hi = bi.shiftRight(64).longValue();
@@ -386,8 +363,6 @@ public class Decimal128 implements Sinkable {
         long bH = other.high;
         long bL = other.low;
         if (aNeg) {
-            diffQ = -1;
-
             aL = ~aL + 1;
             aH = ~aH + (aL == 0 ? 1L : 0L);
 
@@ -398,67 +373,24 @@ public class Decimal128 implements Sinkable {
 
         // Different scales - need to align for comparison
         // We'll scale up the one with smaller scale
+        Decimal128 holder = tl.get();
         if (this.scale < other.scale) {
-            // Scale up this to match other's scale
-            int scaleDiff = other.scale - this.scale;
-
-            // Simple iterative scaling using multiply-by-10
-            for (int i = 0; i < scaleDiff; i++) {
-                if ((aH >>> 3) != 0) {
-                    throw NumericException.instance().put("Overflow");
-                }
-
-                // Multiply by 10: (8x + 2x)
-                long high8 = (aH << 3) | (aL >>> 61);
-                long low8 = aL << 3;
-                long high2 = (aH << 1) | (aL >>> 63);
-                long low2 = aL << 1;
-
-                aL = low8 + low2;
-                long carry = hasCarry(low8, low2, aL) ? 1 : 0;
-                try {
-                    aH = Math.addExact(high8, Math.addExact(high2, carry));
-                } catch (ArithmeticException e) {
-                    throw NumericException.instance().put("Overflow");
-                }
-            }
-
-            // Compare scaled this with other
-            if (aH != bH) {
-                return Long.compare(aH, bH) * diffQ;
-            }
-            return Long.compareUnsigned(aL, bL) * diffQ;
+            holder.of(aH, aL, this.scale);
+            holder.multiplyByPowerOf10InPlace(other.scale - this.scale);
+            aH = holder.high;
+            aL = holder.low;
         } else {
-            // Scale up other to match this scale
-            int scaleDiff = this.scale - other.scale;
-
-            // Simple iterative scaling using multiply-by-10
-            for (int i = 0; i < scaleDiff; i++) {
-                if ((bH >>> 3) != 0) {
-                    throw NumericException.instance().put("Overflow");
-                }
-
-                // Multiply by 10: (8x + 2x)
-                long high8 = (bH << 3) | (bL >>> 61);
-                long low8 = bL << 3;
-                long high2 = (bH << 1) | (bL >>> 63);
-                long low2 = bL << 1;
-
-                bL = low8 + low2;
-                long carry = hasCarry(low8, low2, bL) ? 1 : 0;
-                try {
-                    bH = Math.addExact(high8, Math.addExact(high2, carry));
-                } catch (ArithmeticException e) {
-                    throw NumericException.instance().put("Overflow");
-                }
-            }
-
-            // Compare this with scaled other
-            if (aH != bH) {
-                return Long.compare(aH, bH) * diffQ;
-            }
-            return Long.compareUnsigned(aL, bL) * diffQ;
+            holder.of(bH, bL, other.scale);
+            holder.multiplyByPowerOf10InPlace(this.scale - other.scale);
+            bH = holder.high;
+            bL = holder.low;
         }
+
+        // Compare this with scaled other
+        if (aH != bH) {
+            return Long.compare(aH, bH) * diffQ;
+        }
+        return Long.compareUnsigned(aL, bL) * diffQ;
     }
 
     /**
@@ -471,7 +403,6 @@ public class Decimal128 implements Sinkable {
         this.scale = source.scale;
         this.compact = source.compact;
     }
-
 
     /**
      * Divide this Decimal128 by another (in-place) with optimal precision
@@ -498,8 +429,6 @@ public class Decimal128 implements Sinkable {
         // Fail early if we're sure to overflow.
         if (delta > 0 && (this.scale + delta) > MAX_SCALE) {
             throw NumericException.instance().put("Overflow");
-        } else if (delta < 0 && (divisorScale + delta) > MAX_SCALE) {
-            throw NumericException.instance().put("Overflow");
         }
 
         final boolean negResult = (divisorHigh < 0) ^ isNegative();
@@ -513,10 +442,7 @@ public class Decimal128 implements Sinkable {
         // allocations.
         if (divisorHigh < 0 && divisorLow != 0) {
             divisorLow = ~divisorLow + 1;
-            divisorHigh = ~divisorHigh;
-            if (divisorLow == 0) {
-                divisorHigh += 1;
-            }
+            divisorHigh = ~divisorHigh + (divisorLow == 0 ? 1 : 0);
         }
 
         if (delta > 0) {
@@ -536,8 +462,17 @@ public class Decimal128 implements Sinkable {
             this.low = dividendLow;
             this.compact = compact;
         }
-        divideKnuth(this, divisorHigh, divisorLow, negResult, roundingMode);
-        this.scale = scale;
+
+        DecimalKnuthDivider divider = DecimalKnuthDivider.instance();
+        divider.ofDividend(high, low);
+        divider.ofDivisor(divisorHigh, divisorLow);
+        divider.divide(negResult, roundingMode);
+        divider.sink(this, scale);
+
+        if (negResult) {
+            negate();
+        }
+
         this.updateCompact();
     }
 
@@ -669,6 +604,19 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Sets this Decimal128 to the specified 128-bit value and scale.
+     *
+     * @param high  the high 64 bits (bits 64-127)
+     * @param low   the low 64 bits (bits 0-63)
+     * @param scale the number of decimal places
+     */
+    public void of(long high, long low, int scale) {
+        this.high = high;
+        this.low = low;
+        this.scale = scale;
+    }
+
+    /**
      * Round this Decimal128 to the specified scale using the given rounding mode.
      * This method performs in-place rounding without requiring a divisor.
      *
@@ -683,6 +631,10 @@ public class Decimal128 implements Sinkable {
         // UNNECESSARY mode should be a complete no-op
         if (roundingMode == RoundingMode.UNNECESSARY) {
             return;
+        }
+
+        if (targetScale == this.scale) {
+            // No rounding needed
         }
 
         // Handle zero specially
@@ -788,74 +740,33 @@ public class Decimal128 implements Sinkable {
     /**
      * Convert to double (may lose precision).
      *
-     * @return double representation of this Decimal128
+     * @return double representation
      */
     public double toDouble() {
-        // Calculate the divisor (10^scale)
-        double divisor = 1.0;
-        for (int i = 0; i < scale; i++) {
-            divisor *= 10.0;
-        }
-
-        // Convert 128-bit integer to double
-        double result;
-
-        if (high >= 0) {
-            // Positive number
-            // result = high * 2^64 + low (treating low as unsigned)
-            result = (double) high * 18446744073709551616.0 + unsignedToDouble(low);
-        } else {
-            // Negative number - need to handle two's complement
-            // For negative numbers, we need to convert from two's complement
-            if (low == 0) {
-                // Special case: low is 0, just negate after division
-                result = (double) high * 18446744073709551616.0;
-            } else {
-                // Two's complement: ~high * 2^64 + ~low + 1
-                // But we need to be careful with the arithmetic
-                long negLow = ~low + 1;
-                long negHigh = ~high + (negLow == 0 ? 1L : 0L);
-
-                // Now we have the absolute value in negHigh:negLow
-                result = -((double) negHigh * 18446744073709551616.0 + unsignedToDouble(negLow));
-            }
-        }
-
-        return result / divisor;
-    }
-
-    @Override
-    public void toSink(@NotNull CharSink<?> sink) {
-        if (high == 0) {
-            // Case: value fits in 64 bits (could be large unsigned)
-            if (low >= 0) {
-                // Positive value - use signed arithmetic
-                longToDecimalSink(low, scale, sink);
-            } else {
-                // Large unsigned value that appears negative as signed long
-                // Convert to unsigned string first, then format
-                unsignedLongToDecimalSink(low, scale, sink);
-            }
-        } else if (high == -1 && low < 0) {
-            // Simple negative case: small negative number
-            longToDecimalSink(low, scale, sink);
-        } else {
-            // Complex case: full 128-bit conversion
-            fullToSink(sink);
-        }
+        return toBigDecimal().doubleValue();
     }
 
     /**
-     * Returns a string representation of this decimal value.
+     * Writes the string representation of this Decimal256 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
      *
-     * @return string representation of this Decimal128
+     * @param sink the CharSink to write to
+     */
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        BigDecimal bd = toBigDecimal();
+        sink.put(bd.toPlainString());
+    }
+
+    /**
+     * Returns the string representation of this Decimal256.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @return string representation of this decimal number
      */
     @Override
     public String toString() {
-        // Use StringSink which is already a CharSink - for compatibility
-        StringSink sink = new StringSink();
-        toSink(sink);
-        return sink.toString();
+        return toBigDecimal().toPlainString();
     }
 
     /**
@@ -904,865 +815,11 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Append a long value to sink without allocation
-     */
-    private static void appendLongToSink(long value, CharSink<?> sink) {
-        if (value == 0) {
-            sink.putAscii('0');
-            return;
-        }
-
-        // Find the highest power of 10 that fits in the value
-        long divisor = 1;
-        long temp = value;
-        while (temp >= 10) {
-            divisor *= 10;
-            temp /= 10;
-        }
-
-        // Output digits from most significant to least significant
-        while (divisor > 0) {
-            int digit = (int) (value / divisor);
-            sink.putAscii((char) ('0' + digit));
-            value %= divisor;
-            divisor /= 10;
-        }
-    }
-
-    /**
-     * Compare a against half of b.
-     *
-     * @param aH High 64-bit part of a.
-     * @param aL Low 64-bit part of a.
-     * @param bH High 64-bit part of b.
-     * @param bL Low 64-bit part of b.
-     * @return 1 if a > b/2, 0 if a == b/2 or -1 otherwise
-     */
-    private static int compareHalf(long aH, long aL, long bH, long bL) {
-        int h = (int) (bL & 1L);
-        bL = bL >>> 1 | bH << 63;
-        bH >>>= 1;
-        int cmp = compareUnsigned(aH, aL, bH, bL);
-        if (cmp == 0) {
-            return h == 0 ? 0 : -1;
-        }
-        return cmp;
-    }
-
-    /**
-     * Compare two unsigned 128-bit numbers
-     *
-     * @return negative if a < b, 0 if a == b, positive if a > b
-     */
-    private static int compareUnsigned(long aHigh, long aLow, long bHigh, long bLow) {
-        int highCmp = Long.compareUnsigned(aHigh, bHigh);
-        if (highCmp != 0) {
-            return highCmp;
-        }
-        return Long.compareUnsigned(aLow, bLow);
-    }
-
-    /**
-     * Algorithm from MutableBigInteger::divideMagnitude to correct qhat in Knutd 4.3.1D algorithm.
-     *
-     * @param qhat  quotient estimation
-     * @param rhat  remainder of quotient estimation
-     * @param vnm1  Divisor highest 32-bit part v_(n-1)
-     * @param vnm2  Divisor second-highest 32-bit part v_(n-2)
-     * @param ujnm2 Dividend 32-bit part: u_(j+n-2)
-     * @return the corrected qhat
-     */
-    private static long correctQhat(long qhat, long rhat, int vnm1, int vnm2, int ujnm2) {
-        long vnm1Long = vnm1 & LONG_MASK;
-        long nl = ujnm2 & LONG_MASK;
-        long rs = ((rhat & LONG_MASK) << Integer.SIZE) | nl;
-        long estProduct = (qhat & LONG_MASK) * (vnm2 & LONG_MASK);
-        if (unsignedLongCompare(estProduct, rs)) {
-            qhat--;
-            rhat = (rhat + vnm1Long) & 0xFFFFFFFFL;
-            if (rhat >= vnm1Long) {
-                estProduct -= vnm2 & LONG_MASK;
-                rs = ((rhat & LONG_MASK) << 32) | nl;
-                if (unsignedLongCompare(estProduct, rs)) {
-                    qhat--;
-                }
-            }
-        }
-        return qhat;
-    }
-
-    /**
-     * Count the number of digits in a positive long value
-     */
-    private static int countDigits(long value) {
-        if (value == 0) return 1;
-        if (value < 10L) return 1;
-        if (value < 100L) return 2;
-        if (value < 1000L) return 3;
-        if (value < 10000L) return 4;
-        if (value < 100000L) return 5;
-        if (value < 1000000L) return 6;
-        if (value < 10000000L) return 7;
-        if (value < 100000000L) return 8;
-        if (value < 1000000000L) return 9;
-        if (value < 10000000000L) return 10;
-        if (value < 100000000000L) return 11;
-        if (value < 1000000000000L) return 12;
-        if (value < 10000000000000L) return 13;
-        if (value < 100000000000000L) return 14;
-        if (value < 1000000000000000L) return 15;
-        if (value < 10000000000000000L) return 16;
-        if (value < 100000000000000000L) return 17;
-        if (value < 1000000000000000000L) return 18;
-        return 19;
-    }
-
-    /**
-     * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for 2 128-bit numbers.
-     * Note that dividends must have the same scale.
-     *
-     * @param result       Decimal128 that will store the rounded result
-     * @param dividendHigh 64-bit high part of the dividend
-     * @param dividendLow  64-bit low part of the dividend
-     * @param divisorHigh  64-bit high part of the divisor
-     * @param divisorLow   64-bit low part of the divisor
-     * @param roundingMode Rounding mode that will be used to round the result
-     */
-    private static void divideKnuth128x128(Decimal128 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
-        // Check for overflow - if dividendHH has upper bits set, the result would overflow 128 bits
-        // We can only handle at most 128 bits (32 bits in u4)
-        if ((dividendHH >>> 32) != 0) {
-            throw NumericException.instance().put("Overflow");
-        }
-
-        int v3 = (int) (divisorHigh >>> 32);
-        int v2 = (int) (divisorHigh & LONG_MASK);
-        int v1 = (int) (divisorLow >>> 32);
-        int v0 = (int) divisorLow;
-
-        int u4 = (int) (dividendHH);
-        int u3 = (int) (dividendHigh >>> 32);
-        int u2 = (int) dividendHigh;
-        int u1 = (int) (dividendLow >>> 32);
-        int u0 = (int) dividendLow;
-
-        long v3Long = v3 & LONG_MASK;
-
-        // Step D3
-        long nChunk = ((long) u4 << Integer.SIZE) | (u3 & LONG_MASK);
-        long qhat = Long.divideUnsigned(nChunk, v3Long);
-        long rhat = Long.remainderUnsigned(nChunk, v3Long);
-
-        qhat = correctQhat(qhat, rhat, v3, v2, u2);
-
-        // Step D4
-        long p = qhat * v0;
-        long t = ((long) u0 & LONG_MASK) - (p & LONG_MASK);
-        u0 = (int) t;
-        long k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u1 & LONG_MASK) - (p & LONG_MASK) - k;
-        u1 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v2 & LONG_MASK);
-        t = ((long) u2 & LONG_MASK) - (p & LONG_MASK) - k;
-        u2 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v3 & LONG_MASK);
-        t = ((long) u3 & LONG_MASK) - (p & LONG_MASK) - k;
-        u3 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u4 & LONG_MASK) - k;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u0 + v0 + k;
-            u0 = (int) t;
-            k = (t >>> 32);
-            t = u1 + v1 + k;
-            u1 = (int) t;
-            k = (t >>> 32);
-            t = u2 + v2 + k;
-            u2 = (int) t;
-            k = (t >>> 32);
-            t = u3 + v3 + k;
-            u3 = (int) t;
-        }
-
-        // qhat is now the quotient
-        result.high = 0;
-        result.low = qhat;
-
-        final boolean oddQuot = (qhat & 1L) == 1L;
-        final long remainderHigh = (u2 & LONG_MASK) | ((u3 & LONG_MASK) << 32);
-        final long remainderLow = (u0 & LONG_MASK) | ((u1 & LONG_MASK) << 32);
-        endKnuth(result, remainderHigh, remainderLow, divisorHigh, divisorLow, oddQuot, roundingMode, isNegative);
-    }
-
-    /**
-     * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for a 128-bit number divided by
-     * a 96-bit number.
-     * Note that dividends must have the same scale.
-     *
-     * @param result       Decimal128 that will store the rounded result
-     * @param dividendHigh 64-bit high part of the dividend
-     * @param dividendLow  64-bit low part of the dividend
-     * @param divisorHigh  64-bit high part of the divisor
-     * @param divisorLow   64-bit low part of the divisor
-     * @param roundingMode Rounding mode that will be used to round the result
-     */
-    private static void divideKnuth128x96(Decimal128 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
-        int v2 = (int) (divisorHigh & LONG_MASK);
-        int v1 = (int) (divisorLow >>> 32);
-        int v0 = (int) divisorLow;
-
-        int u4 = (int) dividendHH;
-        int u3 = (int) (dividendHigh >>> 32);
-        int u2 = (int) dividendHigh;
-        int u1 = (int) (dividendLow >>> 32);
-        int u0 = (int) dividendLow;
-
-        long v2Long = v2 & LONG_MASK;
-
-        // j = 1
-        // Step D3
-        long nChunk = ((long) u4 << Integer.SIZE) | (u3 & LONG_MASK);
-        long qhat = Long.divideUnsigned(nChunk, v2Long);
-        long rhat = Long.remainderUnsigned(nChunk, v2Long);
-
-        qhat = correctQhat(qhat, rhat, v2, v1, u2);
-
-        // Step D4
-        long p = qhat * (v0 & LONG_MASK);
-        long t = ((long) u1 & LONG_MASK) - (p & LONG_MASK);
-        u1 = (int) t;
-        long k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u2 & LONG_MASK) - (p & LONG_MASK) - k;
-        u2 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v2 & LONG_MASK);
-        t = ((long) u3 & LONG_MASK) - (p & LONG_MASK) - k;
-        u3 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u4 & LONG_MASK) - k;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u1 + v0 + k;
-            u1 = (int) t;
-            k = (t >>> 32);
-            t = u2 + v1 + k;
-            u2 = (int) t;
-            k = (t >>> 32);
-            t = u3 + v2 + k;
-            u3 = (int) t;
-        }
-
-        final long q1 = qhat;
-
-        // j = 0
-        // Step D3
-        nChunk = ((long) u3 << Integer.SIZE) | (u2 & LONG_MASK);
-        qhat = Long.divideUnsigned(nChunk, v2Long);
-        rhat = Long.remainderUnsigned(nChunk, v2Long);
-
-        qhat = correctQhat(qhat, rhat, v2, v1, u1);
-
-        // Step D4
-        p = qhat * (v0 & LONG_MASK);
-        t = ((long) u0 & LONG_MASK) - (p & LONG_MASK);
-        u0 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u1 & LONG_MASK) - (p & LONG_MASK) - k;
-        u1 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v2 & LONG_MASK);
-        t = ((long) u2 & LONG_MASK) - (p & LONG_MASK) - k;
-        u2 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u3 & LONG_MASK) - k;
-        u3 = (int) t;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u0 + v0 + k;
-            u0 = (int) t;
-            k = (t >>> 32);
-            t = u1 + v1 + k;
-            u1 = (int) t;
-            k = (t >>> 32);
-            t = u2 + v2 + k;
-            u2 = (int) t;
-        }
-
-        result.high = 0;
-        result.low = ((q1 & LONG_MASK) << 32) | (qhat & LONG_MASK);
-
-        final boolean oddQuot = (qhat & 1L) == 1L;
-        final long remainderHigh = (u2 & LONG_MASK) | ((u3 & LONG_MASK) << 32);
-        final long remainderLow = (u0 & LONG_MASK) | ((u1 & LONG_MASK) << 32);
-        endKnuth(result, remainderHigh, remainderLow, divisorHigh, divisorLow, oddQuot, roundingMode, isNegative);
-    }
-
-    /**
-     * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for a 128-bit number divided by
-     * a 64-bit number.
-     * Note that dividends must have the same scale.
-     *
-     * @param result       Decimal128 that will store the rounded result
-     * @param dividendHigh 64-bit high part of the dividend
-     * @param dividendLow  64-bit low part of the dividend
-     * @param divisor      64-bit divisor
-     * @param roundingMode Rounding mode that will be used to round the result
-     */
-    private static void divideKnuth128xLong(Decimal128 result, long dividendHH, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
-        int v1 = (int) (divisor >>> 32);
-        int v0 = (int) divisor;
-
-        int u4 = (int) (dividendHH);
-        int u3 = (int) (dividendHigh >>> 32);
-        int u2 = (int) dividendHigh;
-        int u1 = (int) (dividendLow >>> 32);
-        int u0 = (int) dividendLow;
-
-        long v1Long = v1 & LONG_MASK;
-
-        // j = 2
-        // Step D3
-        long nChunk = ((u4 & LONG_MASK) << Integer.SIZE) | (u3 & LONG_MASK);
-        long qhat = Long.divideUnsigned(nChunk, v1Long);
-        long rhat = Long.remainderUnsigned(nChunk, v1Long);
-
-        qhat = correctQhat(qhat, rhat, v1, v0, u2);
-
-        // Step D4
-        long p = qhat * (v0 & LONG_MASK);
-        long t = ((long) u2 & LONG_MASK) - (p & LONG_MASK);
-        u2 = (int) t;
-        long k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u3 & LONG_MASK) - (p & LONG_MASK) - k;
-        u3 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u4 & LONG_MASK) - k;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u2 + v0 + k;
-            u2 = (int) t;
-            k = (t >>> 32);
-            t = u3 + v1 + k;
-            u3 = (int) t;
-        }
-
-        final long q2 = qhat;
-
-        // j = 1
-        // Step D3
-        nChunk = ((u3 & LONG_MASK) << Integer.SIZE) | (u2 & LONG_MASK);
-        qhat = Long.divideUnsigned(nChunk, v1Long);
-        rhat = Long.remainderUnsigned(nChunk, v1Long);
-
-        qhat = correctQhat(qhat, rhat, v1, v0, u1);
-
-        // Step D4
-        p = qhat * (v0 & LONG_MASK);
-        t = ((long) u1 & LONG_MASK) - (p & LONG_MASK);
-        u1 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u2 & LONG_MASK) - (p & LONG_MASK) - k;
-        u2 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u3 & LONG_MASK) - k;
-        u3 = (int) t;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u1 + v0 + k;
-            u1 = (int) t;
-            k = (t >>> 32);
-            t = u2 + v1 + k;
-            u2 = (int) t;
-        }
-
-        final long q1 = qhat;
-
-
-        // j = 0
-        // Step D3
-        nChunk = ((u2 & LONG_MASK) << Integer.SIZE) | (u1 & LONG_MASK);
-        qhat = Long.divideUnsigned(nChunk, v1Long);
-        rhat = Long.remainderUnsigned(nChunk, v1Long);
-
-        qhat = correctQhat(qhat, rhat, v1, v0, u0);
-
-        // Step D4
-        p = qhat * (v0 & LONG_MASK);
-        t = ((long) u0 & LONG_MASK) - (p & LONG_MASK);
-        u0 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u1 & LONG_MASK) - (p & LONG_MASK) - k;
-        u1 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u2 & LONG_MASK) - k;
-        u2 = (int) t;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u0 + v0 + k;
-            u0 = (int) t;
-            k = (t >>> 32);
-            t = u1 + v1 + k;
-            u1 = (int) t;
-        }
-
-        result.high = q2 & LONG_MASK;
-        result.low = ((q1 & LONG_MASK) << 32) | (qhat & LONG_MASK);
-
-        final boolean oddQuot = (qhat & 1L) == 1L;
-        final long remainderHigh = (u2 & LONG_MASK) | ((u3 & LONG_MASK) << 32);
-        final long remainderLow = (u0 & LONG_MASK) | ((u1 & LONG_MASK) << 32);
-        endKnuth(result, remainderHigh, remainderLow, 0, divisor, oddQuot, roundingMode, isNegative);
-    }
-
-    /**
-     * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for 2 96-bit numbers.
-     * Note that dividends must have the same scale.
-     *
-     * @param result       Decimal128 that will store the rounded result
-     * @param dividendHigh 64-bit high part of the dividend
-     * @param dividendLow  64-bit low part of the dividend
-     * @param divisorHigh  64-bit high part of the divisor
-     * @param divisorLow   64-bit low part of the divisor
-     * @param roundingMode Rounding mode that will be used to round the result
-     */
-    private static void divideKnuth96x96(Decimal128 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
-        int v2 = (int) (divisorHigh & LONG_MASK);
-        int v1 = (int) (divisorLow >>> 32);
-        int v0 = (int) divisorLow;
-
-        int u3 = (int) (dividendHigh >>> 32);
-        int u2 = (int) dividendHigh;
-        int u1 = (int) (dividendLow >>> 32);
-        int u0 = (int) dividendLow;
-
-        long v2Long = v2 & LONG_MASK;
-
-        // Step D3
-        long nChunk = ((long) u3 << Integer.SIZE) | (u2 & LONG_MASK);
-        long qhat = Long.divideUnsigned(nChunk, v2Long);
-        long rhat = Long.remainderUnsigned(nChunk, v2Long);
-
-        qhat = correctQhat(qhat, rhat, v2, v1, u1);
-
-        // Step D4
-        long p = qhat * (v0 & LONG_MASK);
-        long t = ((long) u0 & LONG_MASK) - (p & LONG_MASK);
-        u0 = (int) t;
-        long k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u1 & LONG_MASK) - (p & LONG_MASK) - k;
-        u1 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v2 & LONG_MASK);
-        t = ((long) u2 & LONG_MASK) - (p & LONG_MASK) - k;
-        u2 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u3 & LONG_MASK) - k;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u0 + v0 + k;
-            u0 = (int) t;
-            k = (t >>> 32);
-            t = u1 + v1 + k;
-            u1 = (int) t;
-            k = (t >>> 32);
-            t = u2 + v2 + k;
-            u2 = (int) t;
-        }
-
-        // qhat is now the quotient
-        result.high = 0;
-        result.low = qhat;
-
-        final boolean oddQuot = (qhat & 1L) == 1L;
-        final long remainderHigh = (u2 & LONG_MASK);
-        final long remainderLow = (u0 & LONG_MASK) | ((u1 & LONG_MASK) << 32);
-        endKnuth(result, remainderHigh, remainderLow, divisorHigh, divisorLow, oddQuot, roundingMode, isNegative);
-    }
-
-    /**
-     * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for a 96-bit number divided by
-     * a 64-bit number.
-     * Note that dividends must have the same scale.
-     *
-     * @param result       Decimal128 that will store the rounded result
-     * @param dividendHigh 64-bit high part of the dividend
-     * @param dividendLow  64-bit low part of the dividend
-     * @param divisor      64-bit divisor
-     * @param roundingMode Rounding mode that will be used to round the result
-     */
-    private static void divideKnuth96xLong(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
-        int v1 = (int) ((divisor >>> 32) & LONG_MASK);
-        int v0 = (int) divisor;
-
-        int u3 = (int) (dividendHigh >>> 32);
-        int u2 = (int) dividendHigh;
-        int u1 = (int) (dividendLow >>> 32);
-        int u0 = (int) dividendLow;
-
-        long v1Long = v1 & LONG_MASK;
-
-        // j = 1
-        // Step D3
-        long nChunk = ((long) u3 << Integer.SIZE) | (u2 & LONG_MASK);
-        long qhat = Long.divideUnsigned(nChunk, v1Long);
-        long rhat = Long.remainderUnsigned(nChunk, v1Long);
-
-        qhat = correctQhat(qhat, rhat, v1, v0, u1);
-
-        // Step D4
-        long p = qhat * (v0 & LONG_MASK);
-        long t = ((long) u1 & LONG_MASK) - (p & LONG_MASK);
-        u1 = (int) t;
-        long k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u2 & LONG_MASK) - (p & LONG_MASK) - k;
-        u2 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u3 & LONG_MASK) - k;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u1 + v0 + k;
-            u1 = (int) t;
-            k = (t >>> 32);
-            t = u2 + v1 + k;
-            u2 = (int) t;
-        }
-
-        final long q1 = qhat;
-
-        // j = 0
-        // Step D3
-        nChunk = ((long) u2 << Integer.SIZE) | (u1 & LONG_MASK);
-        qhat = Long.divideUnsigned(nChunk, v1Long);
-        rhat = Long.remainderUnsigned(nChunk, v1Long);
-
-        qhat = correctQhat(qhat, rhat, v1, v0, u0);
-
-        // Step D4
-        p = qhat * (v0 & LONG_MASK);
-        t = ((long) u0 & LONG_MASK) - (p & LONG_MASK);
-        u0 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        p = qhat * (v1 & LONG_MASK);
-        t = ((long) u1 & LONG_MASK) - (p & LONG_MASK) - k;
-        u1 = (int) t;
-        k = (p >>> 32) - (t >> 32);
-        t = ((long) u2 & LONG_MASK) - k;
-        u2 = (int) t;
-
-        // Step D5
-        if (t < 0) {
-            // Step D6
-            qhat--;
-            t = u0 + v0 + k;
-            u0 = (int) t;
-            k = (t >>> 32);
-            t = u1 + v1 + k;
-            u1 = (int) t;
-        }
-
-        result.high = 0;
-        result.low = ((q1 & LONG_MASK) << 32) | (qhat & LONG_MASK);
-
-        final boolean oddQuot = (qhat & 1L) == 1L;
-        final long remainderHigh = (u2 & LONG_MASK);
-        final long remainderLow = (u0 & LONG_MASK) | ((u1 & LONG_MASK) << 32);
-        endKnuth(result, remainderHigh, remainderLow, 0, divisor, oddQuot, roundingMode, isNegative);
-    }
-
-    /**
-     * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for 2 64-bit numbers.
-     * Note that dividends must have the same scale.
-     *
-     * @param result       Decimal128 that will store the rounded result
-     * @param dividend     64-bit dividend
-     * @param divisor      64-bit divisor
-     * @param roundingMode Rounding mode that will be used to round the result
-     */
-    private static void divideKnuthLongxLong(Decimal128 result, long dividend, long divisor, boolean isNegative, RoundingMode roundingMode) {
-        long q = Long.divideUnsigned(dividend, divisor);
-        long r = Long.remainderUnsigned(dividend, divisor);
-
-        result.high = 0;
-        result.low = q;
-
-        final boolean oddQuot = (q & 1L) == 1L;
-        endKnuth(result, 0, r, 0, divisor, oddQuot, roundingMode, isNegative);
-    }
-
-    private static void divideKnuthXx128(Decimal128 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
-        if ((dividendHigh >>> 32) != 0) {
-            // Step D1: Normalize (common to every division)
-            final int shift = Integer.numberOfLeadingZeros((int) (divisorHigh >>> 32));
-            long dividendHH = 0;
-            if (shift != 0) {
-                dividendHH = dividendHigh >>> (63 & -shift);
-                dividendHigh = dividendHigh << shift | (dividendLow >>> (63 & -shift));
-                dividendLow <<= shift;
-                divisorHigh = divisorHigh << shift | (divisorLow >>> (63 & -shift));
-                divisorLow <<= shift;
-            }
-
-            divideKnuth128x128(result, dividendHH, dividendHigh, dividendLow, divisorHigh, divisorLow, isNegative, roundingMode);
-        } else {
-            result.high = 0;
-            result.low = 0;
-            endKnuth(result, dividendHigh, dividendLow, divisorHigh, divisorLow, false, roundingMode, isNegative);
-        }
-    }
-
-    private static void divideKnuthXx96(Decimal128 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
-        if (dividendHigh != 0) {
-            boolean is128 = (dividendHigh >>> 32) != 0;
-            // Step D1: Normalize (common to every division)
-            final int shift = Integer.numberOfLeadingZeros((int) (divisorHigh & LONG_MASK));
-            long dividendHH = 0;
-            if (shift != 0) {
-                dividendHH = dividendHigh >>> (63 & -shift);
-                dividendHigh = dividendHigh << shift | (dividendLow >>> (63 & -shift));
-                dividendLow <<= shift;
-                divisorHigh = divisorHigh << shift | (divisorLow >>> (63 & -shift));
-                divisorLow <<= shift;
-            }
-
-            if (is128) {
-                divideKnuth128x96(result, dividendHH, dividendHigh, dividendLow, divisorHigh, divisorLow, isNegative, roundingMode);
-            } else {
-                divideKnuth96x96(result, dividendHigh, dividendLow, divisorHigh, divisorLow, isNegative, roundingMode);
-            }
-        } else {
-            result.high = 0;
-            result.low = 0;
-            endKnuth(result, dividendHigh, dividendLow, divisorHigh, divisorLow, false, roundingMode, isNegative);
-        }
-    }
-
-    private static void divideKnuthXxLong(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
-        if (dividendHigh != 0) {
-            boolean is128 = (dividendHigh >>> 32) != 0;
-
-            // Step D1: Normalize (common to every division)
-            final int shift = Integer.numberOfLeadingZeros((int) (divisor >>> 32));
-            long dividendHH = 0;
-            if (shift != 0) {
-                dividendHH = dividendHigh >>> (63 & -shift);
-                dividendHigh = dividendHigh << shift | (dividendLow >>> (63 & -shift));
-                dividendLow <<= shift;
-                divisor <<= shift;
-            }
-
-            if (is128) {
-                divideKnuth128xLong(result, dividendHH, dividendHigh, dividendLow, divisor, isNegative, roundingMode);
-            } else {
-                divideKnuth96xLong(result, dividendHigh, dividendLow, divisor, isNegative, roundingMode);
-            }
-        } else {
-            if ((dividendLow >>> 32) != 0) {
-                divideKnuthLongxLong(result, dividendLow, divisor, isNegative, roundingMode);
-            } else {
-                result.high = 0;
-                result.low = 0;
-                endKnuth(result, 0, dividendLow, 0, divisor, false, roundingMode, isNegative);
-            }
-        }
-    }
-
-    /**
-     * Divide any 128-bit numbers by a 32-bit one using Knuth 4.3.1 exercise 16.
-     *
-     * @param result       Decimal128 where the result will be written
-     * @param dividendHigh 64-bit high part of the dividend
-     * @param dividendLow  64-bit low part of the dividend
-     * @param divisor      32-bit divisor
-     * @param isNegative   whether the result should be negative
-     * @param roundingMode rounding mode used if there is a remainder
-     */
-    private static void divideKnuthXxWord(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
-        int divisorInt = (int) divisor;
-        if (divisor == 0) {
-            throw NumericException.instance().put("Division by zero");
-        }
-
-        if (divisor == 1) {
-            result.high = dividendHigh;
-            result.low = dividendLow;
-            if (isNegative) {
-                result.negate();
-            }
-            return;
-        }
-
-        int u3 = (int) (dividendHigh >>> 32);
-        int u2 = (int) dividendHigh;
-        int u1 = (int) (dividendLow >>> 32);
-        int u0 = (int) dividendLow;
-
-        int r = u3;
-        long rLong = (long) r & LONG_MASK;
-
-        int q3 = 0;
-        if (rLong >= divisor) {
-            q3 = (int) (rLong / divisor);
-            r = (int) (rLong - (long) q3 * divisor);
-            rLong = (long) r & LONG_MASK;
-        }
-
-        long qhat = rLong << 32 | (u2 & LONG_MASK);
-        int q2;
-        if (qhat >= 0L) {
-            q2 = (int) (qhat / divisor);
-            r = (int) (qhat - (long) q2 * divisor);
-        } else {
-            long tmp = divWord(qhat, divisorInt);
-            q2 = (int) (tmp & LONG_MASK);
-            r = (int) (tmp >>> 32);
-        }
-        rLong = (long) r & LONG_MASK;
-
-        qhat = rLong << 32 | (u1 & LONG_MASK);
-        int q1;
-        if (qhat >= 0L) {
-            q1 = (int) (qhat / divisor);
-            r = (int) (qhat - (long) q1 * divisor);
-        } else {
-            long tmp = divWord(qhat, divisorInt);
-            q1 = (int) (tmp & LONG_MASK);
-            r = (int) (tmp >>> 32);
-        }
-        rLong = (long) r & LONG_MASK;
-
-        qhat = rLong << 32 | (u0 & LONG_MASK);
-        int q0;
-        if (qhat >= 0L) {
-            q0 = (int) (qhat / divisor);
-            r = (int) (qhat - (long) q0 * divisor);
-        } else {
-            long tmp = divWord(qhat, divisorInt);
-            q0 = (int) (tmp & LONG_MASK);
-            r = (int) (tmp >>> 32);
-        }
-
-        result.high = ((q3 & LONG_MASK) << 32) | (q2 & LONG_MASK);
-        result.low = ((q1 & LONG_MASK) << 32) | (q0 & LONG_MASK);
-
-        final boolean oddQuot = (q0 & 1L) == 1L;
-        endKnuth(result, 0, r, 0, divisor, oddQuot, roundingMode, isNegative);
-    }
-
-    private static void endKnuth(Decimal128 result, long remainderHigh, long remainderLow, long divisorHigh, long divisorLow, boolean oddQuot, RoundingMode roundingMode, boolean isNegative) {
-        if (remainderHigh == 0 && remainderLow == 0) {
-            if (isNegative) {
-                result.negate();
-            }
-            return;
-        }
-
-        // We can ignore Step D8 as we only need the remainder to compare with the divisor and if we don't unnormalize neither of them
-        // then they are still comparable.
-
-        boolean increment = false;
-        switch (roundingMode) {
-            case UNNECESSARY:
-                throw NumericException.instance().put("Rounding necessary");
-            case UP: // Away from zero
-                increment = true;
-                break;
-
-            case DOWN: // Towards zero
-                break;
-
-            case CEILING: // Towards +infinity
-                increment = !isNegative;
-                break;
-
-            case FLOOR: // Towards -infinity
-                increment = isNegative;
-                break;
-
-            default: // Some kind of half-way rounding
-                int cmp = compareHalf(remainderHigh, remainderLow, divisorHigh, divisorLow);
-                if (cmp > 0) {
-                    increment = true;
-                } else if (cmp == 0) {
-                    switch (roundingMode) {
-                        case HALF_UP:
-                            increment = true;
-                            break;
-                        case HALF_EVEN:
-                            increment = oddQuot;
-                            break;
-                        default:
-                    }
-                }
-        }
-
-        if (increment) {
-            result.low++;
-            if (result.low == 0) {
-                result.high++;
-            }
-        }
-
-        if (isNegative) {
-            result.negate();
-        }
-    }
-
-    /**
      * Compare two longs as if they were unsigned.
      * Returns true iff one is bigger than two.
      */
     private static boolean unsignedLongCompare(long one, long two) {
         return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
-    }
-
-    /**
-     * Convert unsigned long to double
-     * Java's long is signed, but we need to treat it as unsigned for the low part
-     */
-    private static double unsignedToDouble(long value) {
-        if (value >= 0) {
-            return (double) value;
-        } else {
-            // For negative values (which represent large unsigned values)
-            // Split into two parts to avoid precision loss
-            // value = 2^63 + (value & 0x7FFFFFFFFFFFFFFF)
-            return 9223372036854775808.0 + (double) (value & 0x7FFFFFFFFFFFFFFFL);
-        }
     }
 
     /**
@@ -1772,140 +829,6 @@ public class Decimal128 implements Sinkable {
         // Use unsigned comparison for faster bounds check
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
             throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
-        }
-    }
-
-    /**
-     * Full 128-bit to sink conversion (simplified version)
-     * For production use, consider using BigInteger for complex cases
-     */
-    private void fullToSink(CharSink<?> sink) {
-        // Convert the 128-bit value to BigInteger first, then handle sign and formatting
-        java.math.BigInteger bigInt;
-
-        // Create BigInteger from the 128-bit representation
-        if (high == 0) {
-            // Simple positive case: fits in 64 bits
-            bigInt = java.math.BigInteger.valueOf(low);
-        } else if (high == -1 && low < 0) {
-            // Simple negative case: small negative number that fits in signed long
-            bigInt = java.math.BigInteger.valueOf(low);
-        } else if (high < 0) {
-            // Negative 128-bit number - use two's complement to get absolute value
-            long absHigh = ~high;
-            long absLow = ~low + 1;
-            if (low == 0 && absLow == 0) {
-                absHigh++; // Handle carry
-            }
-
-            // Create positive BigInteger for absolute value
-            java.math.BigInteger absBigInt;
-            if (absHigh == 0) {
-                absBigInt = new java.math.BigInteger(Long.toUnsignedString(absLow));
-            } else {
-                absBigInt = java.math.BigInteger.valueOf(absHigh).shiftLeft(64).add(new java.math.BigInteger(Long.toUnsignedString(absLow)));
-            }
-
-            // Make it negative
-            bigInt = absBigInt.negate();
-        } else {
-            // Positive 128-bit number
-            bigInt = java.math.BigInteger.valueOf(high).shiftLeft(64).add(new java.math.BigInteger(Long.toUnsignedString(low)));
-        }
-
-        // Convert to string (BigInteger handles the sign)
-        String valueStr = bigInt.toString();
-
-        // Handle sign separately for formatting
-        boolean negative = valueStr.startsWith("-");
-        String digits = negative ? valueStr.substring(1) : valueStr;
-
-        // Apply decimal formatting based on scale
-        if (negative) {
-            sink.putAscii('-');
-        }
-
-        if (scale == 0) {
-            // Integer
-            sink.put(digits);
-        } else {
-            // Decimal
-            if (digits.length() <= scale) {
-                // Number < 1: output 0.00...digits
-                sink.putAscii('0').putAscii('.');
-                for (int i = 0; i < scale - digits.length(); i++) {
-                    sink.putAscii('0');
-                }
-                sink.put(digits);
-            } else {
-                // Number >= 1: split into integer.fractional
-                int splitPoint = digits.length() - scale;
-                sink.put(digits.substring(0, splitPoint));
-                sink.putAscii('.');
-                sink.put(digits.substring(splitPoint));
-            }
-        }
-    }
-
-    /**
-     * Convert a long to decimal representation in a sink with scale (allocation-free)
-     */
-    private void longToDecimalSink(long value, int scale, CharSink<?> sink) {
-        if (scale == 0) {
-            sink.put(value);
-            return;
-        }
-
-        // Handle negative numbers
-        boolean negative = value < 0;
-        long absValue = negative ? -value : value;
-
-        if (negative) {
-            sink.putAscii('-');
-        }
-
-        // Calculate number of digits in absValue
-        int digits = countDigits(absValue);
-
-        if (digits <= scale) {
-            // Need to pad with leading zeros: 0.00...value
-            sink.putAscii('0').putAscii('.');
-            // Add leading zeros
-            for (int i = 0; i < scale - digits; i++) {
-                sink.putAscii('0');
-            }
-            // Add the actual digits
-            appendLongToSink(absValue, sink);
-        } else {
-            // Split into integer and fractional parts
-            // Extract integer part
-            long divisor = 1;
-            for (int i = 0; i < scale; i++) {
-                divisor *= 10;
-            }
-            long integerPart = absValue / divisor;
-            long fractionalPart = absValue % divisor;
-
-            // Output integer part
-            appendLongToSink(integerPart, sink);
-
-            // Output decimal point
-            sink.putAscii('.');
-
-            // Output fractional part with leading zeros if needed
-            if (fractionalPart == 0) {
-                // Special case: all trailing zeros
-                for (int i = 0; i < scale; i++) {
-                    sink.putAscii('0');
-                }
-            } else {
-                // Pad with leading zeros and append fractional part
-                int fracDigits = countDigits(fractionalPart);
-                for (int i = 0; i < scale - fracDigits; i++) {
-                    sink.putAscii('0');
-                }
-                appendLongToSink(fractionalPart, sink);
-            }
         }
     }
 
@@ -1933,10 +856,7 @@ public class Decimal128 implements Sinkable {
         if (bNegative) {
             // Negate other's values
             bL = ~bL + 1;
-            bH = ~bH;
-            if (bL == 0) {
-                bH += 1;
-            }
+            bH = ~bH + (bL == 0 ? 1 : 0);
         }
 
         if (bH == 0 && bL >= 0) {
@@ -1950,10 +870,7 @@ public class Decimal128 implements Sinkable {
         if (negative) {
             // Negate result
             this.low = ~this.low + 1;
-            long newHigh = ~this.high;
-            if (this.low == 0) {
-                newHigh += 1;
-            }
+            long newHigh = ~this.high + (this.low == 0 ? 1 : 0);
             this.high = newHigh;
         }
 
@@ -2136,9 +1053,6 @@ public class Decimal128 implements Sinkable {
         if (n <= 0 || (high == 0 && low == 0)) {
             return;
         }
-        if (n > 38) {
-            throw NumericException.instance().put("Overflow");
-        }
 
         // For small powers, use lookup table
         if (n < 18) {
@@ -2180,10 +1094,7 @@ public class Decimal128 implements Sinkable {
      * @param newScale The new scale (must be >= current scale)
      */
     private void rescale(int newScale) {
-        if (newScale < this.scale) {
-            throw new IllegalArgumentException("Cannot reduce scale");
-        }
-
+        assert newScale >= this.scale;
         int scaleDiff = newScale - this.scale;
 
         boolean isNegative = isNegative();
@@ -2201,63 +1112,8 @@ public class Decimal128 implements Sinkable {
         this.scale = newScale;
     }
 
-    /**
-     * Convert an unsigned long to decimal representation in a sink with scale (allocation-free)
-     */
-    private void unsignedLongToDecimalSink(long value, int scale, CharSink<?> sink) {
-        if (scale == 0) {
-            // Integer case - output as unsigned
-            sink.put(Long.toUnsignedString(value));
-            return;
-        }
-
-        // Convert to string as unsigned
-        String digits = Long.toUnsignedString(value);
-
-        if (digits.length() <= scale) {
-            // Need to pad with leading zeros: 0.00...digits
-            sink.putAscii('0').putAscii('.');
-            // Add leading zeros
-            for (int i = 0; i < scale - digits.length(); i++) {
-                sink.putAscii('0');
-            }
-            // Add the actual digits
-            sink.put(digits);
-        } else {
-            // Split into integer and fractional parts
-            // Extract integer part
-            int splitPoint = digits.length() - scale;
-            sink.put(digits.substring(0, splitPoint));
-            // Output decimal point
-            sink.putAscii('.');
-            // Output fractional part
-            sink.put(digits.substring(splitPoint));
-        }
-    }
-
     private void updateCompact() {
         this.compact = (this.high == 0 || (this.high == -1 && this.low < 0)) ? this.low : INFLATED;
-    }
-
-    static long divWord(long n, int d) {
-        long dLong = d & LONG_MASK;
-        if (dLong == 1L) {
-            return n & LONG_MASK;
-        } else {
-            long q = (n >>> 1) / (dLong >>> 1);
-
-            long r;
-            for (r = n - q * dLong; r < 0L; --q) {
-                r += dLong;
-            }
-
-            while (r >= dLong) {
-                r -= dLong;
-                ++q;
-            }
-
-            return r << 32 | q & LONG_MASK;
-        }
     }
 
     /**

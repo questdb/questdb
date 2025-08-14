@@ -91,26 +91,6 @@ public class Decimal256DivideBenchmark {
         return decimal256Result;
     }
 
-    @Benchmark
-    public void decimal256Divide256By128() {
-        // Test division of 256-bit by 128-bit values
-        Decimal256 largeDividend = new Decimal256();
-        largeDividend.setFromLong(123456789098765432L, 6);
-
-        decimal256Result.copyFrom(largeDividend);
-        decimal256Result.divide(decimal256Divisor, 10, RoundingMode.HALF_UP);
-    }
-
-    @Benchmark
-    public void decimal256DivideHighPrecision() {
-        // Test high precision division
-        Decimal256 val1 = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234.123456789"));
-        Decimal256 val2 = Decimal256.fromBigDecimal(new BigDecimal("987654.321098765"));
-
-        decimal256Result.copyFrom(val1);
-        decimal256Result.divide(val2, 15, RoundingMode.HALF_UP);
-    }
-
     @Setup
     public void setup() {
         decimal256Result = new Decimal256();

@@ -73,6 +73,38 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testAllModes() {
+        double testValue = 1.235;
+        int originalScale = 3;
+        int targetScale = 2;
+
+        // Test all rounding modes
+        java.math.RoundingMode[] modes = {
+                java.math.RoundingMode.UP,
+                java.math.RoundingMode.DOWN,
+                java.math.RoundingMode.CEILING,
+                java.math.RoundingMode.FLOOR,
+                java.math.RoundingMode.HALF_UP,
+                java.math.RoundingMode.HALF_DOWN,
+                java.math.RoundingMode.HALF_EVEN
+        };
+
+        for (java.math.RoundingMode mode : modes) {
+            Decimal64 a = Decimal64.fromDouble(testValue, originalScale);
+            a.round(targetScale, mode);
+
+            // Compare with BigDecimal reference
+            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue)
+                    .setScale(originalScale, java.math.RoundingMode.HALF_UP)
+                    .setScale(targetScale, mode);
+
+            Assert.assertEquals("Rounding mode " + mode + " failed for " + testValue,
+                    reference, a.toBigDecimal());
+            Assert.assertEquals("Scale should be " + targetScale, targetScale, a.getScale());
+        }
+    }
+
+    @Test
     public void testBasicConstruction() {
         Decimal64 zero = new Decimal64();
         Assert.assertEquals(0, zero.getValue());
@@ -91,6 +123,12 @@ public class Decimal64Test {
         Assert.assertEquals(2, negative.getScale());
         Assert.assertFalse(negative.isZero());
         Assert.assertTrue(negative.isNegative());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testBigDecimalOverflow() {
+        BigDecimal bd = new BigDecimal("1e100");
+        Decimal64.fromBigDecimal(bd);
     }
 
     @Test
@@ -199,6 +237,14 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testDivisionByOne() {
+        Decimal64 dividend = Decimal64.fromLong(123456L, 3);
+        Decimal64 divisor = Decimal64.fromLong(1L, 0);
+        dividend.divide(divisor, 3, RoundingMode.HALF_UP);
+        Assert.assertEquals("123.456", dividend.toString());
+    }
+
+    @Test
     public void testDivisionByZero() {
         Decimal64 dividend = new Decimal64(123, 0);
         Decimal64 zero = new Decimal64(0, 0);
@@ -236,6 +282,13 @@ public class Decimal64Test {
             // Test division accuracy
             testDivisionAccuracy(a, b, i);
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivisionRemainderUnnecessary() {
+        Decimal64 dividend = Decimal64.fromLong(10L, 0);
+        Decimal64 divisor = Decimal64.fromLong(3L, 0);
+        dividend.divide(divisor, 0, RoundingMode.UNNECESSARY);
     }
 
     @Test
@@ -345,6 +398,19 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testModuloNegativeScale() {
+        // Test -10 % 3 = -1
+        BigDecimal bdA = new BigDecimal("-0.000001364898122");
+        BigDecimal bdB = new BigDecimal("0.4073709550324");
+        Decimal64 a = Decimal64.fromBigDecimal(bdA);
+        Decimal64 b = Decimal64.fromBigDecimal(bdB);
+
+        a.modulo(b);
+
+        Assert.assertEquals("-0.000001364898122", a.toString());
+    }
+
+    @Test
     public void testMultiplication() {
         Decimal64 a = new Decimal64(123, 1);  // 12.3
         Decimal64 b = new Decimal64(456, 2);  // 4.56
@@ -366,6 +432,11 @@ public class Decimal64Test {
             // Test multiplication accuracy
             testMultiplicationAccuracy(a, b, i);
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testNegateMinValue() {
+        new Decimal64(Long.MIN_VALUE, 0).negate();
     }
 
     @Test
@@ -390,6 +461,11 @@ public class Decimal64Test {
         negative.add(positive);
         Assert.assertEquals("-55.56", negative.toString());
         Assert.assertTrue(negative.isNegative());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testNullBigDecimal() {
+        Decimal64.fromBigDecimal(null);
     }
 
     @Test
@@ -429,6 +505,161 @@ public class Decimal64Test {
         a.add(b);
         Assert.assertEquals(9, a.getScale());
         Assert.assertEquals("2E-9", a.toString()); // BigDecimal uses scientific notation for very small numbers
+    }
+
+    @Test
+    public void testRound() {
+        // Test basic rounding from scale 3 to scale 2
+        Decimal64 a = Decimal64.fromDouble(1.234, 3);
+        a.round(2, java.math.RoundingMode.HALF_UP);
+
+        java.math.BigDecimal expected = java.math.BigDecimal.valueOf(1.23);
+        Assert.assertEquals("Basic rounding failed", expected, a.toBigDecimal());
+        Assert.assertEquals("Scale should be 2", 2, a.getScale());
+    }
+
+    @Test
+    public void testRoundFuzz() {
+        // Fuzz test for round() method using BigDecimal as oracle
+        final int iterations = 10_000;  // Reduced for debugging
+        final Rnd rnd = TestUtils.generateRandom(null);
+
+        // All rounding modes except UNNECESSARY (which requires special handling)
+        java.math.RoundingMode[] roundingModes = {
+                java.math.RoundingMode.UP,
+                java.math.RoundingMode.DOWN,
+                java.math.RoundingMode.CEILING,
+                java.math.RoundingMode.FLOOR,
+                java.math.RoundingMode.HALF_UP,
+                java.math.RoundingMode.HALF_DOWN,
+                java.math.RoundingMode.HALF_EVEN
+        };
+
+        Decimal64 decimal = new Decimal64();
+        for (int i = 0; i < iterations; i++) {
+            // Generate random decimal with varying characteristics
+            rnd.nextDecimal64(decimal);
+
+            // Skip zero and very small values that might cause issues
+            if (decimal.isZero()) {
+                continue;
+            }
+
+            // Generate random target scale (0 to 10)
+            int targetScale = rnd.nextInt(11);
+
+            // Skip cases where target scale equals current scale (no rounding needed)
+            if (targetScale == decimal.getScale()) {
+                continue;
+            }
+
+            // Randomly select rounding mode
+            java.math.RoundingMode roundingMode = roundingModes[rnd.nextInt(roundingModes.length)];
+
+            // Create copies for testing
+            Decimal64 testDecimal = new Decimal64();
+            testDecimal.copyFrom(decimal);
+
+            // Get the original BigDecimal representation
+            java.math.BigDecimal originalBigDecimal;
+            try {
+                originalBigDecimal = decimal.toBigDecimal();
+            } catch (NumberFormatException e) {
+                String errorMsg = String.format(
+                        "Failed to convert original Decimal64 to BigDecimal at iteration %d:\n" +
+                                "Decimal64: value=0x%016x, scale=%d\n" +
+                                "toString()=%s\n" +
+                                "Error: %s",
+                        i, decimal.getValue(), decimal.getScale(),
+                        decimal, e.getMessage()
+                );
+                Assert.fail(errorMsg);
+                return; // unreachable but makes compiler happy
+            }
+
+            try {
+                // Apply rounding to our Decimal64
+                testDecimal.round(targetScale, roundingMode);
+
+                // Apply same rounding to BigDecimal as oracle
+                java.math.BigDecimal expectedBigDecimal = originalBigDecimal.setScale(targetScale, roundingMode);
+
+                // Compare results
+                java.math.BigDecimal actualBigDecimal;
+                try {
+                    actualBigDecimal = testDecimal.toBigDecimal();
+                } catch (NumberFormatException e) {
+                    String errorMsg = String.format(
+                            "Failed to convert result Decimal64 to BigDecimal at iteration %d:\n" +
+                                    "Original: %s (scale=%d)\n" +
+                                    "Target scale: %d, Mode: %s\n" +
+                                    "Result Decimal64: value=0x%016x, scale=%d\n" +
+                                    "toString()=%s\n" +
+                                    "Error: %s",
+                            i,
+                            originalBigDecimal.toPlainString(), decimal.getScale(),
+                            targetScale, roundingMode,
+                            testDecimal.getValue(), testDecimal.getScale(),
+                            testDecimal, e.getMessage()
+                    );
+                    Assert.fail(errorMsg);
+                    return; // unreachable but makes compiler happy
+                }
+
+                if (!expectedBigDecimal.equals(actualBigDecimal)) {
+                    String errorMsg = String.format(
+                            "Rounding mismatch at iteration %d:\n" +
+                                    "Original: %s (scale=%d)\n" +
+                                    "Target scale: %d, Mode: %s\n" +
+                                    "Expected: %s\n" +
+                                    "Actual: %s\n" +
+                                    "Original Decimal64: value=0x%016x, scale=%d",
+                            i,
+                            originalBigDecimal.toPlainString(), decimal.getScale(),
+                            targetScale, roundingMode,
+                            expectedBigDecimal.toPlainString(),
+                            actualBigDecimal.toPlainString(),
+                            decimal.getValue(), decimal.getScale()
+                    );
+                    Assert.fail(errorMsg);
+                }
+
+                // Verify the scale is set correctly
+                Assert.assertEquals("Scale should match target scale", targetScale, testDecimal.getScale());
+
+            } catch (NumericException e) {
+                // BigDecimal might throw NumericException in some cases
+                // In such cases, our implementation should either handle it gracefully
+                // or throw the same exception
+                boolean decimal64Threw = false;
+                try {
+                    testDecimal.round(targetScale, roundingMode);
+                } catch (NumericException e2) {
+                    decimal64Threw = true;
+                }
+
+                if (!decimal64Threw) {
+                    String errorMsg = String.format(
+                            "BigDecimal threw NumericException but Decimal64 didn't at iteration %d:\n" +
+                                    "Original: %s (scale=%d)\n" +
+                                    "Target scale: %d, Mode: %s\n" +
+                                    "BigDecimal error: %s",
+                            i,
+                            originalBigDecimal.toPlainString(), decimal.getScale(),
+                            targetScale, roundingMode,
+                            e.getMessage()
+                    );
+                    Assert.fail(errorMsg);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testRoundZero() {
+        Decimal64 a = Decimal64.fromDouble(0, 3);
+        a.round(0, java.math.RoundingMode.HALF_UP);
+        Assert.assertEquals(0, a.getValue());
     }
 
     @Test
@@ -473,6 +704,13 @@ public class Decimal64Test {
         // Test static negate
         Decimal64.negate(a, result);
         Assert.assertEquals("-12.3", result.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testSubtractOverflow() {
+        Decimal64 a = new Decimal64(Long.MAX_VALUE, 0);
+        Decimal64 b = new Decimal64(Long.MIN_VALUE + 1, 0);
+        a.subtract(b);
     }
 
     @Test

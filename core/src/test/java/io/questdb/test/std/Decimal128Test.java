@@ -56,6 +56,12 @@ public class Decimal128Test {
         }
     }
 
+    @Test(expected = NumericException.class)
+    public void testBigDecimalOverflow() {
+        BigDecimal bd = new BigDecimal("1e100");
+        Decimal128.fromBigDecimal(bd);
+    }
+
     @Test
     public void testCompareTo() {
         Decimal128 smaller = new Decimal128(0, 100, 2);
@@ -64,6 +70,11 @@ public class Decimal128Test {
         Assert.assertTrue(smaller.compareTo(larger) < 0);
         Assert.assertTrue(larger.compareTo(smaller) > 0);
         Assert.assertEquals(0, smaller.compareTo(smaller));
+
+        smaller.of(100, 0, 2);
+        larger.of(200, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
     }
 
     @Test
@@ -207,12 +218,31 @@ public class Decimal128Test {
         Assert.assertEquals(result.toBigDecimal(), bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP));
     }
 
+    @Test
+    public void testDivisionByOne() {
+        Decimal128 dividend = Decimal128.fromLong(123456L, 3);
+        Decimal128 divisor = Decimal128.fromLong(1L, 0);
+        dividend.divide(divisor, 3, RoundingMode.HALF_UP);
+        Assert.assertEquals("123.456", dividend.toString());
+    }
+
     @Test(expected = NumericException.class)
     public void testDivisionByZero() {
         Decimal128 a = Decimal128.fromDouble(100.0, 2);
         Decimal128 zero = Decimal128.fromDouble(0.0, 2);
 
         a.divide(zero, 2, RoundingMode.HALF_UP);
+    }
+
+    @Test
+    public void testDivisionDivWord() {
+        Decimal128 dividend = new Decimal128(0, -2, 0);
+        BigDecimal bdDividend = dividend.toBigDecimal();
+        Decimal128 divisor = new Decimal128(0, 0xFFFFFFFFL, 0);
+        BigDecimal bdDivisor = divisor.toBigDecimal();
+        dividend.divide(divisor, 0, RoundingMode.HALF_UP);
+        BigDecimal expected = bdDividend.divide(bdDivisor, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(expected.toString(), dividend.toString());
     }
 
     @Test
@@ -232,6 +262,13 @@ public class Decimal128Test {
                 testDivisionAccuracy(a, b, i);
             }
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivisionRemainderUnnecessary() {
+        Decimal128 dividend = Decimal128.fromLong(10L, 0);
+        Decimal128 divisor = Decimal128.fromLong(3L, 0);
+        dividend.divide(divisor, 0, RoundingMode.UNNECESSARY);
     }
 
     @Test
@@ -431,6 +468,19 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testModuloNegativeScale() {
+        // Test -10 % 3 = -1
+        BigDecimal bdA = new BigDecimal("-0.0000000000000000001364898122");
+        BigDecimal bdB = new BigDecimal("0.000000000018446744073709550324");
+        Decimal128 a = Decimal128.fromBigDecimal(bdA);
+        Decimal128 b = Decimal128.fromBigDecimal(bdB);
+
+        a.modulo(b);
+
+        Assert.assertEquals("-0.000000000000000000136489812200", a.toString());
+    }
+
+    @Test
     public void testModuloSimple() {
         // Test 10 % 3 = 1
         Decimal128 a = Decimal128.fromDouble(10.0, 0);
@@ -489,6 +539,11 @@ public class Decimal128Test {
 
         c.multiply(d);
         Assert.assertEquals(21.0, c.toDouble(), 0.01);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testNullBigDecimal() {
+        Decimal128.fromBigDecimal(null);
     }
 
     @Test
@@ -761,6 +816,13 @@ public class Decimal128Test {
             Assert.assertEquals("HALF_EVEN tie-breaking failed for " + testValues[i],
                     expectedResults[i], a.toBigDecimal());
         }
+    }
+
+    @Test
+    public void testRoundNegative() {
+        Decimal128 a = new Decimal128(-1, -123, 0);
+        a.round(1, java.math.RoundingMode.HALF_UP);
+        Assert.assertEquals("-123.0", a.toString());
     }
 
     @Test
@@ -1160,16 +1222,6 @@ public class Decimal128Test {
     }
 
     @Test
-    public void testToSinkLargeNumber() {
-        Decimal128 decimal = Decimal128.fromLong(9876543210L, 4);
-        StringSink sink = new StringSink();
-
-        decimal.toSink(sink);
-
-        Assert.assertEquals("987654.3210", sink.toString());
-    }
-
-    @Test
     public void testToSinkLargeLong() {
         Decimal128 decimal = new Decimal128(0, -1, 0);
         StringSink sink = new StringSink();
@@ -1177,6 +1229,16 @@ public class Decimal128Test {
         decimal.toSink(sink);
 
         Assert.assertEquals("18446744073709551615", sink.toString());
+    }
+
+    @Test
+    public void testToSinkLargeLongLargeScale() {
+        Decimal128 decimal = new Decimal128(0, -1, 25);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("0.0000018446744073709551615", sink.toString());
     }
 
     @Test
@@ -1189,15 +1251,14 @@ public class Decimal128Test {
         Assert.assertEquals("184467440737095.51615", sink.toString());
     }
 
-
     @Test
-    public void testToSinkLargeLongLargeScale() {
-        Decimal128 decimal = new Decimal128(0, -1, 25);
+    public void testToSinkLargeNumber() {
+        Decimal128 decimal = Decimal128.fromLong(9876543210L, 4);
         StringSink sink = new StringSink();
 
         decimal.toSink(sink);
 
-        Assert.assertEquals("0.0000018446744073709551615", sink.toString());
+        Assert.assertEquals("987654.3210", sink.toString());
     }
 
     @Test

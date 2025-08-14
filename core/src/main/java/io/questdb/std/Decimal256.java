@@ -26,9 +26,9 @@ public class Decimal256 implements Sinkable {
     /**
      * Maximum allowed scale (number of decimal places)
      */
-    public static final int MAX_SCALE = 77;
-    public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
-    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+    public static final int MAX_SCALE = 76;
+    public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
+    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, -1, -1, -1, 0);
     private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
             1L, 15L,
             159L, 1593L, 15930L, 159309L, 1593091L,
@@ -223,8 +223,6 @@ public class Decimal256 implements Sinkable {
 
         // Fail early if we're sure to overflow.
         if (delta > 0 && (scale + delta) > MAX_SCALE) {
-            throw NumericException.instance().put("Overflow");
-        } else if (delta < 0 && (divisorScale + delta) > MAX_SCALE) {
             throw NumericException.instance().put("Overflow");
         }
 
@@ -899,9 +897,7 @@ public class Decimal256 implements Sinkable {
      */
     @Override
     public String toString() {
-        StringSink sink = new StringSink();
-        toSink(sink);
-        return sink.toString();
+        return toBigDecimal().toPlainString();
     }
 
     private static void add(Decimal256 result,
@@ -1643,9 +1639,6 @@ public class Decimal256 implements Sinkable {
         if (n <= 0 || isZero()) {
             return;
         }
-        if (n > 76) {
-            throw NumericException.instance().put("Overflow");
-        }
 
         // For small powers, use lookup table
         if (n < 18) {
@@ -1700,6 +1693,7 @@ public class Decimal256 implements Sinkable {
      * @param newScale The new scale (must be >= current scale)
      */
     private void rescale(int newScale) {
+        assert newScale >= scale;
         int scaleDiff = newScale - this.scale;
 
         boolean isNegative = isNegative();
@@ -1728,9 +1722,6 @@ public class Decimal256 implements Sinkable {
         this.hl = 0;
         this.lh = 0;
         this.ll = 0;
-
-        // Determine if the number is negative
-        boolean negative = bytes.length > 0 && (bytes[0] & 0x80) != 0;
 
         // Fill from the least significant bytes
         int byteIndex = bytes.length - 1;

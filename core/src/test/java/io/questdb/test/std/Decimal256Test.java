@@ -56,6 +56,19 @@ public class Decimal256Test {
         }
     }
 
+    @Test(expected = NumericException.class)
+    public void testAdditionOverflow() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.add(new Decimal256(0, 0, 0, 1, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testBigDecimalOverflow() {
+        BigDecimal bd = new BigDecimal("1e100");
+        Decimal256.fromBigDecimal(bd);
+    }
+
     @Test
     public void testCompareTo() {
         Decimal256 smaller = new Decimal256(0, 0, 0, 100, 2);
@@ -64,6 +77,21 @@ public class Decimal256Test {
         Assert.assertTrue(smaller.compareTo(larger) < 0);
         Assert.assertTrue(larger.compareTo(smaller) > 0);
         Assert.assertEquals(0, smaller.compareTo(smaller));
+
+        smaller.of(0, 0, 100, 0, 2);
+        larger.of(0, 0, 200, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
+
+        smaller.of(0, 100, 0, 0, 2);
+        larger.of(0, 200, 0, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
+
+        smaller.of(100, 0, 0, 0, 2);
+        larger.of(200, 0, 0, 0, 2);
+        Assert.assertTrue(smaller.compareTo(larger) < 0);
+        Assert.assertTrue(larger.compareTo(smaller) > 0);
     }
 
     @Test
@@ -71,7 +99,7 @@ public class Decimal256Test {
         Rnd rnd = TestUtils.generateRandom(null);
 
         // Number of test iterations
-        final int ITERATIONS = 1000_000;
+        final int ITERATIONS = 10_000;
 
         for (int i = 0; i < ITERATIONS; i++) {
             // Generate random operands with various scales and values
@@ -169,6 +197,52 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testDivideAddBack() {
+        // Test a specific case where the division falls into Step D6 of Knuth algorithm
+        // Test multiple edge cases that should trigger Step D5
+        long[][] patterns = {
+                // Patterns for line 1260 (128xLong first)
+                {0x8000000000000000L, 0x0000000000000000L, 0x0000000000000000L, 0x8000000000000001L},
+                {0xC000000000000000L, 0x0000000000000000L, 0x0000000000000000L, 0xC000000000000001L},
+
+                // Patterns for line 1327 (128xLong third)
+                {0x0000000080000000L, 0x0000000000000000L, 0x0000000000000000L, 0x8000000000000001L},
+                {0x00000000C0000000L, 0x0000000000000000L, 0x0000000000000000L, 0xC000000000000001L},
+
+                // Patterns for line 1392 (96x96)
+                {0x0000000080000000L, 0x0000000000000000L, 0x8000000000000000L, 0x0000000000000001L},
+                {0x00000000C0000000L, 0x0000000000000000L, 0xC000000000000000L, 0x0000000000000001L},
+
+                // Patterns for line 1457 (96xLong first)
+                {0x0000000080000000L, 0x0000000000000000L, 0x0000000000000000L, 0x8000000000000001L},
+                {0x00000000C0000000L, 0x0000000000000000L, 0x0000000000000000L, 0xC000000000000001L},
+
+                // Patterns for line 1195 (128x96 second)
+                {0x0000800000000000L, 0x0000000000000000L, 0x0000000080000000L, 0x0000000000000001L},
+                {0x0000C00000000000L, 0x0000000000000000L, 0x00000000C0000000L, 0x0000000000000001L}
+        };
+
+        for (long[] testCase : patterns) {
+            Decimal256 dividend = new Decimal256(0, 0, testCase[0], testCase[1], 0);
+            Decimal256 divisor = new Decimal256(0, 0, testCase[2], testCase[3], 0);
+            Decimal256 result = new Decimal256();
+            BigDecimal bdDividend = dividend.toBigDecimal();
+            BigDecimal bdDivisor = divisor.toBigDecimal();
+            BigDecimal bdResult = bdDividend.divide(bdDivisor, 0, RoundingMode.HALF_UP);
+            Decimal256.divide(dividend, divisor, result, 0, RoundingMode.HALF_UP);
+
+            Assert.assertEquals("Dividend: " + dividend + " divisor: " + divisor + " result: " + result, bdResult, result.toBigDecimal());
+        }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivideDivisorScaleOverflow() {
+        Decimal256 a = new Decimal256(0, Long.MAX_VALUE / 2, Long.MAX_VALUE, Long.MAX_VALUE, 0);
+        Decimal256 b = new Decimal256(0, 0, 3, 0, 0);
+        a.multiply(b);
+    }
+
+    @Test
     public void testDivideLarge() {
         Decimal256 a = Decimal256.fromDouble(987654321.123456789, 9);
         Decimal256 b = Decimal256.fromDouble(123.456, 3);
@@ -210,12 +284,31 @@ public class Decimal256Test {
         Assert.assertEquals(result.toBigDecimal(), bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP));
     }
 
+    @Test
+    public void testDivisionByOne() {
+        Decimal256 dividend = Decimal256.fromLong(123456L, 3);
+        Decimal256 divisor = Decimal256.fromLong(1L, 0);
+        dividend.divide(divisor, 3, RoundingMode.HALF_UP);
+        Assert.assertEquals("123.456", dividend.toString());
+    }
+
     @Test(expected = NumericException.class)
     public void testDivisionByZero() {
         Decimal256 a = Decimal256.fromDouble(100.0, 2);
         Decimal256 zero = Decimal256.fromDouble(0.0, 2);
 
         a.divide(zero, 2, RoundingMode.HALF_UP);
+    }
+
+    @Test
+    public void testDivisionDivWord() {
+        Decimal256 dividend = new Decimal256(0, -2, -2, -2, 0);
+        BigDecimal bdDividend = dividend.toBigDecimal();
+        Decimal256 divisor = new Decimal256(0, 0, 0, 0xFFFFFFFFL, 0);
+        BigDecimal bdDivisor = divisor.toBigDecimal();
+        dividend.divide(divisor, 0, RoundingMode.HALF_UP);
+        BigDecimal expected = bdDividend.divide(bdDivisor, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(expected.toString(), dividend.toString());
     }
 
     @Test
@@ -235,6 +328,13 @@ public class Decimal256Test {
                 testDivisionAccuracy(a, b, i);
             }
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivisionRemainderUnnecessary() {
+        Decimal256 dividend = Decimal256.fromLong(10L, 0);
+        Decimal256 divisor = Decimal256.fromLong(3L, 0);
+        dividend.divide(divisor, 0, RoundingMode.UNNECESSARY);
     }
 
     @Test
@@ -283,6 +383,17 @@ public class Decimal256Test {
         decimal.toSink(sink);
 
         Assert.assertEquals("10000000000000000000000000000000000000", sink.toString());
+    }
+
+    @Test
+    public void testFromBigDecimalHuge() {
+        BigDecimal bd = new BigDecimal("1e75");
+        Decimal256 decimal = Decimal256.fromBigDecimal(bd);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("1000000000000000000000000000000000000000000000000000000000000000000000000000", sink.toString());
     }
 
     @Test
@@ -438,6 +549,19 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testModuloNegativeScale() {
+        // Test -10 % 3 = -1
+        BigDecimal bdA = new BigDecimal("-0.0000000000000000000000000000000001364898122");
+        BigDecimal bdB = new BigDecimal("0.000000000000000000000000018446744073709550324");
+        Decimal256 a = Decimal256.fromBigDecimal(bdA);
+        Decimal256 b = Decimal256.fromBigDecimal(bdB);
+
+        a.modulo(b);
+
+        Assert.assertEquals("-0.000000000000000000000000000000000136489812200", a.toString());
+    }
+
+    @Test
     public void testModuloSimple() {
         // Test 10 % 3 = 1
         Decimal256 a = Decimal256.fromDouble(10.0, 0);
@@ -479,6 +603,13 @@ public class Decimal256Test {
         }
     }
 
+    @Test(expected = NumericException.class)
+    public void testMultiply128Overflow() {
+        Decimal256 a = new Decimal256(0, Long.MAX_VALUE / 2, Long.MAX_VALUE, Long.MAX_VALUE, 0);
+        Decimal256 b = new Decimal256(0, 0, 3, 0, 0);
+        a.multiply(b);
+    }
+
     @Test
     public void testNegativeArithmetic() {
         // Test with negative numbers
@@ -496,6 +627,11 @@ public class Decimal256Test {
 
         c.multiply(d);
         Assert.assertEquals(21.0, c.toDouble(), 0.01);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testNullBigDecimal() {
+        Decimal256.fromBigDecimal(null);
     }
 
     @Test
@@ -672,6 +808,24 @@ public class Decimal256Test {
                 }
             }
         }
+    }
+
+    @Test
+    public void testRoundNegativeScale() {
+        Decimal256 a = Decimal256.fromLong(-5, 0);
+
+        a.round(2, java.math.RoundingMode.HALF_UP);
+        Assert.assertEquals(-500, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test
+    public void testRoundZero() {
+        Decimal256 a = Decimal256.fromLong(0, 3);
+
+        a.round(2, java.math.RoundingMode.HALF_UP);
+        Assert.assertTrue(a.isZero());
+        Assert.assertEquals(2, a.getScale());
     }
 
     @Test

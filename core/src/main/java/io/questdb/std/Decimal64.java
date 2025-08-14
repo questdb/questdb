@@ -5,6 +5,7 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
@@ -118,6 +119,10 @@ public class Decimal64 implements Sinkable {
      * Create a Decimal64 from a BigDecimal value.
      */
     public static Decimal64 fromBigDecimal(BigDecimal value) {
+        if (value == null) {
+            throw new IllegalArgumentException("BigDecimal cannot be null");
+        }
+
         int scale = value.scale();
         if (scale < 0) {
             // Transform negative scale to positive
@@ -126,7 +131,11 @@ public class Decimal64 implements Sinkable {
         }
         validateScale(scale);
 
-        long unscaled = value.unscaledValue().longValueExact();
+        BigInteger bi = value.unscaledValue();
+        if (bi.bitLength() > 63) {
+            throw NumericException.instance().put("Overflow");
+        }
+        long unscaled = bi.longValueExact();
         return new Decimal64(unscaled, scale);
     }
 
@@ -238,7 +247,14 @@ public class Decimal64 implements Sinkable {
      * Divide this by another Decimal64 (in-place)
      */
     public void divide(Decimal64 other, int resultScale, RoundingMode roundingMode) {
-        if (other.value == 0) {
+        divide(other.value, other.scale, resultScale, roundingMode);
+    }
+
+    /**
+     * Divide this by another Decimal64 (in-place)
+     */
+    public void divide(long other, int otherScale, int resultScale, RoundingMode roundingMode) {
+        if (other == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
@@ -246,10 +262,10 @@ public class Decimal64 implements Sinkable {
 
         // Scale dividend to get the desired result scale
         // result = (dividend * 10^resultScale) / (divisor * 10^(this.scale - other.scale))
-        int scaleAdjustment = resultScale + other.scale - this.scale;
+        int scaleAdjustment = resultScale + otherScale - this.scale;
 
         long dividend = this.value;
-        long divisor = other.value;
+        long divisor = other;
         boolean isNegative = (dividend < 0) ^ (divisor < 0);
 
         // Make both values positive for division
@@ -268,8 +284,18 @@ public class Decimal64 implements Sinkable {
             divisor = scaleUpPositive(divisor, -scaleAdjustment);
         }
 
-        // Perform the division using Knuth algorithm for 64-bit values
-        long quotient = divideKnuthLong(dividend, divisor, roundingMode);
+        long quotient = dividend / divisor;
+        long remainder = dividend % divisor;
+
+        // Apply rounding if there's a remainder
+        if (remainder != 0) {
+            boolean oddQuotient = (quotient & 1L) == 1L;
+            boolean increment = shouldRoundUp(remainder, divisor, oddQuotient, isNegative, roundingMode);
+
+            if (increment) {
+                quotient++;
+            }
+        }
 
         if (isNegative) {
             quotient = -quotient;
@@ -371,6 +397,54 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Round this Decimal128 to the specified scale using the given rounding mode.
+     * This method performs in-place rounding without requiring a divisor.
+     *
+     * @param targetScale  the desired scale (number of decimal places)
+     * @param roundingMode the rounding mode to use
+     * @throws IllegalArgumentException if targetScale is invalid
+     * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
+     */
+    public void round(int targetScale, RoundingMode roundingMode) {
+        validateScale(targetScale);
+
+        // UNNECESSARY mode should be a complete no-op
+        if (roundingMode == RoundingMode.UNNECESSARY) {
+            return;
+        }
+
+        if (targetScale == this.scale) {
+            // No rounding needed
+        }
+
+        // Handle zero specially
+        if (isZero()) {
+            this.scale = targetScale;
+            return;
+        }
+
+
+        if (this.scale < targetScale) {
+            boolean isNegative = isNegative();
+            if (isNegative) {
+                negate();
+            }
+
+            // Need to increase scale (add trailing zeros)
+            int scaleIncrease = targetScale - this.scale;
+            this.value = scaleUp(this.value, scaleIncrease);
+            this.scale = targetScale;
+
+            if (isNegative) {
+                negate();
+            }
+            return;
+        }
+
+        divide(1, 0, targetScale, roundingMode);
+    }
+
+    /**
      * Subtract another Decimal64 from this one (in-place)
      */
     public void subtract(Decimal64 other) {
@@ -439,32 +513,8 @@ public class Decimal64 implements Sinkable {
         return cmp;
     }
 
-    /**
-     * Knuth division algorithm for 64-bit values
-     * Adapted from Decimal128's divideKnuthLongxLong method
-     */
-    private static long divideKnuthLong(long dividend, long divisor, RoundingMode roundingMode) {
-        long quotient = dividend / divisor;
-        long remainder = dividend % divisor;
-
-        // Apply rounding if there's a remainder
-        if (remainder != 0) {
-            boolean oddQuotient = (quotient & 1L) == 1L;
-            boolean increment = shouldRoundUp(remainder, divisor, oddQuotient, roundingMode);
-
-            if (increment) {
-                quotient++;
-            }
-        }
-
-        return quotient;
-    }
-
     private static long scaleUp(long value, int scaleDiff) {
         if (scaleDiff == 0) return value;
-        if (scaleDiff >= TEN_POWERS_TABLE.length) {
-            throw NumericException.instance().put("Overflow in decimal scaling");
-        }
 
         long multiplier = TEN_POWERS_TABLE[scaleDiff];
 
@@ -498,7 +548,7 @@ public class Decimal64 implements Sinkable {
      * Determine if we should round up based on the remainder and rounding mode
      * Adapted from Decimal128's endKnuth method
      */
-    private static boolean shouldRoundUp(long remainder, long divisor, boolean oddQuotient, RoundingMode roundingMode) {
+    private static boolean shouldRoundUp(long remainder, long divisor, boolean oddQuotient, boolean isNegative, RoundingMode roundingMode) {
         switch (roundingMode) {
             case UNNECESSARY:
                 throw NumericException.instance().put("Rounding necessary");
@@ -506,10 +556,10 @@ public class Decimal64 implements Sinkable {
                 return true;
             case DOWN: // Towards zero
                 return false;
-            case CEILING: // Towards +infinity (always false since we're dealing with positive values here)
-                return true;
-            case FLOOR: // Towards -infinity (always false since we're dealing with positive values here)
-                return false;
+            case CEILING: // Towards +infinity
+                return !isNegative;
+            case FLOOR: // Towards -infinity
+                return isNegative;
             default: // Half-way rounding modes
                 int cmp = compareWithHalf(remainder, divisor);
                 if (cmp > 0) {

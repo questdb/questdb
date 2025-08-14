@@ -162,6 +162,30 @@ class DecimalKnuthDivider {
     }
 
     /**
+     * Initializes the dividend for the division operation.
+     * Converts the 128-bit positive value into an array of 32-bit integers
+     * stored in little-endian order for the Knuth division algorithm.
+     *
+     * @param high the high 64 bits of the dividend
+     * @param low  the low 64 bits of the dividend
+     */
+    public void ofDividend(long high, long low) {
+        u[3] = (int) (high >>> 32);
+        u[2] = (int) high;
+        u[1] = (int) (low >>> 32);
+        u[0] = (int) low;
+        if (u[3] != 0) {
+            m = 4;
+        } else if (u[2] != 0) {
+            m = 3;
+        } else if (u[1] != 0) {
+            m = 2;
+        } else {
+            m = 1;
+        }
+    }
+
+    /**
      * Initializes the divisor for the division operation.
      * Converts the 256-bit positive value into an array of 32-bit integers
      * stored in little-endian order for the Knuth division algorithm.
@@ -184,6 +208,30 @@ class DecimalKnuthDivider {
     }
 
     /**
+     * Initializes the divisor for the division operation.
+     * Converts the 128-bit positive value into an array of 32-bit integers
+     * stored in little-endian order for the Knuth division algorithm.
+     *
+     * @param high the high 64 bits of the divisor
+     * @param low  the low 64 bits of the divisor
+     */
+    public void ofDivisor(long high, long low) {
+        v[3] = (int) (high >>> 32);
+        v[2] = (int) high;
+        v[1] = (int) (low >>> 32);
+        v[0] = (int) low;
+        if (v[3] != 0) {
+            n = 4;
+        } else if (v[2] != 0) {
+            n = 3;
+        } else if (v[1] != 0) {
+            n = 2;
+        } else {
+            n = 1;
+        }
+    }
+
+    /**
      * Store the result from the division operation into a Decimal256.
      *
      * @param quotient the Decimal256 to store the result in
@@ -194,6 +242,17 @@ class DecimalKnuthDivider {
         long lh = (q[2] & 0xFFFFFFFFL) | ((long) q[3] << 32);
         long ll = (q[0] & 0xFFFFFFFFL) | ((long) q[1] << 32);
         quotient.of(hh, hl, lh, ll, scale);
+    }
+
+    /**
+     * Store the result from the division operation into a Decimal128.
+     *
+     * @param quotient the Decimal128 to store the result in
+     */
+    public void sink(Decimal128 quotient, int scale) {
+        long high = (q[2] & 0xFFFFFFFFL) | ((long) q[3] << 32);
+        long low = (q[0] & 0xFFFFFFFFL) | ((long) q[1] << 32);
+        quotient.of(high, low, scale);
     }
 
     /**
@@ -389,22 +448,21 @@ class DecimalKnuthDivider {
 //        r[n - 1] = u[n - 1] >>> s;
 //    }
     static long divWord(long n, long d) {
-        if (d == 1L) {
-            return n & 0xFFFFFFFFL;
-        } else {
-            long q = (n >>> 1) / (d >>> 1);
-
-            long r;
-            for (r = n - q * d; r < 0L; --q) {
-                r += d;
-            }
-
-            while (r >= d) {
-                r -= d;
-                ++q;
-            }
-
-            return r << 32 | q & 0xFFFFFFFFL;
-        }
+        long q = Long.divideUnsigned(n, d);
+        long r = Long.remainderUnsigned(n, d);
+        return r << 32 | q & 0xFFFFFFFFL;
+//
+//        long q = (n >>> 1) / (d >>> 1);
+//        long r;
+//        for (r = n - q * d; r < 0L; --q) {
+//            r += d;
+//        }
+//
+//        while (r >= d) {
+//            r -= d;
+//            ++q;
+//        }
+//
+//        return r << 32 | q & 0xFFFFFFFFL;
     }
 }

@@ -65,7 +65,10 @@ public class NumericExceptionTest {
 
     @Test
     public void testPutMethods() {
-        try (DirectUtf8Sink utf8sink = new DirectUtf8Sink(8)) {
+        try (
+                DirectUtf8Sink utf8sink = new DirectUtf8Sink(8);
+                DirectUtf8Sink utf8sink2 = new DirectUtf8Sink(8)
+        ) {
             Decimal128 d = new Decimal128(0, 10, 1);
             utf8sink.put(-1);
             NumericException e1 = NumericException.instance()
@@ -80,6 +83,8 @@ public class NumericExceptionTest {
 
             String r = e1.getMessage();
             Assert.assertEquals("12.0Overflow-11.0atrue\\u0000", r);
+            e1.toSink(utf8sink2);
+            Assert.assertEquals("12.0Overflow-11.0atrue\\u0000", utf8sink2.toString());
         }
     }
 }
