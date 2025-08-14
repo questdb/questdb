@@ -37,11 +37,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class ToNanoTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Ignore("fix me")
+
     @Test
     public void testNanosField() throws SqlException {
         call(".123456789", ".N+").andAssertTimestamp(123456789);
