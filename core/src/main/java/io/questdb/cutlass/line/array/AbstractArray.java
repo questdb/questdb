@@ -74,10 +74,12 @@ public abstract class AbstractArray implements QuietCloseable {
         }
         for (int dim = 0; dim < shape.length; dim++) {
             if (shape[dim] < 0) {
-                throw new LineSenderException("dimension length must not be negative [dim=" + dim + ", dimLen=" + shape[dim] + "]");
+                throw new LineSenderException("dimension length must not be negative [dim=" + dim +
+                        ", dimLen=" + shape[dim] + "]");
             }
             if (shape[dim] > ArrayView.DIM_MAX_LEN) {
-                throw new LineSenderException("dimension length out of range [dim=" + dim + ", dimLen=" + shape[dim] + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+                throw new LineSenderException("dimension length out of range [dim=" + dim +
+                        ", dimLen=" + shape[dim] + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
             }
         }
 
@@ -178,10 +180,12 @@ public abstract class AbstractArray implements QuietCloseable {
         }
         for (int dim = 0; dim < nDim; dim++) {
             if (shape[dim] < 0) {
-                throw new LineSenderException("dimension length must not be negative [dim=" + dim + ", dimLen=" + shape[dim] + "]");
+                throw new LineSenderException("dimension length must not be negative [dim=" + dim +
+                        ", dimLen=" + shape[dim] + "]");
             }
             if (shape[dim] > ArrayView.DIM_MAX_LEN) {
-                throw new LineSenderException("dimension length out of range [dim=" + dim + ", dimLen=" + shape[dim] + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+                throw new LineSenderException("dimension length out of range [dim=" + dim +
+                        ", dimLen=" + shape[dim] + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
             }
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), nDim));
@@ -209,7 +213,8 @@ public abstract class AbstractArray implements QuietCloseable {
             throw new LineSenderException("Array size must not be negative, but got " + dimLen);
         }
         if (dimLen > ArrayView.DIM_MAX_LEN) {
-            throw new LineSenderException("Array size out of range [dimLen=" + dimLen + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+            throw new LineSenderException("Array size out of range [dimLen=" + dimLen +
+                    ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), 1));
         array.setDimLen(0, dimLen);
@@ -235,7 +240,8 @@ public abstract class AbstractArray implements QuietCloseable {
             throw new LineSenderException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + "]");
         }
         if (dim1 > ArrayView.DIM_MAX_LEN || dim2 > ArrayView.DIM_MAX_LEN) {
-            throw new LineSenderException("Array dimensions out of range [dim1=" + dim1 + ", dim2=" + dim2 + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+            throw new LineSenderException("Array dimensions out of range [dim1=" + dim1 +
+                    ", dim2=" + dim2 + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), 2));
         array.setDimLen(0, dim1);
@@ -260,10 +266,12 @@ public abstract class AbstractArray implements QuietCloseable {
             throw new LineSenderException("Cannot reshape a closed array");
         }
         if (dim1 < 0 || dim2 < 0 || dim3 < 0) {
-            throw new LineSenderException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + ", " + dim3 + "]");
+            throw new LineSenderException("Array dimensions must not be negative, but got [" +
+                    dim1 + ", " + dim2 + ", " + dim3 + "]");
         }
         if (dim1 > ArrayView.DIM_MAX_LEN || dim2 > ArrayView.DIM_MAX_LEN || dim3 > ArrayView.DIM_MAX_LEN) {
-            throw new LineSenderException("Array dimensions out of range [dim1=" + dim1 + ", dim2=" + dim2 + ", dim3=" + dim3 + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+            throw new LineSenderException("Array dimensions out of range [dim1=" + dim1 +
+                    ", dim2=" + dim2 + ", dim3=" + dim3 + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), 3));
         array.setDimLen(0, dim1);
