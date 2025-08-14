@@ -361,18 +361,6 @@ fn encode_data_plain_streaming(
     }
 }
 
-// Legacy function kept for compatibility (now unused)
-#[allow(dead_code)]
-fn encode_data_plain(arr_slices: &[Option<(&[i32], &[f64])>], buffer: &mut Vec<u8>) {
-    for (_shape, data) in arr_slices.iter().filter_map(|&option| option) {
-        data.iter().for_each(|v| {
-            if !v.is_nan() {
-                buffer.extend_from_slice(&v.to_le_bytes());
-            }
-        });
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_array_page(
     // inner-most type of array group field
