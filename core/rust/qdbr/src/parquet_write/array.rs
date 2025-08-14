@@ -701,18 +701,14 @@ pub fn calculate_array_shape(
             for &rep_level in rep_levels {
                 let rep_level = rep_level.max(1) as usize;
 
-                // Reset counts for dimensions deeper than repetition level
-                counts[rep_level..max_rep_level].fill(0);
-
                 // Increment count at the deepest level (where actual values are)
-                counts[max_rep_level - 1] += 1;
+                counts[rep_level - 1] += 1;
+                shape[rep_level - 1] = shape[rep_level - 1].max(counts[rep_level - 1]);
 
-                // Update shape with maximum counts seen so far
-                for dim in 0..max_rep_level {
-                    // If this is not the first element, increment deeper dimension counts
-                    if dim >= rep_level - 1 && dim <= max_rep_level - 2 {
-                        counts[dim] += 1;
-                    }
+                for dim in rep_level..max_rep_level {
+                    // Reset counts for dimensions deeper than repetition level
+                    counts[dim] = 1;
+                    // Update shape with maximum counts seen so far
                     shape[dim] = shape[dim].max(counts[dim]);
                 }
             }
