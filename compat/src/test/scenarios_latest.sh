@@ -39,16 +39,29 @@ fi
 deactivate
 echo "asyncpg tests finished"
 
-echo "starting rust tests"
-cd compat/src/test/rust/scenarios
+echo "starting rust-tokio tests"
+cd compat/src/test/rust-tokio
 rm -f ./Cargo.lock
 cargo build --release
-./target/release/questrun_rust ../../resources/test_cases.yaml
+./target/release/questrun_rust ../resources/test_cases.yaml
 if [ $? -ne 0 ]; then
-    echo "rust tests failed"
+    echo "rust-tokio tests failed"
     exit 1
 fi
-echo "rust tests finished"
+cd "$base_dir" || exit
+echo "rust-tokio tests finished"
+
+echo "starting rust-sqlx tests"
+cd compat/src/test/rust-sqlx
+rm -f ./Cargo.lock
+cargo build --release
+./target/release/questrun_sqlx ../resources/test_cases.yaml
+if [ $? -ne 0 ]; then
+    echo "rust-sqlx tests failed"
+    exit 1
+fi
+cd "$base_dir" || exit
+echo "rust-sqlx tests finished"
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
   echo "starting csharp tests"

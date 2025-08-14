@@ -80,10 +80,9 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS array_table;"
-
   - name: Test non Vanilla Arrays
     description: Selecting sliced arrays
-    exclude: [ 'golang' ]
+    exclude: [ 'golang', 'sqlx' ]
     prepare:
       - action: execute
         query: "CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]] arr FROM long_sequence(1))"
