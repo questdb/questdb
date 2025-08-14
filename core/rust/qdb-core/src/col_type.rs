@@ -405,7 +405,9 @@ mod tests {
             }
         }
 
-        let dim = ColumnType::new(ColumnTypeTag::Array, 138).array_dimensionality();
+        let typ = encode_array_type(ColumnTypeTag::Double, 3);
+        assert!(typ.is_ok());
+        let dim = typ.unwrap().array_dimensionality();
         assert!(dim.is_ok());
         assert_eq!(dim.unwrap(), 3);
     }
@@ -418,7 +420,9 @@ mod tests {
             }
         }
 
-        let dim = ColumnType::new(ColumnTypeTag::Array, 138).array_element_type();
+        let typ = encode_array_type(ColumnTypeTag::Double, 3);
+        assert!(typ.is_ok());
+        let dim = typ.unwrap().array_element_type();
         assert!(dim.is_ok());
         assert_eq!(dim.unwrap(), ColumnTypeTag::Double);
     }

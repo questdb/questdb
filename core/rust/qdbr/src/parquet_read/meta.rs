@@ -357,7 +357,7 @@ mod tests {
         let col_type_i32 = col_type.code();
         assert_eq!(
             col_type,
-            ColumnType::try_from(col_type_i32).expect("invalid colum type")
+            ColumnType::try_from(col_type_i32).expect("invalid column type")
         );
 
         let ptr = buff.as_ptr();
