@@ -75,8 +75,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     protected Interval calculateInterval(long now, CharSequence tz) {
         if (tz == null) {
             // no timezone, default to UTC
-            final long start = timestampDriver.dayStart(now, shiftFromToday());
-            final long end = timestampDriver.dayEnd(start);
+            final long start = timestampDriver.startOfDay(now, shiftFromToday());
+            final long end = timestampDriver.endOfDay(start);
             return interval.of(start, end);
         }
 
@@ -86,8 +86,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
                 // the timezone is in numeric offset format
                 final long offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 final long nowWithTz = now + offset;
-                final long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
-                final long endWithTz = timestampDriver.dayEnd(startWithTz);
+                final long startWithTz = timestampDriver.startOfDay(nowWithTz, shiftFromToday());
+                final long endWithTz = timestampDriver.endOfDay(startWithTz);
                 return interval.of(startWithTz - offset, endWithTz - offset);
             }
 
@@ -99,8 +99,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             final long offset = tzRules.getOffset(now);
             final long nowWithTz = now + offset;
             // calculate date start and end with tz
-            long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
-            long endWithTz = timestampDriver.dayEnd(startWithTz);
+            long startWithTz = timestampDriver.startOfDay(nowWithTz, shiftFromToday());
+            long endWithTz = timestampDriver.endOfDay(startWithTz);
             return interval.of(timestampDriver.toUTC(startWithTz, tzRules), timestampDriver.toUTC(endWithTz, tzRules));
         } catch (NumericException e) {
             return interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());

@@ -112,7 +112,7 @@ public final class InsertRowImpl implements QuietCloseable {
         if (timestampValue != null) {
             try {
                 return tableWriter.newRow(
-                        timestampDriver.castStr(
+                        timestampDriver.fromStr(
                                 timestampFunction.getStrA(null),
                                 tupleIndex,
                                 timestampFunction.getType(),

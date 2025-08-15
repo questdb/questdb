@@ -168,6 +168,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long add(long timestamp, char type, int stride) {
+        return Nanos.addPeriod(timestamp, type, stride);
+    }
+
+    @Override
     public long addDays(long timestamp, int days) {
         return Nanos.addDays(timestamp, days);
     }
@@ -175,11 +180,6 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long addMonths(long timestamp, int months) {
         return Nanos.addMonths(timestamp, months);
-    }
-
-    @Override
-    public long addPeriod(long lo, char type, int period) {
-        return Nanos.addPeriod(lo, type, period);
     }
 
     @Override
@@ -198,13 +198,23 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public boolean append(long fixedAddr, CharSink<?> sink) {
+        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        if (value != Numbers.LONG_NULL) {
+            NanosFormatUtils.appendDateTimeNSec(sink, value);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
     public void appendToPGWireText(CharSink<?> sink, long timestamp) {
         NanosFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
     }
 
     @Override
-    public PlanSink appendTypeToPlan(PlanSink sink) {
-        return sink.val("timestamp_ns");
+    public void appendTypeToPlan(PlanSink sink) {
+        sink.val("timestamp_ns");
     }
 
     @Override
@@ -231,23 +241,8 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
-        if (value != Numbers.LONG_NULL) {
-            NanosFormatUtils.appendDateTimeNSec(sink, value);
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public long dayEnd(long start) {
+    public long endOfDay(long start) {
         return start + Nanos.DAY_NANOS - 1;
-    }
-
-    @Override
-    public long dayStart(long now, int shiftDays) {
-        return Nanos.floorDD(Nanos.addDays(now, shiftDays));
     }
 
     @Override
@@ -381,11 +376,6 @@ public class NanosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Nanos.getCentury(timestamp);
-    }
-
-    @Override
-    public int getColumnType() {
-        return ColumnType.TIMESTAMP_NANO;
     }
 
     @Override
@@ -845,6 +835,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
         if (ColumnType.isTimestampMicro(srcTimestampType)) {
             return CommonUtils::microsToNanos;
@@ -1290,6 +1285,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @TestOnly
     public void setTicker(Clock clock) {
         this.clock = clock;
+    }
+
+    @Override
+    public long startOfDay(long now, int shiftDays) {
+        return Nanos.floorDD(Nanos.addDays(now, shiftDays));
     }
 
     @Override

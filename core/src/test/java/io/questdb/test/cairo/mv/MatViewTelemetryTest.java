@@ -42,7 +42,6 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
-import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
 @RunWith(Parameterized.class)
@@ -290,6 +289,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampDriver.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 }

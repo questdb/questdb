@@ -168,7 +168,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    return TimestampConstant.newInstance(timestampDriver.parseFloorConstant(fillNode.token), type);
+                    return TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
                 default:
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             }

@@ -24,7 +24,7 @@
 
 package io.questdb.cliutil;
 
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
@@ -144,16 +144,16 @@ public class Table2IlpCopier {
         return DriverManager.getConnection(connectionString, properties);
     }
 
-    private static long getMicroEpoch(ResultSet resultSet, int timestampIndex) throws SQLException {
+    private static long getNanoEpoch(ResultSet resultSet, int timestampIndex) throws SQLException {
         String ts = resultSet.getString(timestampIndex);
-        long microEpoch;
+        long nanoEpoch;
         if (ts != null) {
             try {
-                microEpoch = MicrosTimestampDriver.floor(ts);
+                nanoEpoch = NanosTimestampDriver.floor(ts);
             } catch (NumericException e) {
                 throw new RuntimeException("Failed to parse designated timestamp: " + ts);
             }
-            return microEpoch;
+            return nanoEpoch;
         }
         return Numbers.LONG_NULL;
     }
@@ -220,9 +220,9 @@ public class Table2IlpCopier {
                     case Types.DATE:
                     case Types.TIMESTAMP:
                         if (i != timestampIndex) {
-                            long microEpoch = getMicroEpoch(resultSet, i + 1);
-                            if (microEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
-                                sender.timestampColumn(columnName, microEpoch, ChronoUnit.MICROS);
+                            long nanoEpoch = getNanoEpoch(resultSet, i + 1);
+                            if (nanoEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
+                                sender.timestampColumn(columnName, nanoEpoch, ChronoUnit.NANOS);
                             }
                         }
                         break;
@@ -243,7 +243,7 @@ public class Table2IlpCopier {
             }
         }
 
-        long microEpoch = getMicroEpoch(resultSet, timestampIndex + 1);
-        sender.at(microEpoch, ChronoUnit.MICROS);
+        long nanosEpoch = getNanoEpoch(resultSet, timestampIndex + 1);
+        sender.at(nanosEpoch, ChronoUnit.NANOS);
     }
 }

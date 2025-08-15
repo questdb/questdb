@@ -37,6 +37,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRuleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -73,17 +74,34 @@ public interface TimestampDriver {
         return ee;
     }
 
+    /**
+     * Adds a time period to a timestamp based on the specified type and stride.
+     *
+     * @param timestamp the base timestamp value
+     * @param type      the time unit type ('s'=seconds, 'm'=minutes, 'h'=hours, 'd'=days, etc.)
+     * @param stride    the number of units to add
+     * @return the new timestamp after adding the specified period
+     */
+    long add(long timestamp, char type, int stride);
+
     long addDays(long timestamp, int days);
 
     long addMonths(long timestamp, int months);
-
-    long addPeriod(long timestamp, char type, int stride);
 
     long addWeeks(long timestamp, int weeks);
 
     long addYears(long timestamp, int years);
 
     void append(CharSink<?> sink, long timestamp);
+
+    /**
+     * Reads a timestamp from a fixed memory address and appends its string representation to the sink.
+     *
+     * @param fixedAddr  the fixed memory address containing the timestamp data
+     * @param stringSink the character sink to append the formatted timestamp to
+     * @return true if the operation was successful, false otherwise
+     */
+    boolean append(long fixedAddr, CharSink<?> stringSink);
 
     default void appendToMem(CharSequence value, MemoryA mem) {
         try {
@@ -95,37 +113,59 @@ public interface TimestampDriver {
 
     void appendToPGWireText(CharSink<?> sink, long timestamp);
 
-    PlanSink appendTypeToPlan(PlanSink sink);
+    void appendTypeToPlan(PlanSink sink);
 
     // returns approximate partition duration in driver unit (nanos/micros)
     long approxPartitionDuration(int partitionBy);
 
-    default long castStr(CharSequence value, int tupleIndex, int fromType, int toType) {
-        try {
-            return parseFloorLiteral(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, fromType, toType);
-        }
-    }
-
     long ceilYYYY(long timestamp);
 
-    boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
+    long endOfDay(long start);
 
-    long dayEnd(long start);
-
-    long dayStart(long now, int shiftDays);
-
+    /**
+     * Adjusts an interval to be consistency with the driver's timestampType.
+     *
+     * @param interval     the interval to fix/adjust
+     * @param intervalType the type of interval being processed
+     * @return the adjusted interval
+     */
     Interval fixInterval(Interval interval, int intervalType);
 
     long floorYYYY(long timestamp);
 
+    /**
+     * Converts a value from the specified {@link ChronoUnit} to the timestamp value.
+     *
+     * @param value the time value to convert
+     * @param unit  the {@link ChronoUnit} of the input value
+     * @return the timestamp value
+     */
     long from(long value, ChronoUnit unit);
 
+    /**
+     * Converts a {@link Instant} to the timestamp value.
+     *
+     * @param instant the {@link Instant} to convert
+     * @return the timestamp value
+     */
     long from(Instant instant);
 
+    /**
+     * Converts a timestamp from one type to the driver's timestamp value.
+     *
+     * @param timestamp     the source timestamp value
+     * @param timestampType the type of the source timestamp
+     * @return the timestamp value
+     */
     long from(long timestamp, int timestampType);
 
+    /**
+     * Converts a time value to the driver's timestamp value based on the unit character.
+     *
+     * @param value the time value to convert
+     * @param unit  the time unit character ('n'=nanos, 'u'/'U'=micros, 'T'=millis, 's'=seconds, 'm'=minutes, 'h'/'H'=hours, 'd'=days, 'w'=weeks)
+     * @return the timestamp in the driver's native value, or 0 if unit is not recognized
+     */
     default long from(long value, char unit) {
         switch (unit) {
             case 'n':
@@ -150,6 +190,13 @@ public interface TimestampDriver {
         return 0;
     }
 
+    /**
+     * Converts a timestamp to the driver's format based on the unit byte constant.
+     *
+     * @param ts   the timestamp value to convert
+     * @param unit the time unit byte constant from CommonUtils.TIMESTAMP_UNIT_*
+     * @return the timestamp value
+     */
     default long from(long ts, byte unit) {
         switch (unit) {
             case CommonUtils.TIMESTAMP_UNIT_NANOS:
@@ -185,21 +232,21 @@ public interface TimestampDriver {
 
     long fromSeconds(long seconds);
 
+    default long fromStr(CharSequence value, int tupleIndex, int fromType, int toType) {
+        try {
+            return parseFloorLiteral(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, fromType, toType);
+        }
+    }
+
     // used by the row copier
     @SuppressWarnings("unused")
     long fromWeeks(int weeks);
 
     TimestampAddMethod getAddMethod(char c);
 
-    /**
-     * Gets the century from a timestamp value.
-     *
-     * @param timestamp the timestamp value
-     * @return the century, or Numbers.INT_NULL if timestamp is null
-     */
     int getCentury(long timestamp);
-
-    int getColumnType();
 
     /**
      * Extracts the day of month from a timestamp value.
@@ -371,8 +418,19 @@ public interface TimestampDriver {
      */
     int getSecondOfMinute(long timestamp);
 
+    /**
+     * Gets the time zone rule resolution {@link TimeZoneRuleFactory#RESOLUTION_MICROS} or {@link TimeZoneRuleFactory#RESOLUTION_NANOS}
+     * for this timestamp driver.
+     *
+     * @return the time zone rule resolution
+     */
     int getTZRuleResolution();
 
+    /**
+     * Gets the current timestamp ticks.
+     *
+     * @return the current timestamp value
+     */
     long getTicks();
 
     TimestampCeilMethod getTimestampCeilMethod(char c);
@@ -393,10 +451,17 @@ public interface TimestampDriver {
      * Creates a timestamp sampler instance for the given interval and time unit.
      *
      * @param interval the interval value
-     * @param timeUnit the time unit qualifier ('U', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y')
+     * @param timeUnit the time unit qualifier ('n', 'U', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y')
      * @return a timestamp sampler instance
      */
     TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException;
+
+    /**
+     * Gets the timestamp column type identifier for this driver.
+     *
+     * @return the timestamp type constant (e.g., {@link ColumnType#TIMESTAMP_MICRO} or {@link ColumnType#TIMESTAMP_NANO} )
+     */
+    int getTimestampType();
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
@@ -418,8 +483,16 @@ public interface TimestampDriver {
      */
     int getYear(long timestamp);
 
-    default long implicitCast(CharSequence value, int typeFrom) {
-        assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
+    /**
+     * Performs implicit casting from a character sequence to timestamp.
+     * Attempts multiple parsing strategies in order: numeric parsing, ISO format parsing, and PostgreSQL date formats.
+     *
+     * @param value    the character sequence to cast
+     * @param fromType the source column type (must be STRING or SYMBOL)
+     * @return the parsed timestamp value, or Numbers.LONG_NULL if parsing fails or value is null
+     */
+    default long implicitCast(CharSequence value, int fromType) {
+        assert fromType == ColumnType.STRING || fromType == ColumnType.SYMBOL;
         if (value != null) {
             try {
                 return Numbers.parseLong(value);
@@ -432,7 +505,7 @@ public interface TimestampDriver {
             } catch (NumericException ignore) {
             }
 
-            return castPGDates(value, typeFrom, this);
+            return castPGDates(value, fromType, this);
         }
         return Numbers.LONG_NULL;
     }
@@ -458,7 +531,7 @@ public interface TimestampDriver {
             if (value.isAscii()) {
                 return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, this);
             }
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getColumnType());
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getTimestampType());
         }
         return Numbers.LONG_NULL;
     }
@@ -473,10 +546,6 @@ public interface TimestampDriver {
 
     long parseFloor(Utf8Sequence str, int lo, int hi) throws NumericException;
 
-    default long parseFloorConstant(@NotNull CharSequence quotedTimestampStr) throws NumericException {
-        return parseFloor(quotedTimestampStr, 1, quotedTimestampStr.length() - 1);
-    }
-
     default long parseFloorLiteral(@Nullable CharSequence timestampLiteral) throws NumericException {
         return timestampLiteral != null ? parseFloor(timestampLiteral, 0, timestampLiteral.length()) : Numbers.LONG_NULL;
     }
@@ -488,6 +557,12 @@ public interface TimestampDriver {
     void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException;
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
+
+    default long parseQuotedLiteral(@NotNull CharSequence quotedTimestampStr) throws NumericException {
+        return parseFloor(quotedTimestampStr, 1, quotedTimestampStr.length() - 1);
+    }
+
+    long startOfDay(long now, int shiftDays);
 
     long toDate(long timestamp);
 

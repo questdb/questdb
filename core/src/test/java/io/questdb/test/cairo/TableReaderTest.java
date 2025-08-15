@@ -2728,7 +2728,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.commit();
                         timestampUs += stride;
                     }
-                    timestampUs = timestampDriver.addDays(timestampDriver.dayStart(timestampUs, 0), 1);
+                    timestampUs = timestampDriver.addDays(timestampDriver.startOfDay(timestampUs, 0), 1);
                 }
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
@@ -2880,7 +2880,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.commit();
                         timestampUs += stride;
                     }
-                    timestampUs = timestampDriver.addDays(timestampDriver.dayStart(timestampUs, 0), 1);
+                    timestampUs = timestampDriver.addDays(timestampDriver.startOfDay(timestampUs, 0), 1);
                 }
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());

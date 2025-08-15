@@ -89,7 +89,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         // Evaluate intervals involving functions
         int oldIntervalType = sqlExecutionContext.getIntervalFunctionType();
         try {
-            sqlExecutionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getColumnType()));
+            sqlExecutionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getTimestampType()));
             addEvaluateDynamicIntervals(outIntervals, sqlExecutionContext);
         } finally {
             sqlExecutionContext.setIntervalFunctionType(oldIntervalType);

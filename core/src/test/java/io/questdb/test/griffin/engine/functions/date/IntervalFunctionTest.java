@@ -553,15 +553,15 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     private static long today(TimestampDriver driver, long nowMicros) {
-        return driver.dayStart(nowMicros, 0);
+        return driver.startOfDay(nowMicros, 0);
     }
 
     private static long tomorrow(TimestampDriver driver, long nowMicros) {
-        return driver.dayStart(nowMicros, 1);
+        return driver.startOfDay(nowMicros, 1);
     }
 
     private static long yesterday(TimestampDriver driver, long nowMicros) {
-        return driver.dayStart(nowMicros, -1);
+        return driver.startOfDay(nowMicros, -1);
     }
 
     private void buildInPlan(TimestampDriver driver, StringSink sink, long lo, long hi) {

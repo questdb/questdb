@@ -880,7 +880,7 @@ public class ColumnTypeConverter {
             case ColumnType.DATE:
                 return converterFromDate2String;
             case ColumnType.TIMESTAMP:
-                return ColumnType.getTimestampDriver(srcColumnType)::convertToVar;
+                return ColumnType.getTimestampDriver(srcColumnType)::append;
             case ColumnType.BOOLEAN:
                 return converterFromBoolean2String;
             default:

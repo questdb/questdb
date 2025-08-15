@@ -1095,7 +1095,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampDriver.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     enum Transport {

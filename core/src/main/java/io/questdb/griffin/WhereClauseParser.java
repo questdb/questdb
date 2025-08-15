@@ -304,7 +304,7 @@ public final class WhereClauseParser implements Mutable {
     private static long parseTokenAsTimestamp(TimestampDriver timestampDriver, ExpressionNode lo) throws SqlException {
         try {
             if (!isNullKeyword(lo.token)) {
-                return timestampDriver.parseFloorConstant(lo.token);
+                return timestampDriver.parseQuotedLiteral(lo.token);
             }
             return Numbers.LONG_NULL;
         } catch (NumericException e1) {
@@ -665,7 +665,7 @@ public final class WhereClauseParser implements Mutable {
         }
         int oldIntervalFuncType = executionContext.getIntervalFunctionType();
         try {
-            executionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getColumnType()));
+            executionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getTimestampType()));
             if (in.paramCount == 2) {
                 ExpressionNode inArg = in.rhs;
                 if (inArg.type == ExpressionNode.CONSTANT) {
@@ -1954,7 +1954,7 @@ public final class WhereClauseParser implements Mutable {
         long ts;
         try {
             // Timestamp string
-            ts = timestampDriver.parseFloorConstant(node.token);
+            ts = timestampDriver.parseQuotedLiteral(node.token);
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)

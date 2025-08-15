@@ -639,7 +639,7 @@ public final class IntervalUtils {
             timestampDriver.parseInterval(seq, lo, p, operation, out);
             long low = decodeIntervalLo(out, index);
             long hi = decodeIntervalHi(out, index);
-            hi = timestampDriver.addPeriod(hi, type, period);
+            hi = timestampDriver.add(hi, type, period);
             if (hi < low) {
                 throw SqlException.invalidDate(position);
             }
@@ -650,7 +650,7 @@ public final class IntervalUtils {
         }
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
-            long hiMicros = timestampDriver.addPeriod(loMicros, type, period);
+            long hiMicros = timestampDriver.add(loMicros, type, period);
             if (hiMicros < loMicros) {
                 throw SqlException.invalidDate(position);
             }

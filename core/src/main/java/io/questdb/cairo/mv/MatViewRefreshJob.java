@@ -687,7 +687,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long replacementTimestampHi = Long.MIN_VALUE;
 
                     while (intervalIterator.next()) {
-                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), viewDefinition.getBaseTableTimestampDriver().getColumnType());
+                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), viewDefinition.getBaseTableTimestampDriver().getTimestampType());
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
@@ -712,9 +712,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
                                     throw CairoException.nonCritical()
-                                            .put("timestamp out of replace range [expected=").ts(driver.getColumnType(), replacementTimestampLo)
-                                            .put(", ").ts(driver.getColumnType(), replacementTimestampHi)
-                                            .put(", actual=").ts(driver.getColumnType(), timestamp)
+                                            .put("timestamp out of replace range [expected=").ts(driver.getTimestampType(), replacementTimestampLo)
+                                            .put(", ").ts(driver.getTimestampType(), replacementTimestampHi)
+                                            .put(", actual=").ts(driver.getTimestampType(), timestamp)
                                             .put(']');
                                 }
                                 final TableWriter.Row row = walWriter.newRow(timestamp);

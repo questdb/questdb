@@ -168,6 +168,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long add(long timestamp, char type, int stride) {
+        return Micros.addPeriod(timestamp, type, stride);
+    }
+
+    @Override
     public long addDays(long timestamp, int days) {
         return Micros.addDays(timestamp, days);
     }
@@ -175,11 +180,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public long addMonths(long timestamp, int months) {
         return Micros.addMonths(timestamp, months);
-    }
-
-    @Override
-    public long addPeriod(long lo, char type, int period) {
-        return Micros.addPeriod(lo, type, period);
     }
 
     @Override
@@ -198,13 +198,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public boolean append(long fixedAddr, CharSink<?> sink) {
+        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        if (value != Numbers.LONG_NULL) {
+            MicrosFormatUtils.appendDateTimeUSec(sink, value);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
     public void appendToPGWireText(CharSink<?> sink, long timestamp) {
         MicrosFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
     }
 
     @Override
-    public PlanSink appendTypeToPlan(PlanSink sink) {
-        return sink.val("timestamp");
+    public void appendTypeToPlan(PlanSink sink) {
+        sink.val("timestamp");
     }
 
     @Override
@@ -231,23 +241,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
-        if (value != Numbers.LONG_NULL) {
-            MicrosFormatUtils.appendDateTimeUSec(sink, value);
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public long dayEnd(long start) {
+    public long endOfDay(long start) {
         return start + Micros.DAY_MICROS - 1;
-    }
-
-    @Override
-    public long dayStart(long now, int shiftDays) {
-        return Micros.floorDD(Micros.addDays(now, shiftDays));
     }
 
     @Override
@@ -378,11 +373,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Micros.getCentury(timestamp);
-    }
-
-    @Override
-    public int getColumnType() {
-        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -824,6 +814,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 throw SqlException.$(position, "unsupported interval qualifier");
         }
+    }
+
+    @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -1289,6 +1284,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @TestOnly
     public void setTicker(Clock clock) {
         this.clock = clock;
+    }
+
+    @Override
+    public long startOfDay(long now, int shiftDays) {
+        return Micros.floorDD(Micros.addDays(now, shiftDays));
     }
 
     @Override

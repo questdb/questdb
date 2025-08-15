@@ -90,7 +90,7 @@ public class SqlUtil {
             } catch (NumericException ignore) {
             }
         }
-        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getColumnType());
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
     public static CharSequence createExprColumnAlias(

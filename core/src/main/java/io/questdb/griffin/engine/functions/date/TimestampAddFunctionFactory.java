@@ -197,7 +197,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return timestampDriver.addPeriod(timestamp, period, stride);
+            return timestampDriver.add(timestamp, period, stride);
         }
 
         @Override

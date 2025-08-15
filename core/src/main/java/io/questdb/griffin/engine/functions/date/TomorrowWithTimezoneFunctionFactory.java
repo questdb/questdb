@@ -75,7 +75,7 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            now = executionContext.getNow(timestampDriver.getColumnType());
+            now = executionContext.getNow(timestampDriver.getTimestampType());
         }
 
         @Override
@@ -98,7 +98,7 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            calculateInterval(executionContext.getNow(timestampDriver.getColumnType()), tzFunc.getStrA(null));
+            calculateInterval(executionContext.getNow(timestampDriver.getTimestampType()), tzFunc.getStrA(null));
         }
 
         @Override

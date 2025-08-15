@@ -727,7 +727,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             offset,
                             IMM,
                             I8_TYPE,
-                            ColumnType.getTimestampDriver(predicateContext.columnType).parseFloorConstant(token)
+                            ColumnType.getTimestampDriver(predicateContext.columnType).parseQuotedLiteral(token)
                     );
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
@@ -737,7 +737,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 try {
                     // This is a hack for DATA column type. We use a TIMESTAMP specific driver to
                     // do the work and then derive millis
-                    putOperand(offset, IMM, I8_TYPE, MicrosTimestampDriver.INSTANCE.toDate(MicrosTimestampDriver.INSTANCE.parseFloorConstant(token)));
+                    putOperand(offset, IMM, I8_TYPE, MicrosTimestampDriver.INSTANCE.toDate(MicrosTimestampDriver.INSTANCE.parseQuotedLiteral(token)));
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }
