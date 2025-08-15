@@ -198,7 +198,7 @@ public class CopyImportTest extends AbstractCairoTest {
                 assertEquals("y", model.getTableName().toString());
                 assertEquals("'somefile.csv'", model.getFileName().token.toString());
                 assertFalse(model.isHeader());
-                assertEquals(-1, model.getPartitionBy());
+                assertEquals(3, model.getPartitionBy());
                 assertNull(model.getTimestampColumnName());
                 assertNull(model.getTimestampFormat());
                 assertEquals(-1, model.getDelimiter());
