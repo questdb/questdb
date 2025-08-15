@@ -42,16 +42,21 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class IntervalIntrinsicTest extends AbstractCairoTest {
+    private final boolean convertToParquet;
     private final TestTimestampType timestampType;
 
-    public IntervalIntrinsicTest(TestTimestampType timestampType) {
+    public IntervalIntrinsicTest(boolean convertToParquet, TestTimestampType timestampType) {
+        this.convertToParquet = convertToParquet;
         this.timestampType = timestampType;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "parquet={0},ts={1}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+                {true, TestTimestampType.MICRO},
+                {true, TestTimestampType.NANO},
+                {false, TestTimestampType.MICRO},
+                {false, TestTimestampType.NANO},
         });
     }
 
@@ -69,6 +74,12 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
             execute("insert into x values (3);");
 
             execute("insert into oracle select * from x;");
+
+            if (convertToParquet) {
+                // create a new active partition, so that all older partitions are converted to parquet
+                execute("insert into x values ('1970-01-02');");
+                execute("alter table x convert partition to parquet where ts >= 0;");
+            }
 
             // ASC exact
             String expected = replaceTimestampSuffix("ts\n" +
@@ -199,6 +210,12 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
                 writer.commit();
             }
 
+            if (convertToParquet) {
+                // create a new active partition, so that all older partitions are converted to parquet
+                execute("insert into x (timestamp) values ('2000-01-01');");
+                execute("alter table x convert partition to parquet where timestamp >= 0;");
+            }
+
             StringSink xSink = new StringSink();
             StringSink oracleSink = new StringSink();
 
@@ -223,6 +240,15 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
                 printSql("select count() from x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), xSink);
                 printSql("select count() from oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), oracleSink);
                 TestUtils.assertEquals(oracleSink, xSink);
+
+                // repeat with difference scales
+                if (timestampType == TestTimestampType.MICRO) {
+                    xSink.clear();
+                    long loNs = timestampType.getDriver().toNanos(lo);
+                    long hiNs = timestampType.getDriver().toNanos(hi);
+                    printSql("select count() from x where timestamp between " + loNs + "::TIMESTAMP_NS and " + hiNs + "::TIMESTAMP_NS", xSink);
+                    TestUtils.assertEquals(oracleSink, xSink);
+                }
             }
 
             // DESC
@@ -233,12 +259,6 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
                 oracleSink.clear();
                 printSql("x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName() + " order by timestamp desc", xSink);
                 printSql("oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName() + " order by timestamp desc", oracleSink);
-                TestUtils.assertEquals(oracleSink, xSink);
-
-                xSink.clear();
-                oracleSink.clear();
-                printSql("select count() from x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), xSink);
-                printSql("select count() from oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), oracleSink);
                 TestUtils.assertEquals(oracleSink, xSink);
             }
         });
