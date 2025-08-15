@@ -96,7 +96,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select a_ts, a_long from read_parquet('x.parquet')");
-                assertSqlCursors0("select a_ts, a_long from x", sink);
+                assertSqlCursors0("select a_ts, a_long from x");
             }
         });
     }
@@ -153,7 +153,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet')");
-                assertSqlCursors0("x", sink);
+                assertSqlCursors0("x");
             }
         });
     }
@@ -201,7 +201,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 // Assert 0 rows, header only
                 try {
-                    select("select * from read_parquet('" + path + "')  where 1 = 2");
+                    select("select * from read_parquet('" + path + "')  where 1 = 2").close();
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "could not open, file does not exist");
@@ -306,7 +306,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 }
 
                 sink.put(" where 1 = 2");
-                assertSqlCursors0("x where 1 = 2", sink);
+                assertSqlCursors0("x where 1 = 2");
             }
         });
     }
@@ -332,18 +332,18 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet') order by a_varchar1, a_varchar2");
-                assertSqlCursors0("select * from x order by a_varchar1, a_varchar2", sink);
+                assertSqlCursors0("select * from x order by a_varchar1, a_varchar2");
             }
         });
     }
 
-    private static void assertSqlCursors0(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
+    private static void assertSqlCursors0(CharSequence expectedSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
                     sqlCompiler,
                     sqlExecutionContext,
                     expectedSql,
-                    actualSql,
+                    sink,
                     LOG,
                     true
             );
