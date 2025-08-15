@@ -22,10 +22,13 @@
 
 
 import asyncio
+import os
+
 import asyncpg
 import re
 import sys
 from asyncpg import Connection
+
 from common import *
 
 
@@ -96,13 +99,34 @@ async def run_test(test, global_variables):
     variables = global_variables.copy()
     variables.update(test.get('variables', {}))
 
+    # port from env. variable of default to 8812
+    port = int(os.getenv('PGPORT', 8812))
     connection = await asyncpg.connect(
         host='localhost',
-        port=8812,
+        port=port,
         user='admin',
         password='quest',
         database='qdb'
     )
+
+    # hard-code an array type for float8. this is a workaround for asyncpg using
+    # introspection to determine array types. the introspection query uses recursive CTEs which are not supported
+    # by QuestDB :-(
+    # See: https://github.com/MagicStack/asyncpg/discussions/1015
+    array = {
+        'oid': 1022,
+        'elemtype': 701,
+        'kind': 'b',
+        'name': '_float8',
+        'elemtype_name': 'float8',
+        'ns': 'pg_catalog',
+        'elemdelim': ',',
+        'depth': 0,
+        'range_subtype': None,
+        'attrtypoids': None,
+        'basetype': None
+    }
+    connection._protocol.get_settings().register_data_types([array])
 
     test_failed = False
     try:
@@ -141,7 +165,12 @@ async def main(yaml_file):
 
     for test in tests:
         iterations = test.get('iterations', 50)
+        exclusions = test.get('exclude', [])
+        if 'asyncpg' in exclusions:
+            print(f"Skipping test '{test['name']}' because it is excluded for asyncpg.")
+            continue
         for _ in range(iterations):
+            print(f"Running test '{test['name']}' (iteration {_ + 1})")
             await run_test(test, global_variables)
 
 

@@ -72,7 +72,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "10")
         ) {
             serverMain.start();
-            serverMain.compile("create table " + tn +
+            serverMain.ddl("create table " + tn +
                     "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp" +
                     ") timestamp(ts) partition by HOUR WAL");
 

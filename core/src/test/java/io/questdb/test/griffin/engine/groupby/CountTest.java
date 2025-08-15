@@ -93,6 +93,103 @@ public class CountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterpolation() throws Exception {
+        execute("create table x (ts timestamp, d double, f float, ip ipv4, i int, l256 long256, l long, s string, sym symbol, vch varchar) timestamp(ts);");
+        execute("insert into x values " +
+                "('2000-01-01T00:00', 1, 1, '192.168.1.1', 1, '0x42', 1, 'foo', 'foo', 'foo'), " +
+                "('2000-01-01T04:30', 2, 2, '192.168.1.2', 2, '0x43', 2, 'bar', 'bar', 'bar'), " +
+                "('2000-01-01T05:30', 2, 2, '192.168.1.2', 2, '0x43', 2, 'bar', 'bar', 'bar'), " +
+                "('2000-01-03T00:00', 1, 1, '192.168.1.1', 1, '0x42', 1, 'foo', 'foo', 'foo');"
+        );
+
+        String expected = "ts\tcount\n" +
+                "2000-01-01T00:00:00.000000Z\t3\n" +
+                "2000-01-02T00:00:00.000000Z\t2\n" +
+                "2000-01-03T00:00:00.000000Z\t1\n";
+
+        // double
+        assertQuery(
+                expected,
+                "select ts, count(d) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // float
+        assertQuery(
+                expected,
+                "select ts, count(f) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // ipv4
+        assertQuery(
+                expected,
+                "select ts, count(ip) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // int
+        assertQuery(
+                expected,
+                "select ts, count(i) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // long256
+        assertQuery(
+                expected,
+                "select ts, count(l256) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // long
+        assertQuery(
+                expected,
+                "select ts, count(l) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // string
+        assertQuery(
+                expected,
+                "select ts, count(s) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // symbol
+        assertQuery(
+                expected,
+                "select ts, count(sym) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+
+        // varchar
+        assertQuery(
+                expected,
+                "select ts, count(vch) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testKnownSize() throws Exception {
         assertQuery(
                 "count\n" +

@@ -41,7 +41,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
+import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 
 public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -58,8 +58,8 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                 try (MemoryCMORImpl memoryROffset = new MemoryCMORImpl()) {
                     memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.size(), Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.getOffset(), 0);
+                    Assert.assertEquals(Files.PAGE_SIZE, memoryROffset.size());
+                    Assert.assertEquals(0, memoryROffset.getOffset());
                 }
             });
         }
@@ -107,7 +107,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         Assert.assertEquals(-1, memoryROffset.getFd());
                     } catch (AssertionError ex) {
                         // expected in PARANOIA_MODE == true
-                        Assert.assertTrue(PARANOIA_MODE);
+                        Assert.assertTrue(VM_PARANOIA_MODE);
                     }
 
                     // Failed to remap
@@ -143,7 +143,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not get length");
                     } catch (AssertionError ex) {
                         // expected in PARANOIA_MODE == true
-                        Assert.assertTrue(PARANOIA_MODE);
+                        Assert.assertTrue(VM_PARANOIA_MODE);
                     }
                 }
             });
@@ -201,8 +201,8 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
 
                     memoryROffset.growToFileSize();
                     Assert.assertEquals(2 * Files.PAGE_SIZE, memoryROffset.size());
-                    Assert.assertEquals(memoryROffset.size(), 2 * Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.getOffset() + memoryROffset.size(), 3 * Files.PAGE_SIZE);
+                    Assert.assertEquals(2 * Files.PAGE_SIZE, memoryROffset.size());
+                    Assert.assertEquals(3 * Files.PAGE_SIZE, memoryROffset.getOffset() + memoryROffset.size());
                 }
             });
         }
@@ -255,7 +255,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         Assert.assertTrue(fd > 0);
 
         try (
-                MemoryMARW memoryW = Vm.getMARWInstance();
+                MemoryMARW memoryW = Vm.getCMARWInstance();
                 Path fileName = new Path().of(testName.getMethodName())
         ) {
             memoryW.of(ff, fd, fileName.$(), 16, 0);

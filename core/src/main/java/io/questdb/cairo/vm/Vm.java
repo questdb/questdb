@@ -24,7 +24,13 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMOR;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -32,7 +38,6 @@ import io.questdb.std.str.LPSZ;
 
 public class Vm {
     // Set to true to enable the assertion of pointers and buffer sizes which are too expensive for production.
-    public static final boolean PARANOIA_MODE = false;
     public static final int STRING_LENGTH_BYTES = 4;
     public static final byte TRUNCATE_TO_PAGE = 0;
     public static final byte TRUNCATE_TO_POINTER = 1;
@@ -70,20 +75,12 @@ public class Vm {
         return bestEffortTruncate(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 
-    public static MemoryAR getARInstance(long pageSize, int maxPages, int memoryTag) {
-        return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
-    }
-
-    public static MemoryARW getARWInstance(long pageSize, int maxPages, int memoryTag) {
-        return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
-    }
-
     public static MemoryCARW getCARWInstance(long pageSize, int maxPages, int memoryTag) {
         return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
-    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long size, int memoryTag, long opts) {
-        return new MemoryCMARWImpl(ff, name, pageSize, size, memoryTag, opts);
+    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
 
     public static MemoryCMARW getCMARWInstance() {
@@ -98,35 +95,15 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryMA getMAInstance(int commitMode) {
-        return new MemoryPMARImpl(commitMode);
-    }
-
-    public static MemoryMAR getMARInstance(int commitMode) {
-        return new MemoryPMARImpl(commitMode);
-    }
-
-    public static MemoryMARW getMARWInstance() {
-        return new MemoryCMARWImpl();
-    }
-
-    public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag, opts);
-    }
-
-    public static MemoryMR getMRInstance() {
-        return new MemoryCMRImpl();
-    }
-
     public static MemoryCMOR getMemoryCMOR() {
         return new MemoryCMORImpl();
     }
 
-    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
+    public static MemoryMAR getPMARInstance(CairoConfiguration configuration) {
+        return new MemoryPMARImpl(configuration);
     }
 
-    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
+    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, int opts) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }
 
@@ -141,7 +118,7 @@ public class Vm {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
         return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1, memoryTag, opts);
     }
 }

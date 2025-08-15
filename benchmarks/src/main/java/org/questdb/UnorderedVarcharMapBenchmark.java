@@ -56,8 +56,8 @@ public class UnorderedVarcharMapBenchmark {
     private MemoryCMR auxReadMem;
     private MemoryCMR dataReadMem;
     private OrderedMap orderedMap;
-    private Utf8SplitString stableUtf8String = new Utf8SplitString(() -> true);
-    private Utf8SplitString unstableUtf8String = new Utf8SplitString(() -> false);
+    private final Utf8SplitString stableUtf8String = new Utf8SplitString(() -> true);
+    private final Utf8SplitString unstableUtf8String = new Utf8SplitString(() -> false);
     private UnorderedVarcharMap varcharMap;
 
     public static void main(String[] args) throws RunnerException {
@@ -152,8 +152,8 @@ public class UnorderedVarcharMapBenchmark {
     public void createMem() {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         try (
-                MemoryMA auxAppendMem = Vm.getMAInstance(CommitMode.NOSYNC);
-                MemoryMA dataAppendMem = Vm.getMAInstance(CommitMode.NOSYNC)
+                MemoryMA auxAppendMem = Vm.getPMARInstance(null);
+                MemoryMA dataAppendMem = Vm.getPMARInstance(null)
         ) {
             try (Path path = new Path()) {
                 path.of(AUX_MEM_FILENAME);

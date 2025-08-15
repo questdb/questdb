@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -74,8 +75,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
-    private SqlExecutionCircuitBreakerWrapper circuitBreaker;
-    private long circuitBreakerFd;
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
     private int dispatchStartFrameIndex;
@@ -91,25 +90,35 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
     private boolean uninterruptible;
+    // Must be initialized from the original SQL context's circuit breaker before use.
+    private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
+    /**
+     * Constructs a page frame sequence instance. The returned instance takes ownership of the input atom.
+     */
     public PageFrameSequence(
             CairoConfiguration configuration,
             MessageBus messageBus,
             T atom,
             PageFrameReducer reducer,
             PageFrameReduceTaskFactory localTaskFactory,
-            int sharedWorkerCount,
+            int sharedQueryWorkerCount,
             byte taskType
     ) {
-        this.frameAddressCache = new PageFrameAddressCache(configuration);
-        this.messageBus = messageBus;
-        this.atom = atom;
-        this.reducer = reducer;
-        this.clock = configuration.getMillisecondClock();
-        this.localTaskFactory = localTaskFactory;
-        this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedWorkerCount);
-        this.taskType = taskType;
-        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+        try {
+            this.atom = atom;
+            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.messageBus = messageBus;
+            this.reducer = reducer;
+            this.clock = configuration.getMillisecondClock();
+            this.localTaskFactory = localTaskFactory;
+            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.taskType = taskType;
+            this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     /**
@@ -148,7 +157,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         reduceQueue,
                         pageFrameReduceSubSeq,
                         localRecord,
-                        circuitBreaker,
+                        workStealCircuitBreaker,
                         this
                 );
             } catch (Throwable th) {
@@ -196,7 +205,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         frameRowCounts.clear();
         frameAddressCache.clear();
         atom.clear();
-        frameCursor = Misc.freeIfCloseable(frameCursor);
+        frameCursor = Misc.free(frameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -204,7 +213,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
         }
         if (localTask != null) {
-            localTask.resetCapacities();
+            localTask.reset();
         }
     }
 
@@ -212,7 +221,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void close() {
         clear();
         localRecord = Misc.free(localRecord);
-        circuitBreaker = Misc.free(circuitBreaker);
+        workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
         localTask = Misc.free(localTask);
         Misc.free(atom);
     }
@@ -238,12 +247,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return cancelReason.get();
     }
 
-    public SqlExecutionCircuitBreakerWrapper getCircuitBreaker() {
-        return circuitBreaker;
-    }
-
-    public long getCircuitBreakerFd() {
-        return circuitBreakerFd;
+    // warning: the circuit breaker may be thread unsafe, so don't use it concurrently
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return sqlExecutionContext.getCircuitBreaker();
     }
 
     public int getFrameCount() {
@@ -371,20 +377,22 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     ) throws SqlException {
         sqlExecutionContext = executionContext;
         startTime = clock.getTicks();
-        circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
         uninterruptible = executionContext.isUninterruptible();
 
-        initRecord(executionContext.getCircuitBreaker());
+        if (localRecord == null) {
+            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        }
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
+            assert frameCursor == null;
+            frameCursor = base.getPageFrameCursor(executionContext, order);
+
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes());
 
-            assert frameCursor == null;
-            frameCursor = base.getPageFrameCursor(executionContext, order);
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;
@@ -399,9 +407,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
-        } catch (Throwable e) {
+        } catch (TableReferenceOutOfDateException e) {
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
+        } catch (Throwable th) {
+            // Log the OG exception as the below frame cursor close call may throw.
+            LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
+            frameCursor = Misc.free(frameCursor);
+            throw th;
         }
         return this;
     }
@@ -414,7 +427,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      */
     public void prepareForDispatch() {
         if (!readyToDispatch) {
-            atom.initCursor();
             buildAddressCache();
             readyToDispatch = true;
         }
@@ -523,7 +535,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     }
                     // start stealing work to unload the queue
                     idle = false;
-                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, circuitBreaker)) {
+                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                         if (reduceFinishedCounter.get() > collectedFrameCount) {
                             // We have something to collect, so let's do it!
                             return true;
@@ -550,7 +562,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // join the gang to consume published tasks
         while (reduceFinishedCounter.get() < dispatchStartFrameIndex) {
             idle = false;
-            if (stealWork(reduceQueue, reduceSubSeq, localRecord, circuitBreaker)) {
+            if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                 if (isActive()) {
                     continue;
                 }
@@ -559,17 +571,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
 
         if (idle) {
-            stealWork(reduceQueue, reduceSubSeq, localRecord, circuitBreaker);
+            stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker);
         }
 
         return dispatched;
-    }
-
-    private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (localRecord == null) {
-            localRecord = new PageFrameMemoryRecord();
-        }
-        circuitBreaker.init(executionContextCircuitBreaker);
     }
 
     private boolean stealWork(
@@ -590,7 +595,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         if (localTask == null) {
             localTask = localTaskFactory.getInstance();
-            localTask.setType(taskType);
+            localTask.setTaskType(taskType);
         }
         localTask.of(this, dispatchStartFrameIndex++);
 
@@ -604,7 +609,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     .$(", active=").$(isActive())
                     .I$();
             if (isActive()) {
-                PageFrameReduceJob.reduce(localRecord, circuitBreaker, localTask, this, this);
+                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                PageFrameReduceJob.reduce(localRecord, workStealCircuitBreaker, localTask, this, this);
             }
         } catch (Throwable th) {
             LOG.error()

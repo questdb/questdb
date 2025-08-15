@@ -25,23 +25,36 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public interface SqlExecutionContext extends Closeable {
+public interface SqlExecutionContext extends Sinkable, Closeable {
+
+    // Returns true when the context doesn't require all SQL functions to be deterministic.
+    // Deterministic-only functions are enforced e.g. when compiling a mat view.
+    boolean allowNonDeterministicFunctions();
 
     void clearWindowContext();
 
@@ -64,7 +77,9 @@ public interface SqlExecutionContext extends Closeable {
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
-            int timestampIndex
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     );
 
     default void containsSecret(boolean b) {
@@ -94,19 +109,11 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableMetadata getMetadataForRead(TableToken tableToken) {
-        return getMetadataForRead(tableToken, TableUtils.ANY_TABLE_VERSION);
-    }
-
-    default TableMetadata getMetadataForRead(TableToken tableToken, long desiredVersion) {
-        return getCairoEngine().getTableMetadata(tableToken, desiredVersion);
-    }
-
-    default TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
+    default TableRecordMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
         return getCairoEngine().getLegacyMetadata(tableToken, desiredVersion);
     }
 
-    default TableMetadata getMetadataForWrite(TableToken tableToken) {
+    default TableRecordMetadata getMetadataForWrite(TableToken tableToken) {
         return getMetadataForWrite(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
@@ -131,9 +138,7 @@ public interface SqlExecutionContext extends Closeable {
     @NotNull
     SecurityContext getSecurityContext();
 
-    default int getSharedWorkerCount() {
-        return getWorkerCount();
-    }
+    int getSharedQueryWorkerCount();
 
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
@@ -163,15 +168,27 @@ public interface SqlExecutionContext extends Closeable {
 
     WindowContext getWindowContext();
 
-    int getWorkerCount();
-
     void initNow();
 
     boolean isCacheHit();
 
     boolean isColumnPreTouchEnabled();
 
+    // Used to disable column pre-touch without affecting the explain plan
+    boolean isColumnPreTouchEnabledOverride();
+
+    // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
+    default boolean isOverriddenIntrinsics(TableToken tableToken) {
+        return false;
+    }
+
     boolean isParallelFilterEnabled();
+
+    boolean isParallelGroupByEnabled();
+
+    boolean isParallelReadParquetEnabled();
+
+    boolean isParallelTopKEnabled();
 
     boolean isTimestampRequired();
 
@@ -181,9 +198,19 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isWalApplication();
 
+    // This method is used to override intrinsic values in the query execution context
+    // Its initial usage is in the materialized view refresh
+    // where the queried timestamp of the base table is limited to the range affected since last refresh
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    }
+
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    void resetFlags();
+
+    void setAllowNonDeterministicFunction(boolean value);
 
     void setCacheHit(boolean value);
 
@@ -193,16 +220,32 @@ public interface SqlExecutionContext extends Closeable {
 
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
 
+    // Used to disable column pre-touch without affecting the explain plan
+    void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
+
     void setJitMode(int jitMode);
 
     void setNowAndFixClock(long now);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
+    void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
+
+    void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
     void setRandom(Rnd rnd);
 
     void setUseSimpleCircuitBreaker(boolean value);
 
+    default boolean shouldLogSql() {
+        return true;
+    }
+
     default void storeTelemetry(short event, short origin) {
+    }
+
+    default void toSink(@NotNull CharSink<?> sink) {
     }
 }

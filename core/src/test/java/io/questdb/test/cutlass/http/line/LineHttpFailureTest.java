@@ -50,12 +50,16 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.assertResponse;
+import static java.net.HttpURLConnection.HTTP_BAD_METHOD;
+import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
 public class LineHttpFailureTest extends AbstractBootstrapTest {
 
@@ -184,7 +188,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             SOCountDownLatch pong = new SOCountDownLatch(1);
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "field1.d") && Utf8s.containsAscii(name, "wal")) {
                         ping.await();
                         httpClientRef.get().disconnect();
@@ -243,9 +247,20 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             AtomicInteger counter = new AtomicInteger(2);
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
 
+                long addr = 0;
+
                 @Override
-                public long append(long fd, long buf, int len) {
-                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                    if (fd == this.fd) {
+                        this.addr = addr;
+                    }
+                    return addr;
+                }
+
+                @Override
+                public void msync(long addr, long len, boolean async) {
+                    if ((addr == this.addr) && (counter.decrementAndGet() == 0)) {
                         ping.await();
                         httpClientRef.get().disconnect();
                         pong.countDown();
@@ -253,11 +268,11 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                         // the disconnect happens during sending the response. But it also makes the test slower.
                         Os.sleep(10);
                     }
-                    return Files.append(fd, buf, len);
+                    super.msync(addr, len, async);
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                             && Utf8s.containsAscii(name, "second_table")) {
@@ -267,7 +282,15 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
             };
 
+            final Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("QDB_CAIRO_COMMIT_MODE", "sync");
+
             final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public Map<String, String> getEnv() {
+                    return env;
+                }
+
                 @Override
                 public FilesFacade getFilesFacade() {
                     return filesFacade;
@@ -359,70 +382,49 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
-            }})
-            ) {
+            }})) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.PUT()
-                                    .url("/write ")
-                                    .withContent()
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("404", resp.getStatusCode());
-                    }
+                    request.PUT()
+                            .url("/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_METHOD, "Method PUT not supported\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.GET()
-                                    .url("/api/v2/write ")
-                                    .withContent()
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
-                    }
+                    request.GET()
+                            .url("/api/v2/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_REQUEST, "GET request method cannot have content\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.DELETE()
-                                    .url("/write ")
-                                    .withContent()
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
-                    }
+                    request.DELETE()
+                            .url("/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.POST()
-                                    .url("/write ")
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
-                    }
+                    request.POST()
+                            .url("/write ")
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request\r\n");
                 }
             }
         });

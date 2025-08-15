@@ -24,18 +24,21 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -44,9 +47,14 @@ import org.jetbrains.annotations.Nullable;
  * populated by function dynamically, in that values that have not yet been returned via
  * getInt() are not cached.*
  */
-public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
+public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -70,7 +78,8 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        CharSequence value = getSymbol(rec);
+        return value == null ? 0 : value.charAt(0);
     }
 
     @Override
@@ -110,6 +119,11 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -176,14 +190,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final long getTimestamp(Record rec) {
         final CharSequence value = getSymbol(rec);
-        if (value != null) {
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().put("invalid timestamp: [").put(value).put(']');
-            }
-        }
-        return Numbers.LONG_NULL;
+        return SqlUtil.implicitCastSymbolAsTimestamp(value);
     }
 
     @Override
@@ -227,7 +234,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
      *
      * @return clone of symbol table
      */
-    @Nullable
     public SymbolTable newSymbolTable() {
         return null;
     }

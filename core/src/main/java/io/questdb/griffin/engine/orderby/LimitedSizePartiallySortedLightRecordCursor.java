@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
@@ -35,13 +38,10 @@ import io.questdb.std.Numbers;
  * SortedLightRecordCursor which implements LIMIT clause and assumes that base cursor is already sorted on designated timestamp, which is the first sort key.
  * Base record cursor processing is stopped when enough records with different timestamp values are found.
  */
-public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRecordCursor {
+public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRecordCursor, DynamicLimitCursor {
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
-    private final long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
-    private final long skipFirst; // skip first N rows
-    private final long skipLast;  // skip last N rows
     private final int timestampIndex;
     private RecordCursor baseCursor;
     private Record baseRecord;
@@ -49,25 +49,22 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     private long groupTimestamp;
     private boolean isChainBuilt;
     private boolean isOpen;
+    private long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
     private long rowsInGroup;
     private long rowsLeft;
     private long rowsSoFar;
+    private long skipFirst; // skip first N rows
+    private long skipLast;  // skip last N rows
     private boolean timestampInitialized;
 
     public LimitedSizePartiallySortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
             RecordComparator comparator,
-            long limit,
-            long skipFirst,
-            long skipLast,
             int timestampIndex
     ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.limit = limit;
-        this.skipFirst = skipFirst;
-        this.skipLast = skipLast;
         this.isOpen = true;
         this.timestampIndex = timestampIndex;
     }
@@ -132,6 +129,11 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isChainBuilt ? 1 : 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
     }
@@ -151,6 +153,13 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         }
 
         rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
+    }
+
+    @Override
+    public void updateLimits(long limit, long skipFirst, long skipLast) {
+        this.limit = limit;
+        this.skipFirst = skipFirst;
+        this.skipLast = skipLast;
     }
 
     private void buildChain() {

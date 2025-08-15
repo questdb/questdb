@@ -24,12 +24,21 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
+
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -44,9 +53,11 @@ public final class Timestamps {
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long HOUR_SECONDS = 3600;
+    public static final long MICRO_NANOS = 1000;
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
     public static final long MINUTE_SECONDS = 60;
+    public static final long MONTH_MICROS_APPROX = 30 * DAY_MICROS;
     public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
@@ -60,7 +71,10 @@ public final class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_SIGN = 7;
     public static final int STATE_UTC = 1;
+    public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
+    public static final long YEAR_10000 = 253_402_300_800_000_000L;
+    public static final long YEAR_MICROS_NONLEAP = 365 * DAY_MICROS;
     private static final char AFTER_NINE = '9' + 1;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
@@ -69,10 +83,10 @@ public final class Timestamps {
     };
     private static final int DAY_HOURS = 24;
     private static final int HOUR_MINUTES = 60;
-    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
-    private static final long YEAR_MICROS = 365 * DAY_MICROS;
+    private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
+    private static final int YEAR_MONTHS = 12;
 
     private Timestamps() {
     }
@@ -180,10 +194,11 @@ public final class Timestamps {
     }
 
     public static long ceilDD(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(micros, y, l);
+        return yearMicros(y, l)
+                + monthOfYearMicros(m, l)
                 + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
     }
 
@@ -196,10 +211,11 @@ public final class Timestamps {
     }
 
     public static long ceilMM(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(micros, y, l);
+        return yearMicros(y, l)
+                + monthOfYearMicros(m, l)
                 + (getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
@@ -216,9 +232,9 @@ public final class Timestamps {
     }
 
     public static long ceilYYYY(long micros) {
-        int y;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l)
                 + monthOfYearMicros(12, l)
                 + (DAYS_PER_MONTH[11]) * DAY_MICROS;
     }
@@ -338,6 +354,7 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    @SuppressWarnings("unused")
     public static long floorMM(long micros, long offset) {
         return floorMM(micros, 1, offset);
     }
@@ -434,6 +451,9 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorWW(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -447,16 +467,17 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros) {
-        int y;
-        return yearMicros(y = getYear(micros), isLeapYear(y));
+        final int y = getYear(micros);
+        return yearMicros(y, isLeapYear(y));
     }
 
     public static long floorYYYY(long micros, int stride) {
         final int origin = getYear(0);
-        int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        final int y = origin + ((getYear(micros) - origin) / stride) * stride;
         return yearMicros(y, isLeapYear(y));
     }
 
+    @SuppressWarnings("unused")
     public static long floorYYYY(long micros, long offset) {
         return floorYYYY(micros, 1, offset);
     }
@@ -761,18 +782,26 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
-        if (str != null && str.length() > 1) {
-            try {
-                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
+    public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
+        if (str != null) {
+            if (Chars.equals(str, '-')) {
+                throw SqlException.position(position).put("positive number expected: ").put(str);
+            }
+            if (str.length() > 1) {
+                try {
+                    final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
+                    if (multiple <= 0) {
+                        throw SqlException.position(position).put("positive number expected: ").put(str);
+                    }
+                    return multiple;
+                } catch (NumericException ignored) {
+                }
             }
         }
         return 1;
     }
 
-    public static char getStrideUnit(CharSequence str) throws SqlException {
+    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
         final char unit = str.charAt(str.length() - 1);
         switch (unit) {
@@ -787,8 +816,28 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position).put("Invalid unit: ").put(str);
         }
+    }
+
+    public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return getTimezoneRules(locale, timezone, 0, timezone.length());
+    }
+
+    public static TimeZoneRules getTimezoneRules(
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+        }
+        return new FixedTimeZoneRule(Numbers.decodeLowInt(l) * MINUTE_MICROS);
     }
 
     // https://en.wikipedia.org/wiki/ISO_week_date
@@ -846,8 +895,8 @@ public final class Timestamps {
 
         if (diff < 0) {
             year--;
-        } else if (diff >= YEAR_MICROS) {
-            yearStart += leap ? LEAP_YEAR_MICROS : YEAR_MICROS;
+        } else if (diff >= YEAR_MICROS_NONLEAP) {
+            yearStart += leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
             if (yearStart <= micros) {
                 year++;
             }
@@ -1074,6 +1123,79 @@ public final class Timestamps {
         }
     }
 
+    /**
+     * Returns a duration value in TTL format: if positive, it's in hours; if negative, it's in months (and
+     * the actual value is positive)
+     *
+     * @param value           the number of units, must be a non-negative number
+     * @param partitionByUnit the time unit, one of `PartitionBy` constants
+     * @param tokenPos        the position of the number token in the SQL string
+     * @return the TTL value as described
+     * @throws SqlException if the passed value is out of range
+     */
+    public static int toHoursOrMonths(int value, int partitionByUnit, int tokenPos) throws SqlException {
+        if (value < 0) {
+            throw new AssertionError("The value must be non-negative");
+        }
+        if (value == 0) {
+            return 0;
+        }
+        switch (partitionByUnit) {
+            case PartitionBy.HOUR:
+                return value;
+            case PartitionBy.DAY:
+                int maxDays = Integer.MAX_VALUE / DAY_HOURS;
+                if (value > maxDays) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" days. Max value: ").put(maxDays).put(" days");
+                }
+                return DAY_HOURS * value;
+            case PartitionBy.WEEK:
+                int maxWeeks = Integer.MAX_VALUE / WEEK_DAYS / DAY_HOURS;
+                if (value > maxWeeks) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
+                }
+                return WEEK_DAYS * DAY_HOURS * value;
+            case PartitionBy.MONTH:
+                return -value;
+            case PartitionBy.YEAR:
+                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
+                if (value > maxYears) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" years. Max value: ").put(maxYears).put(" years");
+                }
+                return -(YEAR_MONTHS * value);
+            default:
+                throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
+        }
+    }
+
+    /**
+     * Convert a timestamp in arbitrary units to microseconds.
+     *
+     * @param value timestamp value
+     * @param unit  timestamp unit
+     * @return timestamp in microseconds
+     */
+    public static long toMicros(long value, ChronoUnit unit) {
+        switch (unit) {
+            case NANOS:
+                return value / 1_000;
+            case MICROS:
+                return value;
+            case MILLIS:
+                return value * 1_000;
+            case SECONDS:
+                return value * 1_000_000;
+            default:
+                Duration duration = unit.getDuration();
+                long micros = duration.getSeconds() * 1_000_000L;
+                micros += duration.getNano() / 1_000;
+                return micros * value;
+        }
+    }
+
     public static long toMicros(int y, int m, int d, int h, int mi) {
         return toMicros(y, isLeapYear(y), m, d, h, mi);
     }
@@ -1144,12 +1266,12 @@ public final class Timestamps {
         return sink.toString();
     }
 
-    public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
-        return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());
+    public static long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toUTC(localTimestamp, locale, timezone, 0, timezone.length());
     }
 
     public static long toUTC(
-            long timestampWithTimezone,
+            long localTimestamp,
             DateLocale locale,
             CharSequence timezone,
             int lo,
@@ -1162,20 +1284,15 @@ public final class Timestamps {
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
                     RESOLUTION_MICROS
             );
-            offset = zoneRules.getOffset(timestampWithTimezone);
-            // getOffset really needs UTC date, not local
-            offset = zoneRules.getOffset(timestampWithTimezone - offset);
-            return timestampWithTimezone - offset;
+            offset = zoneRules.getLocalOffset(localTimestamp);
+            return localTimestamp - offset;
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
-        return timestampWithTimezone - offset;
+        return localTimestamp - offset;
     }
 
-    public static long toUTC(long timestampWithTimezone, TimeZoneRules zoneRules) {
-        long offset = zoneRules.getOffset(timestampWithTimezone);
-        // getOffset really needs UTC date, not local
-        offset = zoneRules.getOffset(timestampWithTimezone - offset);
-        return timestampWithTimezone - offset;
+    public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
+        return localTimestamp - zoneRules.getLocalOffset(localTimestamp);
     }
 
     /**
@@ -1183,7 +1300,7 @@ public final class Timestamps {
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
      *
      * @param year the year
-     * @param leap true if give year is leap year
+     * @param leap true if given year is leap year
      * @return millis for start of year.
      */
     public static long yearMicros(int year, boolean leap) {

@@ -338,19 +338,19 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
     public void testInsertFloatTableExists() throws Exception {
         assertType(ColumnType.FLOAT,
                 "value\ttimestamp\n" +
-                        "0.4257\t1970-01-01T00:00:01.000000Z\n" +
-                        "3.1416\t1970-01-01T00:00:02.000000Z\n" +
-                        "0.0000\t1970-01-01T00:00:03.000000Z\n" +
-                        "0.0000\t1970-01-01T00:00:04.000000Z\n" +
+                        "0.4256678\t1970-01-01T00:00:01.000000Z\n" +
+                        "3.1415927\t1970-01-01T00:00:02.000000Z\n" +
+                        "1.35E-12\t1970-01-01T00:00:03.000000Z\n" +
+                        "1.35E-12\t1970-01-01T00:00:04.000000Z\n" +
                         "1.35000005E12\t1970-01-01T00:00:05.000000Z\n" +
                         "1.35000005E12\t1970-01-01T00:00:06.000000Z\n" +
                         "3.4028235E38\t1970-01-01T00:00:08.000000Z\n" +
                         "null\t1970-01-01T00:00:09.000000Z\n" +
                         "null\t1970-01-01T00:00:10.000000Z\n" +
-                        "-3.5000\t1970-01-01T00:00:11.000000Z\n" +
-                        "-0.0000\t1970-01-01T00:00:12.000000Z\n" +
-                        "123.0000\t1970-01-01T00:00:13.000000Z\n" +
-                        "-123.0000\t1970-01-01T00:00:14.000000Z\n" +
+                        "-3.5\t1970-01-01T00:00:11.000000Z\n" +
+                        "-3.01E-43\t1970-01-01T00:00:12.000000Z\n" +
+                        "123.0\t1970-01-01T00:00:13.000000Z\n" +
+                        "-123.0\t1970-01-01T00:00:14.000000Z\n" +
                         "null\t1970-01-01T00:00:15.000000Z\n" +
                         "null\t1970-01-01T00:00:16.000000Z\n" +
                         "null\t1970-01-01T00:00:17.000000Z\n",
@@ -751,12 +751,6 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
         assertStringTypes(varchar ? ColumnType.VARCHAR : ColumnType.STRING);
     }
 
-    private static void assertStringTypesNoTable(boolean varchar) throws Exception {
-        useLegacyString = !varchar;
-        assertStringTypes(ColumnType.UNDEFINED);
-        useLegacyString = true; // restore default
-    }
-
     private static void assertStringTypes(int columnType) throws Exception {
         assertType(columnType,
                 "value\ttimestamp\n" +
@@ -785,6 +779,12 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "@plant2", // discarded bad type symbol
                         "" // valid null
                 });
+    }
+
+    private static void assertStringTypesNoTable(boolean varchar) throws Exception {
+        useLegacyString = !varchar;
+        assertStringTypes(ColumnType.UNDEFINED);
+        useLegacyString = true; // restore default
     }
 
     private static void assertType(int columnType, String expected, String[] values) throws Exception {

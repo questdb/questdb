@@ -25,7 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -34,22 +45,40 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -77,6 +106,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.tearDownStatic();
     }
 
+    @Override
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
@@ -86,27 +116,37 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void tesFailOnNonBooleanJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( ts timestamp, i int) timestamp(ts) ");
-            ddl("create table b ( ts timestamp, i int) timestamp(ts) ");
+            execute("create table a ( ts timestamp, i int) timestamp(ts) ");
+            execute("create table b ( ts timestamp, i int) timestamp(ts) ");
 
             String booleanError = "boolean expression expected";
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "join b on a.i - b.i", 30, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "join b on a.i - b.i", 30, booleanError
+            );
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "left join b on a.i - b.i", 35, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "left join b on a.i - b.i", 35, booleanError
+            );
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "join b on a.ts = b.ts and a.i - b.i", 46, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "join b on a.ts = b.ts and a.i - b.i", 46, booleanError
+            );
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "left join b on a.ts = b.ts and a.i - b.i", 51, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "left join b on a.ts = b.ts and a.i - b.i", 51, booleanError
+            );
 
             for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
-                assertExceptionNoLeakCheck("select * " +
-                        "from a " +
-                        "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join), 37, "unsupported " + join.trim() + " join expression");
+                assertExceptionNoLeakCheck(
+                        "select * " +
+                                "from a " +
+                                "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join), 37, "unsupported " + join.trim() + " join expression"
+                );
             }
 
             String unexpectedError = "expression type mismatch, expected: BOOLEAN, actual: INT";
@@ -123,7 +163,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testACBadOffsetParsing() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
+            execute("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
 
             String prefix = "select avg(a) over(partition by b order by ts ";
 
@@ -163,7 +203,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnTypeInterval() throws Exception {
-        ddl("create table x (a varchar)");
+        execute("create table x (a varchar)");
         assertException(
                 "alter table x add column b interval",
                 27,
@@ -173,7 +213,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testAlterColumnTypeToInterval() throws Exception {
-        ddl("create table x (a varchar)");
+        execute("create table x (a varchar)");
         assertException(
                 "alter table x alter column a type interval",
                 34,
@@ -255,26 +295,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastByteFloat() throws Exception {
         assertCastByte(
                 "a\n" +
-                        "119.0000\n" +
-                        "52.0000\n" +
-                        "91.0000\n" +
-                        "97.0000\n" +
-                        "119.0000\n" +
-                        "107.0000\n" +
-                        "39.0000\n" +
-                        "81.0000\n" +
-                        "46.0000\n" +
-                        "41.0000\n" +
-                        "61.0000\n" +
-                        "82.0000\n" +
-                        "75.0000\n" +
-                        "95.0000\n" +
-                        "87.0000\n" +
-                        "116.0000\n" +
-                        "87.0000\n" +
-                        "40.0000\n" +
-                        "116.0000\n" +
-                        "117.0000\n",
+                        "119.0\n" +
+                        "52.0\n" +
+                        "91.0\n" +
+                        "97.0\n" +
+                        "119.0\n" +
+                        "107.0\n" +
+                        "39.0\n" +
+                        "81.0\n" +
+                        "46.0\n" +
+                        "41.0\n" +
+                        "61.0\n" +
+                        "82.0\n" +
+                        "75.0\n" +
+                        "95.0\n" +
+                        "87.0\n" +
+                        "116.0\n" +
+                        "87.0\n" +
+                        "40.0\n" +
+                        "116.0\n" +
+                        "117.0\n",
                 ColumnType.FLOAT
         );
     }
@@ -668,26 +708,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastDoubleFloat() throws Exception {
         assertCastDouble(
                 "a\n" +
-                        "80.4322\n" +
-                        "8.4870\n" +
-                        "8.4383\n" +
-                        "65.0859\n" +
-                        "79.0568\n" +
-                        "22.4523\n" +
+                        "80.43224\n" +
+                        "8.486964\n" +
+                        "8.438321\n" +
+                        "65.08594\n" +
+                        "79.056755\n" +
+                        "22.452341\n" +
                         "34.9107\n" +
                         "76.1103\n" +
-                        "42.1777\n" +
+                        "42.17769\n" +
                         "null\n" +
-                        "72.6114\n" +
-                        "42.2436\n" +
+                        "72.61136\n" +
+                        "42.24357\n" +
                         "70.9436\n" +
-                        "38.5399\n" +
-                        "0.3598\n" +
-                        "32.8818\n" +
+                        "38.539948\n" +
+                        "0.35983673\n" +
+                        "32.881767\n" +
                         "null\n" +
-                        "97.7110\n" +
-                        "24.8088\n" +
-                        "63.8161\n",
+                        "97.71103\n" +
+                        "24.808813\n" +
+                        "63.816074\n",
                 ColumnType.FLOAT
         );
     }
@@ -1089,26 +1129,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastIntFloat() throws Exception {
         assertCastInt(
                 "a\n" +
-                        "1.0000\n" +
+                        "1.0\n" +
                         "-2.14748365E9\n" +
-                        "22.0000\n" +
-                        "22.0000\n" +
+                        "22.0\n" +
+                        "22.0\n" +
                         "-2.14748365E9\n" +
-                        "7.0000\n" +
-                        "26.0000\n" +
-                        "26.0000\n" +
+                        "7.0\n" +
+                        "26.0\n" +
+                        "26.0\n" +
                         "-2.14748365E9\n" +
-                        "13.0000\n" +
+                        "13.0\n" +
                         "-2.14748365E9\n" +
-                        "0.0000\n" +
+                        "0.0\n" +
                         "-2.14748365E9\n" +
-                        "25.0000\n" +
-                        "21.0000\n" +
-                        "23.0000\n" +
+                        "25.0\n" +
+                        "21.0\n" +
+                        "23.0\n" +
                         "-2.14748365E9\n" +
-                        "6.0000\n" +
-                        "19.0000\n" +
-                        "7.0000\n",
+                        "6.0\n" +
+                        "19.0\n" +
+                        "7.0\n",
                 ColumnType.FLOAT
         );
     }
@@ -1285,33 +1325,34 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastLongFloat() throws Exception {
         assertCastLong(
                 "a\n" +
-                        "22.0000\n" +
+                        "22.0\n" +
                         "-9.223372E18\n" +
-                        "17.0000\n" +
-                        "2.0000\n" +
+                        "17.0\n" +
+                        "2.0\n" +
                         "-9.223372E18\n" +
-                        "21.0000\n" +
-                        "1.0000\n" +
-                        "20.0000\n" +
+                        "21.0\n" +
+                        "1.0\n" +
+                        "20.0\n" +
                         "-9.223372E18\n" +
-                        "14.0000\n" +
+                        "14.0\n" +
                         "-9.223372E18\n" +
-                        "26.0000\n" +
+                        "26.0\n" +
                         "-9.223372E18\n" +
-                        "23.0000\n" +
-                        "2.0000\n" +
-                        "24.0000\n" +
+                        "23.0\n" +
+                        "2.0\n" +
+                        "24.0\n" +
                         "-9.223372E18\n" +
-                        "16.0000\n" +
-                        "10.0000\n" +
-                        "6.0000\n",
+                        "16.0\n" +
+                        "10.0\n" +
+                        "6.0\n",
                 ColumnType.FLOAT
         );
     }
 
     @Test
     public void testCastLongInt() throws Exception {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "22\n" +
                         "11\n" +
                         "6\n" +
@@ -1338,7 +1379,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastLongShort() throws Exception {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "22\n" +
                         "11\n" +
                         "6\n" +
@@ -1548,26 +1590,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastShortFloat() throws Exception {
         assertCastShort(
                 "a\n" +
-                        "1430.0000\n" +
-                        "1238.0000\n" +
-                        "1204.0000\n" +
-                        "1751.0000\n" +
-                        "1751.0000\n" +
-                        "1429.0000\n" +
-                        "1397.0000\n" +
-                        "1539.0000\n" +
-                        "1501.0000\n" +
-                        "1045.0000\n" +
-                        "1318.0000\n" +
-                        "1255.0000\n" +
-                        "1838.0000\n" +
-                        "1784.0000\n" +
-                        "1928.0000\n" +
-                        "1381.0000\n" +
-                        "1822.0000\n" +
-                        "1414.0000\n" +
-                        "1588.0000\n" +
-                        "1371.0000\n",
+                        "1430.0\n" +
+                        "1238.0\n" +
+                        "1204.0\n" +
+                        "1751.0\n" +
+                        "1751.0\n" +
+                        "1429.0\n" +
+                        "1397.0\n" +
+                        "1539.0\n" +
+                        "1501.0\n" +
+                        "1045.0\n" +
+                        "1318.0\n" +
+                        "1255.0\n" +
+                        "1838.0\n" +
+                        "1784.0\n" +
+                        "1928.0\n" +
+                        "1381.0\n" +
+                        "1822.0\n" +
+                        "1414.0\n" +
+                        "1588.0\n" +
+                        "1371.0\n",
                 ColumnType.FLOAT
         );
     }
@@ -1911,7 +1953,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         String query = "select * from y where j > :lim";
         assertMemoryLeak(() -> {
             try {
-                ddl(
+                execute(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -1945,11 +1987,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("create table x (" +
-                "t TIMESTAMP, " +
-                "`bool.flag` BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH", 29, "new column name contains invalid characters"));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "`bool.flag` BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH", 29, "new column name contains invalid characters"
+        ));
     }
 
     @Test
@@ -2152,7 +2196,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.set(new Rnd());
 
-            ddl("create table x as (select rnd_str('d', 'cd', null) rnd_str, rnd_varchar('d', 'cd', null) rnd_varchar from long_sequence(5))");
+            execute("create table x as (select rnd_str('d', 'cd', null) rnd_str, rnd_varchar('d', 'cd', null) rnd_varchar from long_sequence(5))");
             assertSql(
                     "rnd_str\trnd_varchar\n" +
                             "d\td\n" +
@@ -2410,7 +2454,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
                 ddl,
                 35,
-                "'parquet' expected"
+                "'parquet' or 'native' expected"
         );
     }
 
@@ -2445,31 +2489,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelect() throws Exception {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
-                "1569490116\tnull\tfalse\t\tnull\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
-                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
-                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.9205\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
-                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.5779\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
-                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9442\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                "1569490116\tnull\tfalse\t\tnull\t0.7611029\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
+                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793466\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
+                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.92050034\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
+                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.57789475\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
+                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9441659\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                 "00000010 38 e1\n" +
-                "1100812407\t22\tfalse\tOVL\tnull\t0.7633\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
-                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.1179\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
+                "1100812407\t22\tfalse\tOVL\tnull\t0.7632615\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
+                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.117853105\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
                 "00000010 28 60\n" +
-                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.1718\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.17180288\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                 "00000010 ea 4e ea 8b\n" +
-                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.0620\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
-                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.1195\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
-                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5638\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
+                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.062027454\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
+                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.11951214\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
+                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5637742\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
                 "-406528351\t21\tfalse\tNLE\tnull\tnull\t968\t21057\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\t1970-01-01T03:03:20.000000Z\t43\t\n" +
-                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
+                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292086\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
                 "00000010 44 a8 0d fe\n" +
-                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4699\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
+                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4698648\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
                 "00000010 20 53 3b 51\n" +
-                "346891421\t21\tfalse\t\t0.933609514582851\t0.6380\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
-                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.8461\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
-                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
-                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.0440\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
+                "346891421\t21\tfalse\t\t0.933609514582851\t0.6379992\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
+                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.84612113\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
+                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020445\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
+                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.044039965\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
                 "-1496904948\t5\ttrue\tDBZ\t0.2862717364877081\tnull\t764\t5698\t2015-02-06T02:49:54.147Z\t\t\tnull\t-3058745577013275321\t1970-01-01T05:00:00.000000Z\t19\t00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
-                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
+                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.45646673\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
         String expectedMeta = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"a1\",\"type\":\"INT\"},{\"index\":1,\"name\":\"a\",\"type\":\"INT\"},{\"index\":2,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":5,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":6,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":7,\"name\":\"f1\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"h\",\"type\":\"TIMESTAMP\"},{\"index\":10,\"name\":\"i\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"j1\",\"type\":\"LONG\"},{\"index\":13,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":14,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":15,\"name\":\"m\",\"type\":\"BINARY\"}],\"timestampIndex\":13}";
@@ -2496,7 +2540,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
-                        ")  timestamp(k) partition by DAY");
+                        ")  timestamp(k) partition by DAY"
+        );
     }
 
     @Test
@@ -2639,7 +2684,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "underlying cursor is extremely volatile");
+                TestUtils.assertContains(e.getFlyweightMessage(), "too many cached query plan cannot be used because table schema has changed");
             }
         });
     }
@@ -2656,7 +2701,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
+                execute("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2677,7 +2722,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##sp052w92p1p82)");
+                execute("insert into geohash values(##sp052w92p1p82)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2699,7 +2744,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "10010110001\t01010110101\n";
 
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(11) a," +
                     " rnd_geohash(11) b" +
@@ -2747,7 +2792,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(#sp@in)");
+                execute("insert into geohash values(#sp@in)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2768,7 +2813,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(#sp)");
+                execute("insert into geohash values(#sp)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2789,7 +2834,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(#sp052w92p1p8889)");
+                execute("insert into geohash values(#sp052w92p1p8889)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2809,7 +2854,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true,
                     true
             );
-            insert("insert into geohash values(#sp052w92p18)");
+            execute("insert into geohash values(#sp052w92p18)");
             assertSql(
                     "geohash\n" +
                             "sp052w\n",
@@ -2850,7 +2895,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "ksu\tbuy\n";
 
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(15) a," +
                     " rnd_geohash(15) b" +
@@ -2941,7 +2986,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
@@ -2987,8 +3032,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 if (Os.isWindows()) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                    Assert.assertEquals(46, e.getPosition());
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
+                    Assert.assertEquals(53, e.getPosition());
                 }
             }
         });
@@ -3028,18 +3075,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             };
             try {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
-                assertQuery("geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
-                        " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n", true, true, false);
+                assertQuery(
+                        "geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
+                                " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false
+                );
                 Assert.fail();
             } catch (SqlException e) {
                 if (Os.isWindows()) {
@@ -3066,18 +3115,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             try {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
                 Assert.assertTrue(volume.delete());
-                assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n", true, true, false);
+                assertQuery(
+                        "geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false
+                );
                 Assert.fail();
             } catch (SqlException | CairoException e) {
                 if (Os.isWindows()) {
@@ -3093,9 +3144,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectInvalidTimestamp() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("create table y as (" +
-                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                ")  timestamp(a) partition by DAY", 97, "TIMESTAMP column expected"));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "create table y as (" +
+                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                        ")  timestamp(a) partition by DAY", 97, "TIMESTAMP column expected"
+        ));
     }
 
     @Test
@@ -3154,7 +3207,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(43, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: b");
+                TestUtils.assertContains(e.getFlyweightMessage(), "CAST column doesn't exist [column=b]");
             }
         });
     }
@@ -3224,7 +3277,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableNoPartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3263,7 +3316,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3301,7 +3354,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableSymbolCache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3341,7 +3394,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableSymbolNoCache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3381,7 +3434,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableWithIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3443,7 +3496,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateTableUtf8() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table доходы(экспорт int)");
+            execute("create table доходы(экспорт int)");
 
             try (TableWriter writer = getWriter("доходы")) {
                 for (int i = 0; i < 20; i++) {
@@ -3454,7 +3507,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            ddl("create table миллионы as (select * from доходы)");
+            execute("create table миллионы as (select * from доходы)");
 
             final String expected = "экспорт\n" +
                     "0\n" +
@@ -3497,7 +3550,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithO3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "t TIMESTAMP, " +
@@ -3508,7 +3561,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             try (
                     TableWriter writer = getWriter("x");
-                    TableMetadata tableMetadata = engine.getLegacyMetadata(writer.getTableToken())
+                    TableMetadata tableMetadata = engine.getTableMetadata(writer.getTableToken())
             ) {
                 sink.clear();
                 tableMetadata.toJson(sink);
@@ -3520,6 +3573,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
             }
         });
+    }
+
+    @Test
+    public void testCursorFunctionCannotBeUsedAsColumn() throws Exception {
+        assertExceptionNoLeakCheck(
+                "select query_activity() from long_sequence(100L);",
+                7,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select 1 from long_sequence(1)\n" +
+                        "UNION ALL\n" +
+                        "select query_activity() from long_sequence(100L);",
+                48,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1 as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select a, n from q;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.a from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.* from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
     }
 
     @Test
@@ -3549,7 +3648,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testDuplicateTableName() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3560,11 +3659,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             );
             engine.releaseAllWriters();
 
-            assertExceptionNoLeakCheck("create table x (" +
-                    "t TIMESTAMP, " +
-                    "y BOOLEAN) " +
-                    "timestamp(t) " +
-                    "partition by MONTH", 13, "table already exists");
+            assertExceptionNoLeakCheck(
+                    "create table x (" +
+                            "t TIMESTAMP, " +
+                            "y BOOLEAN) " +
+                            "timestamp(t) " +
+                            "partition by MONTH", 13, "table already exists"
+            );
         });
     }
 
@@ -3584,7 +3685,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             sink.put(" null ");
             String query = sink.toString();
 
-            assertSql("column\n\n", query);
+            assertSql("column\n" +
+                    "null\n", query);
 
             sink.clear();
             sink.put("select ");
@@ -3594,7 +3696,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             sink.put(" 1 from tab");
             query = sink.toString();
 
-            ddl("create table tab as (select 1::int x) ");
+            execute("create table tab as (select 1::int x) ");
             assertSql("column\n101\n", query);
         });
     }
@@ -3619,7 +3721,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnBadFunctionCallInOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test(time TIMESTAMP, symbol STRING);");
+            execute("create table test(time TIMESTAMP, symbol STRING);");
 
             assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
         });
@@ -3628,7 +3730,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnEmptyColumnName() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( ts timestamp)");
+            execute("create table tab ( ts timestamp)");
 
             assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"\")", 32, "Invalid column: ");
             assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"ts\")", 28, "Invalid column: ");
@@ -3638,7 +3740,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnEmptyInClause() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(event short);");
+            execute("create table tab(event short);");
 
             assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ", 54, "too few arguments for 'in' [found=1,expected=2]");
             assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())", 54, "too few arguments for 'in'");
@@ -3667,8 +3769,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFunctionNotIn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
-            insert("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
+            execute("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
+            execute("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
 
             assertSql(
                     "timestamp\tcol\tid\n" +
@@ -3690,7 +3792,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
+            execute("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
             assertSql(
                     "#0101a\n" +
                             "#1234\n" +
@@ -3703,7 +3805,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralAsColName2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )");
+            execute("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )");
             assertSql("#0101a\n", "select * from x where #1234 = \"#0101a\"");
         });
     }
@@ -3724,7 +3826,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralInvalid1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
+            execute("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
                 assertExceptionNoLeakCheck("select * from x where str = #1234 '"); // random char at the end
             } catch (Exception ex) {
@@ -3737,7 +3839,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralInvalid2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
+            execute("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
                 assertExceptionNoLeakCheck("select * from x where str = #1234'"); // random char at the end
             } catch (Exception ex) {
@@ -3762,8 +3864,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(id int)");
-            insert("insert into test(id) select rnd_int() from long_sequence(3)");
+            execute("create table if not exists test(id int)");
+            execute("insert into test(id) select rnd_int() from long_sequence(3)");
 
             assertSql(
                     "id\n" +
@@ -3781,8 +3883,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(ts timestamp)");
-            insert("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
+            execute("create table if not exists test(ts timestamp)");
+            execute("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
 
             assertSql(
                     "hour\n" +
@@ -3800,8 +3902,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(id uuid)");
-            insert("insert into test(id) select rnd_uuid4() from long_sequence(3)");
+            execute("create table if not exists test(id uuid)");
+            execute("insert into test(id) select rnd_uuid4() from long_sequence(3)");
 
             try (
                     RecordCursorFactory factory = select(
@@ -3812,9 +3914,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "limit 10")
             ) {
                 String expected = "id\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
                         "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n";
 
                 assertCursor(expected, factory, true, true, false);
                 assertCursor(expected, factory, true, true, false);
@@ -3825,8 +3927,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupBySymbol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(id symbol)");
-            insert("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
+            execute("create table if not exists test(id symbol)");
+            execute("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
 
             assertSql(
                     "id\n" +
@@ -3849,24 +3951,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInShortByteIntLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE table abc (aa long, a int, b short, c byte)");
-            insert("insert into abc values(1, 1, 1, 1)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where a in (1, 2)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where b in (1, 2)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where c in (1, 2)");
+            execute("CREATE table abc (aa long, a int, b short, c byte)");
+            execute("insert into abc values(1, 1, 1, 1)");
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)"
+            );
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where a in (1, 2)"
+            );
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where b in (1, 2)"
+            );
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where c in (1, 2)"
+            );
         });
     }
 
     @Test
     public void testInnerJoinConditionPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
                 assertSql(
@@ -3909,31 +4019,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelect() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
-                "1569490116\tnull\tfalse\t\tnull\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
-                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
-                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.9205\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
-                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.5779\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
-                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9442\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                "1569490116\tnull\tfalse\t\tnull\t0.7611029\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
+                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793466\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
+                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.92050034\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
+                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.57789475\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
+                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9441659\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                 "00000010 38 e1\n" +
-                "1100812407\t22\tfalse\tOVL\tnull\t0.7633\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
-                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.1179\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
+                "1100812407\t22\tfalse\tOVL\tnull\t0.7632615\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
+                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.117853105\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
                 "00000010 28 60\n" +
-                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.1718\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.17180288\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                 "00000010 ea 4e ea 8b\n" +
-                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.0620\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
-                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.1195\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
-                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5638\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
+                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.062027454\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
+                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.11951214\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
+                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5637742\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
                 "-406528351\t21\tfalse\tNLE\tnull\tnull\t968\t21057\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\t1970-01-01T03:03:20.000000Z\t43\t\n" +
-                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
+                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292086\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
                 "00000010 44 a8 0d fe\n" +
-                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4699\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
+                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4698648\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
                 "00000010 20 53 3b 51\n" +
-                "346891421\t21\tfalse\t\t0.933609514582851\t0.6380\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
-                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.8461\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
-                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
-                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.0440\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
+                "346891421\t21\tfalse\t\t0.933609514582851\t0.6379992\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
+                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.84612113\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
+                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020445\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
+                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.044039965\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
                 "-1496904948\t5\ttrue\tDBZ\t0.2862717364877081\tnull\t764\t5698\t2015-02-06T02:49:54.147Z\t\t\tnull\t-3058745577013275321\t1970-01-01T05:00:00.000000Z\t19\t00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
-                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
+                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.45646673\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
         assertMemoryLeak(() -> testInsertAsSelect(
@@ -3965,31 +4075,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectColumnList() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
-                "1569490116\tnull\tfalse\t\tnull\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
-                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
-                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.9205\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
-                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.5779\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
-                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9442\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                "1569490116\tnull\tfalse\t\tnull\t0.7611029\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
+                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793466\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
+                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.92050034\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
+                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.57789475\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
+                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9441659\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                 "00000010 38 e1\n" +
-                "1100812407\t22\tfalse\tOVL\tnull\t0.7633\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
-                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.1179\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
+                "1100812407\t22\tfalse\tOVL\tnull\t0.7632615\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
+                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.117853105\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
                 "00000010 28 60\n" +
-                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.1718\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.17180288\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                 "00000010 ea 4e ea 8b\n" +
-                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.0620\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
-                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.1195\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
-                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5638\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
+                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.062027454\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
+                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.11951214\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
+                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5637742\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
                 "-406528351\t21\tfalse\tNLE\tnull\tnull\t968\t21057\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\t1970-01-01T03:03:20.000000Z\t43\t\n" +
-                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
+                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292086\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
                 "00000010 44 a8 0d fe\n" +
-                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4699\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
+                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4698648\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
                 "00000010 20 53 3b 51\n" +
-                "346891421\t21\tfalse\t\t0.933609514582851\t0.6380\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
-                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.8461\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
-                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
-                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.0440\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
+                "346891421\t21\tfalse\t\t0.933609514582851\t0.6379992\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
+                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.84612113\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
+                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020445\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
+                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.044039965\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
                 "-1496904948\t5\ttrue\tDBZ\t0.2862717364877081\tnull\t764\t5698\t2015-02-06T02:49:54.147Z\t\t\tnull\t-3058745577013275321\t1970-01-01T05:00:00.000000Z\t19\t00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
-                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
+                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.45646673\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
         assertMemoryLeak(() -> testInsertAsSelect(
@@ -4041,31 +4151,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectColumnListAndTimestamp() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
-                "1569490116\tnull\tfalse\t\tnull\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
-                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
-                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.9205\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
-                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.5779\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
-                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9442\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                "1569490116\tnull\tfalse\t\tnull\t0.7611029\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
+                "1253890363\t10\tfalse\tXYS\t0.1911234617573182\t0.5793466\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
+                "-1819240775\t27\ttrue\tGOO\t0.04142812470232493\t0.92050034\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
+                "-1201923128\t18\ttrue\tUVS\t0.7588175403454873\t0.57789475\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
+                "865832060\tnull\ttrue\t\t0.14830552335848957\t0.9441659\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                 "00000010 38 e1\n" +
-                "1100812407\t22\tfalse\tOVL\tnull\t0.7633\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
-                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.1179\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
+                "1100812407\t22\tfalse\tOVL\tnull\t0.7632615\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
+                "1677463366\t18\tfalse\tMNZ\t0.33747075654972813\t0.117853105\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
                 "00000010 28 60\n" +
-                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.1718\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                "39497392\t4\tfalse\tUOH\t0.029227696942726644\t0.17180288\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                 "00000010 ea 4e ea 8b\n" +
-                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.0620\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
-                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.1195\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
-                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5638\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
+                "1545963509\t10\tfalse\tNWI\t0.11371841836123953\t0.062027454\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
+                "53462821\t4\tfalse\tGOO\t0.05514933756198426\t0.11951214\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
+                "-2139296159\t30\tfalse\t\t0.18586435581637295\t0.5637742\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
                 "-406528351\t21\tfalse\tNLE\tnull\tnull\t968\t21057\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\t1970-01-01T03:03:20.000000Z\t43\t\n" +
-                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
+                "415709351\t17\tfalse\tGQZ\t0.49199001716312474\t0.6292086\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
                 "00000010 44 a8 0d fe\n" +
-                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4699\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
+                "-1387693529\t19\ttrue\tMCG\t0.848083900630095\t0.4698648\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
                 "00000010 20 53 3b 51\n" +
-                "346891421\t21\tfalse\t\t0.933609514582851\t0.6380\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
-                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.8461\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
-                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
-                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.0440\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
+                "346891421\t21\tfalse\t\t0.933609514582851\t0.6379992\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
+                "263487884\t27\ttrue\tHZQ\t0.7039785408034679\t0.84612113\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
+                "-1034870849\t9\tfalse\tLSV\t0.6506604601705693\t0.7020445\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
+                "1848218326\t26\ttrue\tSUW\t0.8034049105590781\t0.044039965\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
                 "-1496904948\t5\ttrue\tDBZ\t0.2862717364877081\tnull\t764\t5698\t2015-02-06T02:49:54.147Z\t\t\tnull\t-3058745577013275321\t1970-01-01T05:00:00.000000Z\t19\t00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
-                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
+                "856634079\t20\ttrue\tRJU\t0.10820602386069589\t0.45646673\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                 "00000010 ab 3f a1 f5\n";
 
         assertMemoryLeak(() -> testInsertAsSelect(
@@ -4402,7 +4512,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectDuplicateColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE tab (" +
                             "  ts TIMESTAMP, " +
                             "  x INT" +
@@ -4418,7 +4528,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE tabula (" +
                             "  ts TIMESTAMP, " +
                             "  龜 INT" +
@@ -4434,7 +4544,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectFewerSelectColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+            execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
             try {
                 assertExceptionNoLeakCheck("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
             } catch (SqlException e) {
@@ -4513,7 +4623,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList4() throws Exception {
-        assertMemoryLeak(() -> testInsertAsSelectError("create table x (a DATE, b INT, n TIMESTAMP)",
+        assertMemoryLeak(() -> testInsertAsSelectError(
+                "create table x (a DATE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -4622,10 +4733,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
 
-                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
-                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
+                    engine.execute("create table x (a INT, b INT)", sqlExecutionContext);
+                    engine.execute("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
                     // we need to pass the engine here, so the global test context won't do
-                    compiler.compile("insert into x select * from y", sqlExecutionContext);
+                    engine.execute("insert into x select * from y", sqlExecutionContext);
 
                     TestUtils.assertSql(
                             compiler,
@@ -4697,9 +4808,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertFromStringToLong256() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
-            ddl("create table l256(v long256)", sqlExecutionContext);
-            ddl("insert into l256 select * from t", sqlExecutionContext);
+            execute("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
+            execute("create table l256(v long256)", sqlExecutionContext);
+            execute("insert into l256 select * from t", sqlExecutionContext);
             if (configuration.getWalEnabledDefault()) {
                 drainWalQueue();
             }
@@ -4709,8 +4820,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "0xc78d67954cb7866695b5e08df69df8819fc909a43f149089c143a3bb982af031\n" +
                     "0x6ddedcf7415306f799ce31489578cac77b0ec57771d6e9f27c517f53d504487d\n" +
                     "0xa38b2ad7fbc79d366f9b5d1b162ba472613f1eb5f98a2df86a7f0ebbd1d28a95\n";
-            printSqlResult(expected, "t limit -5", null, true, false);
-            printSqlResult(expected, "l256 limit -5", null, true, false);
+            printSqlResult(expected, "t limit -5", null, true, true);
+            printSqlResult(expected, "l256 limit -5", null, true, true);
         });
     }
 
@@ -4726,7 +4837,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##11211)");
+                execute("insert into geohash values(##11211)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -4747,7 +4858,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##10001)");
+                execute("insert into geohash values(##10001)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -4890,11 +5001,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            execute("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("s\n123456\n1\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
@@ -4908,7 +5019,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("s\n123456\n1\n", "symbolic_index_other WHERE '' != s");
             assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE NULL != s");
 
-            insert("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
+            execute("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
             assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
             assertSql("s\n\n", "symbolic_index_other WHERE s = NULL");
@@ -4926,11 +5037,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index");
             assertSql("s\n\n", "symbolic_index WHERE s = ''");
@@ -4949,12 +5060,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            execute("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
@@ -4973,11 +5084,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithoutIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index");
             assertSql("s\n\n", "symbolic_index WHERE s = ''");
@@ -4996,12 +5107,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithoutIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            execute("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
@@ -5026,22 +5137,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "\n";
 
         assertMemoryLeak(() -> {
-            ddl("create table xy (ts timestamp)");
+            execute("create table xy (ts timestamp)");
             // execute insert with nanos - we expect the nanos to be truncated
-            insert("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
+            execute("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
 
             // execute insert with micros
-            insert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+            execute("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
 
             // execute insert with millis
-            insert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+            execute("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
 
             // insert null
-            insert("insert into xy(ts) values (null)");
+            execute("insert into xy(ts) values (null)");
 
             // test bad format
             try {
-                insert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
+                execute("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2020-01-10T18:00:01.800Zz` [STRING -> TIMESTAMP]");
@@ -5054,44 +5165,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testJoinWithDuplicateColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE t1 (" +
                             "  ts TIMESTAMP, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
-            ddl(
+            execute(
                     "CREATE TABLE t2 (" +
                             "  ts TIMESTAMP, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
-            insert("INSERT INTO t1(ts, x) VALUES (1, 1)");
-            insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
+            execute("INSERT INTO t1(ts, x) VALUES (1, 1)");
+            execute("INSERT INTO t2(ts, x) VALUES (1, 2)");
             engine.releaseInactive();
 
             // wildcard aliases are created after all other aliases
             // a duplicate column may be produced while optimiser does not have info on other aliases
             // if this occurs, the column is renamed once we have full alias info for all columns and this error is avoided
 
-            assertSql("TS\tts2\tts1\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts2\tts1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
+            );
 
-            assertSql("TS\tts1\tts2\tx\tts3\tx1\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts1\tts2\tx\tts3\tx1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;"
+            );
 
-            assertSql("TS\tts1\tx\tts2\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts1\tx\tts2\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
+            );
 
-            assertSql("TS\tts1\tx\tts2\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts1\tx\tts2\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
+            );
         });
     }
 
     @Test
     public void testLargeQueryDoesntHitIncreasedMaxRecursionLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
 
             assertSql(
                     "symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
@@ -5106,8 +5225,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1)");
 
             String query = "SELECT count(1) FROM " +
                     "( SELECT * " +
@@ -5125,7 +5244,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "        Filter filter: T2.created in [now(),now()]\n" +
                             "            Nested Loop Left Join\n" +
                             "              filter: T1.created<T2.created\n" +
-                            "                Limit lo: 0\n" +
+                            "                Limit lo: 0 skip-over-rows: 0 limit: 0\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
@@ -5152,8 +5271,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinReorder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
-            insert("insert into tab values (0, 0), (1, 1), (2,2)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             String query1 = "SELECT T1.created FROM " +
                     "( SELECT * " +
@@ -5168,10 +5287,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "    Filter filter: (null=T2.created or 0<T2.created::long)\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T1.created<T2.created\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: -1 skip-over-rows: 2 limit: 1\n" +
                             "                PageFrame\n" +
-                            "                    Row backward scan\n" +
-                            "                    Frame backward scan on: tab\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
@@ -5324,7 +5443,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "              condition: T3.created=T2.created\n" +
                             "                Nested Loop Left Join\n" +
                             "                  filter: T1.created<T2.created\n" +
-                            "                    Limit lo: 2\n" +
+                            "                    Limit lo: 2 skip-over-rows: 0 limit: 2\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
@@ -5332,11 +5451,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    Limit lo: 3\n" +
+                            "                    Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
-                            "            Limit lo: 4\n" +
+                            "            Limit lo: 4 skip-over-rows: 0 limit: 3\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
@@ -5355,10 +5474,19 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testListEmptyArgs() throws Exception {
+        assertException(
+                "select list() from long_sequence(1)",
+                7,
+                "no arguments provided"
+        );
+    }
+
+    @Test
     public void testNonEqualityJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1)");
 
             assertQueryNoLeakCheck(
                     "count\n" +
@@ -5437,13 +5565,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trigonometry AS " +
-                    "(SELECT" +
-                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
-                    "     rnd_symbol('A', 'B', 'C') sym," +
-                    "     rnd_double() sine" +
-                    " FROM long_sequence(1000)" +
-                    ")", sqlExecutionContext);
+            execute(
+                    "CREATE TABLE trigonometry AS " +
+                            "(SELECT" +
+                            "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                            "     rnd_symbol('A', 'B', 'C') sym," +
+                            "     rnd_double() sine" +
+                            " FROM long_sequence(1000)" +
+                            ")", sqlExecutionContext
+            );
             assertQueryNoLeakCheck(
                     "sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
@@ -5467,13 +5597,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trigonometry AS " +
-                    "(SELECT" +
-                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
-                    "     rnd_symbol('A', 'B', 'C') sym," +
-                    "     rnd_double() sine" +
-                    " FROM long_sequence(1000)" +
-                    ")", sqlExecutionContext);
+            execute(
+                    "CREATE TABLE trigonometry AS " +
+                            "(SELECT" +
+                            "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                            "     rnd_symbol('A', 'B', 'C') sym," +
+                            "     rnd_double() sine" +
+                            " FROM long_sequence(1000)" +
+                            ")", sqlExecutionContext
+            );
             assertQueryNoLeakCheck(
                     "sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
@@ -5512,7 +5644,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        ddl("create table x (a INT, b FLOAT)");
+                        execute("create table x (a INT, b FLOAT)");
                         index.set(0);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -5527,7 +5659,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        ddl("create table x (a STRING, b DOUBLE)");
+                        execute("create table x (a STRING, b DOUBLE)");
                         index.set(1);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -5554,7 +5686,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.drop(path, tt);
+                engine.dropTableOrMatView(path, tt);
             }
         });
     }
@@ -5562,10 +5694,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRebuildIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
+            execute("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym lock exclusive");
+            execute("reindex table rebuild_index column sym lock exclusive");
             assertSql(
                     "sym\tx\n" +
                             "1\t1\n" +
@@ -5580,13 +5712,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRebuildIndexInPartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table rebuild_index as (" +
+            execute("create table rebuild_index as (" +
                     "select rnd_symbol('1', '2', '33', '44') sym, x, timestamp_sequence(0, 12*60*60*1000000L) ts " +
                     "from long_sequence(15)" +
                     "), index(sym) timestamp(ts)");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
+            execute("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
             assertSql(
                     "sym\tx\tts\n" +
                             "1\t1\t1970-01-01T00:00:00.000000Z\n" +
@@ -5601,12 +5733,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRebuildIndexWritersLock() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
+            execute("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             try (TableWriter ignore = getWriter("rebuild_index")) {
-                compile("reindex table rebuild_index column sym lock exclusive");
+                execute("reindex table rebuild_index column sym lock exclusive");
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "cannot lock table");
@@ -5617,7 +5749,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testReindexSyntaxCheckSemicolon() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            execute(
                     "create table xxx as (" +
                             "select " +
                             "rnd_symbol('A', 'B', 'C') as sym1," +
@@ -5629,7 +5761,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("REINDEX TABLE \"xxx\" Lock exclusive;");
+            execute("REINDEX TABLE \"xxx\" Lock exclusive;");
         });
     }
 
@@ -5691,7 +5823,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnShiftTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -5711,7 +5843,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveTimestampAndReplace() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -5733,7 +5865,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -5753,8 +5885,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table table_old_name (a int, b double, t timestamp) timestamp(t)");
-            ddl("rename table table_old_name to table_new_name");
+            execute("create table table_old_name (a int, b double, t timestamp) timestamp(t)");
+            execute("rename table table_old_name to table_new_name");
             try (TableReader reader = getReader("table_new_name")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
                 try (TableWriter writer = getWriter("table_new_name")) {
@@ -5766,7 +5898,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testRndSymbolEmptyArgs() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_symbol() from long_sequence(1)", 7, "function rnd_symbol expects arguments but has none"));
+        assertException(
+                "select rnd_symbol() from long_sequence(1)",
+                7,
+                "no arguments provided"
+        );
     }
 
     @Test
@@ -5795,24 +5931,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcurrentDdl() throws Exception {
-        // On Windows CI this test can fail with Metadata read timeout with small timeout.
-        Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 30000);
         assertMemoryLeak(() -> {
-            ddl("create table x (a int, b int, c int)");
+            execute("create table x (a int, b int, c int)");
 
+            // On Windows CI this test can fail with Metadata read timeout with small timeout.
+            spinLockTimeout = 30_000;
             final AtomicBoolean ddlError = new AtomicBoolean(false);
             final CyclicBarrier barrier = new CyclicBarrier(2);
             new Thread(() -> {
                 try {
                     while (barrier.getNumberWaiting() == 0) {
-                        ddl("alter table x add column d int");
-                        ddl("alter table x drop column d");
+                        execute("alter table x add column d int");
+                        execute("alter table x drop column d");
                     }
                 } catch (Exception e) {
                     ddlError.set(true);
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                 } finally {
+                    Path.clearThreadLocals();
                     TestUtils.await(barrier);
                 }
             }).start();
@@ -5868,7 +6004,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testSelectDoubleInListWithBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select 1D c union all select null::double )");
+            execute("create table x as (select 1D c union all select null::double )");
 
             bindVariableService.clear();
             bindVariableService.setStr("val", "1");
@@ -6030,7 +6166,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testSelectLongInListWithBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select 1L c union all select null::long )");
+            execute("create table x as (select 1L c union all select null::long )");
 
             bindVariableService.clear();
             bindVariableService.setStr("val", "1");
@@ -6225,8 +6361,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(k)";
 
-            ddl(xx);
-            ddl(yy);
+            execute(xx);
+            execute(yy);
 
             final String expected = "a\tb\tc\n" +
                     "IBM\tIBM\tIBM_IBM\n" +
@@ -6236,7 +6372,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n";
-            assertQueryNoLeakCheck(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, true);
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b",
+                    null,
+                    false,
+                    false
+            );
         });
     }
 
@@ -6282,8 +6424,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ict ( event int );");
-            insert("insert into ict select x::int from long_sequence(1000)");
+            execute("create table ict ( event int );");
+            execute("insert into ict select x::int from long_sequence(1000)");
 
             assertWithReorder(
                     "avg\n" +
@@ -6324,50 +6466,54 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
                 try {
-                    compiler.compile("alter altar", sqlExecutionContext);
+                    execute(compiler, "alter altar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.unknownAlterStatementCalled);
                 }
 
                 try {
-                    compiler.compile("show something", sqlExecutionContext);
+                    select(compiler, "show something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.parseShowSqlCalled);
                 }
 
+                execute(compiler, "create table ka(a int)", sqlExecutionContext);
                 try {
-                    compiler.compile("drop table ka boom zoom", sqlExecutionContext);
+                    execute(compiler, "drop table ka boom zoom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropTableSuffixCalled);
+                    Assert.assertTrue(compiler.compileDropTableExtCalled);
+                    compiler.compileDropTableExtCalled = false;
                 }
 
                 try {
-                    compiler.compile("drop something", sqlExecutionContext);
+                    execute(compiler, "drop fridge blue toenail", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropStatementCalled);
+                    Assert.assertTrue(compiler.compileDropOtherCalled);
+                    compiler.compileDropOtherCalled = false;
                 }
 
                 try {
-                    compiler.compile("drop table hopp", sqlExecutionContext);
+                    execute(compiler, "drop something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.dropTableCalled);
+                    Assert.assertTrue(compiler.compileDropOtherCalled);
+                    compiler.compileDropOtherCalled = false;
                 }
 
-                compiler.dropTableCalled = false;
                 try {
-                    compiler.compile("drop table if exists hopp", sqlExecutionContext);
-                } catch (Exception e) {
+                    // when table doesn't exist "dropTableCalled" should not be triggered
+                    execute(compiler, "drop table hopp");
                     Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertFalse(compiler.dropTableCalled);
                 }
-                Assert.assertTrue(compiler.dropTableCalled);
 
                 try {
-                    compiler.compile("create table tab (i int)", sqlExecutionContext);
+                    execute(compiler, "create table tab (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -6375,7 +6521,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    compiler.compile("create table tab2 (i int)", sqlExecutionContext);
+                    execute(compiler, "create table tab2 (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -6383,10 +6529,18 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    compiler.compile("create table tab3 (i int) foobar", sqlExecutionContext);
+                    execute(compiler, "create table tab3 (i int) foobar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createTableSuffixCalled);
+                }
+
+                try {
+                    execute(compiler, "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createMatViewSuffixCalled);
                 }
             }
         });
@@ -6394,7 +6548,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(ddl);
+            execute(ddl);
             try (TableReader reader = getReader("y")) {
                 sink.clear();
                 reader.getMetadata().toJson(sink);
@@ -6419,7 +6573,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                94,
+                89,
                 "unsupported cast"
         );
     }
@@ -6449,7 +6603,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_double(2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                93,
+                88,
                 "unsupported cast"
         );
     }
@@ -6469,7 +6623,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_float(2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                92,
+                87,
                 "unsupported cast"
         );
     }
@@ -6493,7 +6647,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                97,
+                92,
                 "unsupported cast"
         );
     }
@@ -6517,7 +6671,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                98,
+                93,
                 "unsupported cast"
         );
     }
@@ -6540,7 +6694,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_short(2,10) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                95,
+                90,
                 "unsupported cast"
         );
     }
@@ -6550,7 +6704,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                95,
+                90,
                 "unsupported cast"
         );
     }
@@ -6560,7 +6714,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                84,
+                79,
                 "unsupported cast"
         );
     }
@@ -6577,7 +6731,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws Exception {
         // create source table
-        ddl("create table X (a int, b int, t timestamp) timestamp(t)");
+        execute("create table X (a int, b int, t timestamp) timestamp(t)");
         engine.releaseAllWriters();
 
         try (CairoEngine engine = new CairoEngine(configuration) {
@@ -6591,7 +6745,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                compiler.compile(sql, sqlExecutionContext);
+                execute(compiler, sql, sqlExecutionContext);
                 Assert.assertTrue(fiddler.isHappy());
                 try (TableReader reader = engine.getReader("Y")) {
                     sink.clear();
@@ -6612,11 +6766,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(
                 ff,
                 () -> {
-                    ddl("create table x (a INT, b INT)");
+                    execute("create table x (a INT, b INT)");
                     try {
-                        insert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                        execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                         Assert.fail();
-                    } catch (CairoException ignore) {
+                    } catch (CairoException | CairoError ignore) {
                     }
 
                     inError.set(false);
@@ -6625,7 +6779,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         Assert.assertEquals(0, w.size());
                     }
 
-                    insert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                    execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                     try (TableWriter w = getWriter("x")) {
                         Assert.assertEquals(1000000, w.size());
                     }
@@ -6643,7 +6797,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
-        assertQuery("c\n1.0\n",
+        assertQuery(
+                "c\n1.0\n",
                 "select * from x where c in (:val)",
                 null, true, false
         );
@@ -6652,7 +6807,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void selectLongInListWithBindVariable() throws Exception {
-        assertQuery("c\n1\n",
+        assertQuery(
+                "c\n1\n",
                 "select * from x where c in (:val)",
                 null, true, false
         );
@@ -6670,14 +6826,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true,
                     true
             );
-            insert(String.format("insert into geohash values(%s)", geoHash));
+            execute(String.format("insert into geohash values(%s)", geoHash));
             assertSql(expected, "geohash");
         });
     }
 
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
-        ddl(ddl);
-        insert(insert);
+        execute(ddl);
+        execute(insert);
         assertSql(expectedData, select);
     }
 
@@ -6688,7 +6844,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             CharSequence errorMessage
     ) throws Exception {
         if (ddl != null) {
-            ddl(ddl);
+            execute(ddl);
         }
         assertExceptionNoLeakCheck(insert, errorPosition, errorMessage);
     }
@@ -6699,7 +6855,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             CharSequence errorMessage
     ) throws Exception {
         if (ddl != null) {
-            ddl(ddl);
+            execute(ddl);
         }
         try {
             assertExceptionNoLeakCheck(insert);
@@ -6721,22 +6877,39 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
+        boolean compileDropOtherCalled;
+        boolean compileDropTableExtCalled;
+        boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
-        boolean unknownDropStatementCalled;
-        boolean unknownDropTableSuffixCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
         }
 
         @Override
-        public ExecutionModel createTableSuffix(GenericLexer lexer, SecurityContext securityContext, CreateTableModel model, CharSequence tok) throws SqlException {
+        public CreateMatViewOperationBuilder parseCreateMatViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateMatViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createMatViewSuffixCalled = true;
+            return super.parseCreateMatViewExt(lexer, securityContext, builder, tok);
+        }
+
+        @Override
+        public CreateTableOperationBuilder parseCreateTableExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateTableOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
             createTableSuffixCalled = true;
-            return super.createTableSuffix(lexer, securityContext, model, tok);
+            return super.parseCreateTableExt(lexer, securityContext, builder, tok);
         }
 
         @Override
@@ -6746,39 +6919,43 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void addColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+        protected void addColumnSuffix(
+                SecurityContext securityContext,
+                CharSequence tok,
+                TableToken tableToken,
+                AlterOperationBuilder alterOperationBuilder
+        ) throws SqlException {
             addColumnSuffixCalled = true;
-            super.addColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+            super.addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
         }
 
         @Override
-        protected boolean dropTable(SqlExecutionContext executionContext, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
-            dropTableCalled = true;
-            return super.dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-        }
-
-        @Override
-        protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
             unknownAlterStatementCalled = true;
-            super.unknownAlterStatement(executionContext, tok);
+            super.compileAlterExt(executionContext, tok);
+        }
+
+        @Override
+        protected void compileDropExt(
+                @NotNull SqlExecutionContext executionContext,
+                @NotNull GenericDropOperationBuilder opBuilder,
+                @NotNull CharSequence tok,
+                int position
+        ) throws SqlException {
+            compileDropTableExtCalled = true;
+            super.compileDropExt(executionContext, opBuilder, tok, position);
+        }
+
+        @Override
+        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
+            compileDropOtherCalled = true;
+            super.compileDropOther(executionContext, tok, position);
         }
 
         @Override
         protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
             unknownDropColumnSuffixCalled = true;
             super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
-        }
-
-        @Override
-        protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-            unknownDropStatementCalled = true;
-            super.unknownDropStatement(executionContext, tok);
-        }
-
-        @Override
-        protected void unknownDropTableSuffix(SqlExecutionContext executionContext, CharSequence tok, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
-            unknownDropTableSuffixCalled = true;
-            super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
         }
     }
 }

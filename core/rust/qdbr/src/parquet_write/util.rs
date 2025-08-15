@@ -1,5 +1,7 @@
 use std::{cmp, io, mem, slice};
 
+use crate::parquet::error::ParquetResult;
+use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
@@ -9,9 +11,6 @@ use parquet2::schema::types::{PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::ParquetResult;
 
 #[derive(Debug)]
 pub struct MaxMin<T> {
@@ -145,7 +144,7 @@ impl<T, I: Iterator<Item = T>> Iterator for ExactSizedIter<T, I> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().inspect(|_| {
+        self.iter.next().inspect(|_x| {
             self.remaining -= 1;
         })
     }
@@ -230,7 +229,11 @@ pub fn build_plain_page(
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
     assert_eq!(slice.len() % sizeof_t, 0);
-    slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
+    if slice.is_empty() {
+        &[]
+    } else {
+        slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
+    }
 }
 
 #[cfg(test)]

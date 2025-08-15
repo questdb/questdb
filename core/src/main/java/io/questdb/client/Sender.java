@@ -29,10 +29,12 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.client.impl.ConfStringParser;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.cutlass.line.LineTcpSenderV1;
+import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -40,6 +42,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -63,7 +66,7 @@ import java.util.concurrent.TimeUnit;
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
  *     {@link #timestampColumn(CharSequence, long, ChronoUnit)} to add remaining columns columns</li>
- *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -79,7 +82,11 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
  */
-public interface Sender extends Closeable {
+public interface Sender extends Closeable, ArraySender<Sender> {
+
+    int PROTOCOL_VERSION_NOT_SET_EXPLICIT = -1;
+    int PROTOCOL_VERSION_V1 = 1;
+    int PROTOCOL_VERSION_V2 = 2;
 
     /**
      * Create a Sender builder instance from a configuration string.
@@ -214,6 +221,17 @@ public interface Sender extends Closeable {
      * @return this instance for method chaining
      */
     Sender boolColumn(CharSequence name, boolean value);
+
+    /**
+     * Returns a direct view of the current sender's internal not flush data.
+     * <p>
+     * The returned {@link DirectByteSlice} provides borrowed access to the raw byte buffer
+     * that hasn't been flush yet.
+     * </p>
+     *
+     * @return a read-only view of the pending transmission data buffer
+     */
+    DirectByteSlice bufferView();
 
     /**
      * Cancel the current row. This method is useful when you want to discard a row that you started, but
@@ -411,10 +429,11 @@ public interface Sender extends Closeable {
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
+        private static final int DEFAULT_MAX_NAME_LEN = 127;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
-        private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
+        private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN + 1; // challenge size + 1;
         // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
         // where it matters. This is needed to detect invalid combinations of parameters. Why?
         // We want to fail-fast even when an explicitly configured options happens to be same value as the default value,
@@ -426,9 +445,12 @@ public interface Sender extends Closeable {
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
+        private String httpPath;
+        private String httpSettingsPath;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
+        private int maxNameLength = PARAMETER_NOT_SET_EXPLICITLY;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
@@ -442,6 +464,11 @@ public interface Sender extends Closeable {
             }
 
             @Override
+            public String getSettingsPath() {
+                return httpSettingsPath == null ? super.getSettingsPath() : httpSettingsPath;
+            }
+
+            @Override
             public int getTimeout() {
                 return httpTimeout == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
             }
@@ -451,6 +478,7 @@ public interface Sender extends Closeable {
         private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
         private int protocol = PARAMETER_NOT_SET_EXPLICITLY;
+        private int protocolVersion = PARAMETER_NOT_SET_EXPLICITLY;
         private int retryTimeoutMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
@@ -656,11 +684,12 @@ public interface Sender extends Closeable {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
+                return AbstractLineHttpSender.createLineSender(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
+                        username, password, maxNameLength, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
-            LineTcpSender sender;
+            AbstractLineTcpSender sender;
             if (tlsEnabled) {
                 DelegatingTlsChannel tlsChannel;
                 try {
@@ -672,7 +701,11 @@ public interface Sender extends Closeable {
                 channel = tlsChannel;
             }
             try {
-                sender = new LineTcpSender(channel, bufferCapacity);
+                if (protocolVersion == PROTOCOL_VERSION_V1) {
+                    sender = new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
+                } else {
+                    sender = new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
+                }
             } catch (Throwable t) {
                 channel.close();
                 throw rethrow(t);
@@ -764,6 +797,59 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("tls was already enabled");
             }
             tlsEnabled = true;
+            return this;
+        }
+
+        /**
+         * Path component of the HTTP URL.
+         * <br>
+         * This is only used when communicating over HTTP transport.
+         *
+         * @param path HTTP path
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpPath(String path) {
+            if (this.httpPath != null) {
+                throw new LineSenderException("path was already configured");
+            }
+            if (Chars.isBlank(path)) {
+                throw new LineSenderException("path cannot be empty nor null");
+            }
+            if (!Chars.startsWith(path, '/')) {
+                throw new LineSenderException("the path has to start with '/'");
+            }
+            this.httpPath = path;
+            return this;
+        }
+
+        /**
+         * Sets the HTTP path for auto-detecting the line protocol version when #protocolVersion is not explicitly set.
+         * <ul>
+         *   <li>only for HTTP transport.</li>
+         *   <li>Mandatory when the server uses a <b>non-default</b> {@code http.context.settings} configuration.</li>
+         * </ul>
+         *
+         * <b>Example:</b> If the server configures {@code http.context.settings=/custom/settings},
+         * call {@code httpSettingPath("/custom/settings")}.
+         *
+         * @param path The HTTP path to query for server protocol settings. Must:
+         *             <ul>
+         *               <li>Start with '/'</li>
+         *               <li>Match the server's {@code http.context.settings} value if non-default</li>
+         *             </ul>
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpSettingPath(String path) {
+            if (this.httpSettingsPath != null) {
+                throw new LineSenderException("the path was already configured");
+            }
+            if (Chars.isBlank(path)) {
+                throw new LineSenderException("the path cannot be empty nor null");
+            }
+            if (!Chars.startsWith(path, '/')) {
+                throw new LineSenderException("the path has to start with '/'");
+            }
+            this.httpSettingsPath = path;
             return this;
         }
 
@@ -871,6 +957,26 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Set the maximum length of a table or column name in bytes.
+         * Matches the `cairo.max.file.name.length` setting in the server.
+         * The default is 127 bytes.
+         * If running over HTTP and protocol version 2 is auto-negotiated, this
+         * value is picked up from the server.
+         */
+        public LineSenderBuilder maxNameLength(int maxNameLength) {
+            if (this.maxNameLength != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("max name length was already configured ")
+                        .put("[max_name_len=").put(this.maxNameLength).put("]");
+            }
+            if (maxNameLength < 16) {
+                throw new LineSenderException("max_name_len must be at least 16 bytes ")
+                        .put("[max_name_len=").put(maxNameLength).put("]");
+            }
+            this.maxNameLength = maxNameLength;
+            return this;
+        }
+
+        /**
          * Minimum expected throughput in bytes per second for HTTP requests.
          * <br>
          * If the throughput is lower than this value, the connection will time out.
@@ -912,6 +1018,30 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("invalid port [port=").put(port).put("]");
             }
             this.port = port;
+            return this;
+        }
+
+        /**
+         * Sets the protocol version used by the client to connect to the server.
+         * <p>
+         * The client currently supports {@link #PROTOCOL_VERSION_V1} and {@link #PROTOCOL_VERSION_V2} (default).
+         * <p>
+         * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
+         * <p>
+         *
+         * @param protocolVersion The desired protocol version.
+         * @return This instance for method chaining.
+         */
+        public LineSenderBuilder protocolVersion(int protocolVersion) {
+            if (this.protocolVersion != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("protocol version was already configured ")
+                        .put("[protocolVersion=").put(this.protocolVersion).put("]");
+            }
+            if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
+                throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes), " +
+                        "2(binary format for part datatypes) or explicitly unset");
+            }
+            this.protocolVersion = protocolVersion;
             return this;
         }
 
@@ -994,6 +1124,13 @@ public interface Sender extends Closeable {
             }
             if (tlsValidationMode == null) {
                 tlsValidationMode = TlsValidationMode.DEFAULT;
+            }
+            if (protocol == PROTOCOL_TCP && protocolVersion == PARAMETER_NOT_SET_EXPLICITLY) {
+                // keep protocol_version = 1 as default when use does not set protocol_version explicit for tcp/tcps protocol.
+                protocolVersion = PROTOCOL_VERSION_V1;
+            }
+            if (maxNameLength == PARAMETER_NOT_SET_EXPLICITLY) {
+                maxNameLength = DEFAULT_MAX_NAME_LEN;
             }
         }
 
@@ -1136,6 +1273,10 @@ public interface Sender extends Closeable {
                     pos = getValue(configurationString, pos, sink, "max_buf_size");
                     int maxBufferSize = parseIntValue(sink, "max_buf_size");
                     maxBufferCapacity(maxBufferSize);
+                } else if (Chars.equals("max_name_len", sink)) {
+                    pos = getValue(configurationString, pos, sink, "max_name_len");
+                    int len = parseIntValue(sink, "max_name_len");
+                    maxNameLength(len);
                 } else if (Chars.equals("init_buf_size", sink)) {
                     pos = getValue(configurationString, pos, sink, "init_buf_size");
                     int initBufSize = parseIntValue(sink, "init_buf_size");
@@ -1205,6 +1346,12 @@ public interface Sender extends Closeable {
                     pos = getValue(configurationString, pos, sink, "request_min_throughput");
                     int requestMinThroughput = parseIntValue(sink, "request_min_throughput");
                     minRequestThroughput(requestMinThroughput);
+                } else if (Chars.equals("protocol_version", sink)) {
+                    pos = getValue(configurationString, pos, sink, "protocol_version");
+                    if (!Chars.equalsIgnoreCase("auto", sink)) {
+                        int protocolVersion = parseIntValue(sink, "protocol_version");
+                        protocolVersion(protocolVersion);
+                    }
                 } else {
                     // ignore unknown keys, unless they are malformed
                     if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
@@ -1242,16 +1389,13 @@ public interface Sender extends Closeable {
          * Use HTTP protocol as transport.
          * <br>
          * Configures the Sender to use the HTTP protocol.
-         *
-         * @return an instance of {@link LineSenderBuilder} for further configuration
          */
-        private LineSenderBuilder http() {
+        private void http() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_HTTP;
-            return this;
         }
 
         private void tcp() {

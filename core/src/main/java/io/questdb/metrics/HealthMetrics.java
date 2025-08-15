@@ -26,7 +26,15 @@ package io.questdb.metrics;
 
 public interface HealthMetrics {
 
+    void incrementQueryErrorCounter();
+
+    void incrementReaderLeakCounter(int count);
+
     void incrementUnhandledErrors();
+
+    long queryErrorCounter();
+
+    long readerLeakCounter();
 
     long unhandledErrorsCount();
 }

@@ -68,14 +68,16 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " x % 3 b" +
                         " from long_sequence(9)" +
                         ")",
-                null
+                null,
+                true,
+                true
         );
     }
 
     @Test
     public void testDistinctWithOrderByAnotherColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " x a," +
@@ -103,7 +105,9 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " x % 3 b" +
                         " from long_sequence(9)" +
                         ")",
-                null
+                null,
+                true,
+                true
         );
     }
 
@@ -138,7 +142,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true,
+                false,
                 false
         );
     }
@@ -647,7 +651,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                "ts###desc",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
@@ -1482,7 +1486,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    from long_sequence(100)) timestamp (ts)",
                 expected,
                 true,
-                true,
+                false,
                 false
         );
     }

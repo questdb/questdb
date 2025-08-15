@@ -25,19 +25,13 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 
-public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mutable {
-
+public class IPv4BindVariable extends IPv4Function implements Mutable {
     int value;
-
-    IPv4BindVariable() {
-        super();
-    }
 
     @Override
     public void clear() {
@@ -50,12 +44,17 @@ public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mu
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

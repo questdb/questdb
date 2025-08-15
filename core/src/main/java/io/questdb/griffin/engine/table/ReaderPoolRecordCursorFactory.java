@@ -24,7 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -39,11 +47,11 @@ import java.util.Iterator;
 import java.util.Map;
 
 public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final int CURRENT_TXN_COLUMN_INDEX = 3;
+    private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
     private static final RecordMetadata METADATA;
     private static final int OWNER_THREAD_COLUMN_INDEX = 1;
     private static final int TABLE_NAME_COLUMN_INDEX = 0;
-    private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
-    private static final int CURRENT_TXN_COLUMN_INDEX = 3;
     private final CairoEngine cairoEngine;
 
     public ReaderPoolRecordCursorFactory(CairoEngine cairoEngine) {
@@ -71,13 +79,13 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     private static class ReaderPoolCursor implements NoRandomAccessRecordCursor {
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
+        private long currentTxn;
         private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
+        private long lastAccessTimestamp;
         private long owner_thread;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
         private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
         private TableToken tableToken;
-        private long lastAccessTimestamp;
-        private long currentTxn;
 
         @Override
         public void close() {
@@ -119,6 +127,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public long size() {
             return -1;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override
@@ -174,6 +187,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStrB(int col) {
                 return getStrA(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             @Override

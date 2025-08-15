@@ -25,36 +25,62 @@
 package io.questdb.test.cairo;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
+    private final String dbRoot;
+    private final String installRoot;
     private final Overrides overrides;
-    private final String root;
     private final String snapshotRoot;
     private final TelemetryConfiguration telemetryConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
-    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
-        this.root = Chars.toString(root);
-        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
+    public CairoTestConfiguration(CharSequence dbRoot, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
+        super(Metrics.ENABLED);
+        this.dbRoot = Chars.toString(dbRoot);
+        this.installRoot = java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString();
+        this.snapshotRoot = Chars.toString(dbRoot) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
     }
 
     @Override
+    public boolean freeLeakedReaders() {
+        return overrides.freeLeakedReaders();
+    }
+
+    @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return snapshotRoot;
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
+        return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null
+                ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration()
+                : super.getCircuitBreakerConfiguration();
+    }
+
+    @Override
+    public @NotNull String getDbRoot() {
+        return dbRoot;
     }
 
     @Override
@@ -76,6 +102,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        return installRoot;
     }
 
     @Override
@@ -105,18 +136,13 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull String getRoot() {
-        return root;
-    }
-
-    @Override
     public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
     }
 
     @Override
-    public @NotNull CharSequence getCheckpointRoot() {
-        return snapshotRoot;
+    public long getSpinLockTimeout() {
+        return overrides != null ? overrides.getSpinLockTimeout() : super.getSpinLockTimeout();
     }
 
     @Override
@@ -151,6 +177,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     protected CairoConfiguration getDelegate() {
-        return overrides.getConfiguration(root);
+        return overrides.getConfiguration(dbRoot);
     }
 }

@@ -39,7 +39,7 @@ public class RemovePartitionTest extends AbstractCairoTest {
     @Test
     public void testRemoveSeveralFromTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY");
+            execute("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY");
 
             try (
                     TableReader reader = getReader("tst");

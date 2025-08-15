@@ -31,16 +31,16 @@ import io.questdb.std.ObjHashSet;
 import java.util.Map;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
-    protected final CairoConfiguration configuration;
+    protected final CairoEngine engine;
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryStore nameStore;
     protected final TableFlagResolver tableFlagResolver;
     protected ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap;
     protected ConcurrentHashMap<TableToken> tableNameToTableTokenMap;
 
-    public AbstractTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
-        this.configuration = configuration;
-        this.nameStore = new TableNameRegistryStore(configuration, tableFlagResolver);
+    public AbstractTableNameRegistry(CairoEngine engine, TableFlagResolver tableFlagResolver) {
+        this.engine = engine;
+        this.nameStore = new TableNameRegistryStore(engine.configuration, tableFlagResolver);
         this.tableFlagResolver = tableFlagResolver;
     }
 
@@ -57,7 +57,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public TableToken getTableTokenByDirName(String dirName) {
+    public TableToken getTableTokenByDirName(CharSequence dirName) {
         ReverseTableMapItem rmi = dirNameToTableTokenMap.get(dirName);
         if (rmi != null && !rmi.isDropped()) {
             return rmi.getToken();
@@ -93,7 +93,16 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public boolean isTableDropped(CharSequence tableDir) {
+    public boolean isTableDropped(TableToken tableToken) {
+        if (tableToken.isWal()) {
+            return isWalTableDropped(tableToken.getDirName());
+        }
+        TableToken currentTableToken = tableNameToTableTokenMap.get(tableToken.getTableName());
+        return currentTableToken == LOCKED_DROP_TOKEN;
+    }
+
+    @Override
+    public boolean isWalTableDropped(CharSequence tableDir) {
         ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableDir);
         return rmi != null && rmi.isDropped();
     }
@@ -103,7 +112,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         for (Map.Entry<CharSequence, TableToken> e : tableNameToTableTokenMap.entrySet()) {
             TableToken tableNameTableToken = e.getValue();
 
-            if (tableNameTableToken == LOCKED_TOKEN) {
+            if (TableNameRegistry.isLocked(tableNameTableToken)) {
                 continue;
             }
 
@@ -122,23 +131,22 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
             }
         }
         for (Map.Entry<CharSequence, ReverseTableMapItem> e : dirNameToTableTokenMap.entrySet()) {
-            ReverseTableMapItem rtmi = e.getValue();
-            TableToken dirToNameToken = rtmi.getToken();
-            if (rtmi.isDropped()) {
-                TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
+            ReverseTableMapItem item = e.getValue();
+            TableToken dirToNameToken = item.getToken();
+            TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
+            if (item.isDropped()) {
                 if (tokenByName != null && tokenByName.equals(dirToNameToken)) {
                     throw new IllegalStateException("table " + tokenByName.getTableName()
                             + " is dropped but still present in table name registry");
                 }
             } else {
-                TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
                 if (tokenByName == null) {
-                    throw new IllegalStateException("table " + tokenByName.getTableName()
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName()
                             + " is not dropped but name is not present in table name registry");
                 }
 
                 if (!dirToNameToken.equals(tokenByName)) {
-                    throw new IllegalStateException("table " + tokenByName.getTableName() + " tokens mismatch");
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName() + " tokens mismatch");
                 }
             }
         }

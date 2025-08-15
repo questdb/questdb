@@ -25,7 +25,12 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -40,6 +45,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -136,7 +142,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testAddFloatColumnAsFloat() throws Exception {
         floatDefaultColumnType = ColumnType.FLOAT;
-        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "null");
+        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3", "null");
     }
 
     @Test
@@ -450,7 +456,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "broken.d.1")) {
                             return -1;
                         }
@@ -470,11 +476,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     closeContext();
                     String expected = "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n";
                     assertTable(expected, table);
                 }, null
         );
@@ -486,11 +488,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
         String table = "commitException";
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
-        netMsgBufferSize.set(60);
+        maxRecvBufferSize.set(60);
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
                             return -1;
                         }
@@ -528,7 +530,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "broken.d")) {
                             return -1;
                         }
@@ -576,8 +578,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
-                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
+                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
             assertTable(expected, "t_ilp21");
         });
     }
@@ -762,7 +764,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDesignatedTimestampNotCalledTimestampWhenTableExistAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,time=1465839830100300t 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -789,7 +791,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDifferentCaseForExistingColumnWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100400t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -998,7 +1000,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100100t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1025,7 +1027,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
-            ddl("create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",terület=us-midwest hőmérséklet=82,ветер=2.5,ВЕтеР=2.4 1465839830100400200\n" +
                             table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
@@ -1333,7 +1335,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testInsertIntoExistingVarcharColumn() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
+            execute("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
             recvBuffer =
                     table + ",location=us-midwest slog=\"82\",timestamp=1465839830100100t 1465839830100300200\n" +
                             table + ",location=us-midwest slog=\"hello\" 1465839830100500200\n" +
@@ -1359,9 +1361,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testInvalidTableName() throws Exception {
         String table = "testInvalidEmptyTableName";
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TXN_FILE_NAME).$());
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.META_FILE_NAME).$());
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.TXN_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.META_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
 
         runInContext(() -> {
             recvBuffer =
@@ -1407,11 +1409,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testMaxSizes() throws Exception {
+    public void testMaxMeasurementSize() throws Exception {
+        Assume.assumeFalse(walEnabled);
         String table = "maxSize";
         runInContext(() -> {
-            String longMeasurement = table + ",location=us-eastcoastxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx temperature=81 1465839830101400200\n";
-            Assert.assertFalse(longMeasurement.length() < lineTcpConfiguration.getMaxMeasurementSize());
+            String longStr = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+            longStr += longStr;
+            String longMeasurement = table + ",location=us-eastcoast" + longStr + " temperature=81 1465839830101400200\n";
+            Assert.assertTrue(longMeasurement.length() > lineTcpConfiguration.getMaxMeasurementSize());
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1420,13 +1425,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
-            Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getNetMsgBufferSize());
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoastxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\t81.0\t2016-06-13T17:43:50.101400Z\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
@@ -1573,7 +1576,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
-        netMsgBufferSize.set(4096);
+        maxRecvBufferSize.set(4096);
         nWriterThreads = 3;
         int nTables = 5;
         int nIterations = 10_000;
@@ -1582,7 +1585,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithSingleWriterThread() throws Exception {
-        netMsgBufferSize.set(4096);
+        maxRecvBufferSize.set(4096);
         nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 10_000;
@@ -1616,7 +1619,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "testNewColumnsNotAllowed";
         autoCreateNewColumns = false;
         disconnectOnError = true;
-        ddl("create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);");
+        execute("create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);");
 
         engine.releaseInactive();
         runInContext(() -> {
@@ -1666,7 +1669,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n",
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
-            ddl("create table vbw(a int)");
+            execute("create table vbw(a int)");
         });
     }
 
@@ -1709,7 +1712,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            try (Path path = new Path().of(configuration.getRoot()).concat(table)) {
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(table)) {
                 Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
             }
         });
@@ -1747,14 +1750,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testOverflow() throws Exception {
         runInContext(() -> {
-            int msgBufferSize = lineTcpConfiguration.getNetMsgBufferSize();
-            recvBuffer = "A";
-            while (recvBuffer.length() <= msgBufferSize) {
+            long maxBufferSize = lineTcpConfiguration.getMaxRecvBufferSize();
+            recvBuffer = "MAXBUFSIZ";
+            while (recvBuffer.length() <= maxBufferSize) {
                 recvBuffer += recvBuffer;
             }
-            int nUnread = recvBuffer.length() - msgBufferSize;
-            handleContextIO0();
-            Assert.assertTrue(disconnected);
+            long nUnread = recvBuffer.length() - maxBufferSize;
+            do {
+                handleContextIO0();
+                Assert.assertFalse(recvBuffer.isEmpty());
+            } while (!disconnected);
             Assert.assertEquals(nUnread, recvBuffer.length());
         });
     }
@@ -1840,7 +1845,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
 
             // with this line we are testing that mmap size is calculated correctly even in case of fileSize=pageSize
-            (new TableReader(configuration, engine.verifyTableName(table))).close();
+            newOffPoolReader(configuration, table, engine).close();
         });
     }
 
@@ -1881,7 +1886,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testTableParameterRetentionOnAddColumn() throws Exception {
         String table = "retention";
         runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;");
+            execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;");
             try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());

@@ -24,20 +24,39 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -181,7 +200,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
+            Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             baseCursor.close();
             throw th;
@@ -245,8 +264,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long fixedOffset;
+        private boolean hasNextPending;
         private long hiSample = -1;
-        private boolean isHasNextPending;
         private boolean isMapBuilt;
         private boolean isMapFilled;
         private boolean isMapInitialized;
@@ -308,10 +327,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         @Override
         public boolean hasNext() {
-            if (!isMapBuilt) {
-                buildMap();
-                isMapBuilt = true;
-            }
+            buildMapConditionally();
             return super.hasNext();
         }
 
@@ -328,12 +344,17 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             hiSample = -1;
             prevSample = -1;
             rowId = 0;
-            isHasNextPending = false;
+            hasNextPending = false;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
             parseParams(this, executionContext);
             areTimestampsInitialized = false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return isMapBuilt ? 1 : 0;
         }
 
         @Override
@@ -352,7 +373,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 hiSample = -1;
                 prevSample = -1;
                 rowId = 0;
-                isHasNextPending = false;
+                hasNextPending = false;
                 isMapInitialized = false;
                 isMapFilled = false;
             }
@@ -501,6 +522,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             baseCursor = dataMap.getCursor();
         }
 
+        private void buildMapConditionally() {
+            if (!isMapBuilt) {
+                buildMap();
+                isMapBuilt = true;
+            }
+        }
+
         private void computeYPoints(MapValue x1Value, MapValue x2value) {
             for (int i = 0; i < groupByScalarFunctionCount; i++) {
                 InterpolationUtil.StoreYFunction storeYFunction = storeYFunctions.getQuick(i);
@@ -542,7 +570,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!isHasNextPending) {
+                if (!hasNextPending) {
                     // this seems inefficient, but we only double-sample
                     // very first record and nothing else
                     long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
@@ -575,9 +603,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     }
                 }
 
-                isHasNextPending = true;
+                hasNextPending = true;
                 boolean hasNext = managedCursor.hasNext();
-                isHasNextPending = false;
+                hasNextPending = false;
 
                 if (!hasNext) {
                     hiSample = sampler.nextTimestamp(prevSample);

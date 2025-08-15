@@ -32,7 +32,22 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public long getNextDST(long utcEpoch, int year, boolean leap) {
+    public long getDstGapOffset(long localEpoch) {
+        return 0;
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch) {
+        return offset;
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch, int year) {
+        return offset;
+    }
+
+    @Override
+    public long getNextDST(long utcEpoch, int year) {
         return Long.MAX_VALUE;
     }
 
@@ -42,12 +57,17 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long utcEpoch, int year, boolean leap) {
+    public long getOffset(long utcEpoch, int year) {
         return offset;
     }
 
     @Override
     public long getOffset(long utcEpoch) {
         return offset;
+    }
+
+    @Override
+    public boolean hasFixedOffset() {
+        return true;
     }
 }

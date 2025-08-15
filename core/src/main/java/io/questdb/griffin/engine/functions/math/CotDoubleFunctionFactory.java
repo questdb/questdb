@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -55,7 +54,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
         return new CotFunction(args.getQuick(0));
     }
 
-    private static class CotFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
+    private static class CotFunction extends DoubleFunction implements Function, UnaryFunction {
         final Function angleRad;
 
         public CotFunction(Function angleRad) {
@@ -69,11 +68,8 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double angle = angleRad.getDouble(rec);
-            if (Numbers.isNull(angle)) {
-                return Double.NaN;
-            }
-            return 1.0 / Math.tan(angle);
+            double d = 1.0 / Math.tan(angleRad.getDouble(rec));
+            return Numbers.isFinite(d) ? d : Double.NaN;
         }
 
         @Override

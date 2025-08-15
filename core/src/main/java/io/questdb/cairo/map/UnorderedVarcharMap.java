@@ -24,13 +24,27 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Hash;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -96,11 +110,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     private int free;
     private int initialKeyCapacity;
     private int keyCapacity;
-    private int mapSize = 0;
     private long mask;
     private long memLimit; // Hash table memory limit pointer.
     private long memStart; // Hash table memory start pointer.
     private int nResizes;
+    private int size = 0;
 
     public UnorderedVarcharMap(
             @Transient @Nullable ColumnTypes valueTypes,
@@ -158,7 +172,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memsetChecked(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
-            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY);
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
 
             value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
             value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
@@ -193,7 +207,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public void clear() {
         free = (int) (keyCapacity * loadFactor);
-        mapSize = 0;
+        size = 0;
         nResizes = 0;
         Vect.memsetChecked(memStart, memLimit - memStart, 0);
         Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
@@ -204,7 +218,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         if (memStart != 0) {
             memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
             free = 0;
-            mapSize = 0;
+            size = 0;
         }
         Misc.free(keySink);
         Misc.free(allocator);
@@ -212,7 +226,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     @Override
     public MapRecordCursor getCursor() {
-        return cursor.init(memStart, memLimit, mapSize);
+        return cursor.init(memStart, memLimit, size);
     }
 
     @Override
@@ -293,7 +307,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 // copy value
                 Vect.memcpy(destAddr + KEY_SIZE, srcAddr + KEY_SIZE, entrySize - KEY_SIZE);
             }
-            mapSize++;
+            size++;
             if (--free == 0) {
                 rehash();
             }
@@ -346,7 +360,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     @Override
     public long size() {
-        return mapSize;
+        return size;
     }
 
     @Override
@@ -394,7 +408,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 startAddress = getNextAddress(startAddress);
             }
         }
-        mapSize++;
+        size++;
         return valueOf(startAddress, true, value);
     }
 
@@ -623,6 +637,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         @Override
         public void put(Record record, RecordSink sink) {
             sink.copy(record, this);
+        }
+
+        @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

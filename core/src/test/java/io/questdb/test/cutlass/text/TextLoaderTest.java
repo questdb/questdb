@@ -42,8 +42,8 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -94,7 +94,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownClass() throws Exception {
+    public static void tearDownClass() {
         jsonLexer.close();
         AbstractCairoTest.tearDownStatic();
     }
@@ -548,7 +548,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            ddl(
+            execute(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -1175,7 +1175,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    ddl("create table test(" +
+                    execute("create table test(" +
                             "ts timestamp, " +
                             "byte byte, " +
                             "short short," +
@@ -1246,7 +1246,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    ddl("create table test(ts timestamp) timestamp(ts) partition by NONE");
+                    execute("create table test(ts timestamp) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = "ts\n" +
@@ -1283,7 +1283,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    ddl("create table test(ts timestamp) timestamp(ts) partition by NONE");
+                    execute("create table test(ts timestamp) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = "ts\n" +
@@ -1675,6 +1675,34 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoadingSlashAndQuoteEscaped() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String workingCsv = "\"json\"\n" +
+                    "\"{\"\"filed1\"\":1, \"\"filed2\"\":1, \"\"filed3\"\":\"\"admin\"\", \"\"filed4\"\":1}\"\n";
+
+            final String brokenCsv = "\"json\"\n" +
+                    "\"{\\\"filed1\"\\\":1, \\\"filed2\\\":1, \\\"filed3\\\":\\\"admin\\\", \\\"filed4\\\":1}\"";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            textLoader.configureColumnDelimiter((byte) ',');
+            textLoader.setDelimiter((byte) ',');
+            playText0(textLoader, brokenCsv, 1024, NOOP_TRANSFORMER);
+            assertTable("json\n");
+            textLoader.clear();
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            textLoader.configureColumnDelimiter((byte) ',');
+            textLoader.setDelimiter((byte) ',');
+            playText0(textLoader, workingCsv, 1024, NOOP_TRANSFORMER);
+            assertTable("json\n" +
+                    "{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}\n");
+            textLoader.clear();
+        });
+    }
+
+    @Test
     public void testMissingColumnHeader() throws Exception {
         assertNoLeak(textLoader -> {
             // header is present except one column, which has null header
@@ -1861,18 +1889,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testOverrideDoubleWithFloat() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
+                    "\"CMP2\t8\t8000\t2.2763636\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.014235\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.628433\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.877646\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.4655352\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.085475\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
                     "CMP1\t7\t4486\tnull\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+                    "CMP2\t2\t6641\t0.038182534\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.8496632\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.8509204\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.427545\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -2141,7 +2169,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            ddl(
+            execute(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -2255,7 +2283,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 CharSequence dirName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-                path.of(configuration.getRoot()).concat(dirName).$();
+                path.of(configuration.getDbRoot()).concat(dirName).$();
                 Files.touch(path.$());
             }
 
@@ -2886,7 +2914,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "!'dIv$nc.pYu]v)3H,핔ҿ嶤\uD97F\uDF11C\uD9CA\uDC33=/\uDB51\uDFE9\n" +
                     ",\n";
 
-            engine.ddl("create table test(a varchar, b varchar)", sqlExecutionContext);
+            engine.execute("create table test(a varchar, b varchar)", sqlExecutionContext);
 
             configureLoaderDefaults(textLoader);
             playText0(textLoader, csv1, 1024, NOOP_TRANSFORMER);
@@ -2905,9 +2933,9 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "2\t1\n" +
                     "2\t1\n";
 
-            ddl("create table test (col_a int, col_b long)");
-            ddl("alter table test drop column col_a");
-            ddl("alter table test add column col_a long");
+            execute("create table test (col_a int, col_b long)");
+            execute("alter table test drop column col_a");
+            execute("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -2931,9 +2959,9 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "1\t2\n" +
                     "1\t2\n";
 
-            ddl("create table test (col_a int, col_b long)");
-            ddl("alter table test drop column col_a");
-            ddl("alter table test add column col_a long");
+            execute("create table test (col_a int, col_b long)");
+            execute("alter table test drop column col_a");
+            execute("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -3001,7 +3029,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            ddl("create table test(a string, d binary)");
+            execute("create table test(a string, d binary)");
             configureLoaderDefaults(textLoader);
             try {
                 playText(textLoader, csv, 1024,
@@ -3030,7 +3058,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t1970-01-01T00:00:00.000045Z\n" +
                     "werop\t1970-01-01T00:00:00.000090Z\n";
 
-            ddl("create table test(a string, b timestamp)");
+            execute("create table test(a string, b timestamp)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -3054,7 +3082,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t\n" +
                     "werop\t\n";
 
-            ddl("create table test(a string, b date)");
+            execute("create table test(a string, b date)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -3078,7 +3106,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            ddl(
+            execute(
                     "create table test" +
                             "(t date" +
                             ", s symbol" +
@@ -3110,7 +3138,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            ddl("create table test (t timestamp, s symbol, v double)");
+            execute("create table test (t timestamp, s symbol, v double)");
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
@@ -3137,7 +3165,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "2019-11-12T00:00:00.000Z,GOOG,2019-11-12T00:00:00.000Z,2019-11-12T00:00:00.000Z,15\n" +
                     "2019-11-13T00:00:00.000Z,GOOG,2019-11-13T00:00:00.000Z,2019-11-13T00:00:00.000Z,20\n";
 
-            ddl(
+            execute(
                     "create table test" +
                             "(t1 timestamp" +
                             ", s symbol" +
@@ -3174,7 +3202,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            ddl("create table test(a int, b int)");
+            execute("create table test(a int, b int)");
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
@@ -3189,18 +3217,18 @@ public class TextLoaderTest extends AbstractCairoTest {
     public void testWriteToExistingTableTooManyColumns() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "a\tb\tc\td\te\tf\tg\th\ti\tk\tt\n" +
-                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\t\n" +
-                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\t\n" +
-                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\t\n" +
-                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\t\n" +
-                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\t\n" +
-                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\t\n" +
-                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\t\n" +
+                    "\"CMP2\t8\t8000\t2.2763636\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\t\n" +
+                    "CMP1\t2\t1581\t9.014235\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\t\n" +
+                    "CMP2\t8\t7067\t9.628433\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\t\n" +
+                    "CMP1\t8\t5313\t8.877646\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\t\n" +
+                    "\t4\t3883\t7.96873\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\t\n" +
+                    "CMP1\t7\t4256\t2.4655352\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\t\n" +
+                    "CMP2\t4\t155\t5.085475\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\t\n" +
                     "CMP1\t7\t4486\tnull\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\t\n" +
-                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\t\n" +
-                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\t\n" +
-                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\t\n" +
-                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\t\n";
+                    "CMP2\t2\t6641\t0.038182534\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\t\n" +
+                    "CMP1\t1\t3579\t0.8496632\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\t\n" +
+                    "CMP2\t2\t4770\t2.8509204\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\t\n" +
+                    "CMP1\t5\t4938\t4.427545\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\t\n";
 
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
@@ -3215,7 +3243,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            ddl(
+            execute(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -3245,7 +3273,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     @Test
     public void testWriteToExistingVarcharColumn() throws Exception {
         assertNoLeak(textLoader -> {
-            ddl("create table test(a int, b varchar, ts timestamp)");
+            execute("create table test(a int, b varchar, ts timestamp)");
 
             String csv = "a,b,ts\n" +
                     "5,foo,1\n" +
@@ -3277,7 +3305,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            ddl("create table test(a string, b int, d binary)");
+            execute("create table test(a string, b int, d binary)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -3396,7 +3424,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         });
     }
 
-    private void assertTimestampAsLong(String nominatedTimestamp, String expectedMeta) throws Exception {
+    private void assertTimestampAsLong(String designatedTimestamp, String expectedMeta) throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
             public int getTextAnalysisMaxLines() {
@@ -3410,11 +3438,12 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table test(StrSym symbol, ts timestamp) " + nominatedTimestamp, sqlExecutionContext);
-                engine.releaseAllWriters();
-            }
+        try (
+                CairoEngine engine = new CairoEngine(configuration);
+                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+        ) {
+            engine.execute("create table test(StrSym symbol, ts timestamp) " + designatedTimestamp, sqlExecutionContext);
+            engine.releaseAllWriters();
 
             assertNoLeak(
                     engine,
@@ -3495,7 +3524,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
-                    ddl(createStmt);
+                    execute(createStmt);
                     configureLoaderDefaults(
                             textLoader,
                             Atomicity.SKIP_ROW,
@@ -3780,7 +3809,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
-                    ddl(createStmt);
+                    execute(createStmt);
                     configureLoaderDefaults(
                             textLoader,
                             Atomicity.SKIP_ROW,

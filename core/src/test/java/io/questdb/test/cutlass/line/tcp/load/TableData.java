@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.line.tcp.load;
 
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.std.IntLongPriorityQueue;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -37,7 +37,7 @@ import static io.questdb.cairo.ColumnType.DOUBLE;
 import static io.questdb.cairo.ColumnType.FLOAT;
 
 public class TableData {
-    private final IntLongPriorityQueue index = new IntLongPriorityQueue();
+    private final IntLongSortedList index = new IntLongSortedList();
     private final ObjList<LineData> rows = new ObjList<>();
     private final CharSequence tableName;
     private final AtomicLong writePermits = new AtomicLong();
@@ -69,17 +69,17 @@ public class TableData {
         final ObjList<CharSequence> defaults = new ObjList<>();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             TableColumnMetadata colMetaData = metadata.getColumnMetadata(i);
-            CharSequence column = colMetaData.getName();
+            CharSequence column = colMetaData.getColumnName();
             columns.add(column);
-            defaults.add(getDefaultValue((short) colMetaData.getType()));
+            defaults.add(getDefaultValue((short) colMetaData.getColumnType()));
             sb.append(column).append(i == n - 1 ? "\n" : "\t");
         }
         for (int i = 0, n = rows.size(); i < n; i++) {
-            final LineData line = rows.get(index.popIndex());
+            final LineData line = rows.get(index.peekIndex());
             if (line.isValid()) {
                 sb.append(line.getRow(columns, defaults));
             }
-            index.popValue();
+            index.pollValue();
         }
         return sb.toString();
     }

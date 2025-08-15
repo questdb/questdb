@@ -54,4 +54,6 @@ public interface PageFrameMemory {
     LongList getPageSizes();
 
     long getRowIdOffset();
+
+    boolean hasColumnTops();
 }

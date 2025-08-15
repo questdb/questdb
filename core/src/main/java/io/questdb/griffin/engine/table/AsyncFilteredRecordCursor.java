@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
@@ -42,9 +43,9 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
 
     private final Function filter;
@@ -68,11 +69,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
+    public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        record = new PageFrameMemoryRecord();
-        frameMemoryPool = new PageFrameMemoryPool();
+        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
@@ -129,23 +130,24 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            LOG.debug()
-                    .$("closing [shard=").$(frameSequence.getShard())
-                    .$(", frameIndex=").$(frameIndex)
-                    .$(", frameCount=").$(frameLimit)
-                    .$(", frameId=").$(frameSequence.getId())
-                    .$(", cursor=").$(cursor)
-                    .I$();
+            isOpen = false;
+            Misc.free(frameMemoryPool);
 
             if (frameSequence != null) {
+                LOG.debug()
+                        .$("closing [shard=").$(frameSequence.getShard())
+                        .$(", frameIndex=").$(frameIndex)
+                        .$(", frameCount=").$(frameLimit)
+                        .$(", frameId=").$(frameSequence.getId())
+                        .$(", cursor=").$(cursor)
+                        .I$();
+
                 collectCursor(true);
                 if (frameLimit > -1) {
                     frameSequence.await();
                 }
                 frameSequence.clear();
             }
-            Misc.free(frameMemoryPool);
-            isOpen = false;
         }
     }
 
@@ -165,7 +167,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageFrameMemoryRecord(record);
+        recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
         return recordB;
     }
 
@@ -217,6 +219,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
@@ -279,15 +286,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        // Check if we at the top already and there is nothing to do.
-        if (frameIndex == 0 && frameRowIndex == 0) {
-            return;
-        }
         collectCursor(false);
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
+        // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
+        frameRowIndex = -1;
+        frameRowCount = -1;
         allFramesActive = true;
     }
 
@@ -306,6 +312,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             // because we updated frameIndex and loop can exit due to lack of frames.
             // Non-update of 'cursor' could cause double-free.
             cursor = -1;
+            // We also need to clear the record as it's initialized with the task's
+            // page frame memory that is now closed.
+            record.clear();
         }
     }
 
@@ -334,7 +343,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                                 .position(task.getErrorMessagePosition())
                                 .put(task.getErrorMsg())
                                 .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled());
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -360,7 +370,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             if (th instanceof CairoException) {
                 CairoException ce = (CairoException) th;
                 if (ce.isInterruption() || ce.isCancellation()) {
-                    LOG.error().$("filter error [ex=").$(((CairoException) th).getFlyweightMessage()).I$();
+                    LOG.error().$("filter error [ex=").$safe(((CairoException) th).getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
@@ -391,6 +401,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         ogRowsRemaining = rowsRemaining;
         frameIndex = -1;
         frameLimit = -1;
+        frameRowIndex = -1;
+        frameRowCount = -1;
         allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());

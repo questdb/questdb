@@ -24,7 +24,12 @@
 
 package io.questdb.std.datetime;
 
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 
 import java.text.DateFormatSymbols;
 
@@ -33,10 +38,10 @@ public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
     private final String[] eraArray;
     private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
-    private final String name;
     private final TimeZoneRuleFactory factory;
     private final String[] monthArray;
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
+    private final String name;
     private final String[] shortMonthArray;
     private final String[] shortWeekdayArray;
     private final String[] weekdayArray;
@@ -68,10 +73,6 @@ public class DateLocale {
         }
     }
 
-    public String getName() {
-        return name;
-    }
-
     public String getAMPM(int index) {
         return ampmArray[index];
     }
@@ -82,6 +83,10 @@ public class DateLocale {
 
     public String getMonth(int index) {
         return monthArray[index];
+    }
+
+    public String getName() {
+        return name;
     }
 
     public TimeZoneRules getRules(CharSequence timeZoneName, int resolution) throws NumericException {

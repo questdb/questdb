@@ -37,7 +37,7 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
     public void testNonNull() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setRandom(new Rnd());
-            ddl("create table tab as ( select rnd_char() ch from long_sequence(100) )");
+            execute("create table tab as ( select rnd_char() ch from long_sequence(100) )");
 
             assertSql("min\n" +
                     "B\n", "select min(ch) from tab"

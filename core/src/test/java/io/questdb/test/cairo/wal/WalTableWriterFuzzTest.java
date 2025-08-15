@@ -25,15 +25,25 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.std.*;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.Files;
+import io.questdb.std.Hash;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -701,7 +711,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_Random() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        setCurrentMicros(rnd.nextLong());
+        setCurrentMicros(rnd.nextPositiveLong());
         sqlExecutionContext.getRandom().reset(currentMicros * 1000, currentMicros);
 
         assertMemoryLeak(() -> {
@@ -720,6 +730,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 walName = walWriter.getWalName();
             }
             replicateAndApplyToAllNodes(tableName, walName);
+
             TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
 
             update("UPDATE " + tableName + " SET INT=rnd_int()");
@@ -836,8 +847,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             TableToken tableToken = createTable(createTableModel(tableName).wal());
             TableToken tableCopyToken = createTable(createTableModel(tableCopyName).wal());
 
-            insert("INSERT INTO " + tableName + " (ts) VALUES ('2014')");
-            insert("INSERT INTO " + tableCopyName + " (ts) VALUES ('2015')");
+            execute("INSERT INTO " + tableName + " (ts) VALUES ('2014')");
+            execute("INSERT INTO " + tableCopyName + " (ts) VALUES ('2015')");
 
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             checkWalTransactionsJob.runSerially();
@@ -959,7 +970,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private int addRowsToWal(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
+    private int addRowsToWal(
+            int iteration,
+            String tableName,
+            String tableCopyName,
+            int rowsToInsertTotal,
+            long tsIncrement,
+            long startTs,
+            Rnd rnd,
+            WalWriter walWriter,
+            boolean inOrder
+    ) {
         final int tableId;
         try (
                 TableWriter copyWriter = getWriter(tableCopyName);
@@ -999,7 +1020,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         return tableId;
     }
 
-    private int addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
+    private int addRowsToWalAndApplyToTable(
+            int iteration,
+            String tableName,
+            String tableCopyName,
+            int rowsToInsertTotal,
+            long tsIncrement,
+            long startTs,
+            Rnd rnd,
+            WalWriter walWriter,
+            boolean inOrder
+    ) {
         final int tableId = addRowsToWal(iteration, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, startTs, rnd, walWriter, inOrder);
         drainWalQueue();
         return tableId;
@@ -1019,7 +1050,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
         final TableModel model = createTableModel(tableName).wal();
-        forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
+        forEachNode(node -> tableToken.set(TestUtils.createTable(node.getEngine(), model))
         );
 
         // tableCopyName is not WAL enabled
@@ -1088,7 +1119,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
-        ddl("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows);
+        execute("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows);
         if (tableId > 0) {
             drainWalQueue();
         }
@@ -1115,7 +1146,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             }
         }
 
-        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
+        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : createWalApplyJob(engine);
         try {
             job.drain(0);
         } finally {

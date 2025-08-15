@@ -26,8 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -62,7 +64,7 @@ public class DropIndexOperator {
         this.ff = configuration.getFilesFacade();
     }
 
-    public void executeDropIndex(CharSequence columnName, int columnIndex) {
+    public void executeDropIndex(String columnName, int columnIndex) {
         int partitionBy = tableWriter.getPartitionBy();
         int partitionCount = tableWriter.getPartitionCount();
         try {
@@ -72,32 +74,35 @@ public class DropIndexOperator {
                 long pTimestamp = tableWriter.getPartitionTimestamp(pIndex);
                 long pVersion = tableWriter.getPartitionNameTxn(pIndex);
                 long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
-                long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1L);
+                long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1);
+                byte partitionFormat = tableWriter.getPartitionFormat(pIndex);
 
-                if (columnTop != -1L) {
+                if (columnTop != -1) {
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
-                    final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
-                    // create hard link to column data
-                    // src
-                    partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
-                    // hard link
-                    partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
-                    if (-1 == ff.hardLink(path.$(), other.$())) {
-                        throw CairoException.critical(ff.errno())
-                                .put("cannot hardLink [src=").put(path)
-                                .put(", hardLink=").put(other)
-                                .put(']');
+                    if (partitionFormat == PartitionFormat.NATIVE) {
+                        final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
+                        // create hard link to column data
+                        // src
+                        partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
+                        // hard link
+                        partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
+                        if (ff.hardLink(path.$(), other.$()) == -1) {
+                            throw CairoException.critical(ff.errno())
+                                    .put("cannot hardLink [src=").put(path)
+                                    .put(", hardLink=").put(other)
+                                    .put(']');
+                        }
+                        rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
                     }
 
                     // add to cleanup tasks, the index will be removed in due time
-                    purgingOperator.add(columnIndex, columnVersion, pTimestamp, pVersion);
-                    rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
+                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, true, columnVersion, pTimestamp, pVersion);
                 }
             }
         } catch (Throwable th) {
-            LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
+            LOG.error().$("Could not DROP INDEX: ").$safe(th.getMessage()).$();
             purgingOperator.clear();
 
             // cleanup successful links prior to the failed link operation
@@ -129,7 +134,7 @@ public class DropIndexOperator {
             CharSequence columnName,
             long columnNameTxn
     ) {
-        TableUtils.setPathForPartition(
+        TableUtils.setPathForNativePartition(
                 path.trimTo(rootLen),
                 partitionBy,
                 partitionTimestamp,

@@ -226,7 +226,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q8",
                     "SELECT RegionID, count_distinct(UserID) AS u FROM hits GROUP BY RegionID ORDER BY u DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [u desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [RegionID]\n" +
@@ -239,7 +239,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q9",
                     "SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, AVG(ResolutionWidth), count_distinct(UserID) FROM hits GROUP BY RegionID ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [RegionID]\n" +
@@ -252,7 +252,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q10",
                     "SELECT MobilePhoneModel, count_distinct(UserID) AS u FROM hits WHERE MobilePhoneModel IS NOT NULL GROUP BY MobilePhoneModel ORDER BY u DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [u desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [MobilePhoneModel]\n" +
@@ -265,7 +265,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q11",
                     "SELECT MobilePhone, MobilePhoneModel, count_distinct(UserID) AS u FROM hits WHERE MobilePhoneModel IS NOT NULL GROUP BY MobilePhone, MobilePhoneModel ORDER BY u DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [u desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [MobilePhone,MobilePhoneModel]\n" +
@@ -278,7 +278,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q12",
                     "SELECT SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [SearchPhrase]\n" +
@@ -291,7 +291,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q13",
                     "SELECT SearchPhrase, count_distinct(UserID) AS u FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY u DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [u desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [SearchPhrase]\n" +
@@ -304,7 +304,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q14",
                     "SELECT SearchEngineID, SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchEngineID, SearchPhrase ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [SearchEngineID,SearchPhrase]\n" +
@@ -317,7 +317,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q15",
                     "SELECT UserID, COUNT(*) AS c FROM hits GROUP BY UserID ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [UserID]\n" +
@@ -331,7 +331,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q16",
                     "SELECT UserID, SearchPhrase, COUNT(*) AS c FROM hits GROUP BY UserID, SearchPhrase ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [UserID,SearchPhrase]\n" +
@@ -344,7 +344,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q17",
                     "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10;",
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [UserID,SearchPhrase]\n" +
                             "      values: [count(*)]\n" +
@@ -391,7 +391,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q21",
                     "SELECT SearchPhrase, MIN(URL), COUNT(*) AS c FROM hits WHERE URL LIKE '%google%' AND SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [SearchPhrase]\n" +
@@ -404,7 +404,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q22",
                     "SELECT SearchPhrase, MIN(URL), MIN(Title), COUNT(*) AS c, count_distinct(UserID) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [SearchPhrase]\n" +
@@ -435,17 +435,15 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
-            // TODO: https://github.com/questdb/questdb/issues/4133
             new TestCase(
                     "Q25",
                     "SELECT SearchPhrase FROM hits WHERE SearchPhrase IS NOT NULL ORDER BY SearchPhrase LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Async JIT Top K lo: 10 workers: 1\n" +
+                            "  filter: SearchPhrase is not null\n" +
                             "  keys: [SearchPhrase]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: SearchPhrase is not null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: hits\n"
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: hits\n"
             ),
             new TestCase(
                     "Q26",
@@ -503,7 +501,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q30",
                     "SELECT SearchEngineID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchEngineID, ClientIP ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [SearchEngineID,ClientIP]\n" +
@@ -517,7 +515,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q31",
                     "SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [WatchID,ClientIP]\n" +
@@ -531,7 +529,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q32",
                     "SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [WatchID,ClientIP]\n" +
@@ -544,7 +542,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q33",
                     "SELECT URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [c desc]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [URL]\n" +
@@ -554,7 +552,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
-            // TODO: we can extract the constant to an outer query
+            // TODO: https://github.com/questdb/questdb/issues/5198
             new TestCase(
                     "Q34",
                     "SELECT 1, URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;",
@@ -589,7 +587,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q36",
                     "SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND DontCountHits = 0 AND IsRefresh = 0 AND URL IS NOT NULL GROUP BY URL ORDER BY PageViews DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [PageViews desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [URL]\n" +
@@ -603,7 +601,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q37",
                     "SELECT Title, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND DontCountHits = 0 AND IsRefresh = 0 AND Title IS NOT NULL GROUP BY Title ORDER BY PageViews DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
+                    "Long Top K lo: 10\n" +
                             "  keys: [PageViews desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [Title]\n" +
@@ -691,7 +689,7 @@ public class ClickBenchTest extends AbstractCairoTest {
     @Test
     public void testExecutionPlans() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL);
+            execute(DDL);
 
             for (TestCase testCase : TEST_CASES) {
                 LOG.info().$("verifying exec plan for ").$(testCase.name).$();

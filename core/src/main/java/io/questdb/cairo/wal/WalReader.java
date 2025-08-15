@@ -24,25 +24,32 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.wal.WalTxnType.DATA;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
@@ -67,17 +74,17 @@ public class WalReader implements Closeable {
 
         ff = configuration.getFilesFacade();
         path = new Path();
-        path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(walName);
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
         rootLen = path.size();
 
         try {
-            metadata = new SequencerMetadata(ff, true);
+            metadata = new SequencerMetadata(ff, configuration.getCommitMode(), true);
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
-            LOG.debug().$("open [table=").$(tableName).I$();
+            LOG.debug().$("open [table=").$safe(tableName).I$();
             int pathLen = path.size();
-            eventCursor = events.of(path.slash().put(segmentId), WAL_FORMAT_VERSION, -1L);
+            eventCursor = events.of(path.slash().put(segmentId), -1);
             path.trimTo(pathLen);
             openSymbolMaps(eventCursor, configuration);
             path.slash().put(segmentId);
@@ -101,7 +108,7 @@ public class WalReader implements Closeable {
         Misc.free(metadata);
         Misc.freeObjList(columns);
         Misc.free(path);
-        LOG.debug().$("closed '").utf8(tableName).$('\'').$();
+        LOG.debug().$("closed '").$safe(tableName).$('\'').$();
     }
 
     public MemoryCR getColumn(int absoluteIndex) {
@@ -232,7 +239,7 @@ public class WalReader implements Closeable {
 
     private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
         while (eventCursor.hasNext()) {
-            if (eventCursor.getType() == DATA) {
+            if (WalTxnType.isDataType(eventCursor.getType())) {
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {

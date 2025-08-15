@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -44,7 +50,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderMetadataTest extends AbstractCairoTest {
-
     private static final String stringColumnType = ColumnType.nameOf(ColumnType.STRING);
     private static final String varcharColumnType = ColumnType.nameOf(ColumnType.VARCHAR);
     private volatile Throwable exception = null;
@@ -166,9 +171,41 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
                 w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
                 w -> w.removeColumn("bool"),
-                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, null),
+                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null),
                 w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
         );
+    }
+
+    @Test
+    public void testApplyTransitionFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR);
+            final String tableName = "all2";
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
+            ) {
+                ogMeta.load();
+                copyMeta.load();
+                assertEquals(ogMeta, copyMeta);
+
+                long structVersion;
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                    writer.changeColumnType("int", ColumnType.LONG, 0, false, false, 0, false, null);
+                    writer.changeColumnType("sym", ColumnType.VARCHAR, 0, false, false, 0, false, null);
+                    writer.removeColumn("bool");
+                    writer.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null);
+                    structVersion = writer.getMetadataVersion();
+                }
+
+                Assert.assertTrue(ogMeta.prepareTransition(structVersion));
+                ogMeta.applyTransition();
+                copyMeta.applyTransitionFrom(ogMeta);
+
+                assertEquals(ogMeta, copyMeta);
+            }
+        });
     }
 
     @Test
@@ -210,10 +247,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
         String tableName = "all";
         try (
-                Path path = getMetaFilePath(root, tableName);
+                Path path = new Path();
                 TableReaderMetadata metadata = new TableReaderMetadata(configuration)
         ) {
-            metadata.load(path.$());
+            TableToken tableToken = engine.verifyTableName(tableName);
+            metadata.load(path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$());
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -243,6 +281,28 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     @Test
     public void testFreeNullAddressAsIndex() {
         TableUtils.freeTransitionIndex(0);
+    }
+
+    @Test
+    public void testLoadFrom() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR);
+            final String tableName = "all2";
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
+            ) {
+                ogMeta.load();
+                copyMeta.loadFrom(ogMeta);
+                assertEquals(ogMeta, copyMeta);
+
+                // Transition should also be possible.
+                Assert.assertTrue(copyMeta.prepareTransition(ogMeta.getMetadataVersion()));
+                copyMeta.applyTransition();
+                assertEquals(ogMeta, copyMeta);
+            }
+        });
     }
 
     @Test
@@ -297,7 +357,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "varchar:" + varcharColumnType + "\n" +
                 "str:" + stringColumnType + "\n" +
                 "short:INT\n";
-
         assertThat(expected,
                 w -> w.removeColumn("short"),
                 w -> w.removeColumn("str"),
@@ -424,7 +483,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n";
-
         assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("str"));
@@ -447,17 +505,31 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
     }
 
+    private static void assertEquals(TableReaderMetadata expected, TableReaderMetadata actual) {
+        Assert.assertEquals(expected.getMetadataVersion(), actual.getMetadataVersion());
+        Assert.assertEquals(expected.getTableId(), actual.getTableId());
+        Assert.assertEquals(expected.getTableToken(), actual.getTableToken());
+        Assert.assertEquals(expected.getPartitionBy(), actual.getPartitionBy());
+        Assert.assertEquals(expected.isWalEnabled(), actual.isWalEnabled());
+        Assert.assertEquals(expected.getMaxUncommittedRows(), actual.getMaxUncommittedRows());
+        Assert.assertEquals(expected.getO3MaxLag(), actual.getO3MaxLag());
+        Assert.assertEquals(expected.getTtlHoursOrMonths(), actual.getTtlHoursOrMonths());
+        Assert.assertEquals(expected.getColumnCount(), actual.getColumnCount());
 
-    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        TableToken tableToken = engine.verifyTableName(tableName);
-        return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME);
+        for (int i = 0, n = expected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals(expected.getColumnName(i), actual.getColumnName(i));
+            Assert.assertEquals(expected.getColumnType(i), actual.getColumnType(i));
+            Assert.assertEquals(expected.isDedupKey(i), actual.isDedupKey(i));
+            Assert.assertEquals(expected.isIndexed(i), actual.isIndexed(i));
+            Assert.assertEquals(expected.isSymbolTableStatic(i), actual.isSymbolTableStatic(i));
+        }
     }
 
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.drop(path, engine.verifyTableName("all"));
+            engine.dropTableOrMatView(path, engine.verifyTableName("all"));
         }
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
 
@@ -470,7 +542,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
@@ -478,7 +550,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
                     long structVersion;
-                    try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+                    try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                         manipulator.restructure(writer);
                         structVersion = writer.getMetadataVersion();
                     }

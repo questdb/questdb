@@ -32,7 +32,7 @@
     ],
     "result": {
       "status": "SUCCESS",
-      "line": "test_table,sym_col=sym_val str_col=\"foo bar baz\",long_col=42i,double_col=42.5,bool_col=t"
+      "base64Line": "dGVzdF90YWJsZSxzeW1fY29sPXN5bV92YWwgc3RyX2NvbD0iZm9vIGJhciBiYXoiLGxvbmdfY29sPTQyaSxkb3VibGVfY29sPT0QAAAAAABARUAsYm9vbF9jb2w9dAA="
     }
   },
   {
@@ -48,7 +48,7 @@
     ],
     "result": {
       "status": "SUCCESS",
-      "line": "test\\ 1\\=2 a_col=42i"
+      "base64Line": "dGVzdFwgMVw9MiBhX2NvbD00MmkA"
     }
   },
   {
@@ -64,7 +64,7 @@
     ],
     "result": {
       "status": "SUCCESS",
-      "line": "foobar.csv a_col=f"
+      "base64Line": "Zm9vYmFyLmNzdiBhX2NvbD1mAA=="
     }
   },
   {
@@ -80,7 +80,7 @@
     ],
     "result": {
       "status": "SUCCESS",
-      "line": "test_table name\\ 1\\=2=\"value 1,2=3\\\n4\\\r5\\\"6\\\\7\""
+      "base64Line": "dGVzdF90YWJsZSBuYW1lXCAxXD0yPSJ2YWx1ZSAxLDI9M1wKNFwNNVwiNlxcNyIA"
     }
   },
   {
@@ -95,7 +95,7 @@
     "columns": [],
     "result": {
       "status": "SUCCESS",
-      "line": "test_table,name\\ 1\\=2=value\\ 1\\,2\\=3\\\n4\\\r5\"6\\\\7"
+      "base64Line": "dGVzdF90YWJsZSxuYW1lXCAxXD0yPXZhbHVlXCAxXCwyXD0zXAo0XA01IjZcXDcA"
     }
   },
   {
@@ -111,7 +111,7 @@
     ],
     "result": {
       "status": "SUCCESS",
-      "line": "таблица имя\\ раз\\=два=\"значение раз,два=три\\\nчетыре\\\rпять\\\"шесть\\\\семь\""
+      "base64Line": "0YLQsNCx0LvQuNGG0LAg0LjQvNGPXCDRgNCw0LdcPdC00LLQsD0i0LfQvdCw0YfQtdC90LjQtSDRgNCw0Lcs0LTQstCwPdGC0YDQuFwK0YfQtdGC0YvRgNC1XA3Qv9GP0YLRjFwi0YjQtdGB0YLRjFxc0YHQtdC80YwiAA=="
     }
   },
   {
@@ -126,7 +126,7 @@
     "columns": [],
     "result": {
       "status": "SUCCESS",
-      "line": "таблица,имя\\ раз\\=два=значение\\ раз\\,два\\=три\\\nчетыре\\\rпять\"шесть\\\\семь"
+      "base64Line": "0YLQsNCx0LvQuNGG0LAs0LjQvNGPXCDRgNCw0LdcPdC00LLQsD3Qt9C90LDRh9C10L3QuNC1XCDRgNCw0LdcLNC00LLQsFw90YLRgNC4XArRh9C10YLRi9GA0LVcDdC/0Y/RgtGMItGI0LXRgdGC0YxcXNGB0LXQvNGMAA=="
     }
   },
   {

@@ -27,7 +27,14 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
@@ -38,9 +45,20 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
-import io.questdb.std.*;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -55,7 +73,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final boolean autoCreateNewTables;
     private final MillisecondClock clock;
     private final LineTcpReceiverConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
@@ -76,7 +94,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool ioWorkerPool,
+            WorkerPool networkSharedPool,
             IODispatcher<LineTcpConnectionContext> dispatcher,
             WorkerPool writerWorkerPool
     ) {
@@ -88,15 +106,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.clock = cairoConfiguration.getMillisecondClock();
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-            final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
-            this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
-            this.tableNameSinks = new StringSink[ioWorkerPoolSize];
-            for (int i = 0; i < ioWorkerPoolSize; i++) {
+            final int networkSharedPoolSize = networkSharedPool.getWorkerCount();
+            this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
+            this.tableNameSinks = new StringSink[networkSharedPoolSize];
+            for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
                 netIoJobs[i] = netIoJob;
-                ioWorkerPool.assign(i, netIoJob);
-                ioWorkerPool.freeOnExit(netIoJob);
+                networkSharedPool.assign(i, netIoJob);
+                networkSharedPool.freeOnExit(netIoJob);
             }
 
             // Worker count is set to 1 because we do not use this execution context
@@ -141,15 +159,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
                 assignedTables[i] = new ObjList<>();
 
-                final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
+                final LineTcpLegacyWriterJob lineTcpLegacyWriterJob = new LineTcpLegacyWriterJob(
                         i,
                         q,
                         subSeq,
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                writerWorkerPool.assign(i, lineTcpWriterJob);
-                writerWorkerPool.freeOnExit(lineTcpWriterJob);
+                writerWorkerPool.assign(i, lineTcpLegacyWriterJob);
+                writerWorkerPool.freeOnExit(lineTcpLegacyWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
@@ -220,7 +238,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);
                             tud.removeReference(readerWorkerId);
                             pubSeq[writerWorkerId].done(seq);
-                            LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
+                            LOG.info().$("active table going idle [tableName=").$safe(tableNameUtf16).I$();
                         }
                         return true;
                     } else {
@@ -249,7 +267,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             LOG.info()
                     .$("releasing writer, its been idle since ").$ts(tub.getLastMeasurementMillis() * 1_000)
-                    .$("[tableName=").$(tub.getTableNameUtf16())
+                    .$("[tableName=").$safe(tub.getTableNameUtf16())
                     .I$();
 
             event.releaseWriter();
@@ -300,10 +318,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         } catch (CairoException ex) {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
-                    .$(", ex=`")
-                    .$(ex.getFlyweightMessage())
-                    .$("`]").$();
+                    .I$();
             // More details will be logged by catching thread
             throw ex;
         }
@@ -422,14 +439,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                         engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                     }
-
                     // by the time we get here, the table should exist on disk
                     // check the global idle cache - TUD can be there
                     final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
                     if (idleTudKeyIndex < 0) {
                         // TUD is found in global idle cache - this meant it is non-WAL
                         tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
-                        LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("idle table going active [tableName=").$safe(tud.getTableNameUtf16()).I$();
                         if (tud.getWriter() == null) {
                             tud.closeNoLock();
                             // Use actual table name from the "details" to avoid case mismatches in the
@@ -452,6 +468,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         .put(']');
                             }
                             continue; // go for another spin
+                        }
+                        if (tableToken.isMatView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify materialized view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
                         }
                         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
                         if (engine.isWalTable(tableToken)) {
@@ -486,7 +508,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private boolean isOpen() {
-        return null != pubSeq;
+        return pubSeq != null;
     }
 
     @NotNull
@@ -519,7 +541,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 tableNameUtf8
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").$safe(tableNameUtf16).$(" to thread ").$(threadId).$();
         return tud;
     }
 
@@ -532,7 +554,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (stats != null) {
                 loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
             } else {
-                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
+                LOG.error().$("could not find statistic for table [name=").$safe(tableName).I$();
             }
         }
     }

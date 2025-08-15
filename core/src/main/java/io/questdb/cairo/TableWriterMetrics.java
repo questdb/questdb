@@ -24,10 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
-public class TableWriterMetrics {
+public class TableWriterMetrics implements Mutable {
 
     // Includes all types of commits (in-order and o3)
     private final Counter commitCounter;
@@ -36,13 +38,15 @@ public class TableWriterMetrics {
     // For write amplification metric, `physicallyWrittenRowCounter / committedRowCounter`.
     private final Counter physicallyWrittenRowCounter;
     private final Counter rollbackCounter;
+    private final AtomicLongGauge suspendedTablesGauge;
 
     public TableWriterMetrics(MetricsRegistry metricsRegistry) {
         this.commitCounter = metricsRegistry.newCounter("commits");
         this.o3CommitCounter = metricsRegistry.newCounter("o3_commits");
         this.committedRowCounter = metricsRegistry.newCounter("committed_rows");
-        this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
         this.physicallyWrittenRowCounter = metricsRegistry.newCounter("physically_written_rows");
+        this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
+        this.suspendedTablesGauge = metricsRegistry.newAtomicLongGauge("suspended_tables");
     }
 
     public void addCommittedRows(long rows) {
@@ -51,6 +55,20 @@ public class TableWriterMetrics {
 
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowCounter.add(rows);
+    }
+
+    @Override
+    public void clear() {
+        commitCounter.reset();
+        committedRowCounter.reset();
+        o3CommitCounter.reset();
+        physicallyWrittenRowCounter.reset();
+        rollbackCounter.reset();
+        suspendedTablesGauge.setValue(0);
+    }
+
+    public void decSuspendedTables() {
+        suspendedTablesGauge.dec();
     }
 
     public long getCommitCount() {
@@ -71,6 +89,10 @@ public class TableWriterMetrics {
 
     public long getRollbackCount() {
         return rollbackCounter.getValue();
+    }
+
+    public void incSuspendedTables() {
+        suspendedTablesGauge.inc();
     }
 
     public void incrementCommits() {

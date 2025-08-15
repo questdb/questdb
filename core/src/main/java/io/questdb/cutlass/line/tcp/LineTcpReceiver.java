@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -38,33 +37,31 @@ import java.io.Closeable;
 
 public class LineTcpReceiver implements Closeable {
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
-    private final Metrics metrics;
     private LineTcpMeasurementScheduler scheduler;
 
     public LineTcpReceiver(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
-            WorkerPool ioWorkerPool,
+            WorkerPool networkSharedPool,
             WorkerPool writerWorkerPool
     ) {
         try {
             this.scheduler = null;
-            this.metrics = engine.getMetrics();
             ObjectFactory<LineTcpConnectionContext> factory;
-            factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
+            factory = () -> new LineTcpConnectionContext(configuration, scheduler);
 
             IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
                     factory,
                     configuration.getConnectionPoolInitialCapacity()
             );
-            this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
-            ioWorkerPool.assign(dispatcher);
-            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
+            this.dispatcher = IODispatchers.create(configuration, contextFactory);
+            networkSharedPool.assign(dispatcher);
+            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, networkSharedPool, dispatcher, writerWorkerPool);
 
-            for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
+            for (int i = 0, n = networkSharedPool.getWorkerCount(); i < n; i++) {
                 // http context factory has thread local pools
                 // therefore we need each thread to clean their thread locals individually
-                ioWorkerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+                networkSharedPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
             }
         } catch (Throwable t) {
             close();

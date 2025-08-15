@@ -63,8 +63,8 @@ class RndStringMemory implements Closeable {
             }
 
             final int idxPages = count * 8 / pageSize + 1;
-            strMem = Vm.getARInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
-            idxMem = Vm.getARInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
+            strMem = Vm.getCARWInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
+            idxMem = Vm.getCARWInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
         } catch (Throwable th) {
             close();
             throw th;

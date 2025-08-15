@@ -44,24 +44,25 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
+public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
     private final boolean forceDisablePreTouch;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
+    private final double preTouchThreshold;
     private boolean preTouchEnabled;
+    // used to disable column pre-touch without affecting the explain plan
+    private boolean preTouchEnabledOverride;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull IntList columnTypes,
-            boolean forceDisablePreTouch
+            @NotNull IntList columnTypes
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -71,7 +72,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             perWorkerLocks = null;
         }
         this.columnTypes = columnTypes;
-        this.forceDisablePreTouch = forceDisablePreTouch;
+        this.forceDisablePreTouch = !configuration.isSqlParallelFilterPreTouchEnabled();
+        this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
     }
 
     @Override
@@ -93,24 +95,21 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, filter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
         }
         preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        preTouchEnabledOverride = executionContext.isColumnPreTouchEnabledOverride();
     }
 
-    @Override
-    public void initCursor() {
-        filter.initCursor();
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
-        }
-    }
-
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #releaseFilter(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
     public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (perWorkerLocks == null) {
             return -1;
@@ -131,11 +130,13 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * in parallel, on multiple threads, instead of relying on the "query owner" thread
      * to do it later serially.
      *
-     * @param record record to use
-     * @param rows   rows to pre-touch
+     * @param record        record to use
+     * @param rows          rows to pre-touch
+     * @param frameRowCount total number of rows in the frame
      */
-    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows) {
-        if (!preTouchEnabled || forceDisablePreTouch) {
+    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
+        // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
+        if (!isPreTouchEnabled() || !preTouchEnabledOverride || rows.size() > frameRowCount * preTouchThreshold) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
@@ -223,5 +224,12 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(filter);
+        if (isPreTouchEnabled()) {
+            sink.val(" [pre-touch]");
+        }
+    }
+
+    private boolean isPreTouchEnabled() {
+        return preTouchEnabled && !forceDisablePreTouch;
     }
 }

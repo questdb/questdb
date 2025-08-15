@@ -24,8 +24,14 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.http.*;
-import io.questdb.metrics.Scrapable;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.LocalValue;
+import io.questdb.metrics.Target;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Files;
@@ -36,17 +42,22 @@ import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-public class PrometheusMetricsProcessor implements HttpRequestProcessor {
+public class PrometheusMetricsProcessor implements HttpRequestProcessor, HttpRequestHandler {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
     private static final LocalValue<RequestState> LV = new LocalValue<>();
-    private final Scrapable metrics;
+    private final Target metrics;
     private final RequestStatePool pool;
     private final byte requiredAuthType;
 
-    public PrometheusMetricsProcessor(Scrapable metrics, HttpMinServerConfiguration configuration, RequestStatePool pool) {
+    public PrometheusMetricsProcessor(Target metrics, HttpServerConfiguration configuration, RequestStatePool pool) {
         this.metrics = metrics;
         this.requiredAuthType = configuration.getRequiredAuthType();
         this.pool = pool;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
@@ -48,17 +53,18 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private long lastRunMs;
-    private Path threadLocalPath;
     private boolean notificationQueueIsFull = false;
+    private Path threadLocalPath;
+
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
-        dbRoot = engine.getConfiguration().getRoot();
+        dbRoot = engine.getConfiguration().getDbRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-        checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
+        checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
         checkInterval = engine.getConfiguration().getSequencerCheckInterval();
         lastRunMs = millisecondClock.getTicks();
     }
@@ -97,7 +103,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {
-                        if (!e.errnoReadPathDoesNotExist()) {
+                        if (!e.errnoFileCannotRead()) {
                             throw e;
                         } // race, table is dropped, ApplyWal2TableJob is already deleting the files
                     }
@@ -110,7 +116,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     public boolean runSerially() {
         long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
         if (unpublishedWalTxnCount == lastProcessedCount || notificationQueueIsFull) {
-            // when notification queue was full last run, re-evalute tables after a timeout
+            // when notification queue was full last run, re-evaluate tables after a timeout
             final long t = millisecondClock.getTicks();
             if (lastRunMs + checkInterval < t) {
                 lastRunMs = t;

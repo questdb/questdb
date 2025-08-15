@@ -28,11 +28,17 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
@@ -84,6 +90,41 @@ public class Unordered8MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutBinUnsupported() throws Exception {
+        assertUnsupported(key -> key.putBin(null));
+    }
+
+    @Test
+    public void testPutLong128Unsupported() throws Exception {
+        assertUnsupported(key -> key.putLong128(0, 0));
+    }
+
+    @Test
+    public void testPutLong256ObjectUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(null));
+    }
+
+    @Test
+    public void testPutLong256ValuesUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(0, 0, 0, 0));
+    }
+
+    @Test
+    public void testPutStrRangeUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null, 0, 0));
+    }
+
+    @Test
+    public void testPutStrUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null));
+    }
+
+    @Test
+    public void testPutVarcharUnsupported() throws Exception {
+        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
+    }
+
+    @Test
     public void testSingleZeroKey() {
         try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
@@ -105,6 +146,41 @@ public class Unordered8MapTest extends AbstractCairoTest {
                 Assert.assertEquals(42, record.getLong(0));
             }
         }
+    }
+
+    @Test
+    public void testTopK() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int heapCapacity = 5;
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                for (int i = 0; i < 100; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
+
+                MapRecordCursor mapCursor = map.getCursor();
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
+
+                Assert.assertEquals(heapCapacity, list.size());
+
+                MapRecord mapRecord = mapCursor.getRecord();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
+                for (int i = 0; i < heapCapacity; i++) {
+                    Assert.assertTrue(heapCursor.hasNext());
+                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
+                }
+            }
+        });
     }
 
     @Test
@@ -163,41 +239,6 @@ public class Unordered8MapTest extends AbstractCairoTest {
                 }
             });
         }
-    }
-
-    @Test
-    public void testPutBinUnsupported() throws Exception {
-        assertUnsupported(key -> key.putBin(null));
-    }
-
-    @Test
-    public void testPutLong128Unsupported() throws Exception {
-        assertUnsupported(key -> key.putLong128(0, 0));
-    }
-
-    @Test
-    public void testPutLong256ObjectUnsupported() throws Exception {
-        assertUnsupported(key -> key.putLong256(null));
-    }
-
-    @Test
-    public void testPutLong256ValuesUnsupported() throws Exception {
-        assertUnsupported(key -> key.putLong256(0, 0, 0, 0));
-    }
-
-    @Test
-    public void testPutStrUnsupported() throws Exception {
-        assertUnsupported(key -> key.putStr(null));
-    }
-
-    @Test
-    public void testPutStrRangeUnsupported() throws Exception {
-        assertUnsupported(key -> key.putStr(null, 0, 0));
-    }
-
-    @Test
-    public void testPutVarcharUnsupported() throws Exception {
-        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
     }
 
     private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {

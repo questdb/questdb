@@ -158,8 +158,8 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
             );
             assertSql(expected, "select count(distinct s) from x");
 
-            insert("insert into x values(cast(null as INT), '2021-05-21')");
-            insert("insert into x values(cast(null as INT), '1970-01-01')");
+            execute("insert into x values(cast(null as INT), '2021-05-21')");
+            execute("insert into x values(cast(null as INT), '1970-01-01')");
             assertSql(expected, "select count_distinct(s) from x");
             assertSql(expected, "select count(distinct s) from x");
         });

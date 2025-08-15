@@ -25,17 +25,19 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public interface BinaryFunction extends Function {
 
     @Override
     default void close() {
-        getLeft().close();
-        getRight().close();
+        Misc.free(getLeft());
+        Misc.free(getRight());
     }
 
     @Override
@@ -55,14 +57,13 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void initCursor() {
-        getLeft().initCursor();
-        getRight().initCursor();
+    default boolean isConstant() {
+        return getLeft().isConstant() && getRight().isConstant();
     }
 
     @Override
-    default boolean isConstant() {
-        return getLeft().isConstant() && getRight().isConstant();
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
 
     // used in generic toSink implementation
@@ -71,8 +72,8 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isThreadSafe() {
-        return getLeft().isThreadSafe() && getRight().isThreadSafe();
+    default boolean isRandom() {
+        return getLeft().isRandom() || getRight().isRandom();
     }
 
     @Override
@@ -83,8 +84,37 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default void memoize(Record recordA) {
+        getLeft().memoize(recordA);
+        getRight().memoize(recordA);
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof BinaryFunction) {
+            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
+            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getRight().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getLeft().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess();
     }
 
     @Override

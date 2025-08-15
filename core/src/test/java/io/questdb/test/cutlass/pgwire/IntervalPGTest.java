@@ -29,6 +29,7 @@ import org.junit.Test;
 import java.sql.PreparedStatement;
 
 public class IntervalPGTest extends BasePGTest {
+
     @Test
     public void testIntervalSelect() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

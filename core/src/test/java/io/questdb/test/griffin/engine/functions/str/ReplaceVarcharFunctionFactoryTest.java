@@ -94,7 +94,7 @@ public class ReplaceVarcharFunctionFactoryTest extends AbstractFunctionFactoryTe
     @Test
     public void testReplaceWithSymbols() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select 'sym'::symbol sym from long_sequence(1))");
+            execute("create table tab as (select 'sym'::symbol sym from long_sequence(1))");
 
             assertSql("replace\nSym\n", "select replace(sym, 's', 'S') from tab");
             assertSql("replace\nS\n", "select replace(sym, sym, 'S') from tab");

@@ -24,19 +24,25 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -46,8 +52,9 @@ import io.questdb.std.Unsafe;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
+    public static final String NAME = "row_number";
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
-    private static final String SIGNATURE = "row_number()";
+    private static final String SIGNATURE = NAME + "()";
 
     @Override
     public String getSignature() {
@@ -73,7 +80,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         if (windowContext.getPartitionByRecord() != null) {
-            Map map = MapFactory.createOrderedMap(
+            Map map = MapFactory.createUnorderedMap(
                     configuration,
                     windowContext.getPartitionByKeyTypes(),
                     LONG_COLUMN_TYPE
@@ -88,7 +95,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return new SequenceRowNumberFunction();
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class RowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -135,7 +142,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
         }
 
         @Override
@@ -176,7 +185,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class SequenceRowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
         private int columnIndex;
         private long rowNumber = 0;
 
@@ -198,10 +207,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             toTop();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
         }
 
         @Override

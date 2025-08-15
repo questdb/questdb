@@ -26,15 +26,17 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -45,7 +47,6 @@ import java.sql.DriverManager;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-
 public class PGTlsCompatTest extends BasePGTest {
 
     @Test
@@ -54,7 +55,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -66,8 +67,8 @@ public class PGTlsCompatTest extends BasePGTest {
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(1, metrics);
-            try (final PGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -95,7 +96,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -107,8 +108,8 @@ public class PGTlsCompatTest extends BasePGTest {
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(1, metrics);
-            try (final PGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -125,6 +126,58 @@ public class PGTlsCompatTest extends BasePGTest {
 
                 Assert.assertEquals("No create TLS session calls expected: " + createTlsSessionCalls.get(), 0, createTlsSessionCalls.get());
                 Assert.assertEquals("No TLS I/O calls expected: " + tlsIOCalls.get(), 0, tlsIOCalls.get());
+            }
+        });
+    }
+
+    @Test
+    public void testTlsSessionRequestErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger createTlsSessionCalls = new AtomicInteger();
+            final AtomicInteger tlsIOCalls = new AtomicInteger();
+
+            final PGConfiguration conf = new Port0PGConfiguration() {
+                @Override
+                public FactoryProvider getFactoryProvider() {
+                    return new DefaultFactoryProvider() {
+                        @Override
+                        public @NotNull SocketFactory getPGWireSocketFactory() {
+                            return new FakeTlsSocketFactory(true, createTlsSessionCalls, tlsIOCalls);
+                        }
+                    };
+                }
+
+                @Override
+                public int getForceSendFragmentationChunkSize() {
+                    return 2; // force fragmentation and PeerIsSlowToReadException
+                }
+            };
+
+            final int N = 10;
+            final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
+                Assert.assertNotNull(server);
+                final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+
+                workerPool.start(LOG);
+
+                Properties properties = newPGProperties();
+                properties.setProperty("sslmode", "allow");
+                // unencrypted connection
+                try {
+                    for (int i = 0; i < N; i++) {
+                        try (Connection ignore = DriverManager.getConnection(url, properties)) {
+                            Assert.fail();
+                        } catch (PSQLException ex) {
+                            TestUtils.assertContains(ex.getMessage(), "ERROR: request SSL message expected");
+                        }
+
+                        Assert.assertEquals("No create TLS session calls expected: " + createTlsSessionCalls.get(), 0, createTlsSessionCalls.get());
+                        Assert.assertEquals("No TLS I/O calls expected: " + tlsIOCalls.get(), 0, tlsIOCalls.get());
+                    }
+                } finally {
+                    workerPool.halt();
+                }
             }
         });
     }
@@ -164,13 +217,13 @@ public class PGTlsCompatTest extends BasePGTest {
         }
 
         @Override
-        public int startTlsSession(CharSequence peerName) {
+        public void startTlsSession(CharSequence peerName) throws TlsSessionInitFailedException {
             if (!tlsSessionStarted) {
                 createTlsSessionCalls.incrementAndGet();
                 tlsSessionStarted = true;
-                return 0;
+                return;
             }
-            return -1;
+            throw TlsSessionInitFailedException.instance("TLS session has been started already");
         }
 
         @Override

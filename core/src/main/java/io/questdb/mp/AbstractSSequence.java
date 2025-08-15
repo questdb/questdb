@@ -43,11 +43,9 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
     @Override
     public long nextBully() {
         long cursor;
-
         while ((cursor = next()) < 0) {
             bully();
         }
-
         return cursor;
     }
 

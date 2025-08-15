@@ -83,6 +83,15 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyCancelExtras() throws Exception {
+        assertException(
+                "copy 'foobar' cancel aw beans;",
+                21,
+                "unexpected token [aw]"
+        );
+    }
+
+    @Test
     public void testCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -186,7 +195,7 @@ public class CopyTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
-                assertEquals("y", model.getTarget().token.toString());
+                assertEquals("y", model.getTableName().toString());
                 assertEquals("'somefile.csv'", model.getFileName().token.toString());
                 assertFalse(model.isHeader());
                 assertEquals(-1, model.getPartitionBy());
@@ -315,7 +324,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -345,7 +354,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -381,7 +390,7 @@ public class CopyTest extends AbstractCairoTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
             try {
-                ddl("copy 'foobar' cancel;");
+                execute("copy 'foobar' cancel;");
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "copy cancel ID format is invalid: 'foobar'");
@@ -394,7 +403,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
-            ddl("CREATE TABLE reading (\n" +
+            execute("CREATE TABLE reading (\n" +
                     "  readingTypeId SYMBOL,\n" +
                     "  value FLOAT,\n" +
                     "  readingDate TIMESTAMP\n" +
@@ -410,7 +419,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
-            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -424,12 +433,12 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
+            path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
         CopyRunnable stmt = () -> {
-            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -444,7 +453,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTableWithoutExplicitTimestampAndFormatInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -457,7 +466,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -497,7 +506,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
+            path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
@@ -563,7 +572,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyRequiresWithBeforeOptions() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                ddl("copy x from 'somefile.csv' partition by HOUR;");
+                execute("copy x from 'somefile.csv' partition by HOUR;");
                 Assert.fail();
             } catch (SqlException e) {
                 assertEquals("[27] 'with' expected", e.getMessage());
@@ -590,7 +599,7 @@ public class CopyTest extends AbstractCairoTest {
                 runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with partition by jiffy;", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
         });
     }
@@ -749,7 +758,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
                 setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
                 String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
@@ -821,7 +830,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            ddl("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);");
+            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -1102,7 +1111,7 @@ public class CopyTest extends AbstractCairoTest {
                                     "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
                         }
 
-                        assertEquals("x", model.getTarget().token.toString());
+                        assertEquals("x", model.getTableName().toString());
                         assertEquals("'somefile.csv'", model.getFileName().token.toString());
                         assertTrue(model.isHeader());
                         assertEquals(partitionBy[p + 1], model.getPartitionBy());
@@ -1140,7 +1149,7 @@ public class CopyTest extends AbstractCairoTest {
                 "('1972-09-28T00:00:00.000000Z','line1001','desc 1001',0.918270255022)" :
                 "('line1001','1972-09-28T00:00:00.000000Z',0.918270255022,'desc 1001')";
 
-        insert("insert into x values" + values);
+        execute("insert into x values" + values);
         if (walEnabled) {
             drainWalQueue();
         }
@@ -1165,7 +1174,7 @@ public class CopyTest extends AbstractCairoTest {
 
     private void testCopyWithAtomicity(boolean parallel, String atomicity, int expectedCount) throws Exception {
         CopyRunnable stmt = () -> {
-            ddl("create table alltypes (\n" +
+            execute("create table alltypes (\n" +
                     "  bo boolean,\n" +
                     "  by byte,\n" +
                     "  sh short,\n" +
@@ -1206,7 +1215,7 @@ public class CopyTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
-            drop("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
+            execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
             try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 Thread processingThread = createJobThread(copyRequestJob, processed);
                 processingThread.start();

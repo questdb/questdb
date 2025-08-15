@@ -28,8 +28,26 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
-import io.questdb.mp.*;
-import io.questdb.tasks.*;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.ColumnPurgeTask;
+import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByMergeShardTask;
+import io.questdb.tasks.LatestByTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3PartitionPurgeTask;
+import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.TableWriterTask;
+import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.tasks.WalTxnNotificationTask;
 
 import java.io.Closeable;
 
@@ -106,6 +124,8 @@ public interface MessageBus extends Closeable {
     MPSequence getQueryCacheEventPubSeq();
 
     MCSequence getQueryCacheEventSubSeq();
+
+    ConcurrentQueue<QueryTrace> getQueryTraceQueue();
 
     FanOut getTableWriterEventFanOut();
 

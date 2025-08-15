@@ -31,8 +31,10 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public final class Constants {
+    private static final ObjList<TypeConstant> doubleArrayTypeConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> nullConstants = new ObjList<>(ColumnType.NULL + 1);
+    private static final ObjList<ConstantFunction> nullDoubleArrayConstants = new ObjList<>();
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     public static ConstantFunction getGeoHashConstant(long hash, int bits) {
@@ -56,17 +58,42 @@ public final class Constants {
 
     public static ConstantFunction getNullConstant(int columnType) {
         int typeTag = ColumnType.tagOf(columnType);
-        if (typeTag >= ColumnType.GEOBYTE &&
-                typeTag <= ColumnType.GEOLONG) {
-            int bits = ColumnType.getGeoHashBits(columnType);
-            if (bits != 0) {
-                return geoNullConstants.get(bits);
+        switch (typeTag) {
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                int bits = ColumnType.getGeoHashBits(columnType);
+                if (bits != 0) {
+                    return geoNullConstants.get(bits);
+                }
+                return nullConstants.getQuick(typeTag);
+            case ColumnType.ARRAY: {
+                int dim = ColumnType.decodeArrayDimensionality(columnType);
+                if (dim <= nullDoubleArrayConstants.size()) {
+                    return nullDoubleArrayConstants.getQuick(dim - 1);
+                }
+                return new NullArrayConstant(columnType);
             }
+            default:
+                return nullConstants.getQuick(typeTag);
         }
-        return nullConstants.getQuick(typeTag);
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
+        if (ColumnType.isArray(columnType)) {
+            switch (ColumnType.decodeArrayElementType(columnType)) {
+                case ColumnType.DOUBLE:
+                    // dimension is 1-based, list offset is 0-based
+                    int dim = ColumnType.decodeArrayDimensionality(columnType);
+                    if (dim <= doubleArrayTypeConstants.size()) {
+                        return doubleArrayTypeConstants.get(dim - 1);
+                    }
+                    return new ArrayTypeConstant(columnType);
+                default:
+                    throw new UnsupportedOperationException();
+            }
+        }
         // GEOHASH takes a different path, no need to extract tag
         return typeConstants.getQuick(columnType);
     }
@@ -120,8 +147,25 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.INTERVAL, IntervalTypeConstant.INSTANCE);
 
+        // pre-populate double array types up to 10 dimensions
+        for (int i = 0; i < 10; i++) {
+            doubleArrayTypeConstants.add(
+                    new ArrayTypeConstant(
+                            ColumnType.encodeArrayType(ColumnType.DOUBLE, i + 1)
+                    )
+            );
+        }
+
         for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));
+        }
+
+        for (int i = 0; i < 10; i++) {
+            nullDoubleArrayConstants.add(
+                    new NullArrayConstant(
+                            ColumnType.encodeArrayType(ColumnType.DOUBLE, i + 1)
+                    )
+            );
         }
     }
 }

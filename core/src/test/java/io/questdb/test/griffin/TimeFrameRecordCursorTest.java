@@ -46,7 +46,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
     @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             " i int," +
                             " t timestamp" +
@@ -70,7 +70,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
         for (int i = 0; i < N; i++) {
             final int nRows = nRowsBase * (i + 1);
             assertMemoryLeak(() -> {
-                ddl(
+                execute(
                         "create table x as (select" +
                                 " rnd_int() a," +
                                 " rnd_str() b," +
@@ -118,7 +118,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                drop("drop table x");
+                execute("drop table x");
             });
         }
     }
@@ -130,7 +130,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
         for (int i = 0; i < N; i++) {
             final int nRows = nRowsBase * (i + 1);
             assertMemoryLeak(() -> {
-                ddl(
+                execute(
                         "create table x as (select" +
                                 " rnd_int() a," +
                                 " rnd_str() b," +
@@ -189,7 +189,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                drop("drop table x");
+                execute("drop table x");
             });
         }
     }
@@ -201,7 +201,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
         for (int i = 0; i < N; i++) {
             final int nRows = nRowsBase * (i + 1);
             assertMemoryLeak(() -> {
-                ddl(
+                execute(
                         "create table x as (select" +
                                 " rnd_int() a," +
                                 " rnd_str() b," +
@@ -245,7 +245,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                drop("drop table x");
+                execute("drop table x");
             });
         }
     }
@@ -253,7 +253,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
     @Test
     public void testNavigateForwardNoPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (select" +
                             " rnd_long() a," +
                             " rnd_boolean() b," +
@@ -297,7 +297,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                 }
             }
 
-            drop("drop table x");
+            execute("drop table x");
         });
     }
 
@@ -329,7 +329,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                 new TestCase(
                         "time_filtered_t",
                         "create table time_filtered_t (ts timestamp) timestamp(ts) partition by day",
-                        "time_filtered_t where ts in '1970-01-13'"
+                        "time_filtered_t where ts in '1970-01-13' or ts = '1970-05-14T16:00:02.000000Z'"
                 ),
                 new TestCase(
                         "desc_ordered_t",
@@ -340,7 +340,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
         for (TestCase tc : testCases) {
             assertMemoryLeak(() -> {
-                ddl(tc.ddl);
+                execute(tc.ddl);
                 try (RecordCursorFactory factory = select(tc.query)) {
                     Assert.assertFalse("time frame cursor shouldn't be supported for " + tc.table, factory.supportsTimeFrameCursor());
                 }
@@ -361,7 +361,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
         for (int partitionBy : partitionBys) {
             assertMemoryLeak(() -> {
-                ddl(
+                execute(
                         "create table x as (select" +
                                 " timestamp_sequence(100000000, " + 365 * Timestamps.DAY_MICROS + ") t" +
                                 " from long_sequence(3)" +
@@ -398,7 +398,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                drop("drop table x");
+                execute("drop table x");
             });
         }
     }
@@ -407,25 +407,32 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
     public void testTimeFrameBoundariesSplitPartitions() throws Exception {
         executeWithPool((engine, compiler, executionContext) -> {
             // produce split partition
-            compiler.compile(
+            execute(
+                    compiler,
                     "create table x as (" +
                             "  select timestamp_sequence('2020-02-03T13', 60*1000000L) ts " +
                             "  from long_sequence(60*24*2+300)" +
                             ") timestamp (ts) partition by DAY",
                     executionContext
             );
-            compiler.compile(
+            execute(
+                    compiler,
                     "create table z as (" +
                             "  select timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts " +
                             "  from long_sequence(50)" +
                             ")",
                     executionContext
             );
-            compiler.compile(
+            execute(
+                    compiler,
                     "create table y as (select * from x union all select * from z)",
                     executionContext
             );
-            compiler.compile("insert into x select * from z", executionContext);
+            execute(
+                    compiler,
+                    "insert into x select * from z",
+                    executionContext
+            );
 
             try (RecordCursorFactory factory = engine.select("x", executionContext)) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
@@ -472,13 +479,13 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            WorkerPool pool = new WorkerPool(() -> 2);
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getPartitionO3SplitMinSize() {
                     return 1000;
                 }
             };
+            WorkerPool pool = new WorkerPool(() -> 2);
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
     }

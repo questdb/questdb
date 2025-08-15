@@ -25,5 +25,5 @@
 package io.questdb.cutlass.pgwire;
 
 public interface OptionsListener {
-    void setStatementTimeout(long statementTimeout);
+    void setSqlTimeout(long sqlTimeout);
 }

@@ -27,10 +27,10 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoIntFunction;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
 import io.questdb.std.NumericException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,6 +50,11 @@ public class GeoIntFunctionTest extends AbstractCairoTest {
             return true;
         }
     };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        function.getArray(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetGeoLong() {

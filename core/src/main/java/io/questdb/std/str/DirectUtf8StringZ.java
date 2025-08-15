@@ -47,6 +47,11 @@ public class DirectUtf8StringZ implements LPSZ {
         return Unsafe.getUnsafe().getByte(ptr + index);
     }
 
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
     public DirectUtf8StringZ of(long address) {
         this.ptr = address;
         long p = address;

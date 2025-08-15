@@ -24,7 +24,11 @@
 
 package io.questdb.test;
 
-import io.questdb.*;
+import io.questdb.DefaultTelemetryConfiguration;
+import io.questdb.MessageBus;
+import io.questdb.Metrics;
+import io.questdb.PropertyKey;
+import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
@@ -75,7 +79,7 @@ public class QuestDBTestNode {
     }
 
     public Metrics getMetrics() {
-        return cairo.metrics;
+        return cairo.configuration.getMetrics();
     }
 
     public CharSequence getRoot() {
@@ -146,7 +150,6 @@ public class QuestDBTestNode {
     private static class Cairo {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
-        private final Metrics metrics;
         private final Overrides overrides;
         private final boolean ownRoot;
         private final CharSequence root;
@@ -170,8 +173,7 @@ public class QuestDBTestNode {
             };
 
             configuration = configurationFactory.getInstance(root, telemetryConfiguration, overrides);
-            metrics = Metrics.enabled();
-            engine = engineFactory.getInstance(configuration, metrics);
+            engine = engineFactory.getInstance(configuration);
             messageBus = engine.getMessageBus();
         }
 
@@ -189,6 +191,7 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().close();
             engine.clear();
             engine.closeNameRegistry();
+            engine.getMetrics().clear();
             if (removeDir && ownRoot) {
                 TestUtils.removeTestPath(root);
             }

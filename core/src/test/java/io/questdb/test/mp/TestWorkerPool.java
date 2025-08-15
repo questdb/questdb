@@ -35,11 +35,11 @@ public class TestWorkerPool extends WorkerPool {
     private final ObjList<PageFrameReduceJob> pageFrameReduceJobs = new ObjList<>();
 
     public TestWorkerPool(int workerCount) {
-        this("testing", workerCount, Metrics.disabled());
+        this("testing", workerCount, Metrics.DISABLED);
     }
 
     public TestWorkerPool(String poolName, int workerCount) {
-        this(poolName, workerCount, Metrics.disabled());
+        this(poolName, workerCount, Metrics.DISABLED);
     }
 
     public TestWorkerPool(int workerCount, Metrics metrics) {
@@ -47,7 +47,12 @@ public class TestWorkerPool extends WorkerPool {
     }
 
     public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
+        this(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
             @Override
             public String getPoolName() {
                 return poolName;
@@ -57,7 +62,11 @@ public class TestWorkerPool extends WorkerPool {
             public int getWorkerCount() {
                 return workerCount;
             }
-        }, metrics);
+        });
+    }
+
+    public TestWorkerPool(WorkerPoolConfiguration configuration) {
+        super(configuration);
     }
 
     @Override

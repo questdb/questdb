@@ -33,6 +33,11 @@ import org.junit.Test;
 public class ExpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0.0);
+    }
+
+    @Test
     public void testNegative() throws SqlException {
         call(-2.0).andAssert(0.1353352832366127, 0.0000000001);
     }
@@ -45,11 +50,6 @@ public class ExpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testZero() throws SqlException {
         call(0.0).andAssert(1.0, 0.0000000001);
-    }
-
-    @Test
-    public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0.0);
     }
 
     @Override

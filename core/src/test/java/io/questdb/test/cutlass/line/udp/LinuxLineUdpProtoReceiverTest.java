@@ -24,10 +24,18 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DatabaseCheckpointStatus;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.cutlass.line.udp.*;
+import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpReceiver;
+import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
@@ -46,9 +54,9 @@ import org.junit.Test;
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedQueryWorkerCount, functionFactoryCache, snapshotAgent) -> new LineUdpReceiver(configuration, engine, workerPool);
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedQueryWorkerCount, functionFactoryCache, snapshotAgent) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -196,7 +204,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
-                factory.create(receiverCfg, engine, null, true, 0, null, null, metrics);
+                factory.create(receiverCfg, engine, null, true, 0, null, null);
                 Assert.fail();
             } catch (NetworkError ignore) {
             }
@@ -228,7 +236,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                     "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, 0, null, null, metrics)) {
+                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, 0, null, null)) {
                     // create table
                     String tableName = "tab";
                     TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -236,7 +244,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                             .col("shape", ColumnType.SYMBOL)
                             .col("size", ColumnType.DOUBLE)
                             .timestamp();
-                    TestUtils.create(model, engine);
+                    TestUtils.createTable(engine, model);
 
                     // warm writer up
                     try (TableWriter w = getWriter(engine, tableName)) {
@@ -252,7 +260,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(configuration, engine.verifyTableName(tableName))) {
+                    try (TableReader reader = newOffPoolReader(configuration, tableName, engine)) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {
@@ -280,10 +288,9 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                 CairoEngine engine,
                 WorkerPool workerPool,
                 boolean isWorkerPoolLocal,
-                int sharedWorkerCount,
+                int sharedQueryWorkerCount,
                 @Nullable FunctionFactoryCache functionFactoryCache,
-                @Nullable DatabaseCheckpointStatus snapshotAgent,
-                Metrics metrics
+                @Nullable DatabaseCheckpointStatus snapshotAgent
         );
     }
 }

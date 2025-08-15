@@ -29,7 +29,16 @@ import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of intermediate objects.
+ * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of objects.
+ * <p>
+ * There are 2 ways to use this pool:
+ * <ul>
+ *     <li>Mass release: You keep acquiring objects via @link {@link #next()} and then release them all at once via
+ *     {@link #clear()}. This is the fastest way to use the pool.</li>
+ *     <li>Individual release: You acquire objects via @link {@link #next()} and then release them individually via
+ *     {@link #release(Mutable)}. This method has complexity O(n) where n is the number of objects in the pool thus
+ *     should be used with care.</li>
+ * </ul>
  */
 public class ObjectPool<T extends Mutable> implements Mutable {
     private static final Log LOG = LogFactory.getLog(ObjectPool.class);
@@ -52,6 +61,10 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         pos = 0;
     }
 
+    public int getPos() {
+        return pos;
+    }
+
     public T next() {
         if (pos == size) {
             expand();
@@ -60,6 +73,43 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         T o = list.getQuick(pos++);
         o.clear();
         return o;
+    }
+
+    /**
+     * Gives access to an object in the pool without incrementing the position.
+     * This method does not validate the position, it's only safe to use it if you know that the position is valid
+     * (i.e. it's less than the number of objects in the pool).
+     *
+     * @param pos position of the object in the pool
+     * @return object at the specified position
+     */
+    public T peekQuick(int pos) {
+        return list.getQuick(pos);
+    }
+
+    /**
+     * Return an individual object to the pool.
+     * <p>
+     * This method has complexity O(n) where n is the number of objects in the pool thus should be used with care.
+     * It cannot be used after {@link #resetCapacity()} or {@link #clear()} have been called since they automatically
+     * mark all objects as released.
+     *
+     * @param o object to return to the pool
+     */
+    public void release(T o) {
+        assert pos > 0 : "returnObject called more times than next()";
+        pos--;
+
+        int objectPos = pos;
+        while (list.getQuick(objectPos) != o) {
+            objectPos--;
+            if (objectPos < 0) {
+                throw new AssertionError("Object not found in pool [object=" + o + ']');
+            }
+        }
+        T objectToSwap = list.getQuick(pos);
+        list.setQuick(pos, o);
+        list.setQuick(objectPos, objectToSwap);
     }
 
     public void resetCapacity() {

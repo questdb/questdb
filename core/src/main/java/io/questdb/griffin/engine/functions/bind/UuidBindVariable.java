@@ -25,12 +25,11 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Uuid;
 
-public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable {
+public class UuidBindVariable extends UuidFunction implements Mutable {
     final Uuid value = new Uuid();
 
     @Override
@@ -49,12 +48,17 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

@@ -25,12 +25,13 @@
 package io.questdb.test.sqllogictest.dedup;
 
 import io.questdb.test.sqllogictest.AbstractSqllogicTestRunner;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
+/**
+ * Tests data deduplication.
+ */
 public class DedupTest extends AbstractSqllogicTestRunner {
     public DedupTest(String testFile) {
         super(testFile);

@@ -186,22 +186,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             for (int i = 0; i < slotCount; i++) {
                 perWorkerAllocators.extendAndSet(i, GroupByAllocatorFactory.createAllocator(configuration));
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         }
     }
 
     @Override
     public void clear() {
         sharded = false;
-        ownerFragment.close();
-        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            Misc.free(perWorkerFragments.getQuick(i));
-        }
-        for (int i = 0, n = destShards.size(); i < n; i++) {
-            Misc.free(destShards.getQuick(i));
-        }
+        Misc.free(ownerFragment);
+        Misc.freeObjListAndKeepObjects(perWorkerFragments);
+        Misc.freeObjListAndKeepObjects(destShards);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
@@ -311,14 +307,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
         }
 
         if (ownerKeyFunctions != null) {
-            Function.init(ownerKeyFunctions, symbolTableSource, executionContext);
+            Function.init(ownerKeyFunctions, symbolTableSource, executionContext, null);
         }
 
         if (perWorkerKeyFunctions != null) {
@@ -326,7 +322,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerKeyFunctions.getQuick(i), symbolTableSource, executionContext);
+                    Function.init(perWorkerKeyFunctions.getQuick(i), symbolTableSource, executionContext, null);
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -338,7 +334,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext);
+                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext, null);
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -346,20 +342,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
-        }
-    }
-
-    @Override
-    public void initCursor() {
-        if (ownerFilter != null) {
-            ownerFilter.initCursor();
-        }
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
         }
     }
 
@@ -367,6 +351,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return sharded;
     }
 
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #release(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             // Owner thread is free to use the original functions anytime.
@@ -375,6 +365,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #release(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
     public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             // Owner thread is free to use its own private filter, function updaters, allocator,
@@ -582,8 +578,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final long statKeyCapacity = dest ? stats.mergedSize : stats.medianSize;
         // Per-worker limit is smaller than the owner one.
         final long statLimit = dest
-                ? configuration.getGroupByPresizeMaxSize()
-                : configuration.getGroupByPresizeMaxSize() / perWorkerFragments.size();
+                ? configuration.getGroupByPresizeMaxCapacity()
+                : configuration.getGroupByPresizeMaxCapacity() / perWorkerFragments.size();
         int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         if (statKeyCapacity <= statLimit) {
             keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
@@ -641,8 +637,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return shards;
         }
 
-        public boolean isSharded() {
-            return sharded;
+        public boolean isNotSharded() {
+            return !sharded;
         }
 
         public Map reopenMap() {

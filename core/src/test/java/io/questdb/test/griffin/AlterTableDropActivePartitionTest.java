@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -361,8 +367,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             dropPartition(tableName, LastPartitionTs);
                         } catch (CairoException |
                                  SqlException ex) { // the latter is due to an assertion in SqlException.position
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp column data in detached partition");
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp data in detached partition");
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         }
                     } finally {
                         Misc.free(workerPool);
@@ -396,7 +402,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             dropPartition(tableName, LastPartitionTs);
                         } catch (CairoException |
                                  SqlException ex) { // the latter is due to an assertion in SqlException.position
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read min, max timestamp from the column");
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read min, max timestamp from the");
                         }
                     } finally {
                         Misc.free(workerPool);
@@ -743,7 +749,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
 
-                        ddl("alter table " + tableName + " drop partition where timestamp > 0");
+                        execute("alter table " + tableName + " drop partition where timestamp > 0");
                         assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
                     } finally {
                         Misc.free(workerPool);
@@ -759,7 +765,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     try {
                         createTableX(tableName, TableHeader);
                         try {
-                            ddl("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
+                            execute("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
                             Assert.fail();
                         } catch (CairoException e) {
                             Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
@@ -983,15 +989,15 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
 
     @SuppressWarnings("SameParameterValue")
     private void detachPartition(String tableName, String partitionName) throws SqlException {
-        ddl("alter table " + tableName + " detach partition list '" + partitionName + "'");
+        execute("alter table " + tableName + " detach partition list '" + partitionName + "'");
     }
 
     private void dropPartition(String tableName, String partitionName) throws SqlException {
-        ddl("alter table " + tableName + " drop partition list '" + partitionName + "'");
+        execute("alter table " + tableName + " drop partition list '" + partitionName + "'");
     }
 
     private void insert(String stmt) throws SqlException {
-        AbstractCairoTest.insert(stmt);
+        AbstractCairoTest.execute(stmt);
         txn++;
     }
 }

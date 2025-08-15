@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -32,11 +34,16 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
+    // millis
+    long getAcceptLoopTimeout();
+
     int getBindIPv4Address();
 
     int getBindPort();
 
     MillisecondClock getClock();
+
+    LongGauge getConnectionCountGauge();
 
     default String getDispatcherLogName() {
         return "IODispatcher";
@@ -81,6 +88,12 @@ public interface IODispatcherConfiguration {
         return getLimit();
     }
 
+    // OS socket buffer size
+    int getNetRecvBufferSize();
+
+    // OS socket buffer size
+    int getNetSendBufferSize();
+
     NetworkFacade getNetworkFacade();
 
     default boolean getPeerNoLinger() {
@@ -89,13 +102,17 @@ public interface IODispatcherConfiguration {
 
     long getQueueTimeout();
 
-    int getRcvBufSize();
+    // user-land buffer size
+    int getRecvBufferSize();
 
     SelectFacade getSelectFacade();
 
-    int getSndBufSize();
+    // user-land buffer size
+    int getSendBufferSize();
 
     int getTestConnectionBufferSize();
 
     long getTimeout();
+
+    Counter listenerStateChangeCounter();
 }

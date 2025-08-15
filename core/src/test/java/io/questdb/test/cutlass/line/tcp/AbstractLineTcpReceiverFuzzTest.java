@@ -33,17 +33,27 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -52,6 +62,7 @@ import static io.questdb.cairo.ColumnType.*;
 @RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
+    protected static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
@@ -137,14 +148,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
-    }
-
-    @Before
-    public void setUp2() {
-        long s0 = System.currentTimeMillis();
-        long s1 = System.nanoTime();
-        random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
+        random = TestUtils.generateRandom(getLog());
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -202,11 +206,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             throw new RuntimeException("Table name is missing");
         }
         try (TableReader reader = getReader(tableName)) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+            getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
             final CharSequence expected = table.generateRows(metadata);
-            getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+            getLog().info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             if (timestampMark < 0L) {
                 try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
@@ -229,8 +233,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 final String sql = tableName + " where timestamp > " + timestampMark;
                 try (RecordCursorFactory factory = select(sql)) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                                .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
+                        // Extract for safe logging
+                        CharSequence name = table.getName();
+                        int size = table.size();
+                        long cursorSize = cursor.size();
+
+                        getLog().info().$("table.getName(): ").$(name).$(", tableName: ").$safe(tableName)
+                                .$(", table.size(): ").$(size).$(", cursor.size(): ").$(cursorSize).$();
                         assertCursorTwoPass(expected, cursor, metadata);
                     }
                 }
@@ -341,18 +350,18 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     boolean checkTable(TableData table) throws SqlException {
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
-            getLog().info().$(table.getName()).$(" has not been created yet").$();
+            getLog().info().$safe(table.getName()).$(" has not been created yet").$();
             return false;
         }
 
         if (timestampMark < 0L) {
             try (TableReader reader = getReader(tableName)) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                         .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
                 return table.size() <= reader.size();
             } catch (CairoException ex) {
                 if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                    getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                             .$(", table.size(): ").$(table.size()).$(", reader.size(): table does not exist").$();
                     return table.size() <= 0;
                 } else {
@@ -364,16 +373,36 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         final String sql = tableName + " where timestamp > " + timestampMark;
         try (RecordCursorFactory factory = select(sql)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                        .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                return table.size() <= cursor.size();
+
+                // Extract vars for safe logging
+                long size = 0;
+                while (cursor.hasNext()) {
+                    size++;
+                }
+                int tableSize = table.size();
+                CharSequence name = table.getName();
+
+                getLog().info().$("table.getName(): ")
+                        .$safe(name).$(", tableName: ").$safe(tableName)
+                        .$(", table.size(): ").$(tableSize)
+                        .$(", cursor.size(): ").$(size).$();
+                return tableSize <= size;
             }
         } catch (SqlException ex) {
             if (ex.getFlyweightMessage().toString().contains("table does not exist")
                     || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                        .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
-                return table.size() <= 0;
+
+                // Extract vars for safe logging
+                int size = table.size();
+                CharSequence name = table.getName();
+
+                getLog().info().$("table.getName(): ")
+                        .$safe(name).$(", tableName: ").$safe(tableName)
+                        .$(", table.size(): ").$(size)
+                        .$(", cursor.size(): table does not exist")
+                        .$();
+
+                return size <= 0;
             } else {
                 throw ex;
             }
@@ -525,7 +554,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 getLog().error().$(e).$();
                 setError(e.getMessage());
             } finally {
-                for (int i = 0; i < numOfThreads; i++) {
+                for (int i = 0; i < sockets.size(); i++) {
                     final Socket socket = sockets.get(i);
                     socket.close();
                 }

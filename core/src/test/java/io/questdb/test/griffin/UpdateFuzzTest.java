@@ -38,14 +38,14 @@ public class UpdateFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             boolean partitioned = rnd.nextInt(10) > 2;
             if (partitioned) {
-                ddl(
+                execute(
                         "create table up as" +
                                 " (select timestamp_sequence('2022-02-24T04', 1000000) ts " +
                                 " from long_sequence(0))" +
                                 " timestamp(ts) partition by DAY" + (rnd.nextBoolean() ? " WAL" : "")
                 );
             } else {
-                ddl(
+                execute(
                         "create table up as" +
                                 " (select timestamp_sequence('2022-02-24T04', 1000000) ts " +
                                 " from long_sequence(0))"
@@ -53,47 +53,47 @@ public class UpdateFuzzTest extends AbstractCairoTest {
             }
 
             if (rnd.nextBoolean()) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-24T10', 1000000) ts " +
                         " from long_sequence(2)");
             }
 
             if (rnd.nextBoolean() && partitioned) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-24', 1000000) ts " +
                         " from long_sequence(2)");
             }
 
             if (rnd.nextBoolean()) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-25T09', 1000000) ts " +
                         " from long_sequence(1)");
             }
 
             if (rnd.nextBoolean() && partitioned) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-25T04', 1000000) ts " +
                         " from long_sequence(1)");
             }
 
-            ddl("alter table up add column x string");
+            execute("alter table up add column x string");
 
             if (rnd.nextBoolean() && partitioned) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-25T03', 1000000) ts, '1' as x" +
                         " from long_sequence(2)");
 
             }
 
             if (rnd.nextBoolean()) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-25T10', 1000000) ts, '1' as x" +
                         " from long_sequence(2)");
 
             }
 
             if (rnd.nextBoolean()) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-26T10', 1000000) ts, '1' as x" +
                         " from long_sequence(5)");
             }
@@ -101,13 +101,13 @@ public class UpdateFuzzTest extends AbstractCairoTest {
             short lastType = ColumnType.STRING;
 
             if (rnd.nextBoolean() && partitioned) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-24', 1000000) ts, '12' " +
                         " from long_sequence(2)");
             }
 
             if (rnd.nextBoolean()) {
-                ddl("alter table up alter column x type symbol");
+                execute("alter table up alter column x type symbol");
                 lastType = ColumnType.SYMBOL;
                 drainWalQueue();
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
@@ -124,7 +124,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
             }
 
             if (rnd.nextBoolean()) {
-                ddl("alter table up alter column x type varchar");
+                execute("alter table up alter column x type varchar");
                 drainWalQueue();
                 lastType = ColumnType.VARCHAR;
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
@@ -133,14 +133,14 @@ public class UpdateFuzzTest extends AbstractCairoTest {
             }
 
             if (rnd.nextBoolean() && partitioned) {
-                insert(" insert into up " +
+                execute(" insert into up " +
                         " select timestamp_sequence('2022-02-24T10', 1000000) ts, '1' as x" +
                         " from long_sequence(1)");
 
             }
 
             if (rnd.nextBoolean() && lastType != ColumnType.STRING) {
-                ddl("alter table up alter column x type string");
+                execute("alter table up alter column x type string");
                 drainWalQueue();
                 lastType = ColumnType.STRING;
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
@@ -149,7 +149,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
             }
 
             if (rnd.nextBoolean() && lastType != ColumnType.SYMBOL) {
-                ddl("alter table up alter column x type symbol");
+                execute("alter table up alter column x type symbol");
                 drainWalQueue();
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                     purgeJob.run(0);

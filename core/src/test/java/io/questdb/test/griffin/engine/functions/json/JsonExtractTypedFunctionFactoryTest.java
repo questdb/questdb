@@ -70,19 +70,10 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExtractTimestampFromDouble() throws SqlException {
-        assertSql(
-                "json_extract\n" +
-                        "1970-01-01T00:00:00.000001Z\n",
-                "select json_extract('{\"x\":1.0}', '.x')::timestamp"
-        );
-    }
-
-    @Test
     public void testColumnAsJsonPath() throws Exception {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": 0.0000000000000000000000000001}'";
-            ddl("create table json_test as (select " + json + "::varchar text, '.path' path)");
+            execute("create table json_test as (select " + json + "::varchar text, '.path' path)");
             assertException("select json_extract(text, path, 6) from json_test", 26, "constant or bind variable expected");
         });
     }
@@ -90,12 +81,12 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExtractTimestampBadJson() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": [1,2,3]}')");
-            insert("insert into json_test values ('{\"\"path\": [1,2]}')");
-            insert("insert into json_test values ('{\"path\": []]}')");
-            insert("insert into json_test values ('{\"path2\": \"4\"}')");
-            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": [1,2,3]}')");
+            execute("insert into json_test values ('{\"\"path\": [1,2]}')");
+            execute("insert into json_test values ('{\"path\": []]}')");
+            execute("insert into json_test values ('{\"path2\": \"4\"}')");
+            execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
                     "x\n" +
                             "1970-01-01T00:00:00.000003Z:TIMESTAMP\n" +
@@ -109,14 +100,23 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractTimestampFromDouble() throws SqlException {
+        assertSql(
+                "json_extract\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
+                "select json_extract('{\"x\":1.0}', '.x')::timestamp"
+        );
+    }
+
+    @Test
     public void testExtractTimestampNonExistingPlaces() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": [1,2,3]}')");
-            insert("insert into json_test values ('{\"path\": [1,2]}')");
-            insert("insert into json_test values ('{\"path\": []]}')");
-            insert("insert into json_test values ('{\"path2\": \"4\"}')");
-            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": [1,2,3]}')");
+            execute("insert into json_test values ('{\"path\": [1,2]}')");
+            execute("insert into json_test values ('{\"path\": []]}')");
+            execute("insert into json_test values ('{\"path2\": \"4\"}')");
+            execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
                     "x\n" +
                             "1970-01-01T00:00:00.000003Z:TIMESTAMP\n" +
@@ -196,7 +196,7 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
             final String sql = "select json_extract(NULL, '.x', " + columnType + ") as x from long_sequence(1)";
             final SqlException exc = Assert.assertThrows(
                     SqlException.class,
-                    () -> compile(sql)
+                    () -> execute(sql)
             );
             Assert.assertEquals(7, exc.getPosition());
             TestUtils.assertContains(exc.getMessage(), "please use json_extract(json,path)::type semantic");

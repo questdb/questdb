@@ -40,27 +40,44 @@ import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
+/**
+ * DROP can be followed by:
+ * - TABLE name [;]
+ * - TABLES name(,name)* [;]
+ * - ALL [;] or legacy ALL TABLES [;]
+ * - MATERIALIZED VIEW name [;] (these are in MatViewTest)
+ */
 public class DropStatementTest extends AbstractCairoTest {
-    /* **
-     * DROP can be followed by:
-     * - TABLE name [;]
-     * - TABLES name(,name)* [;]
-     * - ALL TABLES [;]
-     */
-
     private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
 
     @Test
-    public void testDropDatabase() throws Exception {
+    public void testDropDatabase0() throws Exception {
         String tab0 = "public table";
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"" + tab0 + "\" (s string)");
-            ddl("CREATE TABLE \"" + tab1 + "\" (s string)");
-            ddl("CREATE TABLE \"" + tab2 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab0 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab1 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab2 + "\" (s string)");
 
-            drop("DROP ALL TABLES");
+            execute("DROP ALL TABLES");
+            tableBucket.clear();
+            engine.getTableTokens(tableBucket, true);
+            Assert.assertEquals(getSystemTablesCount(engine), tableBucket.size());
+        });
+    }
+
+    @Test
+    public void testDropDatabase1() throws Exception {
+        String tab0 = "public table";
+        String tab1 = "shy table";
+        String tab2 = "japanese table 向上";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE \"" + tab0 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab1 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab2 + "\" (s string)");
+
+            execute("DROP ALL");
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
             Assert.assertEquals(getSystemTablesCount(engine), tableBucket.size());
@@ -71,11 +88,11 @@ public class DropStatementTest extends AbstractCairoTest {
     public void testDropTableBusyReader() throws Exception {
         String tab0 = "large table";
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"" + tab0 + "\" (a int)");
+            execute("CREATE TABLE \"" + tab0 + "\" (a int)");
 
             try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    drop("DROP TABLE \"" + tab0 + '"');
+                    execute("DROP TABLE \"" + tab0 + '"');
                 }
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
@@ -86,7 +103,7 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableBusyWriter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"large table\" (a int)");
+            execute("CREATE TABLE \"large table\" (a int)");
 
             try (TableWriter ignored = getWriter("large table")) {
                 assertExceptionNoLeakCheck("DROP TABLE \"large table\"");
@@ -99,9 +116,9 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableExisting() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE instrument (a int)");
+            execute("CREATE TABLE instrument (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("instrument"));
-            drop("DROP TABLE instrument");
+            execute("DROP TABLE instrument");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("instrument"));
         });
     }
@@ -111,10 +128,10 @@ public class DropStatementTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // non existing table, must not fail
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("una tabla de queso"));
-            drop("DROP TABLE IF EXISTS \"una tabla de queso\";");
-            ddl("create table \"una tabla de queso\"(a int)");
+            execute("DROP TABLE IF EXISTS \"una tabla de queso\";");
+            execute("create table \"una tabla de queso\"(a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("una tabla de queso"));
-            drop("DROP TABLE IF EXISTS \"una tabla de queso\";");
+            execute("DROP TABLE IF EXISTS \"una tabla de queso\";");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("una tabla de queso"));
         });
     }
@@ -126,7 +143,7 @@ public class DropStatementTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("drop i_am_missing");
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'materialized view' or 'all' expected");
             }
         });
     }
@@ -134,9 +151,9 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableQuoted() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"large table\" (a int)");
+            execute("CREATE TABLE \"large table\" (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("large table"));
-            drop("DROP TABLE \"large table\"");
+            execute("DROP TABLE \"large table\"");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("large table"));
         });
     }
@@ -144,10 +161,10 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableUtf8() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE научный (a int)");
+            execute("CREATE TABLE научный (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("научный"));
 
-            drop("DROP TABLE научный");
+            execute("DROP TABLE научный");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("научный"));
         });
     }
@@ -155,10 +172,10 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableUtf8Quoted() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"научный руководитель\"(a int)");
+            execute("CREATE TABLE \"научный руководитель\"(a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("научный руководитель"));
 
-            drop("DROP TABLE \"научный руководитель\"");
+            execute("DROP TABLE \"научный руководитель\"");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("научный руководитель"));
         });
     }
@@ -166,7 +183,7 @@ public class DropStatementTest extends AbstractCairoTest {
     @Test
     public void testDropTableWithDotFailure() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"x.csv\" (a int)");
+            execute("CREATE TABLE \"x.csv\" (a int)");
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("x.csv"));
 
             try {
@@ -176,7 +193,7 @@ public class DropStatementTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [.]");
             }
 
-            drop("DROP TABLE \"x.csv\"");
+            execute("DROP TABLE \"x.csv\"");
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("x.csv"));
         });
     }
@@ -187,9 +204,9 @@ public class DropStatementTest extends AbstractCairoTest {
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"" + tab0 + "\" (s string)");
-            ddl("CREATE TABLE \"" + tab1 + "\" (s string)");
-            ddl("CREATE TABLE \"" + tab2 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab0 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab1 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab2 + "\" (s string)");
 
             try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
@@ -198,7 +215,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables ['public table': [-1] could not lock 'public table' [reason='busyReader']]"
+                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table~' [reason='busyReader']]"
                 );
             }
             tableBucket.clear();
@@ -214,16 +231,16 @@ public class DropStatementTest extends AbstractCairoTest {
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
-            ddl("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
-            ddl("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
+            execute("CREATE TABLE \"" + tab0 + "\" (s string)", sqlExecutionContext);
+            execute("CREATE TABLE \"" + tab1 + "\" (s string)", sqlExecutionContext);
+            execute("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
 
             try (TableWriter ignored = getWriter(tab0)) {
-                ddl("DROP ALL TABLES;", sqlExecutionContext);
+                execute("DROP ALL TABLES;", sqlExecutionContext);
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables ['public table': [-1] could not lock 'public table' [reason='test']]"
+                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table~' [reason='test']]"
                 );
             }
             tableBucket.clear();

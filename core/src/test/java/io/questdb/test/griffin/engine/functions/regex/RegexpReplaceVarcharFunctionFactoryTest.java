@@ -94,7 +94,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
+            execute("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
 
             assertSql(
                     "regexp_replace\n" +
@@ -111,7 +111,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSingleGroupAsciiStable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com','http://example4.com?q=форсаж','фубар',null) url from long_sequence(20))");
+            execute("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com','http://example4.com?q=форсаж','фубар',null) url from long_sequence(20))");
 
             assertSql(
                     "regexp_replace\n" +
@@ -168,7 +168,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSingleGroupAsciiUnstable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com','http://example4.com?q=форсаж','фубар',null) url from long_sequence(20))");
+            execute("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com','http://example4.com?q=форсаж','фубар',null) url from long_sequence(20))");
 
             assertSql(
                     "regexp_replace\n" +
@@ -225,7 +225,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSingleGroupStable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('https://пример.com/abc','https://example2.com/def','http://пример.com','http://пример.com?q=форсаж','фубар',null) url from long_sequence(20))");
+            execute("create table x as (select rnd_varchar('https://пример.com/abc','https://example2.com/def','http://пример.com','http://пример.com?q=форсаж','фубар',null) url from long_sequence(20))");
 
             assertSql(
                     "regexp_replace\n" +
@@ -282,7 +282,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSingleGroupUnstable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('https://пример.com/abc','https://example2.com/def','http://пример.com','http://пример.com?q=форсаж','фубар',null) url from long_sequence(20))");
+            execute("create table x as (select rnd_varchar('https://пример.com/abc','https://example2.com/def','http://пример.com','http://пример.com?q=форсаж','фубар',null) url from long_sequence(20))");
 
             assertSql(
                     "regexp_replace\n" +

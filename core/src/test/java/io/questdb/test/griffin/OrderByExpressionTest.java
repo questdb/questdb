@@ -35,7 +35,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
         assertException(
                 "select b from (select rnd_bin(10, 20, 2) b from long_sequence(10)) order by b desc",
                 76,
-                "unsupported column type: BINARY"
+                "BINARY is not a supported type in ORDER BY clause"
         );
     }
 
@@ -62,7 +62,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 null,
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -127,14 +127,14 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 null,
                 null,
                 true,
-                false
+                true
         );
     }
 
     @Test
     public void testOrderByExpressionWithDuplicatesMaintainsOriginalOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select x x, x%2 y from long_sequence(10))");
+            execute("create table tab as (select x x, x%2 y from long_sequence(10))");
 
             assertQuery(
                     "x\ty\n" +
@@ -254,7 +254,84 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         ") " +
                         "order by i desc",
                 151,
-                "unsupported column type: INTERVAL"
+                "INTERVAL is not a supported type in ORDER BY clause"
+        );
+    }
+
+    @Test
+    public void testOrderByNumericColumnThatDoesExist() throws Exception {
+        assertQuery("5\n" +
+                        "123\n" +
+                        "456\n" +
+                        "789\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\"\n" +
+                        ")\n" +
+                        "ORDER BY 5",
+                null,
+                true,
+                true
+        );
+
+        assertQuery("5\n" +
+                        "123\n" +
+                        "456\n" +
+                        "789\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\"\n" +
+                        ")\n" +
+                        "ORDER BY 1",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByNumericColumnThatDoesNotExist() throws Exception {
+        assertException("SELECT * FROM (\n" +
+                "  SELECT 456 AS \"5\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 789 AS \"5\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 123 AS \"5\"\n" +
+                ")\n" +
+                "ORDER BY 6", 113, "order column position is out of range [max=1]");
+    }
+
+    @Test
+    public void testOrderByTwoColumnsInJoin() throws Exception {
+        assertQuery(
+                "id\ts1\ts2\n" +
+                        "42\tfoo1\tbar1\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo2\tbar1\n" +
+                        "42\tfoo2\tbar2\n" +
+                        "42\tfoo2\tbar3\n" +
+                        "42\tfoo2\tbar3\n" +
+                        "42\tfoo3\tbar2\n" +
+                        "42\tfoo3\tbar3\n",
+                "select * " +
+                        "from (" +
+                        "  select b.*" +
+                        "  from (select 42 id) a " +
+                        "  left join (x union all (select 0 id, 'foo0' s1, 'bar0')) b on a.id = b.id" +
+                        ")" +
+                        "order by s1, s2",
+                "create table x as (select 42 id, rnd_str('foo1','foo2','foo3') s1, rnd_str('bar1','bar2','bar3') s2 from long_sequence(10))",
+                null,
+                true,
+                false
         );
     }
 
@@ -285,5 +362,39 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testOrderByWithAlphanumericNamedColumn() throws Exception {
+        assertMemoryLeak(() -> assertSql("5_sum\n" +
+                "123\n" +
+                "456\n" +
+                "789\n", "SELECT * FROM (\n" +
+                "  SELECT 456 AS \"5_sum\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 789 AS \"5_sum\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 123 AS \"5_sum\"\n" +
+                ")\n" +
+                "ORDER BY \"5_sum\""));
+    }
+
+    @Test
+    public void testOrderByWithAmbiguousColumnOrdering() throws Exception {
+        assertQuery("5\t1\n" +
+                        "123\t999\n" +
+                        "456\t123\n" +
+                        "789\t456\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\", 123 AS \"1\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\",  456 AS \"1\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\",  999 AS \"1\"\n" +
+                        ")\n" +
+                        "ORDER BY 1",
+                null,
+                true,
+                true);
     }
 }

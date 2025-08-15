@@ -45,12 +45,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testAddIndexOnDeduplicatedColumn() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol, i int) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts, i, s ) "
             );
-            ddl("alter table " + tableName + " alter column s add index");
+            execute("alter table " + tableName + " alter column s add index");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -69,7 +69,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     "SHOW COLUMNS FROM " + tableName
             );
 
-            ddl("alter table " + tableName + " alter column s drop index");
+            execute("alter table " + tableName + " alter column s drop index");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -93,7 +93,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testAlterReadonlyFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table dups as" +
+            execute("create table dups as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -118,7 +118,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            ddl("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
+            execute("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
             assertException(
@@ -202,10 +202,17 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithArrayDedupKey() throws Exception {
+        assertMemoryLeak(() -> assertException("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
+                        " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)",
+                101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
+    }
+
+    @Test
     public void testCreateTableWithDoubleQuotes() throws Exception {
         String tableName = testName.getMethodName() + " a 欢迎回来 to you";
         assertMemoryLeak(ff, () -> {
-            ddl(
+            execute(
                     "CREATE TABLE '" + tableName + "' (\n" +
                             "  Status SYMBOL capacity 16 CACHE,\n" +
                             "  \"Reported time\" TIMESTAMP\n" +
@@ -220,8 +227,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                             "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n",
                     "SHOW COLUMNS FROM '" + tableName + '\''
             );
-            ddl("alter table '" + tableName + "' DEDUP DISABLE;");
-            ddl("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
+            execute("alter table '" + tableName + "' DEDUP DISABLE;");
+            execute("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
             drainWalQueue();
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
@@ -236,7 +243,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testDedupEnabledTimestampOnly() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts)"
@@ -251,7 +258,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testDedupSyntaxError() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL"
@@ -265,7 +272,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testDeduplicationEnabledIntAndSymbol() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol, i int) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts, i, s ) "
@@ -292,7 +299,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testDeduplicationEnabledTimestampAndSymbol() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS(ts, s)"
@@ -309,7 +316,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testDeduplicationEnabledTimestampOnly() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts)"
@@ -324,7 +331,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testDisableDedupOnTable() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
@@ -344,7 +351,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     "SHOW COLUMNS FROM " + tableName
             );
 
-            ddl("ALTER table " + tableName + " dedup disable");
+            execute("ALTER table " + tableName + " dedup disable");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -362,7 +369,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     "SHOW COLUMNS FROM " + tableName
             );
 
-            ddl("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
+            execute("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -380,9 +387,9 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     "SHOW COLUMNS FROM " + tableName
             );
 
-            ddl("ALTER table " + tableName + " dedup disable");
-            ddl("ALTER table " + tableName + " drop column x");
-            ddl("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
+            execute("ALTER table " + tableName + " dedup disable");
+            execute("ALTER table " + tableName + " drop column x");
+            execute("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -399,8 +406,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     "SHOW COLUMNS FROM " + tableName
             );
 
-            ddl("ALTER table " + tableName + " dedup disable");
-            ddl("ALTER table " + tableName + " drop column s");
+            execute("ALTER table " + tableName + " dedup disable");
+            execute("ALTER table " + tableName + " drop column s");
             assertException(
                     "ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)",
                     57,
@@ -420,7 +427,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testEnableDedup() throws Exception {
         String tableName = testName.getMethodName();
-        ddl(
+        execute(
                 "create table " + tableName +
                         " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
@@ -437,7 +444,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                         "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n",
                 "show columns from '" + tableName + "'"
         );
-        compile("alter table " + tableName + " dedup disable");
+        execute("alter table " + tableName + " dedup disable");
         drainWalQueue();
         assertSql(
                 "table_name\tdedup\n" +
@@ -445,7 +452,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
 
-        compile("alter table " + tableName + " dedup enable upsert keys(ts)");
+        execute("alter table " + tableName + " dedup enable upsert keys(ts)");
         drainWalQueue();
         assertSql(
                 "table_name\tdedup\n" +
@@ -465,7 +472,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testEnableDedupDroppedColumnColumnConcurrently() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameStr = testName.getMethodName();
-            ddl(
+            execute(
                     "create table " + tableNameStr + " as (" +
                             "select x, " +
                             " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -513,7 +520,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testEnableDedupDroppedColumnColumnFails() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameStr = testName.getMethodName();
-            ddl("create table " + tableNameStr + " as (" +
+            execute("create table " + tableNameStr + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -544,7 +551,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 }
             }
 
-            ddl("ALTER TABLE " + tableNameStr + " drop column sym");
+            execute("ALTER TABLE " + tableNameStr + " drop column sym");
             try (TableWriter tw = getWriter(tableToken)) {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(1);

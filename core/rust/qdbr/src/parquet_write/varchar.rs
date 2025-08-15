@@ -1,14 +1,13 @@
 use std::mem;
 
+use super::util::ExactSizedIter;
+use crate::allocator::AcVec;
+use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
-use crate::parquet_write::{ParquetError, ParquetResult};
-
-use super::util::ExactSizedIter;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -79,7 +78,7 @@ pub fn varchar_to_page(
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
-                let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
+                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
                 assert!(
                     offset + size <= data.len(),
                     "Data corruption in VARCHAR column"
@@ -100,17 +99,17 @@ pub fn varchar_to_page(
     match encoding {
         Encoding::Plain => {
             encode_plain(&utf8_slices, &mut buffer, &mut stats);
-            Ok(())
         }
         Encoding::DeltaLengthByteArray => {
             encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
-            Ok(())
         }
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding string as {:?}",
-            other
-        ))),
-    }?;
+        _ => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {encoding:?} while writing a string column"
+            ));
+        }
+    };
 
     let null_count = column_top + null_count;
     build_plain_page(
@@ -167,24 +166,28 @@ fn is_inlined(header: u8) -> bool {
     (header & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED
 }
 
-pub fn append_varchar(aux_mem: &mut Vec<u8>, data_mem: &mut Vec<u8>, value: &[u8]) {
+pub fn append_varchar(
+    aux_mem: &mut AcVec<u8>,
+    data_mem: &mut AcVec<u8>,
+    value: &[u8],
+) -> ParquetResult<()> {
     let value_size = value.len();
     if value_size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
         let flags = HEADER_FLAG_INLINED | is_ascii_inlined(value);
         let header = (value_size << HEADER_FLAGS_WIDTH) as u8 | flags;
-        aux_mem.push(header);
+        aux_mem.push(header)?;
         let len_before_value = aux_mem.len();
-        aux_mem.extend_from_slice(value);
+        aux_mem.extend_from_slice(value)?;
         // Add zeroes to align to 16 bytes.
-        aux_mem.resize(len_before_value + VARCHAR_MAX_BYTES_FULLY_INLINED, 0u8);
-        append_offset(aux_mem, data_mem.len());
+        aux_mem.resize(len_before_value + VARCHAR_MAX_BYTES_FULLY_INLINED, 0u8)?;
+        append_offset(aux_mem, data_mem.len())
     } else {
         assert!(value_size <= LENGTH_LIMIT_BYTES);
-        let header = (value_size as u32) << HEADER_FLAGS_WIDTH | is_ascii(value);
-        aux_mem.extend_from_slice(&header.to_le_bytes());
-        aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES]);
-        data_mem.extend_from_slice(value);
-        append_offset(aux_mem, data_mem.len() - value_size);
+        let header = ((value_size as u32) << HEADER_FLAGS_WIDTH) | is_ascii(value);
+        aux_mem.extend_from_slice(&header.to_le_bytes())?;
+        aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES])?;
+        data_mem.extend_from_slice(value)?;
+        append_offset(aux_mem, data_mem.len() - value_size)
     }
 }
 
@@ -206,20 +209,27 @@ fn is_ascii(value: &[u8]) -> u32 {
     HEADER_FLAG_ASCII_32
 }
 
-pub fn append_varchar_null(aux_mem: &mut Vec<u8>, data_mem: &[u8]) {
-    aux_mem.extend_from_slice(&VARCHAR_HEADER_FLAG_NULL);
-    append_offset(aux_mem, data_mem.len());
+pub fn append_varchar_null(aux_mem: &mut AcVec<u8>, data_mem: &[u8]) -> ParquetResult<()> {
+    aux_mem.extend_from_slice(&VARCHAR_HEADER_FLAG_NULL)?;
+    append_offset(aux_mem, data_mem.len())?;
+    Ok(())
 }
 
-fn append_offset(aux_mem: &mut Vec<u8>, offset: usize) {
+fn append_offset(aux_mem: &mut AcVec<u8>, offset: usize) -> ParquetResult<()> {
     assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
-    aux_mem.extend_from_slice(&(offset as u16).to_le_bytes());
-    aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes());
+    aux_mem.extend_from_slice(&(offset as u16).to_le_bytes())?;
+    aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes())?;
+    Ok(())
 }
 
-pub fn append_varchar_nulls(aux_mem: &mut Vec<u8>, data_mem: &[u8], count: usize) {
+pub fn append_varchar_nulls(
+    aux_mem: &mut AcVec<u8>,
+    data_mem: &[u8],
+    count: usize,
+) -> ParquetResult<()> {
     // TODO: optimize, inserting same values
     for _ in 0..count {
-        append_varchar_null(aux_mem, data_mem);
+        append_varchar_null(aux_mem, data_mem)?;
     }
+    Ok(())
 }

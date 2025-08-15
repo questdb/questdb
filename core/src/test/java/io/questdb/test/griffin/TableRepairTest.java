@@ -37,9 +37,9 @@ public class TableRepairTest extends AbstractCairoTest {
 
     @Test
     public void testDeleteActivePartition() throws Exception {
-        // this delete partition actually deletes files, simulating manual intervention
+        // this test deletes partition files, simulating manual intervention
         assertMemoryLeak(() -> {
-            ddl("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+            execute("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
             engine.releaseAllWriters();
 
@@ -49,7 +49,7 @@ public class TableRepairTest extends AbstractCairoTest {
                 // last and "active" partition is "1970-01-12"
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
-                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-12").$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-12").$();
                     Assert.assertTrue(Files.rmdir(path, true));
                 }
 
@@ -57,7 +57,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                try (TableWriter writer = newOffPoolWriter(configuration, "tst", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "tst")) {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
                     Assert.assertEquals(950390000000L, writer.getMaxTimestamp());
@@ -76,9 +76,9 @@ public class TableRepairTest extends AbstractCairoTest {
 
     @Test
     public void testDeletePartitionInTheMiddle() throws Exception {
-        // this delete partition actually deletes files, simulating manual intervention
+        // this test deletes partition files, simulating manual intervention
         assertMemoryLeak(() -> {
-            ddl("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+            execute("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
             engine.releaseAllWriters();
 
@@ -88,7 +88,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
-                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-09").$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-09").$();
                     Assert.assertTrue(Files.rmdir(path, true));
                 }
 
@@ -96,7 +96,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                newOffPoolWriter(configuration, "tst", metrics).close();
+                newOffPoolWriter(configuration, "tst").close();
 
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(91360, reader.size());

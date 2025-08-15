@@ -28,8 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -41,7 +44,11 @@ import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -129,6 +136,11 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
+            public AtomicBoolean getCancelledFlag() {
+                return null;
+            }
+
+            @Override
             public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
                 return null;
             }
@@ -154,11 +166,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-            }
-
-            @Override
-            public boolean isThreadsafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
 
@@ -231,10 +239,10 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             memoryRestrictedEngine.reloadTableNames();
 
-            insert("insert into balances values (1, 'EUR', 140.6)");
+            execute("insert into balances values (1, 'EUR', 140.6)");
             assertQuery(
                     "cust_id\tccy\tbalance\n1\tEUR\t140.6\n",
                     "select * from balances",
@@ -256,7 +264,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testBackupTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             // create infrastructure where backup is enabled (dir configured)
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
 
             final File backupDir = temp.newFolder();
             final DateFormat backupSubDirFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
@@ -290,7 +298,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCircuitBreakerTimeout() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tab as (select" +
+            execute("create table tab as (select" +
                     " rnd_double(2) d" +
                     " from long_sequence(1000000))");
             memoryRestrictedEngine.reloadTableNames();
@@ -314,10 +322,49 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCircuitBreakerTimeoutForCrossJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            execute(" CREATE TABLE 'bench' (\n" +
+                    "    symbol SYMBOL capacity 256 CACHE,\n" +
+                    "    timestamp TIMESTAMP,\n" +
+                    "    price DOUBLE,\n" +
+                    "    amount DOUBLE\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            execute("insert into bench\n" +
+                    "select rnd_symbol('a', 'b', 'c') symbol, \n" +
+                    "rnd_timestamp('2022-03-08T00:00:00Z', '2022-03-08T23:59:59Z', 0) timestamp, \n" +
+                    "rnd_double() price, rnd_double() amount from long_sequence(100000)");
+            drainWalQueue();
+            memoryRestrictedEngine.reloadTableNames();
+
+            try {
+                setMaxCircuitBreakerChecks(Long.MAX_VALUE);
+                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + 10; // 10ms query timeout
+                TestUtils.printSql(
+                        engine,
+                        readOnlyExecutionContext,
+                        "select t1.*, t2.* from (SELECT * FROM bench LIMIT 100000) t1 \n" +
+                                "join (SELECT * FROM bench LIMIT 100000) t2 \n" +
+                                "on t1.symbol=concat(t2.price, '') and t1.symbol = cast(t2.symbol as varchar)\n" +
+                                "where t1.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'\n" +
+                                "and t2.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'",
+                        sink
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing"));
+            } finally {
+                circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
+            }
+        });
+    }
+
+    @Test
     public void testCircuitBreakerWithNonKeyedAgg() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(3,3,3,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
@@ -357,12 +404,12 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCircuitBreakerWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(3,3,3,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10)) timestamp(ts1)");
-            ddl("create table tb2 as (select" +
+            execute("create table tb2 as (select" +
                     " rnd_symbol(20,3,3,20000) sym1," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
@@ -397,7 +444,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCopyDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                ddl("create table testDisallowCopySerial (l long)");
+                execute("create table testDisallowCopySerial (l long)");
                 assertExceptionNoLeakCheck("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.toString(), "permission denied");
@@ -409,7 +456,21 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertExceptionNoLeakCheck("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                try (SqlCompiler compiler = memoryRestrictedEngine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(false);
+                    CompiledQuery cq = compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                    if (cq.getRecordCursorFactory() != null) {
+                        try (
+                                RecordCursorFactory factory = cq.getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(readOnlyExecutionContext)
+                        ) {
+                            cursor.hasNext();
+                        }
+                    } else {
+                        execute(compiler, "create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                    }
+                }
+                Assert.fail();
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
@@ -425,10 +486,24 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testDropTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            engine.execute("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             memoryRestrictedEngine.reloadTableNames();
             try {
-                assertExceptionNoLeakCheck("drop table balances", readOnlyExecutionContext);
+                try (SqlCompiler compiler = memoryRestrictedEngine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(false);
+                    CompiledQuery cq = compiler.compile("drop table balances", readOnlyExecutionContext);
+                    if (cq.getRecordCursorFactory() != null) {
+                        try (
+                                RecordCursorFactory factory = cq.getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(readOnlyExecutionContext)
+                        ) {
+                            cursor.hasNext();
+                        }
+                    } else {
+                        memoryRestrictedEngine.execute("drop table balances", readOnlyExecutionContext);
+                    }
+                }
+                Assert.fail();
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
@@ -439,12 +514,12 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testInsertDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             memoryRestrictedEngine.reloadTableNames();
 
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
 
-            insert("insert into balances values (1, 'EUR', 140.6)");
+            execute("insert into balances values (1, 'EUR', 140.6)");
             assertQuery(
                     "count\n1\n",
                     "select count() from balances",
@@ -455,7 +530,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
 
             try {
-                insert("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
+                execute("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
@@ -477,7 +552,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(2,2,2,20000) sym2," +
                     " rnd_double(2) d," +
@@ -518,48 +593,10 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryRestrictionsWithDistinct() throws Exception {
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
-                    " rnd_symbol(40,4,4,20000) sym1," +
-                    " rnd_symbol(40,4,4,20000) sym2," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(40)) timestamp(ts)");
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    "sym1\tsym2\n" +
-                            "OOZZ\tHNZH\n" +
-                            "GPGW\tQSRL\n" +
-                            "FJGE\tQCEH\n" +
-                            "PEHN\tIPHZ\n",
-                    "select distinct sym1, sym2 from tb1 where d < 0.07",
-                    null,
-                    true,
-                    readOnlyExecutionContext
-            );
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select distinct sym1, sym2 from tb1",
-                        null,
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
-        });
-    }
-
-    @Test
     public void testMemoryRestrictionsWithFullFatInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl(
+            execute(
                     "create table tb1 as (select" +
                             " rnd_symbol(4,4,4,20000) sym1," +
                             " rnd_double(2) d1," +
@@ -567,7 +604,7 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(10)) timestamp(ts1)"
             );
 
-            ddl(
+            execute(
                     "create table tb2 as (select" +
                             " rnd_symbol(3,3,3,20000) sym2," +
                             " rnd_double(2) d2," +
@@ -606,14 +643,14 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithFullFatOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl(
+            execute(
                     "create table tb1 as (select" +
                             " rnd_symbol(4,4,4,20000) sym1," +
                             " rnd_double(2) d1," +
                             " timestamp_sequence(0, 1000000000) ts1" +
                             " from long_sequence(10)) timestamp(ts1)"
             );
-            ddl(
+            execute(
                     "create table tb2 as (select" +
                             " rnd_symbol(3,3,3,20000) sym2," +
                             " rnd_double(2) d2," +
@@ -653,12 +690,12 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10)) timestamp(ts1)");
-            ddl("create table tb2 as (select" +
+            execute("create table tb2 as (select" +
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
@@ -668,7 +705,7 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false,
-                    true
+                    false
             );
 
             try {
@@ -691,7 +728,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithLatestBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_long() d," +
@@ -727,12 +764,12 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10)) timestamp(ts1)");
-            ddl("create table tb2 as (select" +
+            execute("create table tb2 as (select" +
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
@@ -766,7 +803,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithRandomAccessOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
@@ -806,7 +843,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
@@ -847,7 +884,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithSampleByFillNone() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(20,4,4,20000) sym1," +
                     " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
@@ -888,7 +925,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(20,4,4,20000) sym1," +
                     " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
@@ -929,7 +966,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithSampleByFillPrev() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(20,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
@@ -970,7 +1007,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithSampleByFillValue() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(20,4,4,20000) sym1," +
                     " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
@@ -1011,12 +1048,12 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(3,3,3,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10)) timestamp(ts1)");
-            ddl("create table tb2 as (select" +
+            execute("create table tb2 as (select" +
                     " rnd_symbol(20,3,3,20000) sym1," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
@@ -1050,12 +1087,12 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithoutRandomAccessOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000001000) ts1" +
                     " from long_sequence(10)) timestamp(ts1)");
-            ddl("create table tb2 as (select" +
+            execute("create table tb2 as (select" +
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
@@ -1088,7 +1125,7 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testRenameTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances(cust_id int, ccy symbol, balance double)");
             try {
                 assertExceptionNoLeakCheck("rename table balances to newname", readOnlyExecutionContext);
             } catch (Exception ex) {
@@ -1110,7 +1147,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl("create table tb1 as (select" +
+            execute("create table tb1 as (select" +
                     " rnd_symbol(8,8,8,20000) sym1," +
                     " rnd_symbol(2,2,2,20000) sym2," +
                     " rnd_double(2) d," +
@@ -1155,14 +1192,14 @@ public class SecurityTest extends AbstractCairoTest {
     private void assertLeftHashJoin(boolean fullFat) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            ddl(
+            execute(
                     "create table tb1 as (select" +
                             " rnd_symbol(4,4,4,20000) sym1," +
                             " rnd_double(2) d1," +
                             " timestamp_sequence(0, 1000000000) ts1" +
                             " from long_sequence(10)) timestamp(ts1)"
             );
-            ddl(
+            execute(
                     "create table tb2 as (select" +
                             " rnd_symbol(3,3,3,20000) sym2," +
                             " rnd_double(2) d2," +

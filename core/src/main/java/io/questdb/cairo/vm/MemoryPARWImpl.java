@@ -25,12 +25,28 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,6 +89,7 @@ public class MemoryPARWImpl implements MemoryARW {
         this.memoryTag = memoryTag;
     }
 
+    @Override
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -139,6 +156,11 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final long getAppendOffset() {
         return baseOffset + appendPointer;
+    }
+
+    @Override
+    public ArrayView getArray(long offset) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -244,19 +266,17 @@ public class MemoryPARWImpl implements MemoryARW {
 
     @Override
     public void getLong256(long offset, CharSink<?> sink) {
-        final long a, b, c, d;
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
-            b = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES);
-            c = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2);
-            d = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3);
+            Numbers.appendLong256FromUnsafe(absolutePointer + offset, sink);
         } else {
-            a = getLong(offset);
-            b = getLong(offset + Long.BYTES);
-            c = getLong(offset + Long.BYTES * 2);
-            d = getLong(offset + Long.BYTES * 3);
+            Numbers.appendLong256(
+                    getLong(offset),
+                    getLong(offset + Long.BYTES),
+                    getLong(offset + Long.BYTES * 2),
+                    getLong(offset + Long.BYTES * 3),
+                    sink
+            );
         }
-        Numbers.appendLong256(a, b, c, d, sink);
     }
 
     @Override
@@ -411,6 +431,11 @@ public class MemoryPARWImpl implements MemoryARW {
 
     public long pageRemaining(long offset) {
         return getPageSize() - offsetInPage(offset);
+    }
+
+    @Override
+    public void putArray(ArrayView array) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -631,9 +656,13 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.putLong(appendPointer + Long.BYTES, hi);
             appendPointer += 16;
         } else {
-            putLong(lo);
-            putLong(hi);
+            putLong128Slow(lo, hi);
         }
+    }
+
+    private void putLong128Slow(long lo, long hi) {
+        putLong(lo);
+        putLong(hi);
     }
 
     @Override
@@ -671,10 +700,8 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.putLong(appendPointer + Long.BYTES * 3, l3);
             appendPointer += Long256.BYTES;
         } else {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
+            putLong128Slow(l0, l1);
+            putLong128Slow(l2, l3);
         }
     }
 
@@ -884,6 +911,7 @@ public class MemoryPARWImpl implements MemoryARW {
      *
      * @param bytes number of bytes to skip
      */
+    @Override
     public void skip(long bytes) {
         assert bytes >= 0;
         if (pageHi - appendPointer > bytes) {
@@ -901,6 +929,18 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void zero() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void zeroMem(int length) {
+        if (pageHi - appendPointer >= length) {
+            Unsafe.getUnsafe().setMemory(appendPointer, length, (byte) 0);
+            appendPointer += length;
+        } else {
+            for (int i = 0; i < length; i++) {
+                putByte((byte) 0);
+            }
+        }
     }
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -1260,7 +1300,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    private class CharSequenceView extends AbstractCharSequence {
+    public class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;
 
@@ -1319,19 +1359,15 @@ public class MemoryPARWImpl implements MemoryARW {
     private class StraddlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
         public void setAll(long l0, long l1, long l2, long l3) {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
+            putLong128Slow(l0, l1);
+            putLong128Slow(l2, l3);
         }
 
         private void putLong256(@Nullable CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
-                putLong(Long256Impl.NULL_LONG256.getLong0());
-                putLong(Long256Impl.NULL_LONG256.getLong1());
-                putLong(Long256Impl.NULL_LONG256.getLong2());
-                putLong(Long256Impl.NULL_LONG256.getLong3());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
                 putLong256(hexString, 2, len);
             }
@@ -1344,10 +1380,8 @@ public class MemoryPARWImpl implements MemoryARW {
         private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
-                putLong(Long256Impl.NULL_LONG256.getLong0());
-                putLong(Long256Impl.NULL_LONG256.getLong1());
-                putLong(Long256Impl.NULL_LONG256.getLong2());
-                putLong(Long256Impl.NULL_LONG256.getLong3());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
                 putLong256(hexString.asAsciiCharSequence(), 2, size);
             }

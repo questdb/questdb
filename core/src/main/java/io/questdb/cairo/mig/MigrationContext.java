@@ -77,7 +77,7 @@ class MigrationContext {
     }
 
     public int getNextTableId() {
-        return (int) engine.getTableIdGenerator().getNextId();
+        return engine.getNextTableId();
     }
 
     public MemoryMARW getRwMemory() {

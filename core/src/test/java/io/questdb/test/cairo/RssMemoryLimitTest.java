@@ -26,6 +26,8 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -33,6 +35,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class RssMemoryLimitTest extends AbstractCairoTest {
@@ -41,6 +44,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
         super.setUp();
         capture.start();
     }
@@ -49,6 +53,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
+        LogFactory.disableGuaranteedLogging(QueryProgress.class);
     }
 
     @Test
@@ -56,7 +61,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
         long limitMiB = 2;
         assertMemoryLeak(limitMiB, () -> {
             try {
-                ddl("create atomic table x as (select" +
+                execute("create atomic table x as (select" +
                         " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
                         " from long_sequence(1000000)) timestamp(ts) partition by day;");
                 fail("Managed to create table with RSS limit " + limitMiB + " MB");
@@ -76,21 +81,23 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             int batchCount = 10;
             int batchSize = 500_000;
 
-            ddl("create table x (ts timestamp, i int, l long, d double, vch varchar) timestamp(ts) partition by day wal;");
+            execute("create table x (ts timestamp, i int, l long, d double, vch varchar) timestamp(ts) partition by day wal;");
 
             for (int i = 0; i < batchCount; i++) {
-                insert("insert into x select" +
-                        " rnd_timestamp(to_timestamp('2024-01-01', 'yyyy-mm-dd'), to_timestamp('2025-01-01', 'yyyy-mm-dd'), 0) ts," +
+                execute("insert into x select" +
+                        " rnd_timestamp('2024-01-01', '2025-01-01', 0) ts," +
                         " rnd_int(), rnd_long(), rnd_double(), rnd_varchar(1, 50, 0)" +
                         " from long_sequence(" + batchSize + ");");
                 System.out.println("Tx no. " + i + " done -----");
             }
 
+            TableToken tt = engine.getTableTokenIfExists("x");
 
             int expectedRowCount = batchCount * batchSize;
             TestUtils.assertEventually(() -> {
                 drainWalQueue();
-                assertTableNotSuspended("x");
+                assertTableNotSuspended();
+                assertTrue(engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().isReadyToProcess());
 
                 try {
                     // cannot use assertQuery, because it clears CairoEngine - this clears all seqTxnTrackers
@@ -109,7 +116,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     @Test
     public void testSelect() throws Exception {
         assertMemoryLeak(14, () -> {
-            ddl("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
+            execute("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
             assertException(
                     "select a, sum(b) from test",
                     0,
@@ -130,28 +137,28 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             int batchCount = 100;
             int batchSize = 50_000;
 
-            ddl("create table x (ts timestamp) timestamp(ts) partition by day wal;");
+            execute("create table x (ts timestamp) timestamp(ts) partition by day wal;");
 
             for (int i = 0; i < batchCount; i++) {
-                insert("insert into x select" +
+                execute("insert into x select" +
                         " rnd_timestamp(to_timestamp('2024-01-01', 'yyyy-mm-dd'), to_timestamp('2025-01-01', 'yyyy-mm-dd'), 0) ts" +
                         " from long_sequence(" + batchSize + ");");
             }
 
             TestUtils.assertEventually(() -> {
                 drainWalQueue();
-                assertTableSuspended("x");
+                assertTableSuspended();
             }, 600);
         });
     }
 
-    private static void assertTableNotSuspended(CharSequence tableName) {
-        TableToken tt = engine.getTableTokenIfExists(tableName);
+    private static void assertTableNotSuspended() {
+        TableToken tt = engine.getTableTokenIfExists("x");
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
     }
 
-    private static void assertTableSuspended(CharSequence tableName) {
-        TableToken tt = engine.getTableTokenIfExists(tableName);
+    private static void assertTableSuspended() {
+        TableToken tt = engine.getTableTokenIfExists("x");
         Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt));
     }
 }

@@ -27,7 +27,10 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -180,8 +183,14 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 }
 
                 slaveCursor.toTop();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 isMasterHasNextPending = true;
             }
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

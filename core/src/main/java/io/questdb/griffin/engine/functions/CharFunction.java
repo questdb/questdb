@@ -25,23 +25,32 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
-public abstract class CharFunction implements ScalarFunction {
+public abstract class CharFunction implements Function {
     private final StringSink utf16SinkA = new StringSink();
     private final StringSink utf16SinkB = new StringSink();
 
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -60,7 +69,7 @@ public abstract class CharFunction implements ScalarFunction {
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return castCharToNumber(rec, ColumnType.BYTE);
     }
 
     @Override
@@ -70,12 +79,12 @@ public abstract class CharFunction implements ScalarFunction {
 
     @Override
     public double getDouble(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.DOUBLE);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.FLOAT);
     }
 
     @Override
@@ -105,12 +114,17 @@ public abstract class CharFunction implements ScalarFunction {
 
     @Override
     public int getInt(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.INT);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.LONG);
     }
 
     @Override
@@ -145,7 +159,7 @@ public abstract class CharFunction implements ScalarFunction {
 
     @Override
     public short getShort(Record rec) {
-        return (short) getChar(rec);
+        return castCharToNumber(rec, ColumnType.SHORT);
     }
 
     @Override
@@ -230,5 +244,14 @@ public abstract class CharFunction implements ScalarFunction {
         utf8SinkA.clear();
         utf8SinkA.put(getChar(rec));
         return utf8SinkA.size();
+    }
+
+    private byte castCharToNumber(Record rec, int toType) {
+        char c = getChar(rec);
+        final byte v = (byte) (c - '0');
+        if (v > -1 && v < 10) {
+            return v;
+        }
+        throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, toType);
     }
 }

@@ -24,23 +24,22 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class IntervalColumn extends IntervalFunction implements ScalarFunction {
+public class IntervalColumn extends IntervalFunction implements Function, FunctionExtension {
     private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public IntervalColumn(int columnIndex) {
+    private IntervalColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
@@ -52,8 +51,38 @@ public class IntervalColumn extends IntervalFunction implements ScalarFunction {
     }
 
     @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public @NotNull Interval getInterval(Record rec) {
         return rec.getInterval(columnIndex);
+    }
+
+    @Override
+    public Record getRecord(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

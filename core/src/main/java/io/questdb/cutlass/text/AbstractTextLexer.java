@@ -27,8 +27,15 @@ package io.questdb.cutlass.text;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -37,7 +44,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
     private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
     private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
-    private static final long NON_ASCII_MASK_FULL = SwarUtils.broadcast((byte) 0x80);
 
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
@@ -112,7 +118,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         if (useLineRollBuf) {
             if (inQuote && lastQuotePos < fieldHi) {
                 errorCount++;
-                LOG.info().$("quote is missing [table=").$(tableName).$(']').$();
+                LOG.info().$("quote is missing [table=").$safe(tableName).$(']').$();
             } else {
                 this.fieldHi++;
                 stashField(fieldIndex);
@@ -203,7 +209,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     private void extraField(int fieldIndex) {
         LogRecord logRecord = LOG.error()
-                .$("extra fields [table=").$(tableName)
+                .$("extra fields [table=").$safe(tableName)
                 .$(", fieldIndex=").$(fieldIndex)
                 .$(", fieldMax=").$(fieldMax)
                 .$("]\n\t").$(lineCount)
@@ -232,7 +238,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
             LOG.info()
-                    .$("too long [table=").$(tableName)
+                    .$("too long [table=").$safe(tableName)
                     .$(", line=").$(lineCount)
                     .$(", requiredLen=").$(requiredLength)
                     .$(", rollLimit=").$(lineRollBufLimit)
@@ -243,7 +249,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
 
         final int len = Math.min(lineRollBufLimit, requiredLength << 1);
-        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
+        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$safe(tableName).$(']').$();
         long p = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {
@@ -304,7 +310,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     if (zeroBytesWord == 0) {
                         ptr += 7;
                         this.fieldHi += 7;
-                        this.ascii &= (word & NON_ASCII_MASK_FULL) == 0;
+                        this.ascii &= Utf8s.isAscii(word);
                         continue;
                     } else {
                         int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
@@ -314,7 +320,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                             // These bytes come on LOW bits of the "word". To check that these bytes are
                             // positive, we need to isolate them. We do that by masking out the entire
                             // word, save for the bytes we intend to keep.
-                            this.ascii &= ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
+                            this.ascii &= Utf8s.isAscii(word & (0xffffffffffffffffL >>> (64 - firstIndex * 8)));
                             ptr += firstIndex;
                         }
                         this.fieldHi += firstIndex;

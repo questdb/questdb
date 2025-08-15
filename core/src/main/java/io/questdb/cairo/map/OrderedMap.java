@@ -24,11 +24,29 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.Hash;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -220,15 +238,18 @@ public class OrderedMap implements Map, Reopenable {
 
             assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
             if (keySize == -1) {
-                record = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+                final OrderedMapVarSizeRecord varSizeRecord = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+                record = varSizeRecord;
+                cursor = new OrderedMapVarSizeCursor(varSizeRecord, this);
                 key = new VarSizeKey();
                 mergeRef = this::mergeVarSizeKey;
             } else {
-                record = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
+                final OrderedMapFixedSizeRecord fixedSizeRecord = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
+                record = fixedSizeRecord;
+                cursor = new OrderedMapFixedSizeCursor(fixedSizeRecord, this);
                 key = new FixedSizeKey();
                 mergeRef = this::mergeFixedSizeKey;
             }
-            cursor = new OrderedMapCursor(record, this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -632,6 +653,11 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putBin(BinarySequence value) {
             throw new UnsupportedOperationException();
         }
@@ -883,6 +909,15 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public long hash() {
             return Hash.hashMem64(startAddress + keyOffset, len);
+        }
+
+        @Override
+        public void putArray(ArrayView value) {
+            long byteCount = ArrayTypeDriver.getPlainValueSize(value);
+            checkCapacity(byteCount);
+            long writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddress, value);
+            assert writtenBytes == byteCount;
+            appendAddress += byteCount;
         }
 
         @Override

@@ -113,7 +113,7 @@ public class WalListenerTest extends AbstractCairoTest {
                 Assert.assertEquals(0, listener.events.size());
 
                 final String newTableName = tableToken1.get().getTableName() + "_new";
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     tableToken2.set(engine.rename(
                             securityContext,
                             Path.getThreadLocal(""),
@@ -188,7 +188,7 @@ public class WalListenerTest extends AbstractCairoTest {
             // No data event, segment closed ignored
             Assert.assertEquals(0, listener.events.size());
 
-            engine.drop(Path.getThreadLocal(""), tableToken2.get());
+            engine.dropTableOrMatView(Path.getThreadLocal(""), tableToken2.get());
 
             Assert.assertEquals(
                     new WalListenerEvent(

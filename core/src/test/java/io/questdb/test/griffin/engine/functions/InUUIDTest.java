@@ -37,7 +37,7 @@ public class InUUIDTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarConstants() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -56,13 +56,13 @@ public class InUUIDTest extends AbstractCairoTest {
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', " +
                 "'b5b2159a-2356-4217-965d-4c984f0ffa8a', '4cd64b0b-0a34-4f8e-a698-c6c186b7571a')\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
     @Test
     public void testBindVarRuntimeConstants() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -85,13 +85,13 @@ public class InUUIDTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
     @Test
     public void testBindVarTypeChange() throws SqlException {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
@@ -179,7 +179,7 @@ public class InUUIDTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVariableMix() throws SqlException {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -195,7 +195,7 @@ public class InUUIDTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVariableVarcharMix() throws SqlException {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -241,7 +241,7 @@ public class InUUIDTest extends AbstractCairoTest {
 
     @Test
     public void testConstBadUUID() throws Exception {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
         assertException(
                 "test where a in ('9/12')",
                 17,
@@ -251,7 +251,7 @@ public class InUUIDTest extends AbstractCairoTest {
 
     @Test
     public void testConstInvalidType() throws Exception {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
         assertException(
                 "test where a in (0.1323)",
                 17,

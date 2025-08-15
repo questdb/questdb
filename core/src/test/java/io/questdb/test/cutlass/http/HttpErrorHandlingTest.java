@@ -24,12 +24,22 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpResponseHeader;
-import io.questdb.cutlass.http.client.*;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
+import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8StringSink;
@@ -68,8 +78,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 new FilesFacadeImpl() {
                                     @Override
-                                    public long openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 69) {
+                                    public long openRW(LPSZ name, int opts) {
+                                        if (counter.incrementAndGet() > 78) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);
@@ -88,8 +98,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, "create table x(y long)", HttpURLConnection.HTTP_INTERNAL_ERROR,
-                            "{\"query\":\"create table x(y long)\",\"error\":\"Test error\",\"position\":0}"
+                    assertExecRequest(httpClient, "create table x as (select 1L y)", HttpURLConnection.HTTP_INTERNAL_ERROR,
+                            "{\"query\":\"create table x as (select 1L y)\",\"error\":\"Test error\",\"position\":0}"
                     );
                 }
             }

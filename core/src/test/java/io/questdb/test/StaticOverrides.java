@@ -53,6 +53,11 @@ public class StaticOverrides extends Overrides {
         return AbstractCairoTest.inputWorkRoot;
     }
 
+    @Override
+    public long getSpinLockTimeout() {
+        return AbstractCairoTest.spinLockTimeout;
+    }
+
     public MicrosecondClock getTestMicrosClock() {
         return AbstractCairoTest.testMicrosClock;
     }

@@ -25,10 +25,15 @@
 package io.questdb.test.std;
 
 import io.questdb.std.ObjStack;
+import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.*;
+
 public class ObjStackTest {
+
     @Test
     public void clearTest() {
         ObjStack<Integer> s = new ObjStack<>();
@@ -36,12 +41,12 @@ public class ObjStackTest {
             s.push(i);
         }
 
-        Assert.assertEquals(10, s.size());
+        assertEquals(10, s.size());
         s.clear();
-        Assert.assertEquals(0, s.size());
+        assertEquals(0, s.size());
 
         for (int i = 0; i < 10; i++) {
-            Assert.assertNull(s.peek(i));
+            assertNull(s.peek(i));
         }
     }
 
@@ -51,7 +56,7 @@ public class ObjStackTest {
         for (int i = 0; i < 10; i++) {
             q.push(2 * i);
         }
-        Assert.assertEquals(10, q.size());
+        assertEquals(10, q.size());
     }
 
     @Test
@@ -60,7 +65,7 @@ public class ObjStackTest {
         for (int i = 0; i < 10; i++) {
             s.push(2 * i);
         }
-        Assert.assertEquals(10, s.size());
+        assertEquals(10, s.size());
     }
 
     @Test
@@ -80,9 +85,86 @@ public class ObjStackTest {
             s.push(i);
         }
 
-        Assert.assertEquals(s.size() - 1, (int) s.peek());
+        assertEquals(s.size() - 1, (int) s.peek());
         for (int i = 0; i < 10; i++) {
-            Assert.assertEquals(s.size() - i - 1, (int) s.peek(i));
+            assertEquals(s.size() - i - 1, (int) s.peek(i));
+        }
+    }
+
+    @Test
+    public void testBottomBeyondTop() {
+        ObjStack<Integer> s = new ObjStack<>();
+        s.push(1);
+        s.push(2);
+        try {
+            s.setBottom(3);
+            fail();
+        } catch (IllegalStateException e) {
+            assertEquals("Tried to set bottom beyond the top of the stack", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testBottomClear() {
+        ObjStack<Integer> s = new ObjStack<>();
+        s.push(1);
+        s.push(2);
+        s.setBottom(2);
+        assertNull(s.peek());
+        s.clear();
+        s.push(1);
+        assertEquals((Integer) 1, s.pop());
+    }
+
+    @Test
+    public void testBottomPeek() {
+        ObjStack<Integer> s = new ObjStack<>();
+        s.push(1);
+        s.push(2);
+        s.push(3);
+        s.setBottom(1);
+        assertEquals((Integer) 3, s.peek(0));
+        assertEquals((Integer) 2, s.peek(1));
+        assertNull(s.peek(2));
+    }
+
+    @Test
+    public void testBottomPop() {
+        ObjStack<Integer> s = new ObjStack<>();
+        s.push(1);
+        s.push(2);
+        s.setBottom(1);
+        assertEquals(1, s.size());
+        assertEquals((Integer) 2, s.pop());
+        assertNull(s.pop());
+        s.setBottom(0);
+        assertEquals(1, s.size());
+        assertEquals((Integer) 1, s.pop());
+    }
+
+    @Test
+    public void testBottomSize() {
+        ObjStack<Integer> s = new ObjStack<>();
+        s.push(1);
+        s.push(2);
+        assertEquals(2, s.size());
+        s.setBottom(1);
+        assertEquals(1, s.size());
+        s.setBottom(2);
+        assertEquals(0, s.size());
+    }
+
+    @Test
+    public void testBottomUpdate() {
+        ObjStack<Integer> s = new ObjStack<>();
+        s.push(1);
+        s.push(2);
+        s.setBottom(1);
+        try {
+            s.update(1, 3);
+            fail("Allowed updating under the bottom");
+        } catch (IllegalStateException e) {
+            assertEquals("Tried to update under the bottom", e.getMessage());
         }
     }
 
@@ -95,9 +177,9 @@ public class ObjStackTest {
 
         for (int i = 9; i >= 0; i--) {
             Integer r = s.pop();
-            Assert.assertEquals((Integer) i, r);
+            assertEquals((Integer) i, r);
         }
-        Assert.assertNull(s.pop());
+        assertNull(s.pop());
     }
 
     @Test
@@ -109,9 +191,9 @@ public class ObjStackTest {
 
         for (int i = 19; i >= 0; i--) {
             Integer r = s.pop();
-            Assert.assertEquals((Integer) i, r);
+            assertEquals((Integer) i, r);
         }
-        Assert.assertNull(s.pop());
+        assertNull(s.pop());
     }
 
     @Test
@@ -120,8 +202,8 @@ public class ObjStackTest {
         s.push(1);
         int i = s.pop();
 
-        Assert.assertEquals(1, i);
-        Assert.assertNull(s.pop());
+        assertEquals(1, i);
+        assertNull(s.pop());
     }
 
     @Test
@@ -132,8 +214,8 @@ public class ObjStackTest {
             s.push(2 * i + 1);
 
             Integer r = s.pop();
-            Assert.assertEquals((Integer) (2 * i + 1), r);
-            Assert.assertEquals(i + 1, s.size());
+            assertEquals((Integer) (2 * i + 1), r);
+            assertEquals(i + 1, s.size());
         }
     }
 
@@ -145,13 +227,62 @@ public class ObjStackTest {
             s.push(2 * i + 1);
 
             Integer r = s.pop();
-            Assert.assertEquals((Integer) (2 * i + 1), r);
+            assertEquals((Integer) (2 * i + 1), r);
 
             Integer r2 = s.pop();
-            Assert.assertEquals((Integer) (2 * i), r2);
+            assertEquals((Integer) (2 * i), r2);
 
-            Assert.assertEquals(0, s.size());
+            assertEquals(0, s.size());
         }
+    }
+
+    @Test
+    public void testResetCapacity() {
+        ObjStack<Integer> s = new ObjStack<>();
+        int n = ObjStack.DEFAULT_INITIAL_CAPACITY * 2;
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        Assert.assertEquals(n, s.size());
+        s.resetCapacity();
+        Assert.assertEquals(ObjStack.DEFAULT_INITIAL_CAPACITY - 1, s.size());
+
+        // we must be able to pop the latest items out
+        for (int i = n - 1; i >= n / 2 + 1; i--) {
+            Assert.assertEquals(i, s.pop().intValue());
+        }
+        Assert.assertEquals(0, s.size());
+    }
+
+    @Test
+    public void testResetCapacityEmpty() {
+        ObjStack<Integer> s = new ObjStack<>();
+        int n = ObjStack.DEFAULT_INITIAL_CAPACITY * 2;
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        for (int i = 0; i < n; i++) {
+            s.pop();
+        }
+
+        s.resetCapacity();
+        Assert.assertEquals(ObjStack.DEFAULT_INITIAL_CAPACITY, s.getCapacity());
+        Assert.assertEquals(0, s.size());
+    }
+
+    @Test
+    public void testResetCapacityFuzz() {
+        ObjStack<Integer> s = new ObjStack<>();
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 1 + rnd.nextInt(ObjStack.DEFAULT_INITIAL_CAPACITY * 4);
+        int p = rnd.nextInt(n);
+        pushPop(n, p, s);
+
+        int n1 = 1 + rnd.nextInt(ObjStack.DEFAULT_INITIAL_CAPACITY * 3);
+        int p1 = rnd.nextInt(n1);
+        pushPop(n1, p1, s);
     }
 
     @Test
@@ -161,9 +292,29 @@ public class ObjStackTest {
             s.push(i);
         }
 
-        Assert.assertEquals(s.size() - 1, (int) s.peek());
+        assertEquals(s.size() - 1, (int) s.peek());
         s.update(20);
-        Assert.assertEquals(20, (int) s.peek());
-        Assert.assertEquals(20, (int) s.pop());
+        assertEquals(20, (int) s.peek());
+        assertEquals(20, (int) s.pop());
+    }
+
+    private static void pushPop(int n, int p, ObjStack<Integer> s) {
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        for (int i = 0; i < p; i++) {
+            Assert.assertEquals(n - i - 1, s.pop().intValue());
+        }
+
+        Assert.assertEquals(n - p, s.size());
+        s.resetCapacity();
+        Assert.assertEquals(Math.min(ObjStack.DEFAULT_INITIAL_CAPACITY - 1, n - p), s.size());
+
+        // we must be able to pop the latest items out
+        for (int i = 0, size = s.size(); i < size; i++) {
+            Assert.assertEquals(n - p - i - 1, s.pop().intValue());
+        }
+        Assert.assertEquals(0, s.size());
     }
 }

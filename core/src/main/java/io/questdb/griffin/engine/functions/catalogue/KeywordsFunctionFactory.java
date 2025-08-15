@@ -24,8 +24,14 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -90,7 +96,7 @@ public class KeywordsFunctionFactory implements FunctionFactory {
             sink.type("keywords()");
         }
 
-        private static class KeywordsRecordCursor implements RecordCursor {
+        private static class KeywordsRecordCursor implements NoRandomAccessRecordCursor {
             private final KeywordRecord record = new KeywordRecord();
             private int index = -1;
 
@@ -105,18 +111,13 @@ public class KeywordsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public boolean hasNext() {
                 return ++index < Constants.KEYWORDS.length;
             }
 
             @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
+            public long preComputedStateSize() {
+                return 0;
             }
 
             @Override

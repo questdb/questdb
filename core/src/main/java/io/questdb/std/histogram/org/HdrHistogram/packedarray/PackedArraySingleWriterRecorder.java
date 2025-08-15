@@ -69,7 +69,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 
 public class PackedArraySingleWriterRecorder {
-    private static AtomicLong instanceIdSequencer = new AtomicLong(1);
+    private static final AtomicLong instanceIdSequencer = new AtomicLong(1);
     private final long instanceId = instanceIdSequencer.getAndIncrement();
 
     private final WriterReaderPhaser recordingPhaser = new WriterReaderPhaser();
@@ -196,8 +196,7 @@ public class PackedArraySingleWriterRecorder {
                                                          final boolean enforeContainingInstance) {
         // Verify that replacement array can validly be used as an inactive array replacement:
         validateFitAsReplacementArray(arrayToRecycle, enforeContainingInstance);
-        PackedLongArray sampledArray = performIntervalSample(arrayToRecycle);
-        return sampledArray;
+        return performIntervalSample(arrayToRecycle);
     }
 
     /**

@@ -88,6 +88,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     protected void _close() {
         super._close();
         filter = Misc.free(filter);
+        Misc.free(cursor);
     }
 
     protected abstract AbstractLatestByValueRecordCursor createCursorFor(int symbolKey);
@@ -97,6 +98,8 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        symbolFunc.init(pageFrameCursor, executionContext);
+
         if (lookupDeferredSymbol(pageFrameCursor)) {
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;

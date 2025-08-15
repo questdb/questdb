@@ -50,6 +50,16 @@ public class RenameTableModel implements Mutable, ExecutionModel {
         return ExecutionModel.RENAME_TABLE;
     }
 
+    @Override
+    public CharSequence getTableName() {
+        return from.token;
+    }
+
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return from;
+    }
+
     public ExpressionNode getTo() {
         return to;
     }

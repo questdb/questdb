@@ -123,7 +123,6 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
-
             }
 
             @Override
@@ -147,10 +146,15 @@ public class AllTablesFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public long preComputedStateSize() {
+                // no state
+                return 0;
+            }
+
+            @Override
             public void toTop() {
                 iteratorIdx = -1;
             }
-
 
             private static class AllTablesRecord implements Record {
                 private CairoTable table;

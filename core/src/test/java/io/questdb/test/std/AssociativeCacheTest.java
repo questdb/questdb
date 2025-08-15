@@ -24,8 +24,24 @@
 
 package io.questdb.test.std;
 
-import io.questdb.metrics.*;
-import io.questdb.std.*;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.CounterImpl;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.LongGaugeImpl;
+import io.questdb.metrics.NullCounter;
+import io.questdb.metrics.NullLongGauge;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.ConcurrentAssociativeCache;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
+import io.questdb.std.SimpleAssociativeCache;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -131,6 +147,22 @@ public class AssociativeCacheTest {
             }
 
             Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    @Test
+    public void testEmptyValuePromotion() {
+        // just a single row to make sure keys are in the same row
+        try (AssociativeCache<String> cache = createCache(8, 1)) {
+            cache.put("x", "val1");
+            cache.put("y", "val2");
+
+            Assert.assertEquals("val1", cache.poll("x"));
+            Assert.assertNull(cache.poll("x"));
+
+
+            cache.put("x", "val3");
+            Assert.assertEquals("val3", cache.poll("x"));
         }
     }
 
@@ -257,6 +289,29 @@ public class AssociativeCacheTest {
     }
 
     @Test
+    public void testMultiValues() {
+        try (AssociativeCache<String> cache = createCache(8, 8)) {
+            String val1 = "myval1";
+            String val2 = "myval2";
+
+            // put two values under the same key.
+            cache.put("x", val1);
+            cache.put("x", val2);
+
+            // poll should return one of the values.
+            String fromCache1 = cache.poll("x");
+            Assert.assertNotNull(fromCache1);
+            Assert.assertTrue(fromCache1 == val1 || fromCache1 == val2);
+
+            // second poll should return the other value.
+            String fromCache2 = cache.poll("x");
+            Assert.assertNotNull(fromCache2);
+            Assert.assertNotSame(fromCache1, fromCache2);
+            Assert.assertTrue(fromCache2 == val1 || fromCache2 == val2);
+        }
+    }
+
+    @Test
     public void testNoOpCache() {
         Assume.assumeTrue(cacheType == CacheType.SIMPLE);
 
@@ -325,6 +380,29 @@ public class AssociativeCacheTest {
         }
     }
 
+    @Test
+    public void testSimpleAssociativeCachePutAfterPeekDoesNotDuplicate() {
+        Assume.assumeTrue(cacheType == CacheType.SIMPLE);
+
+        try (SimpleAssociativeCache<Object> cache = new SimpleAssociativeCache<>(8, 1)) {
+            Object o1 = new Object();
+            Object o2 = new Object();
+            Object o3 = new Object();
+            cache.put("X", o1);
+            cache.put("Y", o2);
+            cache.put("Z", o3);
+
+            Object peeked = cache.peek("Y");
+            Assert.assertSame(o2, peeked);
+
+            cache.put("Y", o2);
+
+            Assert.assertNotNull(cache.poll("Y"));
+            Assert.assertNull(cache.poll("Y"));
+        }
+
+    }
+
     private <V> AssociativeCache<V> createCache(int blocks, int rows) {
         return createCache(blocks, rows, NullLongGauge.INSTANCE, NullCounter.INSTANCE, NullCounter.INSTANCE);
     }
@@ -334,7 +412,34 @@ public class AssociativeCacheTest {
             case SIMPLE:
                 return new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
             case CONCURRENT:
-                return new ConcurrentAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
+                return new ConcurrentAssociativeCache<>(
+                        new ConcurrentCacheConfiguration() {
+                            @Override
+                            public int getBlocks() {
+                                return blocks;
+                            }
+
+                            @Override
+                            public LongGauge getCachedGauge() {
+                                return cachedGauge;
+                            }
+
+                            @Override
+                            public Counter getHiCounter() {
+                                return hitCounter;
+                            }
+
+                            @Override
+                            public Counter getMissCounter() {
+                                return missCounter;
+                            }
+
+                            @Override
+                            public int getRows() {
+                                return rows;
+                            }
+                        }
+                );
             default:
                 throw new IllegalArgumentException("Unexpected cache type: " + cacheType);
         }

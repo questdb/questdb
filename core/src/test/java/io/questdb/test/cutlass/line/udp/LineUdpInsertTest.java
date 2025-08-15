@@ -24,11 +24,19 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.cutlass.line.udp.*;
+import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpReceiver;
+import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
@@ -80,8 +88,8 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                                      String expected,
                                      Consumer<AbstractLineSender> senderConsumer,
                                      String... expectedExtraStringColumns) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
@@ -92,7 +100,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
                         TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
-                        TestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
+                        TestUtils.createTable(engine, model.col(targetColumnName, columnType).timestamp());
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {

@@ -24,10 +24,12 @@
 
 package io.questdb.cairo.vm.api;
 
-//contiguous mapped readable
+// contiguous mapped readable
 public interface MemoryCMR extends MemoryCR, MemoryMR, MemoryCM {
     @Override
     default boolean isFileBased() {
         return true;
     }
+
+    void changeSize(long dataSize);
 }

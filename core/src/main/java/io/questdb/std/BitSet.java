@@ -43,8 +43,8 @@ public class BitSet implements Mutable {
         this.words = new long[wordIndex(nBits - 1) + 1];
     }
 
-    public int capacity() {
-        return words.length * BITS_PER_WORD;
+    public long capacity() {
+        return (long) words.length * BITS_PER_WORD;
     }
 
     @Override

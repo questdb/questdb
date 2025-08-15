@@ -37,8 +37,8 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
     @Test
     public void testInsertGeoNullByte() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table g(a geohash(4b))");
-            insert("insert into g values (cast(null as geohash(5b)))");
+            execute("create table g(a geohash(4b))");
+            execute("insert into g values (cast(null as geohash(5b)))");
             assertSql("a\n\n", "g");
         });
     }
@@ -46,8 +46,8 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
     @Test
     public void testInsertGeoNullInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table g(a geohash(22b))");
-            insert("insert into g values (cast(null as geohash(24b)))");
+            execute("create table g(a geohash(22b))");
+            execute("insert into g values (cast(null as geohash(24b)))");
             assertSql("a\n\n", "g");
         });
     }
@@ -55,8 +55,8 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
     @Test
     public void testInsertGeoNullLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table g(a geohash(42b))");
-            insert("insert into g values (cast(null as geohash(44b)))");
+            execute("create table g(a geohash(42b))");
+            execute("insert into g values (cast(null as geohash(44b)))");
             assertSql("a\n\n", "g");
         });
     }
@@ -64,8 +64,8 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
     @Test
     public void testInsertGeoNullShort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table g(a geohash(12b))");
-            insert("insert into g values (cast(null as geohash(14b)))");
+            execute("create table g(a geohash(12b))");
+            execute("insert into g values (cast(null as geohash(14b)))");
             assertSql("a\n\n", "g");
         });
     }

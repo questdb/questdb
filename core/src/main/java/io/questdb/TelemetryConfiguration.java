@@ -32,4 +32,6 @@ public interface TelemetryConfiguration {
     int getQueueCapacity();
 
     boolean hideTables();
+
+    long getDbSizeEstimateTimeout();
 }

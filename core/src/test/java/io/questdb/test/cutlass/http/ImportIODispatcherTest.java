@@ -24,7 +24,15 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.TxnScoreboardV1;
+import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -53,7 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
@@ -190,6 +198,16 @@ public class ImportIODispatcherTest extends AbstractTest {
             REQUEST_FOOTER;
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+VARCHAR)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
+    private final String ImportCreateParamRequestFalse = ValidImportRequest1
+            .replace(
+                    "POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP"
+            );
+    private final String ImportCreateParamRequestTrue = ValidImportRequest1
+            .replace(
+                    "POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP"
+            );
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -299,6 +317,15 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private final String ImportCreateParamResponse = WarningValidImportResponse1
+            .replace(
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+            );
     private final String WarningValidImportResponse1Json = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -322,21 +349,6 @@ public class ImportIODispatcherTest extends AbstractTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    private final String ImportCreateParamRequestTrue = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
-    private final String ImportCreateParamRequestFalse = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
-    private final String ImportCreateParamResponse = WarningValidImportResponse1
-            .replace(
-                    "\r\n" +
-                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
-                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
-                    "\r\n" +
-                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
-            );
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -352,7 +364,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -438,8 +450,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
+                    try (TableReader reader = newOffPoolReader(engine.getConfiguration(), "syms", engine)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(2, meta.getTimestampIndex());
@@ -464,7 +475,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                .run((engine, sqlExecutionContext) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
                     executor.execute(
                             ValidImportRequest1.replace("VARCHAR", "SYMBOL"),
                             ValidImportResponse1.replace("VARCHAR", "SYMBOL").replace(" SYMBOL", "  SYMBOL")
@@ -491,8 +502,8 @@ public class ImportIODispatcherTest extends AbstractTest {
 
                     executor.execute(request2, ValidImportResponse2);
 
-                    // This will try to hit same execution plan as the first SELECT query
-                    // but because table metadata changes, old query plan is not valid anymore
+                    // This will try to hit the same execution plan as the first SELECT query
+                    // but because table metadata changes, the old query plan is not valid anymore
                     // and produces NPE if used
                     executor.executeWithStandardHeaders(
                             "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
@@ -511,14 +522,16 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.ddl("create table trips as (" +
-                            "select cast('b' as SYMBOL) Col1, " +
-                            "timestamp_sequence(0, 100000L) Pickup_DateTime," +
-                            "timestamp_sequence(100000000L, 10000L)" +
-                            "from long_sequence(1)" +
-                            ")", sqlExecutionContext);
+                    engine.execute(
+                            "create table trips as (" +
+                                    "select cast('b' as SYMBOL) Col1, " +
+                                    "timestamp_sequence(0, 100000L) Pickup_DateTime," +
+                                    "timestamp_sequence(100000000L, 10000L)" +
+                                    "from long_sequence(1)" +
+                                    ")", this.sqlExecutionContext
+                    );
 
                     new SendAndReceiveRequestBuilder().executeMany(executor -> {
                         executor.execute(
@@ -551,8 +564,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
                         executor.execute(request2, ValidImportResponse2);
 
-                        // This will try to hit same execution plan as the first SELECT query
-                        // but because table metadata changes, old query plan is not valid anymore
+                        // This will try to hit the same execution plan as the first SELECT query
+                        // but because table metadata changes, the old query plan is not valid anymore
                         // and produces NPE if used
                         executor.execute(
                                 "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
@@ -607,7 +620,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     AtomicBoolean locked = new AtomicBoolean(false);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
@@ -641,7 +654,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                .run((engine, sqlExecutionContext) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
                     String requestJson = ValidImportRequest1
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json HTTP");
                     new SendAndReceiveRequestBuilder().execute(requestJson, ValidImportResponse2Json);
@@ -656,7 +669,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -741,8 +754,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.fail();
                     }
 
-                    TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
+                    try (TableReader reader = newOffPoolReader(engine.getConfiguration(), "syms", engine)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
@@ -777,9 +789,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTempFolder(root).withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse);
-                });
+                .run((engine, sqlExecutionContext) -> new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse));
     }
 
     @Test()
@@ -788,18 +798,16 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTempFolder(root).withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        new SendAndReceiveRequestBuilder().execute(ImportCreateParamRequestTrue, ImportCreateParamResponse);
-                        drainWalQueue(engine);
-                        assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select count() from trips",
-                                Misc.getThreadLocalSink(),
-                                "count\n24\n"
-                        );
-                    }
+                .run((engine, sqlExecutionContext) -> {
+                    new SendAndReceiveRequestBuilder().execute(ImportCreateParamRequestTrue, ImportCreateParamResponse);
+                    drainWalQueue(engine);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from trips",
+                            Misc.getThreadLocalSink(),
+                            "count\n24\n"
+                    );
                 });
     }
 
@@ -810,56 +818,54 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
 
-                    try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        engine.compile(
-                                "create table trips (" +
-                                        "Col1 STRING," +
-                                        "Pickup_DateTime TIMESTAMP," +
-                                        "DropOff_datetime VARCHAR" +
-                                        ") timestamp(Pickup_DateTime) partition by DAY WAL",
-                                sqlExecutionContext
-                        );
+                    engine.execute(
+                            "create table trips (" +
+                                    "Col1 STRING," +
+                                    "Pickup_DateTime TIMESTAMP," +
+                                    "DropOff_datetime VARCHAR" +
+                                    ") timestamp(Pickup_DateTime) partition by DAY WAL",
+                            sqlExecutionContext
+                    );
 
-                        String request = ValidImportRequest1
-                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime HTTP");
+                    String request = ValidImportRequest1
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime HTTP");
 
-                        String response = WarningValidImportResponse1
-                                .replace(
-                                        "\r\n" +
-                                                "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
-                                                "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
-                                        "\r\n" +
-                                                "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
-                                                "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
-                                );
-                        new SendAndReceiveRequestBuilder().execute(request, response);
+                    String response = WarningValidImportResponse1
+                            .replace(
+                                    "\r\n" +
+                                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                                    "\r\n" +
+                                            "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
+                                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+                            );
+                    new SendAndReceiveRequestBuilder().execute(request, response);
 
-                        drainWalQueue(engine);
-                        assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select count() from trips",
-                                Misc.getThreadLocalSink(),
-                                "count\n24\n"
-                        );
+                    drainWalQueue(engine);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from trips",
+                            Misc.getThreadLocalSink(),
+                            "count\n24\n"
+                    );
 
-                        engine.compile("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
+                    engine.execute("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
 
-                        // resend the same request
-                        new SendAndReceiveRequestBuilder().execute(request, response);
-                        drainWalQueue(engine);
+                    // resend the same request
+                    new SendAndReceiveRequestBuilder().execute(request, response);
+                    drainWalQueue(engine);
 
-                        // check deduplication worked
-                        assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select count() from trips",
-                                Misc.getThreadLocalSink(),
-                                "count\n24\n"
-                        );
-                    }
+                    // check deduplication worked
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from trips",
+                            Misc.getThreadLocalSink(),
+                            "count\n24\n"
+                    );
                 });
     }
 
@@ -870,7 +876,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
@@ -899,7 +905,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
@@ -928,7 +934,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
@@ -964,7 +970,7 @@ public class ImportIODispatcherTest extends AbstractTest {
 
     @Test
     public void testPartitionDeletedUnlocksTxn() throws Exception {
-        // Simulate file not found on partition reopen on reader reload
+        // Simulate file-not-found on partition re-open on reader reload
         // so that JsonQueryProcessor gets error like here
 
         // I i.q.c.h.p.QueryCache hit [thread=questdb-worker-2, sql=select count(*) from xyz where x > 0;]
@@ -988,9 +994,9 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .withFilesFacade(ff)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.ddl("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", sqlExecutionContext);
+                    engine.execute("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
 
                     // Cache query plan
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -1002,7 +1008,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     );
 
                     // Add new commit
-                    engine.insert("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
+                    engine.execute("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
 
                     // Here fail expected
                     new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders(
@@ -1011,17 +1017,23 @@ public class ImportIODispatcherTest extends AbstractTest {
                                     "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: "
                     );
 
-                    // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
-                    CairoConfiguration configuration = engine.getConfiguration();
+                    // Check that txn_scoreboard is fully unlocked, e.g., no reader scoreboard leaks after the failure
                     TableToken tableToken = engine.verifyTableName("xyz");
-                    try (
-                            Path path = new Path().concat(configuration.getRoot()).concat(tableToken);
-                            TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
-                    ) {
-                        Assert.assertEquals(2, txnScoreboard.getMin());
-                        Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
+                    try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
+                        long min = getMin(txnScoreboard);
+                        Assert.assertTrue(2 == min || min == -1);
+                        Assert.assertTrue(txnScoreboard.acquireTxn(10, 3));
+                        Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });
+    }
+
+    private static long getMin(TxnScoreboard scoreboard) {
+        if (scoreboard instanceof TxnScoreboardV2) {
+            return ((TxnScoreboardV2) scoreboard).getMin();
+        } else {
+            return ((TxnScoreboardV1) scoreboard).getMin();
+        }
     }
 
     private static int stringLen(int number) {
@@ -1060,13 +1072,15 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(serverConfigBuilder)
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.ddl("create table trips(" +
-                            "timestamp TIMESTAMP," +
-                            "str STRING," +
-                            "i STRING" +
-                            ") timestamp(timestamp)", sqlExecutionContext);
+                    engine.execute(
+                            "create table trips(" +
+                                    "timestamp TIMESTAMP," +
+                                    "str STRING," +
+                                    "i STRING" +
+                                    ") timestamp(timestamp)", this.sqlExecutionContext
+                    );
                     String request = PostHeader.replace("name=trips", "name=trips&skipLev=true") +
                             Request1DataHeader +
                             generateImportCsv(0, rowCount, "aaaaaaaaaaaaaaaaa,22222222222222222222,33333333333333333") +
@@ -1088,9 +1102,11 @@ public class ImportIODispatcherTest extends AbstractTest {
                                             "\r\n"
                             );
 
-                    engine.insert("insert into trips values (" +
-                            "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
-                            ")", sqlExecutionContext);
+                    engine.execute(
+                            "insert into trips values (" +
+                                    "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
+                                    ")", this.sqlExecutionContext
+                    );
                 });
     }
 
@@ -1103,7 +1119,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
 
@@ -1197,7 +1213,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
                     String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};

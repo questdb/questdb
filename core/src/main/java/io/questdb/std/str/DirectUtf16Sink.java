@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Closeable, Utf16Sink {
+public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Closeable, CloneableMutable {
     private final long initialCapacity;
     private long capacity;
     private long hi;
@@ -61,6 +61,12 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     @Override
     public void close() {
         ptr = Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T copy() {
+        return (T) toString();
     }
 
     @TestOnly

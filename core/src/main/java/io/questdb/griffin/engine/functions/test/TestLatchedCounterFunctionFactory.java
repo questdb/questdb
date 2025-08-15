@@ -79,7 +79,7 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            if (null != callback) {
+            if (callback != null) {
                 callback.onClose();
             }
         }
@@ -87,7 +87,7 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             int count = COUNTER.incrementAndGet();
-            if (null == callback) {
+            if (callback == null) {
                 return true;
             }
             return callback.onGet(rec, count);

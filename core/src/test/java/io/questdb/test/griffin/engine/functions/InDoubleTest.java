@@ -36,7 +36,7 @@ public class InDoubleTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarConstants() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -54,13 +54,13 @@ public class InDoubleTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN (1.1, 2.1, 3.52)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
     @Test
     public void testBindVarRuntimeConstants() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -83,14 +83,14 @@ public class InDoubleTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
 
     @Test
     public void testBindVarTypeChange() throws SqlException {
-        ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
+        execute("create table test as (select x, rnd_double() a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
@@ -144,7 +144,7 @@ public class InDoubleTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVariableMix() throws SqlException {
-        ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
+        execute("create table test as (select x, rnd_double() a from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -160,7 +160,7 @@ public class InDoubleTest extends AbstractCairoTest {
 
     @Test
     public void testNulls() throws SqlException {
-        ddl("create table test as (select x, rnd_double(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_double(1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
@@ -239,7 +239,7 @@ public class InDoubleTest extends AbstractCairoTest {
 
     @Test
     public void testUnsupportedConstType() throws Exception {
-        ddl("create table test as (select x, rnd_double(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_double(1) a from long_sequence(100))");
         assertException(
                 "test where a in (0.234, cast ('1CB' as geohash(1b)))",
                 24,

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
@@ -37,23 +36,26 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final PageFrameMemoryPool frameMemoryPool;
     protected final PageFrameMemoryRecord recordA;
     protected final PageFrameMemoryRecord recordB;
+    private final RecordMetadata metadata;
     protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
 
     public AbstractPageFrameRecordCursor(
             @NotNull CairoConfiguration configuration,
-            @NotNull @Transient RecordMetadata metadata
+            @NotNull RecordMetadata metadata
     ) {
-        recordA = new PageFrameMemoryRecord();
-        recordB = new PageFrameMemoryRecord();
+        this.metadata = metadata;
+        recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
         frameAddressCache = new PageFrameAddressCache(configuration);
-        frameAddressCache.of(metadata);
-        frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+        Misc.free(recordA);
+        Misc.free(recordB);
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -96,7 +98,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     protected void init() {
-        frameAddressCache.clear();
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

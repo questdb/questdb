@@ -32,11 +32,11 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
-    private final GenericRecordMetadata metadata;
+    private final RecordMetadata metadata;
     private final long metadataVersion;
     private final TableToken tableToken;
 
-    public AbstractPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
+    public AbstractPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, RecordMetadata metadata) {
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
         this.metadata = metadata;
@@ -46,6 +46,7 @@ public abstract class AbstractPartitionFrameCursorFactory implements PartitionFr
     public void close() {
     }
 
+    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }

@@ -30,14 +30,32 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.*;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.ColumnType.*;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "coalesce(V)";
@@ -46,12 +64,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (args.size() < 2) {
+        if (args == null || args.size() < 2) {
             throw SqlException.$(position, "coalesce can be used with 2 or more arguments");
         }
         if (args.size() > 2) {
@@ -123,6 +141,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
+    }
+
     private static boolean isNotNull(Long256 value) {
         return value != null &&
                 value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NULL ||
@@ -189,7 +212,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             for (int i = 0; i < size; i++) {
                 double value = args.getQuick(i).getDouble(rec);
-                if (value == value) {
+                if (Numbers.isFinite(value)) {
                     return value;
                 }
             }
@@ -215,7 +238,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             for (int i = 0; i < size; i++) {
                 float value = args.getQuick(i).getFloat(rec);
-                if (value == value) {
+                if (Numbers.isFinite(value)) {
                     return value;
                 }
             }
@@ -296,7 +319,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
-                    Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+                    Numbers.appendLong256(value, sink);
                     return;
                 }
             }
@@ -463,7 +486,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double value = args0.getDouble(rec);
-            if (value == value) {
+            if (Numbers.isFinite(value)) {
                 return value;
             }
             return args1.getDouble(rec);
@@ -493,7 +516,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             float value = args0.getFloat(rec);
-            if (value == value) {
+            if (Numbers.isFinite(value)) {
                 return value;
             }
             return args1.getFloat(rec);
@@ -591,7 +614,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);
             }
-            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+            Numbers.appendLong256(value, sink);
         }
 
         @Override

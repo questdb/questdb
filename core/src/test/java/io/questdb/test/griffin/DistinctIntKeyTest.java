@@ -61,7 +61,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount);
 
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::int i from long_sequence(10000))" +
                             " timestamp(ts) PARTITION BY MONTH",
                     sqlExecutionContext
@@ -69,8 +69,8 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
 
             try {
                 assertExceptionNoLeakCheck("select DISTINCT i from tab order by 1 LIMIT 3", sqlExecutionContext);
-            } catch (OutOfMemoryError e) {
-                // ignore
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
             }
         });
     }
@@ -136,7 +136,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnBrokenTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::int i from long_sequence(10000))" +
                             " timestamp(ts) PARTITION BY MONTH"
             );
@@ -145,7 +145,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
             final String partition = "2020-02";
 
             TableToken tableToken = engine.verifyTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition)) {
+            try (Path path = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(partition)) {
                 Assert.assertTrue(Files.rmdir(path, true));
             }
 

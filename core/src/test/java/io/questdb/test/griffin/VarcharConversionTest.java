@@ -32,10 +32,10 @@ public class VarcharConversionTest extends AbstractCairoTest {
     @Test
     public void testConvertToIpv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (c_varchar varchar)");
-            ddl("create table y (c_ipv4 ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into y select * from x");
+            execute("create table x (c_varchar varchar)");
+            execute("create table y (c_ipv4 ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into y select * from x");
             assertSql("c_ipv4\n127.0.0.1\n", "y");
         });
     }
@@ -43,10 +43,10 @@ public class VarcharConversionTest extends AbstractCairoTest {
     @Test
     public void testConvertToLong256() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (c_varchar varchar)");
-            ddl("create table y (c_long256 long256)");
-            insert("insert into x values('0x1')");
-            insert("insert into y select * from x");
+            execute("create table x (c_varchar varchar)");
+            execute("create table y (c_long256 long256)");
+            execute("insert into x values('0x1')");
+            execute("insert into y select * from x");
             assertSql("c_long256\n0x01\n", "y");
         });
     }
@@ -54,10 +54,10 @@ public class VarcharConversionTest extends AbstractCairoTest {
     @Test
     public void testConvertToGeohash() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (c_varchar varchar)");
-            ddl("create table y (c_geohash geohash(2B))");
-            insert("insert into x values('sr')");
-            insert("insert into y select * from x");
+            execute("create table x (c_varchar varchar)");
+            execute("create table y (c_geohash geohash(2B))");
+            execute("insert into x values('sr')");
+            execute("insert into y select * from x");
             assertSql("c_geohash\n11\n", "y");
         });
     }

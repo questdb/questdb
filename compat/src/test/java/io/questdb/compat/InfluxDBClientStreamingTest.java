@@ -96,7 +96,7 @@ public class InfluxDBClientStreamingTest extends AbstractTest {
                 try {
                     assertSql(server.getEngine(),
                             "select count(*) from " + tableName,
-                            "count\n" + pointCounter.get() + "\n"
+                            "count()\n" + pointCounter.get() + "\n"
                     );
                 } catch (SqlException e) {
                     throw new RuntimeException(e);

@@ -39,24 +39,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
-
-    // type inference fails on java 8 if <CharSequence> is removed
-    private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
-        @Override
-        public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
-            throw new UnsupportedOperationException();
-        }
-    };
     private final InsertOperationFuture doneFuture = new InsertOperationFuture();
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long metadataVersion;
     private final TableToken tableToken;
-    private ObjList<CharSequence> columnNames;
 
     public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long metadataVersion) {
         this.engine = engine;
@@ -70,10 +60,15 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
+    public void close() {
+        Misc.free(insertMethod);
+        Misc.freeObjList(insertRows);
+    }
+
+    @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
-        insertMethod.executionContext = executionContext;
 
         initContext(executionContext);
         if (insertMethod.writer == null) {
@@ -103,26 +98,10 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
+            insertMethod.execute(sqlExecutionContext);
             insertMethod.commit();
             return doneFuture;
         }
-    }
-
-    public void setColumnNames(ObjList<CharSequence> columnNameList) {
-        if (columnNameList.size() == 0) {
-            columnNames = EMPTY_COLUMN_LIST;
-        } else {
-            columnNames = new ObjList<>();
-            for (int i = 0, n = columnNameList.size(); i < n; i++) {
-                columnNames.add(Chars.toString(columnNameList.getQuick(i)));
-            }
-        }
-    }
-
-    @Override
-    public void setInsertSql(CharSequence query) {
-        insertMethod.insertSql = Chars.toString(query);
     }
 
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
@@ -133,8 +112,6 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertMethodImpl implements InsertMethod {
-        private SqlExecutionContext executionContext;
-        private String insertSql;
         private TableWriterAPI writer = null;
 
         @Override
@@ -148,17 +125,17 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public long execute() {
-            long queryId = engine.getQueryRegistry().register(insertSql, executionContext);
-            try {
-                for (int i = 0, n = insertRows.size(); i < n; i++) {
-                    InsertRowImpl row = insertRows.get(i);
-                    row.append(writer);
-                }
-                return insertRows.size();
-            } finally {
-                engine.getQueryRegistry().unregister(queryId, executionContext);
+        public long execute(SqlExecutionContext executionContext) {
+            for (int i = 0, n = insertRows.size(); i < n; i++) {
+                InsertRowImpl row = insertRows.get(i);
+                row.append(writer);
             }
+            return insertRows.size();
+        }
+
+        @Override
+        public TableWriterAPI getWriter() {
+            return writer;
         }
 
         @Override
@@ -170,15 +147,9 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertOperationFuture extends DoneOperationFuture {
-
         @Override
         public long getAffectedRowsCount() {
             return insertRows.size();
-        }
-
-        @Override
-        public long getInstanceId() {
-            return -3L;
         }
     }
 }

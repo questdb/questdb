@@ -24,7 +24,19 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,7 +46,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -174,6 +192,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return limit;
         }
@@ -195,7 +218,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 TableReaderMetadata meta = tableReader.getMetadata();
                 tsColName = meta.getColumnName(meta.getTimestampIndex());
             }
-            path.of(cairoConfig.getRoot()).concat(tableToken).$();
+            path.of(cairoConfig.getDbRoot()).concat(tableToken).$();
             rootLen = path.size();
             scanDetachedAndAttachablePartitions();
             limit = tableReader.getTxFile().getPartitionCount() +
@@ -233,7 +256,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
-                TableUtils.setPathForPartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
+                TableUtils.setPathForNativePartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
@@ -428,8 +451,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStrA(col);
-                return s != null ? s.length() : TableUtils.NULL_LEN;
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             @Override

@@ -71,6 +71,14 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         return keys[-index - 1];
     }
 
+    /**
+     * Returns the index of a free slot where this key can be placed.
+     * Returns the negative index of the key if it's already present.
+     *
+     * @param key the key whose slot to look for
+     * @return the index of a free slot where this key can be placed,
+     * or the negative index of the key if it's already present.
+     */
     public int keyIndex(@NotNull CharSequence key) {
         int index = Hash.spread(Chars.hashCode(key)) & mask;
         if (keys[index] == noEntryKey) {

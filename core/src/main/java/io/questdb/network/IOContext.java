@@ -25,22 +25,23 @@
 package io.questdb.network;
 
 import io.questdb.log.Log;
-import io.questdb.metrics.LongGauge;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
     protected final Socket socket;
-    private final LongGauge connectionCountGauge;
     protected long heartbeatId = -1;
     private int disconnectReason;
-    // keep dispatcher private to avoid context scheduling itself multiple times
-    private IODispatcher<T> dispatcher;
+    private volatile boolean initialized = false;
 
-    protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log, LongGauge connectionCountGauge) {
+    // IMPORTANT: Keep subclass constructors lightweight!
+    // Under high load, new context objects are created for each accepted connection.
+    // Since connection acceptance runs on a single thread, slow constructors can
+    // significantly degrade performance and throttle incoming connections.
+    // To avoid this, defer context initialization to the doInit() method.
+    protected IOContext(@NotNull SocketFactory socketFactory, NetworkFacade nf, Log log) {
         this.socket = socketFactory.newInstance(nf, log);
-        this.connectionCountGauge = connectionCountGauge;
     }
 
     @Override
@@ -48,31 +49,9 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         _clear();
     }
 
-    public void clearSuspendEvent() {
-        // no-op
-    }
-
     @Override
     public void close() {
         _clear();
-    }
-
-    public int getDisconnectReason() {
-        return disconnectReason;
-    }
-
-
-    public PeerIsSlowToReadException registerDispatcherWrite() {
-        return PeerIsSlowToReadException.INSTANCE;
-    }
-
-    public HeartBeatException registerDispatcherHeartBeat() {
-        return HeartBeatException.INSTANCE;
-    }
-
-    public ServerDisconnectException registerDispatcherDisconnect(int reason) {
-        disconnectReason = reason;
-        return ServerDisconnectException.INSTANCE;
     }
 
     public long getAndResetHeartbeatId() {
@@ -81,8 +60,8 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return id;
     }
 
-    public PeerIsSlowToWriteException registerDispatcherRead() {
-        return PeerIsSlowToWriteException.INSTANCE;
+    public int getDisconnectReason() {
+        return disconnectReason;
     }
 
     public long getFd() {
@@ -97,11 +76,11 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return null;
     }
 
-    /**
-     * @throws io.questdb.cairo.CairoException if initialization fails
-     */
-    public void init() {
-        // no-op
+    public final void init() throws TlsSessionInitFailedException {
+        if (!initialized) {
+            doInit();
+            initialized = true;
+        }
     }
 
     public boolean invalid() {
@@ -109,13 +88,26 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     @SuppressWarnings("unchecked")
-    public T of(long fd, @NotNull IODispatcher<T> dispatcher) {
-        if (fd != -1) {
-            connectionCountGauge.inc();
-        }
+    public final T of(long fd) {
         socket.of(fd);
-        this.dispatcher = dispatcher;
         return (T) this;
+    }
+
+    public ServerDisconnectException registerDispatcherDisconnect(int reason) {
+        disconnectReason = reason;
+        return ServerDisconnectException.INSTANCE;
+    }
+
+    public HeartBeatException registerDispatcherHeartBeat() {
+        return HeartBeatException.INSTANCE;
+    }
+
+    public PeerIsSlowToWriteException registerDispatcherRead() {
+        return PeerIsSlowToWriteException.INSTANCE;
+    }
+
+    public PeerIsSlowToReadException registerDispatcherWrite() {
+        return PeerIsSlowToReadException.INSTANCE;
     }
 
     public void setHeartbeatId(long heartbeatId) {
@@ -123,13 +115,29 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     private void _clear() {
-        if (socket.getFd() != -1) {
-            connectionCountGauge.dec();
-        }
         heartbeatId = -1;
         socket.close();
-        dispatcher = null;
         disconnectReason = -1;
         clearSuspendEvent();
+        initialized = false;
+    }
+
+    protected void clearSuspendEvent() {
+    }
+
+    /**
+     * Initializes the state of the context object.
+     * <p>
+     * Override this method to perform any setup required.
+     * Note that this method is called once per connection, but not on the thread
+     * that accepts connections. Instead, it is invoked when the first I/O event
+     * is dispatched for this context.
+     * <p>
+     * Avoid placing initialization logic in the context's constructor, as it may
+     * negatively impact the database's ability to accept new connections under high load.
+     *
+     * @throws io.questdb.cairo.CairoException if initialization fails
+     */
+    protected void doInit() throws TlsSessionInitFailedException {
     }
 }

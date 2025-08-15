@@ -49,7 +49,6 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,7 +107,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
@@ -164,7 +163,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
@@ -200,7 +199,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(500);
@@ -259,7 +258,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     @Test
     public void testAlterTableCacheAndNocache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE foo ( a SYMBOL )");
+            execute("CREATE TABLE foo ( a SYMBOL )");
             drainWalQueue();
 
             String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n";
@@ -269,12 +268,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             // check its true by default
             assertSql(header + left + "true" + right, "table_columns('foo')");
 
-            ddl("ALTER TABLE foo ALTER COLUMN a NOCACHE");
+            execute("ALTER TABLE foo ALTER COLUMN a NOCACHE");
             drainWalQueue();
             // check its false now
             assertSql(header + left + "false" + right, "table_columns('foo')");
 
-            ddl("ALTER TABLE foo ALTER COLUMN a CACHE");
+            execute("ALTER TABLE foo ALTER COLUMN a CACHE");
             drainWalQueue();
 
             // check its true again
@@ -329,6 +328,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 )
                 .withAlterTableStartWaitTimeout(30_000);
 
+        // this is JDK8 thing:
+        //noinspection CharsetObjectCanBeUsed
         runUpdateOnBusyTable(
                 (writer, reader) -> TestUtils.assertReader(
                         "s\tx\tts\n" +
@@ -346,17 +347,17 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 ),
                 writer -> {
                 },
-                0,
                 queryTestBuilder,
                 null,
                 null,
                 -1L,
                 3,
-                URLEncoder.encode("update x set x=1 where s = 'a'", StandardCharsets.UTF_8.toString()),
-                URLEncoder.encode("update x set x=10 where s = 'b'", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set x=1 where s = 'a'", "UTF8"),
+                URLEncoder.encode("update x set x=10 where s = 'b'", "UTF8")
         );
     }
 
+    @SuppressWarnings("CharsetObjectCanBeUsed")
     @Test
     public void testUpdateConnectionDropOnColumnRewrite() throws Exception {
         SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
@@ -370,7 +371,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             disconnectLatch.countDown();
                         }
@@ -384,13 +385,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 },
                 writer -> {
                 },
-                0,
                 queryTestBuilder,
                 disconnectLatch,
                 null,
                 1000,
                 0,
-                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set x=1 from tables()", "UTF8")
         );
     }
 
@@ -426,11 +426,11 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             SOCountDownLatch waitToDisconnect,
             final String... httpAlterQueries
     ) throws Exception {
-        queryTestBuilder.run((engine) -> {
+        queryTestBuilder.run((engine, sqlExecutionContext) -> {
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                engine.ddl(
+                engine.execute(
                         "create table IF NOT EXISTS " + tableName + " as (" +
                                 " select rnd_symbol('a', 'b', 'c') as s," +
                                 " cast(x as timestamp) ts" +
@@ -524,7 +524,6 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     private void runUpdateOnBusyTable(
             AlterVerifyAction alterVerifyAction,
             OnTickAction onTick,
-            int errorsExpected,
             HttpQueryTestBuilder queryTestBuilder,
             SOCountDownLatch waitToDisconnect,
             String errorHeader,
@@ -532,11 +531,11 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             int updatedCount,
             final String... httpUpdateQueries
     ) throws Exception {
-        queryTestBuilder.run((engine) -> {
+        queryTestBuilder.run((engine, sqlExecutionContext) -> {
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                engine.ddl("create table IF NOT EXISTS " + tableName + " as (" +
+                engine.execute("create table IF NOT EXISTS " + tableName + " as (" +
                                 " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
                                 " x," +
                                 " cast(x as timestamp) ts" +
@@ -583,9 +582,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                                 }
                             }
                         } catch (Error e) {
-                            if (errorsExpected == 0) {
-                                error = e;
-                            }
+                            error = e;
                             errors.getAndIncrement();
                         } catch (Throwable e) {
                             errors.getAndIncrement();
@@ -599,7 +596,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion
-                while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= errorsExpected) {
+                while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= 0) {
                     onTick.run(writer);
                     writer.tick(true);
                     finished.await(1_000_000);
@@ -608,7 +605,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 if (error != null) {
                     throw error;
                 }
-                Assert.assertEquals(errorsExpected, errors.get());
+                Assert.assertEquals(0, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseAllReaders();
                 try (TableReader reader = engine.getReader(tableName)) {
@@ -622,6 +619,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         });
     }
 
+    // JDK8 related
+    @SuppressWarnings("CharsetObjectCanBeUsed")
     private void testUpdateAfterReaderOutOfDateException(
             AlterVerifyAction alterVerifyAction,
             OnTickAction onTick,
@@ -644,7 +643,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000L)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "default/ts.d.2") || Utf8s.endsWithAscii(name, "default\\ts.d.2")) {
                             updateAckReceived.await();
                         }
@@ -655,13 +654,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         runUpdateOnBusyTable(
                 alterVerifyAction,
                 onTick,
-                0,
                 queryTestBuilder,
                 null,
                 errorHeader,
                 statementTimeout,
                 updatedCount,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set ts=123", "UTF8")
         );
     }
 

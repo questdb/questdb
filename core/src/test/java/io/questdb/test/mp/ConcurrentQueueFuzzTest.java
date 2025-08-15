@@ -25,7 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.ConcurrentQueue;
-import io.questdb.mp.QueueValueHolder;
+import io.questdb.mp.ValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -80,7 +80,7 @@ public class ConcurrentQueueFuzzTest {
         int elementsCount = 33 + rnd.nextInt(1_000) + (int) Math.pow(2, rnd.nextInt(20));
         boolean[] received = new boolean[elementsCount];
 
-        ConcurrentQueue<IntHolderQueue> queue = new ConcurrentQueue<>(IntHolderQueue::new);
+        ConcurrentQueue<IntHolderQueue> queue = ConcurrentQueue.createConcurrentQueue(IntHolderQueue::new);
         AtomicInteger counter = new AtomicInteger();
 
         CyclicBarrier barrier = new CyclicBarrier(nProducers + nConsumers);
@@ -112,7 +112,6 @@ public class ConcurrentQueueFuzzTest {
 
         boolean pauseReader = rnd.nextBoolean();
         for (int i = 0; i < nConsumers; i++) {
-            Rnd consumerRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
             Thread th = new Thread(() -> {
                 try {
                     barrier.await();
@@ -173,8 +172,13 @@ public class ConcurrentQueueFuzzTest {
         System.out.println("Processed " + elementsCount + " queue size: " + queue.capacity());
     }
 
-    static class IntHolderQueue implements QueueValueHolder<IntHolderQueue> {
+    static class IntHolderQueue implements ValueHolder<IntHolderQueue> {
         int value;
+
+        @Override
+        public void clear() {
+            value = 0;
+        }
 
         @Override
         public void copyTo(IntHolderQueue intHolder) {

@@ -35,7 +35,7 @@ public class InLongTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarConstants() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -53,13 +53,13 @@ public class InLongTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN (1, 2, 3)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
     @Test
     public void testBindVarRuntimeConstants() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -82,13 +82,13 @@ public class InLongTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
     @Test
     public void testBindVarTypeChange() throws SqlException {
-        ddl("create table test as (select x, rnd_long(2991, 2989892, 1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_long(2991, 2989892, 1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
@@ -142,7 +142,7 @@ public class InLongTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVariableMix() throws SqlException {
-        ddl("create table test as (select x, rnd_long() a from long_sequence(100))");
+        execute("create table test as (select x, rnd_long() a from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -158,7 +158,7 @@ public class InLongTest extends AbstractCairoTest {
 
     @Test
     public void testNulls() throws SqlException {
-        ddl("create table test as (select x, rnd_double(1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_double(1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();

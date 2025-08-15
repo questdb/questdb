@@ -27,9 +27,23 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -46,9 +60,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testBlankKey() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = newDefaultMap(valueType)
+        try (
+                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             Assert.assertNull(findValue("", map));
             putStable("", 42, map, sinkA, true);
@@ -64,8 +79,9 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testClear() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB)
+        try (
+                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB)
         ) {
             putStable("foo", 42, map, sinkA, true);
             putUnstable("foo", 42, map, false);
@@ -98,8 +114,9 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testCursor() throws Exception {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = newDefaultMap(valueType)
+        try (
+                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             int keyCount = 100_000;
             for (int i = 0; i < keyCount; i++) {
@@ -175,8 +192,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testKeyHashCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-            try (Map map = newDefaultMap(valueType);
-                 DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024)) {
+            try (
+                    Map map = newDefaultMap(valueType);
+                    DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024)
+            ) {
                 final int N = 100000;
                 final LongList keyHashCodes = new LongList(N);
                 long lo = sinkA.hi();
@@ -216,9 +235,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
             int keyLength = 20_000_000;
-            try (Map map = newDefaultMap(valueType);
-                 DirectUtf8Sink sinkA = new DirectUtf8Sink(keyLength)) {
-
+            try (
+                    Map map = newDefaultMap(valueType);
+                    DirectUtf8Sink sinkA = new DirectUtf8Sink(keyLength)
+            ) {
                 for (int i = 0; i < keyLength; i++) {
                     sinkA.put('k');
                 }
@@ -249,10 +269,11 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testMerge() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap mapA = newDefaultMap(valueType);
-             UnorderedVarcharMap mapB = newDefaultMap(valueType)
+        try (
+                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                UnorderedVarcharMap mapA = newDefaultMap(valueType);
+                UnorderedVarcharMap mapB = newDefaultMap(valueType)
         ) {
             int keyCountA = 100;
             int keyCountB = 200;
@@ -279,7 +300,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testMergeUnstable() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
-
             int keyCountA = 100;
             int keyCountB = 200;
             try (UnorderedVarcharMap mapB = newDefaultMap(valueType)) {
@@ -291,7 +311,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 }
                 mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
             }
-
 
             for (int i = 0; i < keyCountA; i++) {
                 Assert.assertEquals(i * 2, get("foo" + i, mapA));
@@ -305,9 +324,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testNullKey() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = newDefaultMap(valueType)
+        try (
+                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             Assert.assertNull(findValue(null, map));
             putStable(null, 42, map, sinkA, true);
@@ -323,9 +343,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testRehashing() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = newDefaultMap(valueType)
+        try (
+                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             int keyCount = 1_000;
             for (int i = 0; i < keyCount; i++) {
@@ -351,9 +372,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
             UnorderedVarcharMap danglingMap;
-            try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-                 DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-                 UnorderedVarcharMap map = newDefaultMap(valueType)
+            try (
+                    DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                    DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                    UnorderedVarcharMap map = newDefaultMap(valueType)
             ) {
                 danglingMap = map;
 
@@ -396,6 +418,40 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 }
             }
             danglingMap.close();
+        });
+    }
+
+    @Test
+    public void testTopK() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int heapCapacity = 7;
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    UnorderedVarcharMap map = newDefaultMap(valueTypes);
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                for (int i = 0; i < 100; i++) {
+                    MapKey key = map.withKey();
+                    key.putVarchar(String.valueOf(i));
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
+
+                MapRecordCursor mapCursor = map.getCursor();
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
+
+                Assert.assertEquals(heapCapacity, list.size());
+
+                MapRecord mapRecord = mapCursor.getRecord();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
+                for (int i = 0; i < heapCapacity; i++) {
+                    Assert.assertTrue(heapCursor.hasNext());
+                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
+                }
+            }
         });
     }
 

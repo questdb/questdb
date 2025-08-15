@@ -31,11 +31,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
-    public TableNameRegistryRW(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
-        super(configuration, tableFlagResolver);
+    public TableNameRegistryRW(CairoEngine engine, TableFlagResolver tableFlagResolver) {
+        super(engine, tableFlagResolver);
         if (!nameStore.lock()) {
-            if (!configuration.getAllowTableRegistrySharedWrite()) {
-                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
+            if (!engine.getConfiguration().getAllowTableRegistrySharedWrite()) {
+                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getDbRoot()).put(']');
             }
         }
         this.tableNameToTableTokenMap = new ConcurrentHashMap<>(false);
@@ -51,27 +51,39 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public boolean dropTable(TableToken token) {
+        assert !TableNameRegistry.isLocked(token);
         final ReverseTableMapItem reverseMapItem = dirNameToTableTokenMap.get(token.getDirName());
-        if (reverseMapItem != null && tableNameToTableTokenMap.remove(token.getTableName(), token)) {
+
+        // we do not want to remove the token mapping and release the name of the table for another table create
+        // before the change saved in the name store. This is why we lock the name here for dropping.
+        if (reverseMapItem != null && tableNameToTableTokenMap.replace(token.getTableName(), token, LOCKED_DROP_TOKEN)) {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
                 dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
             }
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.dropTable(token);
+            }
+
+            // remove the token from the map and release the name.
+            boolean removed = tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
+            assert removed;
+
             return true;
         }
         return false;
     }
 
     @Override
-    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isMatView, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
-            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
+            return new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }
@@ -85,23 +97,33 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     @Override
     public void registerName(TableToken tableToken) {
         String tableName = tableToken.getTableName();
-        if (!tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken)) {
+        if (tableNameToTableTokenMap.get(tableName) != LOCKED_TOKEN) {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
+
+        // This most unsafe, can throw, run it first.
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(tableToken);
+        }
+
         if (tableToken.isWal()) {
             nameStore.logAddTable(tableToken);
         }
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
+
+        // Finish the name registration, table is queriable from this moment.
+        boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken);
+        assert stillLocked;
     }
 
     @Override
-    public synchronized void reload(@Nullable ObjList<TableToken> convertedTables) {
+    public synchronized boolean reload(@Nullable ObjList<TableToken> convertedTables) {
         tableNameToTableTokenMap.clear();
         dirNameToTableTokenMap.clear();
         if (!nameStore.isLocked()) {
             nameStore.lock();
         }
-        nameStore.reload(tableNameToTableTokenMap, dirNameToTableTokenMap, convertedTables);
+        return nameStore.reload(tableNameToTableTokenMap, dirNameToTableTokenMap, convertedTables);
     }
 
     @Override
@@ -115,11 +137,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         TableToken renamedTableToken = tableToken.renamed(newTableNameStr);
 
         if (tableNameToTableTokenMap.putIfAbsent(newTableNameStr, renamedTableToken) == null) {
-            if (tableNameToTableTokenMap.remove(oldName, tableToken)) {
-                // Persist to file
-                nameStore.logDropTable(tableToken);
-                nameStore.logAddTable(renamedTableToken);
-                dirNameToTableTokenMap.put(renamedTableToken.getDirName(), ReverseTableMapItem.of(renamedTableToken));
+            if (renameToNew(tableToken, renamedTableToken)) {
                 return renamedTableToken;
             } else {
                 // Already renamed by another thread. Revert new name reservation.
@@ -133,15 +151,36 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public void rename(TableToken oldToken, TableToken newToken) {
-        if (tableNameToTableTokenMap.remove(oldToken.getTableName(), oldToken)) {
-            nameStore.logDropTable(oldToken);
-            nameStore.logAddTable(newToken);
-            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
-        }
+        renameToNew(oldToken, newToken);
     }
 
     @Override
     public void unlockTableName(TableToken tableToken) {
         tableNameToTableTokenMap.remove(tableToken.getTableName(), LOCKED_TOKEN);
+    }
+
+    private boolean renameToNew(TableToken oldToken, TableToken newToken) {
+        // Mark the old name as about to be released, do not release the new name in
+        // the map before it is logged in name store file.
+        if (tableNameToTableTokenMap.replace(oldToken.getTableName(), oldToken, LOCKED_DROP_TOKEN)) {
+            // Log the change in the name store file.
+            nameStore.logDropTable(oldToken);
+            nameStore.logAddTable(newToken);
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                // Save the new name in the table dir.
+                metadataRW.renameTable(oldToken, newToken);
+            }
+
+            // Update the reverse map.
+            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
+
+            // Release the new name in the map.
+            boolean removed = tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
+            assert removed;
+
+            return true;
+        }
+        return false;
     }
 }

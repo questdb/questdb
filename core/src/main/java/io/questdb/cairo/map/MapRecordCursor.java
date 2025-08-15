@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.DirectLongLongSortedList;
 
 public interface MapRecordCursor extends RecordCursor {
 
@@ -33,4 +35,6 @@ public interface MapRecordCursor extends RecordCursor {
 
     @Override
     MapRecord getRecordB();
+
+    void longTopK(DirectLongLongSortedList list, Function recordFunction);
 }

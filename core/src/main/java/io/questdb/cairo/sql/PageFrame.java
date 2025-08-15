@@ -35,14 +35,6 @@ import io.questdb.cairo.BitmapIndexReader;
  * should be used.
  */
 public interface PageFrame {
-    /**
-     * Page frame belonging to a partition in native QDB format.
-     */
-    byte NATIVE_FORMAT = 0;
-    /**
-     * Page frame belonging to a partition in Apache Parquet format.
-     */
-    byte PARQUET_FORMAT = 1;
 
     /**
      * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
@@ -77,7 +69,7 @@ public interface PageFrame {
     /**
      * Returns page frame format.
      * <p>
-     * Possible values: {@link #NATIVE_FORMAT} and {@link #PARQUET_FORMAT}.
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
      */
     byte getFormat();
 
@@ -102,6 +94,36 @@ public interface PageFrame {
      * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
+
+    /**
+     * Return Parquet partition's mmapped file address or 0 in case of a native partition.
+     */
+    long getParquetAddr();
+
+    /**
+     * Return the Parquet partition's read size or -1 in case of a native partition.
+     * Specifying the read size allows us to find a specific metadata at the end of the read size
+     * (rather than the end of the file) should we have performed an O3 operation that extended
+     * the file size.
+     */
+    long getParquetFileSize();
+
+    /**
+     * Returns row group index corresponding to the Parquet page frame.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    int getParquetRowGroup();
+
+    /**
+     * Returns high row index within the row group, exclusive.
+     */
+    int getParquetRowGroupHi();
+
+    /**
+     * Returns low row index within the row group, inclusive.
+     */
+    int getParquetRowGroupLo();
 
     /**
      * Return high row index within the frame's partition, exclusive.

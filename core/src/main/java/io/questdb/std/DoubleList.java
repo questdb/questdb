@@ -24,10 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -97,18 +96,14 @@ public class DoubleList implements Mutable, Sinkable {
                 high = mid - 1;
             } else {
                 // In case of multiple equal values, find the first
-                return scanDir == BinarySearch.SCAN_UP ?
+                return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
                         scrollUp(mid, midVal) :
                         scrollDown(mid, high, midVal);
             }
         }
-        return scanDir == BinarySearch.SCAN_UP ?
+        return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
                 scanUp(value, low, high + 1) :
                 scanDown(value, low, high + 1);
-    }
-
-    public void clear() {
-        pos = 0;
     }
 
     public void checkCapacity(int capacity) {
@@ -119,10 +114,18 @@ public class DoubleList implements Mutable, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            double[] buf = new double[newCap];
-            System.arraycopy(data, 0, buf, 0, l);
-            this.data = buf;
+            this.data = Arrays.copyOf(data, newCap);
         }
+    }
+
+    /**
+     * Resets the size of this list to zero.
+     * <p>
+     * <strong>Does not overwrite the underlying array with empty values.</strong>
+     * Use <code>clear(0)</code> to overwrite it.
+     */
+    public void clear() {
+        pos = 0;
     }
 
     @Override
@@ -135,6 +138,13 @@ public class DoubleList implements Mutable, Sinkable {
         Arrays.fill(data, noEntryValue);
     }
 
+    /**
+     * Sets the value at index, extending the backing array if needed.
+     * <p>
+     * <strong>WARNING:</strong> does not initialize the newly revealed portion of
+     * the backing array! This may reveal values that were never set, or were set
+     * before calling <code>clear()</code>.
+     */
     public void extendAndSet(int index, double value) {
         checkCapacity(index + 1);
         if (index >= pos) {

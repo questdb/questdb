@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -72,8 +73,7 @@ public class ShowServerVersionNumCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStrA(col);
-                return s != null ? s.length() : -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         };
         private int idx = -1;
@@ -91,6 +91,11 @@ public class ShowServerVersionNumCursorFactory extends AbstractRecordCursorFacto
         @Override
         public boolean hasNext() {
             return ++idx < SIZE;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

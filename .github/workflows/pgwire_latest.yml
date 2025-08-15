@@ -27,52 +27,19 @@ jobs:
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
         run: ./questdb-*bin/questdb.sh start
-      - name: Setup Python version
-        uses: actions/setup-python@v2
-        with:
-          python-version: 3
-      - name: Create and start virtual environment for psycopg2
-        run: |
-          python3 -m venv venv_psycopg2
-          source venv_psycopg2/bin/activate
-          pip install -r compat/src/test/python/requirements_psycopg2_latest.txt
-      - name: Run tests with psycopg2
-        run: |
-          source venv_psycopg2/bin/activate
-          python compat/src/test/python/runner_psycopg2.py compat/src/test/resources/test_cases.yaml
-      - name: Create and start virtual environment for psycopg3
-        run: |
-          python3 -m venv venv_psycopg3
-          source venv_psycopg3/bin/activate
-          pip install -r compat/src/test/python/requirements_psycopg3_latest.txt
-      - name: Run tests with psycopg3
-        run: |
-          source venv_psycopg3/bin/activate
-          python compat/src/test/python/runner_psycopg3.py compat/src/test/resources/test_cases.yaml
-      - name: Create and start virtual environment for asyncpg
-        run: |
-          python3 -m venv venv_asyncpg
-          source venv_asyncpg/bin/activate
-          pip install -r compat/src/test/python/requirements_asyncpg_latest.txt
-      - name: Run tests with asyncpg
-        run: |
-          source venv_asyncpg/bin/activate
-          python compat/src/test/python/runner_asyncpg.py compat/src/test/resources/test_cases.yaml
       - name: Setup Rust toolchain
         # 4d1965c9142484e48d40c19de54b5cba84953a06 is the same as @v1, except it's guaranteed to be immutable
         # even if the original tag is moved or deleted
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
           toolchain: stable
-          # No cache when testing latest
-          cache: 'false'
-      - name: Compile Rust scenarios runner
+          cache-workspaces: compat/src/test/rust/scenarios
+      - name: Setup Python version
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3
+      - name: Run all scenarios
         run: |
-          cd compat/src/test/rust/scenarios
-          cargo build --release
-      - name: Run Rust test runner
-        run: |
-          compat/src/test/rust/scenarios/target/release/questrun_rust compat/src/test/resources/test_cases.yaml
+          ./compat/src/test/scenarios_latest.sh
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
-# TODO: Add notification via Slack webhook

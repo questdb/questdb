@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -88,7 +87,7 @@ public class MemRemappedFileTest extends AbstractTest {
 
     private double test(MemoryMR readMem) {
         long nanos = 0;
-        try (MemoryMA appMem = Vm.getMAInstance(CommitMode.NOSYNC)) {
+        try (MemoryMA appMem = Vm.getPMARInstance(null)) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;

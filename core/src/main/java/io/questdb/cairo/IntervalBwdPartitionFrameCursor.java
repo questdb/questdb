@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -47,7 +47,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     }
 
     @Override
-    public PartitionFrame next() {
+    public PartitionFrame next(long skipTarget) {
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
@@ -55,9 +55,10 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final int currentInterval = intervalsHi - 1;
             final int currentPartition = partitionHi - 1;
-            long rowCount = reader.openPartition(currentPartition);
+            long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
             if (rowCount > 0) {
-                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(currentPartition), timestampIndex));
+                final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);
+
                 final long intervalLo = intervals.getQuick(currentInterval * 2);
                 final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
 
@@ -68,42 +69,53 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     limitHi = partitionLimit - 1;
                 }
 
-                final long partitionTimestampLo = column.getLong(0);
-
                 LOG.debug()
                         .$("next [partition=").$(currentPartition)
                         .$(", intervalLo=").microTime(intervalLo)
                         .$(", intervalHi=").microTime(intervalHi)
-                        .$(", partitionLo=").microTime(partitionTimestampLo)
                         .$(", limitHi=").$(limitHi)
                         .$(", rowCount=").$(rowCount)
                         .$(", currentInterval=").$(currentInterval)
                         .I$();
 
+                final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
                 // interval is wholly above partition, skip partition
-                if (partitionTimestampLo > intervalHi) {
+                if (partitionTimestampLoApprox > intervalHi) {
                     skipPartition(currentPartition);
                     continue;
                 }
 
+                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
                 // interval is wholly below partition, skip interval
-                final long partitionTimestampHi = column.getLong(limitHi * Long.BYTES);
-                if (partitionTimestampHi < intervalLo) {
+                if (partitionTimestampHiApprox < intervalLo) {
+                    skipInterval(currentInterval, limitHi + 1);
+                    continue;
+                }
+
+                reader.openPartition(currentPartition);
+                timestampFinder.prepare();
+
+                // interval is wholly below partition, skip interval
+                final long partitionTimestampHiExact = timestampFinder.timestampAt(limitHi);
+                if (partitionTimestampHiExact < intervalLo) {
                     skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
 
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
+                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
                 final long lo;
-                if (partitionTimestampLo < intervalLo) {
-                    lo = BinarySearch.find(column, intervalLo - 1, 0, limitHi, BinarySearch.SCAN_DOWN) + 1;
+                if (partitionTimestampLoExact < intervalLo) {
+                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
+                    // and then do index + 1 to skip to top of where we need to be.
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, 0, limitHi) + 1;
                 } else {
                     lo = 0;
                 }
 
                 final long hi;
-                if (partitionTimestampHi > intervalHi) {
-                    hi = BinarySearch.find(column, intervalHi, lo, limitHi, BinarySearch.SCAN_DOWN) + 1;
+                if (partitionTimestampHiExact > intervalHi) {
+                    hi = timestampFinder.findTimestamp(intervalHi, lo, limitHi) + 1;
                 } else {
                     hi = limitHi + 1;
                 }
@@ -117,11 +129,23 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 if (lo < hi) {
-                    partitionFrame.partitionIndex = currentPartition;
-                    partitionFrame.rowLo = lo;
-                    partitionFrame.rowHi = hi;
+                    frame.partitionIndex = currentPartition;
+                    frame.rowLo = lo;
+                    frame.rowHi = hi;
                     sizeSoFar += hi - lo;
-                    return partitionFrame;
+
+                    final byte format = reader.getPartitionFormat(currentPartition);
+                    if (format == PartitionFormat.PARQUET) {
+                        assert parquetDecoder.getFileAddr() != -1 : "parquet decoder is not initialized";
+                        frame.format = PartitionFormat.PARQUET;
+                        frame.parquetDecoder = parquetDecoder;
+                    } else {
+                        assert format == PartitionFormat.NATIVE;
+                        frame.format = PartitionFormat.NATIVE;
+                        frame.parquetDecoder = null;
+                    }
+
+                    return frame;
                 }
             } else {
                 // partition was empty, just skip to next

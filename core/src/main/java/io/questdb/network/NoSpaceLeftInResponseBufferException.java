@@ -25,12 +25,29 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.std.ThreadLocal;
 
 public class NoSpaceLeftInResponseBufferException extends HttpException {
-    public static final NoSpaceLeftInResponseBufferException INSTANCE;
+    private static final ThreadLocal<NoSpaceLeftInResponseBufferException> tlException = new ThreadLocal<>(NoSpaceLeftInResponseBufferException::new);
 
-    static {
-        INSTANCE = new NoSpaceLeftInResponseBufferException();
-        INSTANCE.put("no space left in response buffer");
+    private long bytesRequired;
+
+    public NoSpaceLeftInResponseBufferException() {
+        super();
+        put("no space left in response buffer");
+    }
+
+    public static NoSpaceLeftInResponseBufferException instance(long bytesRequired) {
+        NoSpaceLeftInResponseBufferException ex = tlException.get();
+        ex.bytesRequired = bytesRequired;
+        return ex;
+    }
+
+    public long getBytesRequired() {
+        return bytesRequired;
+    }
+
+    public void setBytesRequired(long bytesRequired) {
+        this.bytesRequired = bytesRequired;
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,7 +42,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Iterator;
 
 public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
-
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final ShowParametersRecordCursor cursor = new ShowParametersRecordCursor();
 
@@ -127,8 +127,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStrA(col);
-                return s != null ? s.length() : -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         };
         @NotNull
@@ -155,6 +154,11 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1L;
         }
@@ -178,6 +182,6 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         METADATA.add(new TableColumnMetadata("value", ColumnType.STRING));
         METADATA.add(new TableColumnMetadata("value_source", ColumnType.STRING));
         METADATA.add(new TableColumnMetadata("sensitive", ColumnType.BOOLEAN));
-        METADATA.add(new TableColumnMetadata("dynamic", ColumnType.BOOLEAN));
+        METADATA.add(new TableColumnMetadata("reloadable", ColumnType.BOOLEAN));
     }
 }

@@ -686,8 +686,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             this.indexChunkSize = 0;
             this.chunkNumber = 0;
             this.dataSize = 0;
-            this.memory = new MemoryPMARImpl(configuration.getCommitMode());
-
+            this.memory = new MemoryPMARImpl(configuration);
             nextChunk(ff, path);
         }
 

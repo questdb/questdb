@@ -35,7 +35,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Os;
+import io.questdb.std.Rows;
+import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
@@ -108,12 +115,16 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 "completed timestamp" + // 11
                                 ") timestamp(ts) partition by MONTH BYPASS WAL"
                         )
-                        .compile(sqlExecutionContext)
-                        .getTableToken();
+                        .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWriter(tableToken, "QuestDB system");
-            this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
+            this.columnPurgeOperator = new ColumnPurgeOperator(
+                    engine,
+                    this.writer,
+                    "completed",
+                    ColumnPurgeOperator.ScoreboardUseMode.BAU_QUEUE_PROCESSING
+            );
             this.checkpointStatus = engine.getCheckpointStatus();
             processTableRecords(engine);
         } catch (Throwable th) {
@@ -215,8 +226,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     .$(tableToken.getTableName())
                     .$("\" WHERE completed = null")
                     .compile(sqlExecutionContext).getRecordCursorFactory();
-        } catch (SqlException e) {
-            LOG.error().$("failed to reload column version purge tasks").$((Throwable) e).$();
+        } catch (Throwable e) {
+            LOG.error().$("failed to reload column version purge tasks").$(e).$();
             return;
         }
 
@@ -225,7 +236,18 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             assert recordCursorFactory.supportsUpdateRowId(tableToken);
             int count = 0;
 
-            try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {
+            try (
+                    RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext);
+                    // this is a startup-only activity where we purge columns from the log table
+                    // to ensure purge operator does not have to deal with the complexity of switching operating
+                    // modes dynamically, we create a new instance specifically for startup.
+                    ColumnPurgeOperator columnPurgeOperator = new ColumnPurgeOperator(
+                            engine,
+                            this.writer,
+                            "completed",
+                            ColumnPurgeOperator.ScoreboardUseMode.STARTUP_ONLY
+                    )
+            ) {
                 Record rec = records.getRecord();
                 long lastTs = 0;
                 ColumnPurgeRetryTask task = null;
@@ -239,7 +261,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     if (ts != lastTs || task == null) {
                         if (task != null) {
                             if (taskInitialized) {
-                                columnPurgeOperator.purgeExclusive(task);
+                                columnPurgeOperator.purge(task);
                                 taskInitialized = false;
                             }
                         } else {
@@ -257,7 +279,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         TableToken token = engine.getTableTokenByDirName(tableName);
 
                         if (token == null || token.getTableId() != tableId) {
-                            LOG.debug().$("table deleted, skipping [tableDir=").utf8(tableName).I$();
+                            LOG.debug().$("table deleted, skipping [tableDir=").$safe(tableName).I$();
                             continue;
                         }
 
@@ -281,7 +303,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 }
                 if (task != null) {
                     if (taskInitialized) {
-                        columnPurgeOperator.purgeExclusive(task);
+                        columnPurgeOperator.purge(task);
                     }
                     taskPool.push(task);
                 }
@@ -365,13 +387,14 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (checkpointStatus.isInProgress()) {
-            // do not purge anything before checkpoint is released
-            return false;
-        }
 
         try {
             boolean useful = processInQueue();
+            if (checkpointStatus.partitionsLocked()) {
+                // do not purge anything before the checkpoint is released
+                return false;
+            }
+
             boolean cleanupUseful = purge();
             if (cleanupUseful) {
                 LOG.debug().$("cleaned column version, outstanding tasks: ").$(retryQueue.size()).$();
@@ -408,7 +431,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
         public void of(
                 TableToken tableName,
-                CharSequence columnName,
+                String columnName,
                 int tableId,
                 long truncateVersion,
                 int columnType,

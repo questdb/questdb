@@ -51,6 +51,15 @@ public interface Utf8Sequence extends ByteSequence {
      */
     byte byteAt(int index);
 
+    default int intAt(int offset) {
+        int result = 0;
+        result |= byteAt(offset) & 0xff;
+        result |= (byteAt(offset + 1) & 0xff) << 8;
+        result |= (byteAt(offset + 2) & 0xff) << (8 * 2);
+        result |= (byteAt(offset + 3) & 0xff) << (8 * 3);
+        return result;
+    }
+
     /**
      * Returns `true` if it's guaranteed that the contents of this UTF-8 sequence are
      * all ASCII characters. Returning `false` does not guarantee anything.
@@ -80,9 +89,14 @@ public interface Utf8Sequence extends ByteSequence {
      */
     default long longAt(int offset) {
         long result = 0;
-        for (int i = offset; i < offset + Long.BYTES; i++) {
-            result |= (byteAt(i) & 0xffL) << (8 * (i - offset));
-        }
+        result |= byteAt(offset) & 0xffL;
+        result |= (byteAt(offset + 1) & 0xffL) << 8;
+        result |= (byteAt(offset + 2) & 0xffL) << (8 * 2);
+        result |= (byteAt(offset + 3) & 0xffL) << (8 * 3);
+        result |= (byteAt(offset + 4) & 0xffL) << (8 * 4);
+        result |= (byteAt(offset + 5) & 0xffL) << (8 * 5);
+        result |= (byteAt(offset + 6) & 0xffL) << (8 * 6);
+        result |= (byteAt(offset + 7) & 0xffL) << (8 * 7);
         return result;
     }
 
@@ -92,6 +106,13 @@ public interface Utf8Sequence extends ByteSequence {
      */
     default long ptr() {
         return -1;
+    }
+
+    default short shortAt(int offset) {
+        int result = 0;
+        result |= byteAt(offset) & 0xff;
+        result |= (byteAt(offset + 1) & 0xff) << 8;
+        return (short) result;
     }
 
     /**

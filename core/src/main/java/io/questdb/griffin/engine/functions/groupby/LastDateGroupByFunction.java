@@ -30,8 +30,7 @@ import io.questdb.cairo.sql.Record;
 import org.jetbrains.annotations.NotNull;
 
 public class LastDateGroupByFunction extends FirstDateGroupByFunction {
-
-    public LastDateGroupByFunction(int position, @NotNull Function arg) {
+    public LastDateGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 

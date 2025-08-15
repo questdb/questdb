@@ -112,14 +112,23 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
     }
 
     public GenericRecordMetadata add(int i, TableColumnMetadata meta) {
-        int index = columnNameIndexMap.keyIndex(meta.getName());
+        int index = columnNameIndexMap.keyIndex(meta.getColumnName());
         if (index > -1) {
-            columnNameIndexMap.putAt(index, meta.getName(), i);
+            columnNameIndexMap.putAt(index, meta.getColumnName(), i);
             columnMetadata.extendAndSet(i, meta);
             columnCount++;
             return this;
         }
-        throw CairoException.duplicateColumn(meta.getName());
+        throw CairoException.duplicateColumn(meta.getColumnName());
+    }
+
+    public void addIfNotExists(int i, TableColumnMetadata meta) {
+        int index = columnNameIndexMap.keyIndex(meta.getColumnName());
+        if (index > -1) {
+            columnNameIndexMap.putAt(index, meta.getColumnName(), i);
+            columnMetadata.extendAndSet(i, meta);
+            columnCount++;
+        }
     }
 
     public void setTimestampIndex(int index) {

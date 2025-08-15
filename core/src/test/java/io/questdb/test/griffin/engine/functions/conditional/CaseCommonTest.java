@@ -36,31 +36,104 @@ import org.junit.Test;
 import java.util.*;
 
 public class CaseCommonTest extends BaseFunctionFactoryTest {
-    private static final Map<Short, Set<Short>> IGNORED_TYPE = buildIgnoredTypeMap();
     private static final short MAX_COLUMN_TYPE_ID = ColumnType.VARCHAR;
     private static final short MIN_COLUMN_TYPE_ID = ColumnType.BOOLEAN;
-
+    private static final Map<Short, Set<Short>> IGNORED_TYPE = buildIgnoredTypeMap();
     private FunctionParser functionParser;
 
     @Before
     public void setUpParser() {
-        functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())));
+        functionParser = new FunctionParser(configuration, new FunctionFactoryCache(
+                configuration,
+                new FunctionFactoryCacheBuilder().scan(LOG).build()
+        ));
     }
 
+    @Test
+    public void testCommonType() throws Exception {
+        // this test that:
+        // 1. for each pair of types getCommonType() returns a valid type, unless it's explicitly ignored.
+        //    this protects us against a missing entry in CaseFunction.typeEscalationMap
+        // 2. getCastFunction() returns a function that can read the common type
+        //    this protects us against a missing entry in CaseFunction.castFactories
 
-    private static void addIgnored(Map<Short, Set<Short>> map, short from, short... to) {
-        Set<Short> ignored = map.get(from);
-        for (short t : to) {
-            ignored.add(t);
-        }
-    }
+        // this test is relatively invasive, it tests against internals thus do not be afraid to change it if you need to
 
-    private static boolean isGeoType(short type) {
-        return type == ColumnType.GEOBYTE || type == ColumnType.GEOSHORT || type == ColumnType.GEOINT || type == ColumnType.GEOLONG || type == ColumnType.GEOHASH;
-    }
+        assertMemoryLeak(() -> {
+            SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1);
+            for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {
+                for (short r = MIN_COLUMN_TYPE_ID; r <= MAX_COLUMN_TYPE_ID; r++) {
+                    try {
+                        int commonType = CaseCommon.getCommonType(l, r, 0, "UNDEFINED is not expected");
+                        Function upstreamFunction = getRndFunction(l);
+                        upstreamFunction.init(null, context);
+                        Function commonFunction = CaseCommon.getCastFunction(upstreamFunction, 0, commonType, configuration, null);
+                        Assert.assertNotNull(commonFunction);
 
-    private static boolean isAuxType(short type) {
-        return type == ColumnType.CURSOR || type == ColumnType.VAR_ARG || type == ColumnType.RECORD;
+                        // check we can read the expected type
+                        switch (commonType) {
+                            case ColumnType.BOOLEAN:
+                                commonFunction.getBool(null);
+                                break;
+                            case ColumnType.BYTE:
+                                commonFunction.getByte(null);
+                                break;
+                            case ColumnType.SHORT:
+                                commonFunction.getShort(null);
+                                break;
+                            case ColumnType.CHAR:
+                                commonFunction.getChar(null);
+                                break;
+                            case ColumnType.INT:
+                                commonFunction.getInt(null);
+                                break;
+                            case ColumnType.LONG:
+                                commonFunction.getLong(null);
+                                break;
+                            case ColumnType.DATE:
+                                commonFunction.getDate(null);
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                commonFunction.getTimestamp(null);
+                                break;
+                            case ColumnType.FLOAT:
+                                commonFunction.getFloat(null);
+                                break;
+                            case ColumnType.DOUBLE:
+                                commonFunction.getDouble(null);
+                                break;
+                            case ColumnType.STRING:
+                                commonFunction.getStrA(null);
+                                break;
+                            case ColumnType.SYMBOL:
+                                commonFunction.getSymbol(null);
+                                break;
+                            case ColumnType.LONG256:
+                                commonFunction.getLong256A(null);
+                                break;
+                            case ColumnType.UUID:
+                                commonFunction.getLong128Lo(null);
+                                commonFunction.getLong128Hi(null);
+                                break;
+                            case ColumnType.VARCHAR:
+                                commonFunction.getVarcharA(null);
+                                break;
+                            case ColumnType.BINARY:
+                                commonFunction.getBin(null);
+                                break;
+                            case ColumnType.IPv4:
+                                commonFunction.getIPv4(null);
+                                break;
+                            default:
+                                Assert.fail("Unsupported type: " + commonType);
+                        }
+
+                    } catch (SqlException e) {
+                        Assert.assertTrue("retType = " + l + ", r = " + r, isIgnoredType(l, r));
+                    }
+                }
+            }
+        });
     }
 
     private static void addGlobalExceptions(Map<Short, Set<Short>> map) {
@@ -72,6 +145,13 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                     ignored.add(j);
                 }
             }
+        }
+    }
+
+    private static void addIgnored(Map<Short, Set<Short>> map, short from, short... to) {
+        Set<Short> ignored = map.get(from);
+        for (short t : to) {
+            ignored.add(t);
         }
     }
 
@@ -396,6 +476,14 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         return res;
     }
 
+    private static boolean isAuxType(short type) {
+        return type == ColumnType.CURSOR || type == ColumnType.VAR_ARG || type == ColumnType.RECORD;
+    }
+
+    private static boolean isGeoType(short type) {
+        return type == ColumnType.GEOBYTE || type == ColumnType.GEOSHORT || type == ColumnType.GEOINT || type == ColumnType.GEOLONG || type == ColumnType.GEOHASH;
+    }
+
     private static boolean isIgnoredType(short lType, short rType) {
         return IGNORED_TYPE.get(lType).contains(rType);
     }
@@ -439,92 +527,5 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
         }
         throw new AssertionError("Unsupported type: " + type);
-    }
-
-    @Test
-    public void testCommonType() throws Exception {
-        // this test that:
-        // 1. for each pair of types getCommonType() returns a valid type, unless it's explicitly ignored.
-        //    this protects us against a missing entry in CaseFunction.typeEscalationMap
-        // 2. getCastFunction() returns a function that can read the common type
-        //    this protects us against a missing entry in CaseFunction.castFactories
-
-        // this test is relatively invasive, it tests against internals thus do not be afraid to change it if you need to
-
-        assertMemoryLeak(() -> {
-            SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1);
-            for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {
-                for (short r = MIN_COLUMN_TYPE_ID; r <= MAX_COLUMN_TYPE_ID; r++) {
-                    try {
-                        int commonType = CaseCommon.getCommonType(l, r, 0, "UNDEFINED is not expected");
-                        Function upstreamFunction = getRndFunction(l);
-                        upstreamFunction.init(null, context);
-                        Function commonFunction = CaseCommon.getCastFunction(upstreamFunction, 0, commonType, configuration, null);
-                        Assert.assertNotNull(commonFunction);
-
-                        // check we can read the expected type
-                        switch (commonType) {
-                            case ColumnType.BOOLEAN:
-                                commonFunction.getBool(null);
-                                break;
-                            case ColumnType.BYTE:
-                                commonFunction.getByte(null);
-                                break;
-                            case ColumnType.SHORT:
-                                commonFunction.getShort(null);
-                                break;
-                            case ColumnType.CHAR:
-                                commonFunction.getChar(null);
-                                break;
-                            case ColumnType.INT:
-                                commonFunction.getInt(null);
-                                break;
-                            case ColumnType.LONG:
-                                commonFunction.getLong(null);
-                                break;
-                            case ColumnType.DATE:
-                                commonFunction.getDate(null);
-                                break;
-                            case ColumnType.TIMESTAMP:
-                                commonFunction.getTimestamp(null);
-                                break;
-                            case ColumnType.FLOAT:
-                                commonFunction.getFloat(null);
-                                break;
-                            case ColumnType.DOUBLE:
-                                commonFunction.getDouble(null);
-                                break;
-                            case ColumnType.STRING:
-                                commonFunction.getStrA(null);
-                                break;
-                            case ColumnType.SYMBOL:
-                                commonFunction.getSymbol(null);
-                                break;
-                            case ColumnType.LONG256:
-                                commonFunction.getLong256A(null);
-                                break;
-                            case ColumnType.UUID:
-                                commonFunction.getLong128Lo(null);
-                                commonFunction.getLong128Hi(null);
-                                break;
-                            case ColumnType.VARCHAR:
-                                commonFunction.getVarcharA(null);
-                                break;
-                            case ColumnType.BINARY:
-                                commonFunction.getBin(null);
-                                break;
-                            case ColumnType.IPv4:
-                                commonFunction.getIPv4(null);
-                                break;
-                            default:
-                                Assert.fail("Unsupported type: " + commonType);
-                        }
-
-                    } catch (SqlException e) {
-                        Assert.assertTrue("retType = " + l + ", r = " + r, isIgnoredType(l, r));
-                    }
-                }
-            }
-        });
     }
 }

@@ -27,18 +27,25 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
+    protected PartitionDecoder parquetDecoder;
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;
 
     @Override
     public void close() {
-        reader = Misc.free(reader);
+        // avoid double-close in case of cursor not closing the reader, query progress catching the leak
+        // and then factory is trying to close the cursor and the reader
+        if (reader != null && reader.isActive()) {
+            reader = Misc.free(reader);
+        }
+        Misc.free(parquetDecoder);
     }
 
     @Override
@@ -78,9 +85,21 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     }
 
     protected static class FullTablePartitionFrame implements PartitionFrame {
+        protected byte format;
+        protected PartitionDecoder parquetDecoder;
         protected int partitionIndex;
         protected long rowHi;
-        protected long rowLo = 0;
+        protected long rowLo;
+
+        @Override
+        public PartitionDecoder getParquetDecoder() {
+            return parquetDecoder;
+        }
+
+        @Override
+        public byte getPartitionFormat() {
+            return format;
+        }
 
         @Override
         public int getPartitionIndex() {

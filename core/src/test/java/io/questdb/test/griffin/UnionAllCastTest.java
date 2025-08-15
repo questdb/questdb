@@ -36,16 +36,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
         // sym <-> sym cast it not thrown away as redundant
         testUnionAll(
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\tr\ts\n" +
-                        "true\t37\tO\t10549\t171760612\t8503557900983561786\t0.7586\t0.5913874468544745\t1970-01-01T00:05:56.479Z\t1970-01-01T00:00:00.000001Z\t0x434524824ca84f523ed391560ac327544a27205d291d7f124c83d07de0778e77\t00000000 29 26 c5 aa da 18 ce 5f b2 8b\t101000\t11000111111100\t6jq4\tn3ub6zju\tCKFMQ\tᣮաf@ץ\n" +
-                        "false\t113\tY\t21020\t-1915752164\t5922689877598858022\t0.4346\t0.7195457109208119\t1970-01-01T00:40:51.578Z\t1970-01-01T00:00:00.000000Z\t0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\t00000000 07 b1 32 57 ff 9a ef 88 cb 4b\t001011\t01000101000010\txf81\tcbj71euv\tLNYRZ\t9іa\uDA76\uDDD4*\n" +
-                        "true\t62\tP\t13143\t-770962341\t-4036499202601723677\t0.8403\t0.5794665369115236\t1970-01-01T02:26:24.738Z\t1970-01-01T00:00:00.000000Z\t0x7f19777ec13680558a2d082bfad3aa844a20938221fd7f431bd29676f6902e64\t00000000 dd 44 11 e2 a3 24 4e 44 a8 0d\t001110\t10101011111110\tnz3p\tz1rvm419\tGIJYD\t\n" +
-                        "false\t79\tN\t-29677\t-8264817\t-9118587154366063429\t0.6397\t0.798471808479839\t1970-01-01T00:02:12.849Z\t1970-01-01T00:00:00.000001Z\t0xb19ddb7ff5abcafec82c35a389f834dababcd0482f05618f926cdd99e63abb35\t\t001001\t11010000011000\tgj7w\txd3qr0fm\tQEMXD\t\n" +
-                        "false\t123\tJ\t-4254\t-735934368\t8384866408379441071\t0.5235\t0.5778817852306684\t1970-01-01T01:12:18.900Z\t\t0x705380a68d53d93c2692845742d6674742bdf2c301f7f43b9747f18a1ed2ef46\t\t010001\t01000000100001\tz403\trcc9nh2x\tDHHGG\tX\uDA8B\uDFC4︵Ƀ^\n" +
-                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.2992\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\t͛Ԉ龘и\uDA89\uDFA4\n" +
-                        "true\t62\tL\t5639\t-1418341054\t3152466304308949756\t0.7664\t0.4138164748227684\t1970-01-01T02:34:54.347Z\t\t0x6698c6c186b7571a9cba3ef59083484d98c2d832d83de9934a0705e1136e872b\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a\t011110\t01011100110001\tqytg\t7kfnr23n\tWEKGH\t\uDB8D\uDE4Eᯤ\\篸{\n" +
-                        "false\t33\tL\t-20409\t-712702244\t-6190031864817509934\t0.5811\t0.4971342426836798\t1970-01-01T01:17:56.168Z\t\t0x4b0a72b3339b8c7c1872e79ea10322460cb5f439cbc22e9d1f0481ab7acd1f4a\t\t101010\t10101111000001\tttz9\tnzxtf741\t\t|\\軦۽㒾\n" +
-                        "true\t92\tP\t4215\t-889224806\t8889492928577876455\t0.0694\t0.6697969295620055\t1970-01-01T00:02:10.728Z\t1970-01-01T00:00:00.000001Z\t0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2\t\t010111\t10110011101001\tvgyb\tg6mmvcdb\tZRMFM\t\n" +
-                        "true\t107\tG\t-5240\t-1121895896\t-2000273984235276379\t0.1834\t0.2711532808184136\t1970-01-01T00:55:56.811Z\t1970-01-01T00:00:00.000001Z\t0x76ffd1a81bf39767b92d0771d78263eb5479ae0482582ad03c84de8f7bd9235d\t00000000 a7 6a 71 34 e0 b0 e9 98 f7 67\t100011\t00001000010100\tvs9s\tn0vjumxz\tLDGLO\ṱ\uD8F2\uDE8E>\uDAE6\uDEE3g\n",
+                        "true\t37\tO\t10549\t171760612\t8503557900983561786\t0.7586254\t0.5913874468544745\t1970-01-01T00:05:56.479Z\t1970-01-01T00:00:00.000001Z\t0x434524824ca84f523ed391560ac327544a27205d291d7f124c83d07de0778e77\t00000000 29 26 c5 aa da 18 ce 5f b2 8b\t101000\t11000111111100\t6jq4\tn3ub6zju\tCKFMQ\tᣮաf@ץ\n" +
+                        "false\t113\tY\t21020\t-1915752164\t5922689877598858022\t0.43461353\t0.7195457109208119\t1970-01-01T00:40:51.578Z\t1970-01-01T00:00:00.000000Z\t0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\t00000000 07 b1 32 57 ff 9a ef 88 cb 4b\t001011\t01000101000010\txf81\tcbj71euv\tLNYRZ\t9іa\uDA76\uDDD4*\n" +
+                        "true\t62\tP\t13143\t-770962341\t-4036499202601723677\t0.84029645\t0.5794665369115236\t1970-01-01T02:26:24.738Z\t1970-01-01T00:00:00.000000Z\t0x7f19777ec13680558a2d082bfad3aa844a20938221fd7f431bd29676f6902e64\t00000000 dd 44 11 e2 a3 24 4e 44 a8 0d\t001110\t10101011111110\tnz3p\tz1rvm419\tGIJYD\t\n" +
+                        "false\t79\tN\t-29677\t-8264817\t-9118587154366063429\t0.6397125\t0.798471808479839\t1970-01-01T00:02:12.849Z\t1970-01-01T00:00:00.000001Z\t0xb19ddb7ff5abcafec82c35a389f834dababcd0482f05618f926cdd99e63abb35\t\t001001\t11010000011000\tgj7w\txd3qr0fm\tQEMXD\t\n" +
+                        "false\t123\tJ\t-4254\t-735934368\t8384866408379441071\t0.52348924\t0.5778817852306684\t1970-01-01T01:12:18.900Z\t\t0x705380a68d53d93c2692845742d6674742bdf2c301f7f43b9747f18a1ed2ef46\t\t010001\t01000000100001\tz403\trcc9nh2x\tDHHGG\tX\uDA8B\uDFC4︵Ƀ^\n" +
+                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.29919904\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\t͛Ԉ龘и\uDA89\uDFA4\n" +
+                        "true\t62\tL\t5639\t-1418341054\t3152466304308949756\t0.76642567\t0.4138164748227684\t1970-01-01T02:34:54.347Z\t\t0x6698c6c186b7571a9cba3ef59083484d98c2d832d83de9934a0705e1136e872b\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a\t011110\t01011100110001\tqytg\t7kfnr23n\tWEKGH\t\uDB8D\uDE4Eᯤ\\篸{\n" +
+                        "false\t33\tL\t-20409\t-712702244\t-6190031864817509934\t0.58112466\t0.4971342426836798\t1970-01-01T01:17:56.168Z\t\t0x4b0a72b3339b8c7c1872e79ea10322460cb5f439cbc22e9d1f0481ab7acd1f4a\t\t101010\t10101111000001\tttz9\tnzxtf741\t\t|\\軦۽㒾\n" +
+                        "true\t92\tP\t4215\t-889224806\t8889492928577876455\t0.069444776\t0.6697969295620055\t1970-01-01T00:02:10.728Z\t1970-01-01T00:00:00.000001Z\t0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2\t\t010111\t10110011101001\tvgyb\tg6mmvcdb\tZRMFM\t\n" +
+                        "true\t107\tG\t-5240\t-1121895896\t-2000273984235276379\t0.18336213\t0.2711532808184136\t1970-01-01T00:55:56.811Z\t1970-01-01T00:00:00.000001Z\t0x76ffd1a81bf39767b92d0771d78263eb5479ae0482582ad03c84de8f7bd9235d\t00000000 a7 6a 71 34 e0 b0 e9 98 f7 67\t100011\t00001000010100\tvs9s\tn0vjumxz\tLDGLO\ṱ\uD8F2\uDE8E>\uDAE6\uDEE3g\n",
                 // column "u" is not ultimately selected from neither X nor Y
                 // we expect this column to be ignored by optimiser, and also
                 // we expect optimiser to correctly select column "b" from Y as
@@ -338,18 +338,18 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testCharShort() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "-22955\n" +
-                        "-1398\n" +
-                        "21015\n" +
-                        "30202\n" +
-                        "-19496\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n",
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n",
                 "create table x as (select rnd_short() a from long_sequence(5))",
-                "create table y as (select rnd_char() b from long_sequence(5))"
+                "create table y as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)"
         );
     }
 
@@ -623,13 +623,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -646,15 +646,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -673,13 +673,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid float, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid float, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -696,15 +696,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -730,11 +730,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_boolean() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))",
                 false
@@ -744,11 +744,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "a\n" +
                         "false\n" +
                         "true\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n"
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n"
         );
     }
 
@@ -756,16 +756,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testFloatByte() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "79.0000\n" +
-                        "122.0000\n" +
-                        "83.0000\n" +
-                        "90.0000\n" +
-                        "76.0000\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "79.0\n" +
+                        "122.0\n" +
+                        "83.0\n" +
+                        "90.0\n" +
+                        "76.0\n" +
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_byte() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -817,11 +817,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0101101\n" +
                         "0111011\n" +
                         "0010101\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_geohash(7) a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -836,11 +836,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "5.9285965E8\n" +
                         "1.86872371E9\n" +
                         "-8.4753107E8\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_int() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -850,11 +850,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testFloatLong() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "0.2846\n" +
-                        "0.2992\n" +
-                        "0.0844\n" +
-                        "0.2045\n" +
-                        "0.9345\n" +
+                        "0.28455776\n" +
+                        "0.29919904\n" +
+                        "0.08438319\n" +
+                        "0.20447439\n" +
+                        "0.93446046\n" +
                         "4.6895921E15\n" +
                         "4.7299965E15\n" +
                         "7.7465361E18\n" +
@@ -869,16 +869,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testFloatNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
-                        "0.2846\tnull\n" +
-                        "0.2992\tnull\n" +
-                        "0.0844\tnull\n" +
-                        "0.2045\tnull\n" +
-                        "0.9345\tnull\n" +
-                        "null\t0.6608\n" +
-                        "null\t0.8043\n" +
-                        "null\t0.2246\n" +
-                        "null\t0.1297\n" +
-                        "null\t0.0849\n",
+                        "0.28455776\tnull\n" +
+                        "0.29919904\tnull\n" +
+                        "0.08438319\tnull\n" +
+                        "0.20447439\tnull\n" +
+                        "0.93446046\tnull\n" +
+                        "null\t0.66077775\n" +
+                        "null\t0.80432236\n" +
+                        "null\t0.22463012\n" +
+                        "null\t0.12966657\n" +
+                        "null\t0.08486962\n",
                 "rnd_float()"
         );
     }
@@ -887,16 +887,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testFloatShort() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "-22955.0000\n" +
-                        "-1398.0000\n" +
-                        "21015.0000\n" +
-                        "30202.0000\n" +
-                        "-19496.0000\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "-22955.0\n" +
+                        "-1398.0\n" +
+                        "21015.0\n" +
+                        "30202.0\n" +
+                        "-19496.0\n" +
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_short() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -1327,6 +1327,77 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4String() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testIPv4Symbol() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "aaa\n" +
+                        "bbb\n" +
+                        "bbb\n" +
+                        "bbb\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_symbol('aaa', 'bbb') a from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "bbb\n"
+        );
+    }
+
+    @Test
+    public void testIPv4Varchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "49.254.54.230\n" +
+                        "89.207.251.208\n" +
+                        "66.9.11.179\n" +
+                        "50.89.42.43\n" +
+                        "219.41.127.7\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testIntBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -1381,17 +1452,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testIntChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "-1148479920\n" +
                         "315515118\n" +
                         "1548800833\n" +
                         "-727724771\n" +
                         "73575701\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_int() b from long_sequence(5))"
         );
     }
@@ -1457,15 +1528,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1484,15 +1555,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1678,17 +1749,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testLongChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "4689592037643856\n" +
                         "4729996258992366\n" +
                         "7746536061816329025\n" +
                         "-6945921502384501475\n" +
                         "8260188555232587029\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_long() b from long_sequence(5))"
         );
     }
@@ -1863,17 +1934,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testShortChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
                         "-13027\n" +
                         "-21227\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_short() b from long_sequence(5))"
         );
     }
@@ -1998,6 +2069,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringIPv4() throws Exception {
+        testUnionAll(
+                "b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n",
+                "create table y as (select rnd_ipv4() a from long_sequence(5))",
+                "create table x as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testStringNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -2116,7 +2207,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
         // we expect this column to be ignored by optimiser, and also
         // we expect optimiser to correctly select column "b" from Y as
         // a match against column "a" in the union
-        compile("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
+        execute("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
         engine.releaseAllWriters();
         assertQuery(
                 "u\ta\tc\n" +
@@ -2380,8 +2471,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private static void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
-        ddl("create table y as (select " + function + " c from long_sequence(5))");
-        ddl("create table x as (select " + function + " a from long_sequence(5))");
+        execute("create table y as (select " + function + " c from long_sequence(5))");
+        execute("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
 
         assertQuery(
@@ -2410,7 +2501,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertException(
                 "x union all y",
@@ -2442,7 +2533,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertQuery(expected, sql, ddlX, null, false, true);
     }

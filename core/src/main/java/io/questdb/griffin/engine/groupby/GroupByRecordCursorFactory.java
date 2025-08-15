@@ -24,26 +24,36 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-
-    protected final RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> keyFunctions;
@@ -102,7 +112,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
+            Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             baseCursor.close();
             throw th;
@@ -115,6 +125,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
+    }
+
+    @Override
+    public boolean recordCursorSupportsLongTopK() {
+        return true;
     }
 
     @Override
@@ -149,7 +164,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(cursor);
     }
 
-    class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
+    private class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final GroupByAllocator allocator;
         private final Map dataMap;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
@@ -181,9 +196,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             baseCursor.calculateSize(circuitBreaker, counter);
         }
 
@@ -200,10 +213,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             return super.hasNext();
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildMapConditionally();
+            ((MapRecordCursor) baseCursor).longTopK(list, recordFunctions.getQuick(columnIndex));
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -213,15 +230,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 dataMap.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            Function.init(keyFunctions, managedCursor, executionContext);
+            Function.init(keyFunctions, managedCursor, executionContext, null);
             isDataMapBuilt = false;
             rowId = 0;
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isDataMapBuilt ? 1 : 0;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
-            isDataMapBuilt = false;
             rowId = 0;
         }
 
@@ -240,6 +261,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             super.of(dataMap.getCursor());
             isDataMapBuilt = true;
+        }
+
+        private void buildMapConditionally() {
+            if (!isDataMapBuilt) {
+                buildDataMap();
+            }
         }
     }
 }

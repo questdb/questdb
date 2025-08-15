@@ -138,8 +138,8 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
             );
             assertSql(expected, "select count(distinct s) from x");
 
-            insert("insert into x values(cast(null as long256), '2021-05-21')");
-            insert("insert into x values(cast(null as long256), '1970-01-01')");
+            execute("insert into x values(cast(null as long256), '2021-05-21')");
+            execute("insert into x values(cast(null as long256), '1970-01-01')");
             assertSql(expected, "select count_distinct(s) from x");
             assertSql(expected, "select count(distinct s) from x");
         });
@@ -157,7 +157,7 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
                     true
             );
 
-            insert("insert into x values ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, null, 5, 5), '2021-05-21'), ('a', to_long256(0, 5, 5, 5), '2021-05-21'), ('a', to_long256(null, 5, 5, 5), '2021-05-21')"
+            execute("insert into x values ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, null, 5, 5), '2021-05-21'), ('a', to_long256(0, 5, 5, 5), '2021-05-21'), ('a', to_long256(null, 5, 5, 5), '2021-05-21')"
                     + ", ('a', to_long256(5, 5, 0, 5), '2021-05-21'), ('a', to_long256(5, 5, null, 5), '2021-05-21'), ('a', to_long256(5, 5, 5, 0), '2021-05-21'), ('a', to_long256(5, 5, 5, null), '2021-05-21')" +
                     ", ('a', to_long256(0, 0, 0, 0), '2021-05-21'), ('a', to_long256(null, null, null, null), '2021-05-21')");
             String expected = "a\ts\n" +

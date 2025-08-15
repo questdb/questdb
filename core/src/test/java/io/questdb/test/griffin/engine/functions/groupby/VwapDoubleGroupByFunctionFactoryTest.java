@@ -31,19 +31,17 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql("vwap\n" +
-                            "0.4601797676425299\n",
-                    "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
-            );
-        });
+        assertMemoryLeak(() -> assertSql("vwap\n" +
+                        "0.4601797676425299\n",
+                "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
+        ));
     }
 
     @Test
     public void testIgnoreNullAndZeroOrNegativeQty() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (p double, q double)");
-            insert("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
+            execute("create table tab (p double, q double)");
+            execute("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
             assertSql(
                     "vwap\n" +
                             "104.0\n",
@@ -64,8 +62,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (a0 double, a1 double)");
-            insert("insert into tab values (null,null),(null,1),(1,null)");
+            execute("create table tab (a0 double, a1 double)");
+            execute("insert into tab values (null,null),(null,1),(1,null)");
             assertSql("vwap\n" +
                             "null\n",
                     "select vwap(a0, a1) from tab"
@@ -76,8 +74,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVwap() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (a0 double, a1 double)");
-            insert("insert into tab values (100,10),(105,40)");
+            execute("create table tab (a0 double, a1 double)");
+            execute("insert into tab values (100,10),(105,40)");
             assertSql("vwap\n" +
                             "104.0\n",
                     "select vwap(a0, a1) from tab"
@@ -88,12 +86,66 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVwapGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (price double, volume double, ticker symbol)");
-            insert("insert into tab values (100,10,'a'),(105,40,'a'),(102,20,'b'),(103,60,'b')");
+            execute("create table tab (price double, volume double, ticker symbol)");
+            execute("insert into tab values (100,10,'a'),(105,40,'a'),(102,20,'b'),(103,60,'b')");
             assertSql("ticker\tvwap\n" +
                             "a\t104.0\n" +
                             "b\t102.75\n",
                     "select ticker,vwap(price, volume) from tab order by ticker"
+            );
+        });
+    }
+
+    @Test
+    public void testVwapInterpolation() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with timestamp, price, volume and symbol columns
+            execute("create table trades (" +
+                    "ts timestamp, " +
+                    "price double, " +
+                    "volume double, " +
+                    "ticker symbol" +
+                    ") timestamp(ts)");
+
+            // Insert data with some gaps in the time series
+            execute("insert into trades values " +
+                    "('2024-01-01T00:00:00', 100.0, 50.0, 'AAPL'), " +  // First bucket
+                    "('2024-01-01T00:00:00', 101.0, 30.0, 'AAPL'), " +
+                    "('2024-01-01T00:00:00', 99.0, 20.0, 'GOOGL'), " +
+                    // Skip 01:00
+                    "('2024-01-01T02:00:00', 105.0, 40.0, 'AAPL'), " +  // Third bucket
+                    "('2024-01-01T02:00:00', 102.0, 25.0, 'GOOGL'), " +
+                    // Skip 03:00
+                    "('2024-01-01T04:00:00', 110.0, 60.0, 'AAPL'), " +  // Fifth bucket
+                    "('2024-01-01T04:00:00', 108.0, 35.0, 'GOOGL')");
+
+            // Calculate VWAP with 1-hour buckets and linear interpolation
+            // Expected results:
+            // - First bucket (00:00): Actual calculations
+            // - Second bucket (01:00): Interpolated
+            // - Third bucket (02:00): Actual calculations
+            // - Fourth bucket (03:00): Interpolated
+            // - Fifth bucket (04:00): Actual calculations
+            String expected = "ts\tticker\tvwap\n" +
+                    "2024-01-01T00:00:00.000000Z\tAAPL\t100.375\n" +
+                    "2024-01-01T00:00:00.000000Z\tGOOGL\t99.0\n" +
+                    "2024-01-01T01:00:00.000000Z\tAAPL\t102.6875\n" +  // Interpolated
+                    "2024-01-01T01:00:00.000000Z\tGOOGL\t100.5\n" +    // Interpolated
+                    "2024-01-01T02:00:00.000000Z\tAAPL\t105.0\n" +
+                    "2024-01-01T02:00:00.000000Z\tGOOGL\t102.0\n" +
+                    "2024-01-01T03:00:00.000000Z\tAAPL\t107.5\n" +     // Interpolated
+                    "2024-01-01T03:00:00.000000Z\tGOOGL\t105.0\n" +    // Interpolated
+                    "2024-01-01T04:00:00.000000Z\tAAPL\t110.0\n" +
+                    "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n";
+
+            assertQuery(
+                    expected,
+                    "select ts, ticker, vwap(price, volume) " +
+                            "from trades " +
+                            "sample by 1h fill(linear) ",
+                    "ts",
+                    true,
+                    true
             );
         });
     }

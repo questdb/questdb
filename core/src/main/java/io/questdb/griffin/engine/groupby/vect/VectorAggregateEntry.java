@@ -68,9 +68,8 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull PerWorkerLocks perWorkerLocks,
             @NotNull ExecutionCircuitBreaker circuitBreaker
     ) {
-        int slot = -1;
+        final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
         try {
-            slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
             final PageFrameMemoryPool frameMemoryPool = frameMemoryPools.getQuick(slot);
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             // for functions like `count()`, that do not have arguments we are required to provide

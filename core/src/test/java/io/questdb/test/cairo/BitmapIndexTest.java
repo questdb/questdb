@@ -24,7 +24,21 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractIndexReader;
+import io.questdb.cairo.BitmapIndexBwdReader;
+import io.questdb.cairo.BitmapIndexFwdReader;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ConcurrentBitmapIndexFwdReader;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
@@ -34,7 +48,20 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
-import io.questdb.std.*;
+import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -62,7 +89,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             try (
-                    MemoryMA mem = Vm.getSmallMAInstance(
+                    MemoryMA mem = Vm.getSmallCMARWInstance(
                             ff,
                             BitmapIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE),
                             MemoryTag.MMAP_DEFAULT,
@@ -80,7 +107,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        path = new Path().of(configuration.getRoot());
+        path = new Path().of(configuration.getDbRoot());
         plen = path.size();
         super.setUp();
     }
@@ -113,13 +140,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 assertThat("[]", writer.getCursor(1000), list);
             }
 
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertThat("[5567,1234]", reader.getCursor(true, 256, 0, Long.MAX_VALUE), list);
                 assertThat("[93,92,91,987,10]", reader.getCursor(true, 64, 0, Long.MAX_VALUE), list);
                 assertThat("[1000]", reader.getCursor(true, 0, 0, Long.MAX_VALUE), list);
             }
 
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertThat("[1234,5567]", reader.getCursor(true, 256, 0, Long.MAX_VALUE), list);
                 assertThat("[10,987,91,92,93]", reader.getCursor(true, 64, 0, Long.MAX_VALUE), list);
                 assertThat("[1000]", reader.getCursor(true, 0, 0, Long.MAX_VALUE), list);
@@ -156,7 +183,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             // read values and compare to the structure index is expected to be holding
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     LongList list = lists.get(keys.getQuick(i));
                     Assert.assertNotNull(list);
@@ -174,7 +201,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             // read values and compare to the structure index is expected to be holding
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     LongList list = lists.get(keys.getQuick(i));
                     Assert.assertNotNull(list);
@@ -209,11 +236,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 w.add(0, 10);
             }
 
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k");
+                        path.of(configuration.getDbRoot()).concat("x").put(".k");
                         mem.wholeFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     }
                     mem.putLong(BitmapIndexUtils.getKeyEntryOffset(0) + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
@@ -309,7 +336,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
 
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
-                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int i = 0; i < 100000; i++) {
                         int key = rnd.nextPositiveInt() % 1024;
                         long value = rnd.nextPositiveLong();
@@ -345,7 +372,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writer.add(0, 1000);
         }
 
-        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
 
             // should have single value in cursor
             RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -409,7 +436,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             long expectedSum = 0;
 
             // current random value distribution ensures we have all K keys
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                     for (int i = 0; i < N; i++) {
                         final int k = rnd.nextInt(K);
@@ -444,7 +471,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             // test branch new reader
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 long sum = 0;
                 for (int i = 0; i < K; i++) {
                     RowCursor cursor = reader.getCursor(true, i, Long.MIN_VALUE, Long.MAX_VALUE);
@@ -518,14 +545,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
             LatestByArguments.setKeyHi(argsAddress, keyCount);
             LatestByArguments.setRowsSize(argsAddress, 0);
 
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 BitmapIndexUtilsNative.latestScanBackward(
                         reader.getKeyBaseAddress(),
                         reader.getKeyMemorySize(),
                         reader.getValueBaseAddress(),
                         reader.getValueMemorySize(),
                         argsAddress,
-                        reader.getUnIndexedNullCount(),
+                        reader.getColumnTop(),
                         Long.MAX_VALUE,
                         0,
                         0,
@@ -579,7 +606,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             LatestByArguments.setRowsSize(argsAddress, 0);
 
             //fixing memory mapping here
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
 
                 // we should ignore this update
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
@@ -597,7 +624,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueBaseAddress(),
                         reader.getValueMemorySize(),
                         argsAddress,
-                        reader.getUnIndexedNullCount(),
+                        reader.getColumnTop(),
                         Long.MAX_VALUE,
                         0,
                         0,
@@ -656,7 +683,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             LatestByArguments.setRowsSize(argsAddress, 0);
 
             //fixing memory mapping here
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
 
                 // we should ignore this update
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
@@ -677,7 +704,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueBaseAddress(),
                         reader.getValueMemorySize(),
                         argsAddress,
-                        reader.getUnIndexedNullCount(),
+                        reader.getColumnTop(),
                         Long.MAX_VALUE,
                         0,
                         0,
@@ -702,7 +729,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testCppLatestByIndexReaderIndexedWithTruncate() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int timestampIncrement = 1000000 * 60 * 5;
             final int M = 1000;
             final int N = 100;
@@ -724,7 +751,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));
@@ -761,8 +788,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
-                        BitmapIndexReader reader = tableReader.getBitmapIndexReader(0,
-                                columnBase, columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                        BitmapIndexReader reader = tableReader.getBitmapIndexReader(
+                                0,
+                                columnIndex,
+                                BitmapIndexReader.DIR_BACKWARD
+                        );
 
                         long columnTop = tableReader.getColumnTop(columnBase, columnIndex);
 
@@ -807,7 +837,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 128);
 
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertEmptyCursor(reader);
             }
         });
@@ -818,7 +848,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 128);
 
-            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertEmptyCursor(reader);
             }
         });
@@ -836,7 +866,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 128);
 
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertEmptyCursor(reader);
             }
         });
@@ -858,11 +888,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 w.add(0, 10);
             }
 
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
 
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k");
+                        path.of(configuration.getDbRoot()).concat("x").put(".k");
                         mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     }
 
@@ -913,7 +943,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
 
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
-                try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int i = 0; i < 100000; i++) {
                         int key = rnd.nextPositiveInt() % 1024;
                         long value = rnd.nextPositiveLong();
@@ -951,7 +981,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writer.add(0, 1000);
         }
 
-        try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+        try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
 
             // should have single value in cursor
             RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -1064,7 +1094,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writeTripleValues(265);
 
             LongList tmp = new LongList();
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertBackwardCursorLimit(reader, 0, 260, tmp, 0, false);
                 assertBackwardCursorLimit(reader, 0, 260, tmp, 0, true);
                 assertBackwardCursorLimit(reader, 0, 16, tmp, 0, true);
@@ -1084,7 +1114,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writeTripleValues(N);
 
             LongList tmp = new LongList();
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, nullsN)) {
                 assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, true);
                 assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, false);
             }
@@ -1111,7 +1141,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             LongList tmp = new LongList();
-            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, false);
                 assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, true);
                 assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0, true);
@@ -1155,7 +1185,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writeTripleValues(N);
 
             LongList tmp = new LongList();
-            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, nullsN)) {
                 assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, true);
                 assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, false);
             }
@@ -1171,7 +1201,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writeTripleValues(N);
 
             LongList tmp = new LongList();
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, false);
                 assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, true);
                 assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0, true);
@@ -1193,7 +1223,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writeTripleValues(N);
 
             LongList tmp = new LongList();
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, nullsN)) {
                 assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, true);
                 assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, false);
             }
@@ -1206,7 +1236,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             BitmapIndexUtils.searchValueBlock(new NullMemoryCMR(), 0L, 63L, 1L);
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "index is corrupt, rowid not found [offset=0, cellCount=63, value=1]");
         }
     }
 
@@ -1250,7 +1280,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 writer.rollbackValues(CUTOFF);
             }
 
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
                     // do not limit reader, we have to read everything index has
@@ -1265,7 +1295,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
                     // do not limit reader, we have to read everything index has
@@ -1280,7 +1310,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
                     // do not limit reader, we have to read everything index has
@@ -1314,7 +1344,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             // assert against model again
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
                     // do not limit reader, we have to read everything index has
@@ -1329,7 +1359,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
                     // do not limit reader, we have to read everything index has
@@ -1344,7 +1374,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
                     // do not limit reader, we have to read everything index has
@@ -1389,7 +1419,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writer.add(900, 8000);
             Assert.assertEquals(901, writer.getKeyCount());
 
-            try (BitmapIndexReader reader = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexReader reader = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 Assert.assertEquals(901, reader.getKeyCount());
                 RowCursor cursor = reader.getCursor(true, 900, 0, 1_000_000);
                 Assert.assertTrue(cursor.hasNext());
@@ -1463,7 +1493,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
-                path.of(configuration.getRoot()).concat("x").put(".k");
+                path.of(configuration.getDbRoot()).concat("x").put(".k");
                 long fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 64);
@@ -1500,7 +1530,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     private void assertBackwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
         try {
-            new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
+            new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0);
             Assert.fail();
         } catch (CairoException e) {
             Assert.assertTrue(Chars.contains(e.getMessage(), contains));
@@ -1541,7 +1571,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     private void assertForwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
         try {
-            new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
+            new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0);
             Assert.fail();
         } catch (CairoException e) {
             Assert.assertTrue(Chars.contains(e.getMessage(), contains));
@@ -1602,7 +1632,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             MemoryMA mem = Vm.getSmallCMARWInstance(
                     configuration.getFilesFacade(),
-                    path.of(configuration.getRoot()).concat("x").put(".k").$(),
+                    path.of(configuration.getDbRoot()).concat("x").put(".k").$(),
                     MemoryTag.MMAP_DEFAULT,
                     configuration.getWriterFileOpenOpts()
             );
@@ -1653,7 +1683,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                             int pass = 0;
                             while (true) {
@@ -1686,8 +1716,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 public void run() {
                     try {
                         startBarrier.await();
-                        try (Path path = new Path().of(configuration.getRoot())) {
-                            try (BitmapIndexBwdReader reader1 = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
+                        try (Path path = new Path().of(configuration.getDbRoot())) {
+                            try (BitmapIndexBwdReader reader1 = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                                 LongList tmp = new LongList();
                                 while (true) {
                                     boolean keepGoing = false;
@@ -1763,7 +1793,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             create(configuration, path.trimTo(plen), "x", 1024);
 
             // write a zero value per each key; note that it won't be in the model
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                     for (int i = 0, n = keys.size(); i < n; i++) {
                         int key = keys.getQuick(i);
@@ -1775,16 +1805,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
             // init the reader
             final ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(
                     configuration,
-                    path.of(configuration.getRoot()),
+                    path.of(configuration.getDbRoot()),
                     "x",
                     COLUMN_NAME_TXN_NONE,
+                    -1,
                     0
             );
 
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                             int pass = 0;
                             while (true) {
@@ -1898,7 +1929,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                             int pass = 0;
                             while (true) {
@@ -1931,8 +1962,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 public void run() {
                     try {
                         startBarrier.await();
-                        try (Path path = new Path().of(configuration.getRoot())) {
-                            try (BitmapIndexFwdReader reader1 = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
+                        try (Path path = new Path().of(configuration.getDbRoot())) {
+                            try (BitmapIndexFwdReader reader1 = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                                 LongList tmp = new LongList();
                                 while (true) {
                                     boolean keepGoing = false;

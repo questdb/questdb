@@ -28,13 +28,19 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class PartitionUpdater implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PartitionUpdater.class);
-    private long ptr;
     private final FilesFacade ff;
+    private long ptr;
 
     public PartitionUpdater(FilesFacade ff) {
         this.ff = ff;
@@ -47,7 +53,7 @@ public class PartitionUpdater implements QuietCloseable {
 
     public void of(
             @Transient LPSZ srcPath,
-            long fileOpenOpts,
+            int fileOpenOpts,
             long fileSize,
             int timestampIndex,
             long compressionCodec,
@@ -55,22 +61,27 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize
     ) {
+        final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
-        try {
-            ptr = create(
-                    Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
-                    fileSize,
-                    timestampIndex,
-                    compressionCodec,
-                    statisticsEnabled,
-                    rowGroupSize,
-                    dataPageSize
-            );
-        } catch (Throwable th) {
-            throw CairoException.nonCritical().put("could not open parquet file for update: [path=").put(srcPath)
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        }
+        ptr = create(  // throws CairoException on error
+                allocator,
+                srcPath.size(),
+                srcPath.ptr(),
+                Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
+                fileSize,
+                timestampIndex,
+                compressionCodec,
+                statisticsEnabled,
+                rowGroupSize,
+                dataPageSize
+        );
+    }
+
+    // call to this method will update file metadata
+    // MUST be called after all row groups have been updated
+    public void updateFileMetadata() {
+        assert ptr != 0;
+        updateFileMetadata(ptr);
     }
 
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
@@ -78,8 +89,10 @@ public class PartitionUpdater implements QuietCloseable {
         final long rowCount = descriptor.getPartitionRowCount();
         try {
             assert ptr != 0;
-            updateRowGroup(
+            updateRowGroup(  // throws CairoException on error
                     ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
                     rowGroupId,
                     columnCount,
                     descriptor.getColumnNamesPtr(),
@@ -88,18 +101,15 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.getColumnDataLen(),
                     rowCount
             );
-        } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not update rowGroup: [table=").put(descriptor.getTableName())
-                    .put(", rowGroup=").put(rowGroupId)
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
         } finally {
             descriptor.clear();
         }
     }
 
     private static native long create(
+            long allocator,
+            int srcPathLen,
+            long srcPathPtr,
             int fd,
             long fileSize,
             int timestampIndex,
@@ -107,14 +117,17 @@ public class PartitionUpdater implements QuietCloseable {
             boolean statisticsEnabled,
             long rowGroupSize,
             long dataPageSize
-    );
+    ) throws CairoException;
 
     private static native void destroy(long impl);
 
-    private static native void finish(long impl);
+    // throws CairoException on error
+    private static native void updateFileMetadata(long impl);
 
     private static native void updateRowGroup(
             long impl,
+            int tableNameLen,
+            long tableNamePtr,
             short rowGroupId,
             int columnCount,
             long columnNamesPtr,
@@ -122,13 +135,15 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataPtr,
             long columnDataSize,
             long rowCount
-    );
+    ) throws CairoException;
 
     private void destroy() {
         if (ptr != 0) {
-            finish(ptr); // write out metadata
-            destroy(ptr);
-            ptr = 0;
+            try {
+                destroy(ptr);
+            } finally {
+                ptr = 0;
+            }
         }
     }
 

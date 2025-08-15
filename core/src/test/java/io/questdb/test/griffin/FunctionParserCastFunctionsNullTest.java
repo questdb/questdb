@@ -44,19 +44,7 @@ import java.util.Collections;
 public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest {
 
     private static final FunctionFactory[] CAST_FUNCS = {
-            new CastBooleanToBooleanFunctionFactory(),
-            new CastByteToByteFunctionFactory(),
-            new CastShortToShortFunctionFactory(),
-            new CastIntToIntFunctionFactory(),
-            new CastLongToLongFunctionFactory(),
-            new CastDateToDateFunctionFactory(),
-            new CastTimestampToTimestampFunctionFactory(),
-            new CastFloatToFloatFunctionFactory(),
-            new CastDoubleToDoubleFunctionFactory(),
-            new CastStrToStrFunctionFactory(),
             new CastStrToBooleanFunctionFactory(),
-            new CastSymbolToSymbolFunctionFactory(),
-            new CastLong256ToLong256FunctionFactory(),
             new CastStrToGeoHashFunctionFactory(),
             new CastGeoHashToGeoHashFunctionFactory(),
             new CastNullTypeFunctionFactory(),

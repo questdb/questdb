@@ -87,7 +87,7 @@ public interface TableWriterAPI extends Closeable {
     @Override
     void close();
 
-    long commit();
+    void commit();
 
     TableRecordMetadata getMetadata();
 
@@ -113,6 +113,7 @@ public interface TableWriterAPI extends Closeable {
      */
     int getSymbolCountWatermark(int columnIndex);
 
+    @NotNull
     TableToken getTableToken();
 
     long getUncommittedRowCount();

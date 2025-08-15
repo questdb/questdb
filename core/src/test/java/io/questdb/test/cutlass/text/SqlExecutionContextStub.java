@@ -41,7 +41,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextStub implements SqlExecutionContext {
-
     private final CairoEngine engine;
 
     public SqlExecutionContextStub(@NotNull CairoEngine engine) {
@@ -49,11 +48,34 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean allowNonDeterministicFunctions() {
+        return true;
+    }
+
+    @Override
     public void clearWindowContext() {
     }
 
     @Override
-    public void configureWindowContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, int orderByDirection, int orderByPos, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos, int timestampIndex) {
+    public void configureWindowContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Nullable ColumnTypes keyTypes,
+            boolean isOrdered,
+            int orderByDirection,
+            int orderByPos,
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoExprPos,
+            long rowsHi,
+            int rowsHiExprPos,
+            int exclusionKind,
+            int exclusionKindPos,
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
+    ) {
     }
 
     @Override
@@ -112,6 +134,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getSharedQueryWorkerCount() {
+        return 0;
+    }
+
+    @Override
     public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return null;
     }
@@ -119,11 +146,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     @Override
     public WindowContext getWindowContext() {
         return null;
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return 0;
     }
 
     @Override
@@ -141,7 +163,27 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isColumnPreTouchEnabledOverride() {
+        return false;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelGroupByEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelReadParquetEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelTopKEnabled() {
         return false;
     }
 
@@ -164,6 +206,14 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void resetFlags() {
+    }
+
+    @Override
+    public void setAllowNonDeterministicFunction(boolean value) {
+    }
+
+    @Override
     public void setCacheHit(boolean value) {
     }
 
@@ -180,6 +230,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
     }
 
@@ -192,11 +246,22 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+    }
+
+    @Override
+    public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
+    public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
     }
 
     @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
-
     }
 }

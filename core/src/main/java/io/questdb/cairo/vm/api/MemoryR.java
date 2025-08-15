@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -43,6 +44,8 @@ public interface MemoryR extends Closeable {
 
     void extend(long size);
 
+    ArrayView getArray(long offset);
+
     BinarySequence getBin(long offset);
 
     long getBinLen(long offset);
@@ -53,11 +56,7 @@ public interface MemoryR extends Closeable {
 
     char getChar(long offset);
 
-    default DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
-        throw new UnsupportedOperationException();
-    }
-
-    default DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+    default DirectUtf8Sequence getDirectVarchar(long offset, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 

@@ -25,8 +25,15 @@
 package org.questdb;
 
 import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,7 +42,15 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -93,10 +108,9 @@ public class TableReaderReloadBenchmark {
                 new MessageBusImpl(configuration),
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                Metrics.disabled(),
                 cairoEngine
         );
         writer.truncate();
@@ -112,7 +126,7 @@ public class TableReaderReloadBenchmark {
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
         writer.commit();
-        reader = new TableReader(configuration, tableToken);
+        reader = new TableReader(0, configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
 
         // ensure reader opens all partitions and maps all data
         for (int i = 0; i < reader.getPartitionCount(); i++) {

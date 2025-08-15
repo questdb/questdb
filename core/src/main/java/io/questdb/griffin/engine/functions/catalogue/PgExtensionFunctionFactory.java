@@ -24,14 +24,19 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
@@ -50,7 +55,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(new PgExtensionCursorFactory(configuration));
     }
 
@@ -78,7 +83,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
             sink.type("pg_extension()");
         }
 
-        private static class PgExtensionRecordCursor implements RecordCursor {
+        private static class PgExtensionRecordCursor implements NoRandomAccessRecordCursor {
 
             private static final String[][] EXTENSIONS = {{"1", "questdb", "1", "1", "false", null, null, null}};
             private final PgExtensionRecord record = new PgExtensionRecord();
@@ -100,23 +105,18 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public boolean hasNext() {
                 return ++index < EXTENSIONS.length;
             }
 
             @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
+            public long size() {
+                return EXTENSIONS.length;
             }
 
             @Override
-            public long size() {
-                return EXTENSIONS.length;
+            public long preComputedStateSize() {
+                return 0;
             }
 
             @Override

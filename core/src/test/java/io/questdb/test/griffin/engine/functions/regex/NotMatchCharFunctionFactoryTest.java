@@ -33,9 +33,9 @@ public class NotMatchCharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCheckCharacter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
             engine.print("select * from x where name !~ 'H'", sink, sqlExecutionContext);
-            Assert.assertEquals(sink.toString().indexOf('H'), -1);
+            Assert.assertEquals(-1, sink.toString().indexOf('H'));
         });
     }
 }

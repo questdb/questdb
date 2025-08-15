@@ -137,7 +137,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 }
                 LOG.info().$("ABOUT TO DROP PARTITIONS").$();
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.ddl("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext, scSequence);
+                    engine.execute("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext, scSequence);
                 } catch (SqlException e) {
                     partitionDropperProblem.set(e);
                 } finally {
@@ -169,7 +169,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             tm.col("watts", ColumnType.LONG);
             tm.timestamp();
             tm.wal();
-            TableToken ignored = TestUtils.create(tm, engine);
+            TableToken ignored = TestUtils.createTable(engine, tm);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);
@@ -387,7 +387,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
             try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
 
-                engine.ddl("CREATE TABLE plug as " +
+                engine.execute("CREATE TABLE plug as " +
                         " (select cast(x as symbol) room, rnd_long() as watts, timestamp_sequence('2023-02-27', 1000) timestamp from long_sequence(100)) " +
                         "timestamp(timestamp) partition by DAY WAL ", sqlExecutionContext);
 
@@ -426,7 +426,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     }
                     LOG.info().$("ABOUT TO TRUNCATE TABLE").$();
                     try {
-                        engine.ddl("TRUNCATE TABLE plug", sqlExecutionContext, scSequence);
+                        engine.execute("TRUNCATE TABLE plug", sqlExecutionContext, scSequence);
                         Os.sleep(100);
                     } catch (SqlException e) {
                         partitionDropperProblem.set(e);
@@ -495,7 +495,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            ddl("ALTER TABLE plug DROP COLUMN watts");
+            execute("ALTER TABLE plug DROP COLUMN watts");
             send("plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n");
             drainWalQueue();
 
@@ -576,7 +576,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "plug,room=6C watts=\"333\",power=220 1531817902842\n";
             send(lineData);
 
-            ddl("ALTER TABLE plug DROP COLUMN watts");
+            execute("ALTER TABLE plug DROP COLUMN watts");
 
             // Send same data again
             send(lineData);
@@ -636,7 +636,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     columnsAdded.add(isSymbol ? i : -i);
                 } else {
                     int dropCol = columnsAdded.get(rnd.nextPositiveInt() % columnsAdded.size());
-                    ddl("ALTER TABLE plug DROP COLUMN column_" + Math.abs(dropCol));
+                    execute("ALTER TABLE plug DROP COLUMN column_" + Math.abs(dropCol));
                     columnsAdded.remove(dropCol);
                 }
             }
@@ -702,7 +702,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            ddl("ALTER TABLE plug DROP COLUMN room");
+            execute("ALTER TABLE plug DROP COLUMN room");
 
             // Send same data again
             send(
@@ -775,7 +775,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         Os.pause();
                     }
 
-                    ddl(alterTableCommand);
+                    execute(alterTableCommand);
                 } catch (Throwable e) {
                     if (alterAttempts == 1) {
                         if (e instanceof SqlException) {
@@ -869,7 +869,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }
     }
 
-    protected void assertTableSize(int expected) {
+    protected void assertTableSize(int expected) throws Exception {
         try (TableReader reader = getReader("plug")) {
             TestUtils.assertEventually(() -> {
                 drainWalQueue();

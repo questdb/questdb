@@ -190,7 +190,7 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 false
         );
 
-        drop("drop table x");
+        execute("drop table x");
 
         assertQuery(
                 expected,

@@ -47,7 +47,7 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "ope\n" +
                     "ope\n" +
                     "ope\n";
-            ddl("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
+            execute("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("(select name::symbol name from x) where name ~ '^op.*'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -61,7 +61,7 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
+            execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
             assertQuery(
                     "name\n",
                     "select * from x where name ~ null",
@@ -74,7 +74,7 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
+            execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
             try {
                 assertExceptionNoLeakCheck("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
@@ -97,7 +97,7 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "ope\n" +
                     "ope\n" +
                     "ope\n";
-            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
+            execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("select * from x where name ~ '^op.*'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

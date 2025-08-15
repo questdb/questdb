@@ -27,24 +27,48 @@ package io.questdb.test;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.unchecked;
 
+@RunWith(Parameterized.class)
 public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
     private static final StringSink sink = new StringSink();
+    private final boolean convertToParquet;
+
+    public ServerMainQuerySmokeTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Before
     public void setUp() {
@@ -58,7 +82,8 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
-                PropertyKey.QUERY_TIMEOUT_SEC + "=150",
+                PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE + "=100",
+                PropertyKey.QUERY_TIMEOUT + "=150000",
                 // JIT doesn't support ARM, and we want exec plans to be the same.
                 PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
@@ -67,7 +92,93 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParallelFilterOomError() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                try (Statement stat = conn.createStatement()) {
+                    stat.execute(
+                            "create table x as (" +
+                                    " select timestamp_sequence(0, 1000000) ts, x" +
+                                    " from long_sequence(10000000)" +
+                                    ") timestamp(ts);"
+                    );
+                }
+
+                final String expected = "count()[BIGINT]\n" +
+                        "9999999\n";
+                try (PreparedStatement stmt = conn.prepareStatement("select count() from x where x != 1")) {
+                    // Set RSS limit, so that the SELECT will fail with OOM.
+                    // The limit should be high enough to let worker threads fail on reduce.
+                    Unsafe.setRssMemLimit(39 * Numbers.SIZE_1MB);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "global RSS memory limit exceeded");
+                    }
+
+                    // Remove the limit, this time the query should succeed.
+                    Unsafe.setRssMemLimit(0);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testParallelGroupByOomError() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                try (Statement stat = conn.createStatement()) {
+                    stat.execute(
+                            "create table x as (" +
+                                    " select timestamp_sequence(0, 1000000) ts, x::varchar as x" +
+                                    " from long_sequence(10000000)" +
+                                    ") timestamp(ts);"
+                    );
+                }
+
+                final String expected = "count()[BIGINT]\n" +
+                        "10000000\n";
+                try (PreparedStatement stmt = conn.prepareStatement("select count() from (select x from x group by x)")) {
+                    // Set RSS limit, so that the SELECT will fail with OOM.
+                    // The limit should be high enough to let worker threads fail on reduce.
+                    Unsafe.setRssMemLimit(39 * Numbers.SIZE_1MB);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "global RSS memory limit exceeded");
+                    }
+
+                    // Remove the limit, this time the query should succeed.
+                    Unsafe.setRssMemLimit(0);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+            }
+        }
+    }
+
+    @Test
     public void testServerMainGlobalQueryCacheSmokeTest() {
+        Assume.assumeFalse(convertToParquet);
+
         // Verify that global cache is correctly synchronized, so that
         // no record cursor factory is used by multiple threads concurrently.
         class TestCase {
@@ -117,7 +228,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         }
                     } catch (Throwable th) {
                         errors.incrementAndGet();
-                        th.printStackTrace();
+                        th.printStackTrace(System.out);
                     } finally {
                         doneLatch.countDown();
                     }
@@ -136,11 +247,12 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT * FROM tab WHERE key = 'k3' LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
-                        "  filter: key='k3'\n" +
+                        "  filter: key='k3' [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
@@ -160,6 +272,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelFilterSmokeTest() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -169,7 +282,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select count() from (select * from x where l = 42);";
-                String expected = "count[BIGINT]\n" +
+                String expected = "count()[BIGINT]\n" +
                         "100\n";
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
@@ -181,6 +294,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelGroupBySmokeTest1() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -190,7 +304,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select count_distinct(l1), count_distinct(l2) from x;";
-                String expected = "count_distinct[BIGINT],count_distinct1[BIGINT]\n" +
+                String expected = "count_distinct(l1)[BIGINT],count_distinct(l2)[BIGINT]\n" +
                         "10000,1000\n";
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
@@ -202,6 +316,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelGroupBySmokeTest2() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -211,7 +326,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select k, count_distinct(l) from x order by k;";
-                String expected = "k[VARCHAR],count_distinct[BIGINT]\n" +
+                String expected = "k[VARCHAR],count_distinct(l)[BIGINT]\n" +
                         "k0,10000\n" +
                         "k1,10000\n" +
                         "k2,10000\n";
@@ -229,6 +344,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT key, min(quantity), max(quantity) FROM tab ORDER BY key DESC",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Sort light\n" +
@@ -239,7 +355,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n",
-                "key[VARCHAR],min[BIGINT],max[BIGINT]\n" +
+                "key[VARCHAR],min(quantity)[BIGINT],max(quantity)[BIGINT]\n" +
                         "k4,4,9999\n" +
                         "k3,3,9998\n" +
                         "k2,2,9997\n" +
@@ -254,6 +370,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT min(quantity), max(quantity) FROM tab",
                 "QUERY PLAN[VARCHAR]\n" +
                         "GroupBy vectorized: true workers: 4\n" +
@@ -261,7 +378,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
-                "min[BIGINT],max[BIGINT]\n" +
+                "min(quantity)[BIGINT],max(quantity)[BIGINT]\n" +
                         "1,10000\n"
         );
     }
@@ -272,12 +389,13 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity) FROM tab GROUP BY day, key ORDER BY day, key LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Sort light lo: 10\n" +
                         "  keys: [day, key]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [day,key,vwap]\n" +
+                        "      functions: [day,key,vwap(price, quantity)]\n" +
                         "        Async Group By workers: 4\n" +
                         "          keys: [day,key]\n" +
                         "          values: [vwap(price,quantity)]\n" +
@@ -285,7 +403,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: tab\n",
-                "day[INTEGER],key[VARCHAR],vwap[DOUBLE]\n" +
+                "day[INTEGER],key[VARCHAR],vwap(price, quantity)[DOUBLE]\n" +
                         "1,k0,6624.171717171717\n" +
                         "1,k1,6624.8468153184685\n" +
                         "1,k10,6612.932687914096\n" +
@@ -305,6 +423,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x::long x from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
+                convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT key, count_distinct(x) FROM tab ORDER BY key LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Sort light lo: 10\n" +
@@ -316,7 +435,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n",
-                "key[VARCHAR],count_distinct[BIGINT]\n" +
+                "key[VARCHAR],count_distinct(x)[BIGINT]\n" +
                         "k0,99\n" +
                         "k1,100\n" +
                         "k10,99\n" +
@@ -330,7 +449,13 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
         );
     }
 
-    private void testServerMainParallelQueryLoadTest(String ddl, String query, String expectedPlan, String expectedResult) throws Exception {
+    private void testServerMainParallelQueryLoadTest(
+            String ddl,
+            String ddl2,
+            String query,
+            String expectedPlan,
+            String expectedResult
+    ) throws Exception {
         // Here we're verifying that adaptive work stealing doesn't lead to deadlocks.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -338,6 +463,12 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
             try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                 try (Statement statement = conn.createStatement()) {
                     statement.execute(ddl);
+                }
+
+                if (ddl2 != null) {
+                    try (Statement statement = conn.createStatement()) {
+                        statement.execute(ddl2);
+                    }
                 }
 
                 try (ResultSet rs = conn.prepareStatement("EXPLAIN " + query).executeQuery()) {

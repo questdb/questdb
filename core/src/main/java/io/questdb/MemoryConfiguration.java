@@ -25,6 +25,7 @@
 package io.questdb;
 
 public interface MemoryConfiguration {
+
     /**
      * Returns the value of the configuration property ram.usage.limit.bytes.
      */

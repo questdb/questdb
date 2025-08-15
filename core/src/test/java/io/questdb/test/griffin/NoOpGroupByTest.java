@@ -61,7 +61,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y (id int, ref int, val double)");
+            execute("create table y (id int, ref int, val double)");
             engine.releaseAllWriters();
             assertExceptionNoLeakCheck(
                     "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
@@ -76,7 +76,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x ( " +
+            execute("create table x ( " +
                     "    sym1 symbol," +
                     "    sym2 symbol," +
                     "    bid int," +
@@ -210,10 +210,10 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByJoinArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (id int, ref int, ref3 int)");
-            insert("insert into x values (1,1,1), (1,2,2);");
-            compile("create table y (id int, ref int, val double)");
-            insert("insert into y values (1,1,1), (1,2,2);");
+            execute("create table x (id int, ref int, ref3 int)");
+            execute("insert into x values (1,1,1), (1,2,2);");
+            execute("create table y (id int, ref int, val double)");
+            execute("insert into y values (1,1,1), (1,2,2);");
             engine.releaseAllWriters();
             assertQueryNoLeakCheck(
                     "id\tcolumn\tsum\n" +
@@ -231,8 +231,8 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByJoinBadArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table y(id int, ref int, val double)");
-            compile("create table x (id int, ref int, ref3 int)");
+            execute("create table y(id int, ref int, val double)");
+            execute("create table x (id int, ref int, ref3 int)");
             engine.releaseAllWriters();
             assertExceptionNoLeakCheck(
                     "select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
@@ -245,8 +245,8 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByJoinConst() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (id int, ref int, ref3 int)");
-            compile("create table y(id int, ref int, val double)");
+            execute("create table x (id int, ref int, ref3 int)");
+            execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
             assertQueryNoLeakCheck(
                     "z\tsum\n",
@@ -260,7 +260,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByJoinReference() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y(id int, ref int, val double)");
+            execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
             assertQueryNoLeakCheck(
                     "id\tref\tref1\tsum\n",
@@ -276,7 +276,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y(id int, ref int, val double)");
+            execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
             assertExceptionNoLeakCheck(
                     "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
@@ -290,8 +290,8 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     @Test
     public void testNoopGroupByJoinStringConst() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (id int, ref int, ref3 int)");
-            ddl("create table y(id int, ref int, val double)");
+            execute("create table x (id int, ref int, ref3 int)");
+            execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
             String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
             assertQueryNoLeakCheck("z\tsum\n", query, null, true);
@@ -624,10 +624,10 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "        rnd_double() cost \n" +
                         "    from long_sequence(20)) timestamp (ts)",
                 "ts\tsym2\ttotalCost\n" +
-                        "180000\tE\t1.7202\n" +
-                        "300000\tE\t1.7202\n" +
-                        "420000\tE\t1.7202\n" +
-                        "1200000\tE\t1.7202\n",
+                        "180000\tE\t1.7201583\n" +
+                        "300000\tE\t1.7201583\n" +
+                        "420000\tE\t1.7201583\n" +
+                        "1200000\tE\t1.7201583\n",
                 true,
                 true,
                 false

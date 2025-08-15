@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -53,12 +54,44 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
+    private static final int IS_MAT_VIEW_COLUMN = 11;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
+    private static final int TTL_UNIT_COLUMN = 10;
+    private static final int TTL_VALUE_COLUMN = 9;
     private static final int WAL_ENABLED_COLUMN = 6;
+
+    public static String getTtlUnit(int ttl) {
+        if (ttl == 0) {
+            return "HOUR";
+        }
+        if (ttl < 0) {
+            return -ttl % 12 != 0 ? "MONTH" : "YEAR";
+        }
+        if (ttl % 24 != 0) {
+            return "HOUR";
+        }
+        ttl /= 24;
+        return ttl % 7 != 0 ? "DAY" : "WEEK";
+    }
+
+    public static int getTtlValue(int ttl) {
+        if (ttl == 0) {
+            return 0;
+        }
+        if (ttl > 0) {
+            if (ttl % 24 != 0) {
+                return ttl;
+            }
+            ttl /= 24;
+            return (ttl % 7 == 0) ? (ttl / 7) : ttl;
+        }
+        ttl = -ttl;
+        return (ttl % 12 == 0) ? (ttl / 12) : ttl;
+    }
 
     @Override
     public String getSignature() {
@@ -133,7 +166,6 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
-
             }
 
             @Override
@@ -145,14 +177,19 @@ public class TablesFunctionFactory implements FunctionFactory {
             public boolean hasNext() {
                 if (iteratorIdx < tableCache.size() - 1) {
                     record.of(tableCache.getAt(++iteratorIdx));
-                } else return false;
-
-                return true;
+                    return true;
+                }
+                return false;
             }
 
             @Override
             public long size() {
                 return -1;
+            }
+
+            @Override
+            public long preComputedStateSize() {
+                return 0;
             }
 
             @Override
@@ -168,9 +205,11 @@ public class TablesFunctionFactory implements FunctionFactory {
                 public boolean getBool(int col) {
                     switch (col) {
                         case WAL_ENABLED_COLUMN:
-                            return table.getWalEnabled();
+                            return table.isWalEnabled();
                         case DEDUP_NAME_COLUMN:
-                            return table.getIsDedup();
+                            return table.hasDedup();
+                        case IS_MAT_VIEW_COLUMN:
+                            return table.getTableToken().isMatView();
                         default:
                             return false;
                     }
@@ -180,6 +219,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                 public int getInt(int col) {
                     if (col == ID_COLUMN) {
                         return table.getId();
+                    }
+                    if (col == TTL_VALUE_COLUMN) {
+                        return getTtlValue(table.getTtlHoursOrMonths());
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
                     return table.getMaxUncommittedRows();
@@ -198,10 +240,12 @@ public class TablesFunctionFactory implements FunctionFactory {
                             return table.getTableName();
                         case PARTITION_BY_COLUMN:
                             return table.getPartitionByName();
+                        case TTL_UNIT_COLUMN:
+                            return getTtlUnit(table.getTtlHoursOrMonths());
                         case DESIGNATED_TIMESTAMP_COLUMN:
                             return table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN:
-                            if (table.getIsSoftLink()) {
+                            if (table.isSoftLink()) {
                                 if (lazyStringSink == null) {
                                     lazyStringSink = new StringSink();
                                 }
@@ -222,8 +266,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStrA(col);
-                    return str != null ? str.length() : -1;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 private void of(CairoTable table) {
@@ -244,6 +287,9 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

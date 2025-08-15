@@ -24,7 +24,14 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
+
 public interface WorkerPoolConfiguration {
+
+    default Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
+
     default long getNapThreshold() {
         return 7000;
     }
@@ -61,5 +68,9 @@ public interface WorkerPoolConfiguration {
 
     default boolean isEnabled() {
         return true;
+    }
+
+    default int workerPoolPriority() {
+        return Thread.NORM_PRIORITY;
     }
 }

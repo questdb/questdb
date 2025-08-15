@@ -25,7 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableUtf8Sink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,7 +37,6 @@ import java.io.File;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
     // The default varies across kernel versions and distros, so we use the same value as for vm.max_map_count.
@@ -60,12 +63,11 @@ public final class Files {
     public static final char SEPARATOR;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
-    private static final AtomicInteger fdCounter = new AtomicInteger();
-    private static final LongHashSet openFds = new LongHashSet();
+    private final static FdCache fdCache = new FdCache();
+    private static final MmapCache mmapCache = new MmapCache();
+    public static boolean FS_CACHE_ENABLED = true;
     // To be set in tests to check every call for using OPEN file descriptor
-    public static boolean PARANOIA_FD_MODE = false;
     public static boolean VIRTIO_FS_DETECTED = false;
 
     private Files() {
@@ -86,14 +88,8 @@ public final class Files {
 
     public static int close(long fd) {
         // do not close `stdin` and `stdout`
-        int osFd;
-        if (fd > 0 && (osFd = toOsFd(fd)) > 2) {
-            auditClose(fd);
-            int res = close0(osFd);
-            if (res == 0) {
-                OPEN_FILE_COUNT.decrementAndGet();
-            }
-            return res;
+        if (fd > 0 && toOsFd(fd) > 2) {
+            return fdCache.close(fd);
         }
         // failed to close
         return -1;
@@ -113,9 +109,7 @@ public final class Files {
 
     public static long createUniqueFd(int fd) {
         if (fd != -1) {
-            long uniqueFd = auditOpen(fd);
-            OPEN_FILE_COUNT.incrementAndGet();
-            return uniqueFd;
+            return fdCache.createUniqueFdNonCached(fd);
         }
         return fd;
     }
@@ -124,11 +118,18 @@ public final class Files {
         int osFd = toOsFd(fd);
         // do not detach `stdin` and `stdout`
         if (osFd > 1) {
-            auditClose(fd);
-            OPEN_FILE_COUNT.decrementAndGet();
+            fdCache.detach(fd);
             return osFd;
         }
         return -1;
+    }
+
+    public static boolean errnoFileCannotRead(int errno) {
+        return errnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
+    }
+
+    public static boolean errnoFileDoesNotExist(int errno) {
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
     public static boolean exists(long fd) {
@@ -198,6 +199,10 @@ public final class Files {
         return 0L;
     }
 
+    public static long getFdReuseCount() {
+        return fdCache.getReuseCount();
+    }
+
     /**
      * Returns fs.file-max kernel limit on Linux or 0 on other OSes.
      */
@@ -229,12 +234,20 @@ public final class Files {
      */
     public native static long getMapCountLimit();
 
+    public static long getMmapReuseCount() {
+        return mmapCache.getReuseCount();
+    }
+
+    public static long getOpenCachedFileCount() {
+        return fdCache.getOpenCachedFileCount();
+    }
+
     public static String getOpenFdDebugInfo() {
-        return openFds.toString();
+        return fdCache.getOpenFdDebugInfo();
     }
 
     public static long getOpenFileCount() {
-        return OPEN_FILE_COUNT.get();
+        return fdCache.getOpenOsFileCount();
     }
 
     public @NotNull
@@ -248,9 +261,7 @@ public final class Files {
 
     public synchronized static long getStdOutFdInternal() {
         int stdoutFd = getStdOutFd();
-        long uniqueFd = Numbers.encodeLowHighInts(0, stdoutFd);
-        openFds.add(uniqueFd);
-        return uniqueFd;
+        return fdCache.createUniqueFdNonCachedStdOut(stdoutFd);
     }
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
@@ -260,16 +271,7 @@ public final class Files {
     }
 
     public static boolean isDirOrSoftLinkDir(LPSZ path) {
-        long ptr = findFirst(path);
-        if (ptr < 1L) {
-            return false;
-        }
-        try {
-            int type = findType(ptr);
-            return type == DT_DIR || (type == DT_LNK && isDir(path.ptr()));
-        } finally {
-            findClose(ptr);
-        }
+        return isDir(path.ptr());
     }
 
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
@@ -303,7 +305,7 @@ public final class Files {
     }
 
     public static void madvise(long address, long len, int advise) {
-        if (Os.isLinux()) {
+        if (Os.isLinux() && mmapCache.isSingleUse(address)) {
             madvise0(address, len, advise);
         }
     }
@@ -341,10 +343,11 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        long address = mmap0(toOsFd(fd), len, offset, flags, 0);
-        AllocationsTracker.onMalloc(address, len);
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        long mmapCacheFd = fdCache.toMmapCacheFd(fd);
+        long address = mmapCache.cacheMmap(osFd, mmapCacheFd, len, offset, flags, memoryTag);
         if (address != -1) {
-            Unsafe.recordMemAlloc(len, memoryTag);
+            AllocationsTracker.onMalloc(address, len);
         }
         return address;
     }
@@ -355,16 +358,19 @@ public final class Files {
                     .put(", newSize=").put(newSize)
                     .put(", offset=").put(offset)
                     .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
                     .put(']');
         }
 
         AllocationsTracker.onFree(address);
-        address = mremap0(toOsFd(fd), address, previousSize, newSize, offset, flags);
-        if (address != -1) {
-            AllocationsTracker.onMalloc(address, newSize);
-            Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        long mmapCacheFd = fdCache.toMmapCacheFd(fd);
+
+        long newAddress = mmapCache.mremap(osFd, mmapCacheFd, address, previousSize, newSize, offset, flags, memoryTag);
+        if (newAddress != -1) {
+            AllocationsTracker.onMalloc(newAddress, newSize);
         }
-        return address;
+        return newAddress;
     }
 
     public static native int msync(long addr, long len, boolean async);
@@ -372,10 +378,8 @@ public final class Files {
     public static void munmap(long address, long len, int memoryTag) {
         if (address != 0) {
             AllocationsTracker.onFree(address);
-            if (munmap0(address, len) != -1) {
-                Unsafe.recordMemAlloc(-len, memoryTag);
-            }
         }
+        mmapCache.unmap(address, len, memoryTag);
     }
 
     public static native long noop();
@@ -403,29 +407,37 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        return createUniqueFd(openAppend(lpsz.ptr()));
+        return fdCache.createUniqueFdNonCached(openAppend(lpsz.ptr()));
     }
 
     public static long openCleanRW(LPSZ lpsz, long size) {
-        return createUniqueFd(openCleanRW(lpsz.ptr(), size));
+        return fdCache.createUniqueFdNonCached(openCleanRW(lpsz.ptr(), size));
     }
 
     public native static int openCleanRW(long lpszName, long size);
 
     public static long openRO(LPSZ lpsz) {
-        return createUniqueFd(openRO(lpsz.ptr()));
+        if (FS_CACHE_ENABLED) {
+            return fdCache.openROCached(lpsz);
+        } else {
+            return fdCache.createUniqueFdNonCached(openRO(lpsz.ptr()));
+        }
+    }
+
+    public static long openRONoCache(LPSZ path) {
+        return fdCache.createUniqueFdNonCached(openRO(path.ptr()));
     }
 
     public static long openRW(LPSZ lpsz) {
-        return createUniqueFd(openRW(lpsz.ptr()));
+        return fdCache.createUniqueFdNonCached(openRW(lpsz.ptr()));
     }
 
-    public static long openRW(LPSZ lpsz, long opts) {
-        return createUniqueFd(openRWOpts(lpsz.ptr(), opts));
+    public static long openRW(LPSZ lpsz, int opts) {
+        return fdCache.createUniqueFdNonCached(openRWOpts(lpsz.ptr(), opts));
     }
 
     public static long read(long fd, long address, long len, long offset) {
-        return read(toOsFd(fd), address, len, offset);
+        return read(fdCache.toOsFd(fd), address, len, offset);
     }
 
     public static long readIntAsUnsignedLong(long fd, long offset) {
@@ -474,11 +486,11 @@ public final class Files {
     }
 
     public static boolean remove(LPSZ lpsz) {
-        return remove(lpsz.ptr());
+        return fdCache.remove(lpsz);
     }
 
     public static int rename(LPSZ oldName, LPSZ newName) {
-        return rename(oldName.ptr(), newName.ptr());
+        return fdCache.rename(oldName, newName);
     }
 
     /**
@@ -546,13 +558,7 @@ public final class Files {
     public static native int sync();
 
     public static int toOsFd(long fd) {
-        if (PARANOIA_FD_MODE && fd != -1) {
-            checkFdOpen(fd);
-        }
-        int osFd = Numbers.decodeHighInt(fd);
-        // 0 FD can be closed, but no other operation is allowed
-        assert fd == -1 || osFd > 0;
-        return osFd;
+        return fdCache.toOsFd(fd);
     }
 
     public static boolean touch(LPSZ lpsz) {
@@ -633,30 +639,6 @@ public final class Files {
 
     private native static long append(int fd, long address, long len);
 
-    private static synchronized void auditClose(long fd) {
-        if (openFds.remove(fd) == -1) {
-            throw new IllegalStateException("fd " + fd + " is already closed!");
-        }
-    }
-
-    private static synchronized long auditOpen(int fd) {
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        int index = fdCounter.getAndIncrement();
-        long uniqueFd = Numbers.encodeLowHighInts(index, fd);
-        openFds.add(uniqueFd);
-        return uniqueFd;
-    }
-
-    private static synchronized void checkFdOpen(long fd) {
-        if (!openFds.contains(fd)) {
-            throw new IllegalStateException("fd " + fd + " is not open!");
-        }
-    }
-
-    private native static int close0(int fd);
-
     private static native int copy(long from, long to);
 
     private static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
@@ -702,19 +684,11 @@ public final class Files {
 
     private native static int mkdir(long lpszPath, int mode);
 
-    private static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
-
-    private static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
-
-    private static native int munmap0(long address, long len);
-
     private native static int openAppend(long lpszName);
-
-    private native static int openRO(long lpszName);
 
     private native static int openRW(long lpszName);
 
-    private native static int openRWOpts(long lpszName, long opts);
+    private native static int openRWOpts(long lpszName, int opts);
 
     private native static long read(int fd, long address, long len, long offset);
 
@@ -730,10 +704,6 @@ public final class Files {
 
     private native static short readNonNegativeShort(int fd, long offset);
 
-    private native static boolean remove(long lpsz);
-
-    private static native int rename(long lpszOld, long lpszNew);
-
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
@@ -741,6 +711,20 @@ public final class Files {
     private native static boolean truncate(int fd, long size);
 
     private native static long write(int fd, long address, long len, long offset);
+
+    native static int close0(int fd);
+
+    static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
+
+    static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
+
+    static native int munmap0(long address, long len);
+
+    native static int openRO(long lpszName);
+
+    native static boolean remove(long lpsz);
+
+    static native int rename(long lpszOld, long lpszNew);
 
     static {
         Os.init();

@@ -24,20 +24,31 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.TelemetryConfigLogger;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.tasks.TelemetryTask;
+
+import static io.questdb.TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME;
 
 // information_schema.tables basic implementation
 // used in grafana meta queries
@@ -59,7 +70,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
                                 CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(new InformationSchemaTablesCursorFactory(configuration, METADATA)) {
             @Override
             public boolean isRuntimeConstant() {
@@ -140,6 +151,11 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public long preComputedStateSize() {
+                return 0;
+            }
+
+            @Override
             public long size() {
                 return -1;
             }
@@ -150,9 +166,12 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
             }
 
             private boolean isSystemTable(TableToken tableToken) {
+                String tableName = tableToken.getTableName();
                 return (hideTelemetryTables &&
-                        (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME) || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)))
-                        || Chars.startsWith(tableToken.getTableName(), sysTablePrefix);
+                        (Chars.equals(tableName, TelemetryTask.TABLE_NAME) ||
+                                Chars.equals(tableName, TELEMETRY_CONFIG_TABLE_NAME)))
+                        || Chars.startsWith(tableName, sysTablePrefix)
+                        || Chars.equals(tableName, QueryTracingJob.TABLE_NAME);
             }
 
             private class TableListRecord implements Record {
@@ -170,10 +189,10 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                         return tableToken.getTableName();
                     }
                     if (col == COLUMN_CATALOG) {
-                        return "qdb";
+                        return Constants.DB_NAME;
                     }
                     if (col == COLUMN_SCHEMA) {
-                        return "public";
+                        return Constants.PUBLIC_SCHEMA;
                     }
                     if (col == COLUMN_TYPE) {
                         return "BASE TABLE";

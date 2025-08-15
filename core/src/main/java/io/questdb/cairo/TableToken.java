@@ -24,15 +24,21 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Stands for a WAL table, or a non-WAL table, or a materialized view.
+ */
 public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
+    private final boolean dirNameSameAsTableName;
+    private final boolean isMatView;
     private final boolean isProtected;
     private final boolean isPublic;
     private final boolean isSystem;
@@ -42,21 +48,26 @@ public class TableToken implements Sinkable {
     private final String tableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, false);
+        this(tableName, new GcUtf8String(dirName), tableId, false, isWal, isSystem, isProtected, false);
     }
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, isPublic);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+        this(tableName, new GcUtf8String(dirName), tableId, isMatView, isWal, isSystem, isProtected, isPublic);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
+        this.isMatView = isMatView;
         this.isWal = isWal;
         this.isSystem = isSystem;
         this.isProtected = isProtected;
         this.isPublic = isPublic;
+        String dirNameString = dirName.toString();
+        this.dirNameSameAsTableName = Chars.startsWith(dirNameString, tableName) &&
+                (dirNameString.length() == tableName.length() ||
+                        (dirNameString.length() > tableName.length() && dirNameString.charAt(tableName.length()) == '~'));
     }
 
     @Override
@@ -71,6 +82,9 @@ public class TableToken implements Sinkable {
         TableToken that = (TableToken) o;
 
         if (tableId != that.tableId) {
+            return false;
+        }
+        if (isMatView != that.isMatView) {
             return false;
         }
         if (isWal != that.isWal) {
@@ -121,6 +135,10 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
+    public boolean isMatView() {
+        return isMatView;
+    }
+
     public boolean isProtected() {
         return isProtected;
     }
@@ -138,16 +156,18 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
+        return new TableToken(newName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put("TableToken{tableName=").put(tableName)
-                .put(", dirName=").put(dirName)
-                .put(", tableId=").put(tableId)
-                .put(", isWal=").put(isWal)
-                .put(", isSystem=").put(isSystem).put('}');
+        if (dirNameSameAsTableName) {
+            sink.put(dirName);
+        } else {
+            sink.put("TableToken{tableName=").put(tableName)
+                    .put(", dirName=").put(dirName)
+                    .put('}');
+        }
     }
 
     @Override
@@ -156,8 +176,11 @@ public class TableToken implements Sinkable {
                 "tableName=" + tableName +
                 ", dirName=" + dirName +
                 ", tableId=" + tableId +
+                ", isMatView=" + isMatView +
                 ", isWal=" + isWal +
                 ", isSystem=" + isSystem +
+                ", isProtected=" + isProtected +
+                ", isPublic=" + isPublic +
                 '}';
     }
 }

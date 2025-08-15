@@ -28,56 +28,12 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
-    @Test
-    public void testCompareTimestampWithTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
-                    ") timestamp(ts) partition by day");
-
-            assertSql(
-                    "a\tts\n" +
-                            "Qd%ǧ\t1970-01-03T21:26:37.500000Z\n",
-                    "select * from x where ts = (select max(ts) from x)"
-            );
-        });
-    }
-
-    @Test
-    public void testCompareTimestampWithString() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
-                    ") timestamp(ts) partition by day");
-
-            assertSql(
-                    "a\tts\n" +
-                            "Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000Z\n",
-                    "select * from x where ts = (select '1970-01-03T21:26')"
-            );
-        });
-    }
-
-    @Test
-    public void testCompareTimestampWithVarchar() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
-                    ") timestamp(ts) partition by day");
-
-            assertSql(
-                    "a\tts\n" +
-                            "\uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000Z\n",
-                    "select * from x where ts = (select '1970-01-03T20:14'::varchar)"
-            );
-        });
-    }
 
     @Test
     public void testCompareTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
-                    "select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(100)" +
+            execute("create table x as (" +
+                    "  select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(100)" +
                     ")");
 
             String expected = "a\tts\n" +
@@ -118,8 +74,131 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertSql(expected, "select * from x where ts = (select '11'::varchar from x where 1 <> 1)");
             assertException("select * from x where ts = (select 'hello')", 28, "the cursor selected invalid timestamp value: hello");
             assertException("select * from x where ts = (select 'hello'::varchar)", 28, "the cursor selected invalid timestamp value: hello");
-            assertException("select * from x where ts =(select 'hello'::varchar, 10 x)", 27, "select must provide exactly one column");
-            assertException("select * from x where ts =(select 10 x)", 27, "cannot compare TIMESTAMP and INT");
+            assertException("select * from x where ts = (select 'hello'::varchar, 10 x)", 28, "select must provide exactly one column");
+            assertException("select * from x where ts = (select 10 x)", 28, "cannot compare TIMESTAMP and INT");
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000Z\n",
+                    "select * from x where ts = (select '1970-01-03T21:26')"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithStringNegated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n",
+                    "select * from x where ts != (select '1970-01-01T00:00:00.000000Z')"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "Qd%ǧ\t1970-01-03T21:26:37.500000Z\n",
+                    "select * from x where ts = (select max(ts) from x)"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithTimestampNegated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from x where ts != (select max(ts) from x)"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "\uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000Z\n",
+                    "select * from x where ts = (select '1970-01-03T20:14'::varchar)"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithVarcharFromTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                    ") timestamp(ts) partition by day");
+
+            assertQueryNoLeakCheck(
+                    "a\tts\n" +
+                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from x where ts = (select ts::varchar from x limit 2)",
+                    "ts",
+                    true
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts=cursor \n" +
+                            "    Limit lo: 2\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [ts::varchar]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts = (select ts::varchar from x limit 2)"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithVarcharNegated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            assertSql(
+                    "a\tts\n" +
+                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n",
+                    "select * from x where ts != (select '1970-01-01T00:00:00.000000Z'::varchar)"
+            );
         });
     }
 }

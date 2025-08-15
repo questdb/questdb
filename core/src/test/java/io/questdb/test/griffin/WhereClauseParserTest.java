@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -32,9 +31,21 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.*;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PostOrderTreeTraversalAlgo;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.WhereClauseParser;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -124,7 +135,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 .timestamp();
         AbstractCairoTest.create(model);
 
-        try (TableWriter writer = newOffPoolWriter(configuration, "v", Metrics.disabled())) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "v")) {
             TableWriter.Row row = writer.newRow(0);
             row.putSym(0, "sym1");
             row.putSym(5, "mode1");
@@ -722,12 +733,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testConstVsLambda() throws Exception {
-        runWhereSymbolTest("sym in (1,2) and ex in (select * from xyz)", "sym in (1,2)");
+        runWhereSymbolTest("sym in (1, 2) and ex in (select * from xyz)", "sym in (1, 2)");
     }
 
     @Test
     public void testConstVsLambda2() throws Exception {
-        runWhereSymbolTest("ex in (1,2) and ex in (select * from xyz)", "ex in (1,2)");
+        runWhereSymbolTest("ex in (1, 2) and ex in (select * from xyz)", "ex in (1, 2)");
     }
 
     @Test
@@ -1867,7 +1878,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym in ( replace( 'AAA', 'A', 'B' ), 'A' || 'B' ) and sym in ('BC', replace('AB', 'C', 'D') ) ");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[AB]", keyValueFuncsToString(m.keyValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1875,7 +1886,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym in ( replace( 'AAA', 'AA', 'B' ), 'AB' ) and sym in ('BC', replace('AB', 'C', 'D') ) ");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[AB]", keyValueFuncsToString(m.keyValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1883,7 +1894,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym in ( replace( 'AAA', 'A', 'B' ) ) ");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[BBB]", keyValueFuncsToString(m.keyValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1893,7 +1904,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[EF,AB,AA]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, null);
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1901,7 +1912,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym in ( 'X' || '1', concat( 'X', '2') ) ");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X1,X2]", keyValueFuncsToString(m.keyValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1910,7 +1921,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.FALSE);
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
     }
 
     @Test
@@ -1919,7 +1930,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X1]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1928,7 +1939,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X1]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1937,7 +1948,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[X2,X1]", keyValueFuncsToString(m.keyExcludedValueFuncs));
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.FALSE);
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
     }
 
     @Test
@@ -1947,7 +1958,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[X1]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "string systimestamp cast sym in not");
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1957,7 +1968,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[X50]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "string sysdate cast sym in not");
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1967,7 +1978,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "string sysdate cast sym in not string now cast sym in not and");
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1977,7 +1988,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "string sysdate cast sym in not string now cast sym in not and");
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1987,7 +1998,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "string sysdate cast string now cast sym in not");
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -1997,7 +2008,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "string sysdate cast string now cast sym in not");
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -2007,7 +2018,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[CD,EF,AB]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, null);
-        Assert.assertEquals(m.intrinsicValue, IntrinsicModel.UNDEFINED);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
@@ -2294,7 +2305,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in [\"2014-01-01T12:30:00.000Z\"]");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "'[' is unexpected here");
         }
     }
 
@@ -2403,7 +2414,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaVsConst() throws Exception {
-        runWhereSymbolTest("ex in (select a from xyz) and sym in (1,2)", "sym in (1,2)");
+        runWhereSymbolTest("ex in (select a from xyz) and sym in (1, 2)", "sym in (1, 2)");
     }
 
     @Test
@@ -2721,7 +2732,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("not (timestamp in ['2015-05-11T15:00:00.000Z']) and timestamp IN '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            TestUtils.assertContains(e.getFlyweightMessage(), "'[' is unexpected here");
         }
     }
 
@@ -3414,15 +3425,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testUnindexedEqualsVarchar() throws SqlException {
         IntrinsicModel m = unindexedModelOf("sym = 'ABC'::varchar", null);
         Assert.assertNull(m.keyColumn);
-        TestUtils.assertEquals("sym = cast('ABC',varchar)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("sym = 'ABC'::varchar", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testUnindexedIn() throws SqlException {
-        IntrinsicModel m = unindexedModelOf("sym in (1,2)", null);
+        IntrinsicModel m = unindexedModelOf("sym in (1, 2)", null);
         Assert.assertNull(m.keyColumn);
-        TestUtils.assertEquals("sym in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("sym in (1, 2)", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
@@ -3462,19 +3473,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testUnindexedPreferredInVsIndexedVarchar() throws SqlException {
         IntrinsicModel m = unindexedModelOf("sym in (1,2) and ex in ('XYZ'::varchar)", "sym");
         TestUtils.assertEquals("sym", m.keyColumn);
-        TestUtils.assertEquals("ex in cast('XYZ',varchar)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("ex in 'XYZ'::varchar", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[1,2]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testVarcharPracticalParsing() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table testVarcharPracticalParsing ( a string, ts timestamp) timestamp(ts)");
+            execute("create table testVarcharPracticalParsing ( a string, ts timestamp) timestamp(ts)");
             assertPlanNoLeakCheck(
                     "select * from testVarcharPracticalParsing where\n" +
                             "ts = '2024-02-29' or ts <= '2024-03-01'",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: (ts=1709164800000000 or 1709251200000000>=ts)\n" +
+                            "  filter: (ts=1709164800000000 or 1709251200000000>=ts) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: testVarcharPracticalParsing\n"
@@ -3484,7 +3495,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     "select * from testVarcharPracticalParsing where\n" +
                             "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
                     "Async Filter workers: 1\n" +
-                            "  filter: ((ts=1709164800000000 or 1709251200000000>=ts) or ts=1714521600000000)\n" +
+                            "  filter: ((ts=1709164800000000 or 1709251200000000>=ts) or ts=1714521600000000) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: testVarcharPracticalParsing\n"

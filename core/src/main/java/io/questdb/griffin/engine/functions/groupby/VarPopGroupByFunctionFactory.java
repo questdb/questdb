@@ -26,10 +26,12 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class VarPopGroupByFunctionFactory implements FunctionFactory {
     @Override
@@ -46,4 +48,28 @@ public class VarPopGroupByFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new VarPopGroupByFunction(args.getQuick(0));
     }
+
+    private static class VarPopGroupByFunction extends VarSampleGroupByFunctionFactory.VarSampleGroupByFunction {
+
+        public VarPopGroupByFunction(@NotNull Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            long count = rec.getLong(valueIndex + 2);
+            if (count > 0) {
+                double sum = rec.getDouble(valueIndex + 1);
+                return sum / count;
+            }
+            return Double.NaN;
+        }
+
+        @Override
+        public String getName() {
+            return "var_pop";
+        }
+
+    }
+
 }

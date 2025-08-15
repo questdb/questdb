@@ -28,9 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.std.str.Path;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -40,25 +43,24 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.filewatch.FileWatcher;
-import io.questdb.std.filewatch.FileWatcherFactory;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -76,9 +78,10 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected PGWireServer pgWireServer;
+    protected PGServer pgServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
+    private Thread hydrateMetadataThread;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
 
@@ -130,13 +133,13 @@ public class ServerMain implements Closeable {
 
         return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root))) {
             @Override
-            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedQueryWorkerCount) {
             }
         };
     }
 
     public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
-        HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
+        HttpFullFatServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
         String username = httpConfig.getUsername();
         if (Chars.empty(username)) {
             return DefaultHttpAuthenticatorFactory.INSTANCE;
@@ -149,7 +152,7 @@ public class ServerMain implements Closeable {
         // create default authenticator for Line TCP protocol
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
             // we need "root/" here, not "root/db/"
-            final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
+            final String rootDir = new File(configuration.getCairoConfiguration().getDbRoot()).getParent();
             final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
@@ -164,13 +167,14 @@ public class ServerMain implements Closeable {
         if (readOnlyInstance) {
             return ReadOnlySecurityContextFactory.INSTANCE;
         } else {
-            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
+            PGConfiguration pgConfiguration = configuration.getPGWireConfiguration();
             HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
+            boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
+            boolean pgWireReadOnlyContext = pgConfiguration.readOnlySecurityContext();
+            boolean pgWireReadOnlyUserEnabled = pgConfiguration.isReadOnlyUserEnabled();
+            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgConfiguration.getReadOnlyUsername() : null;
             boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly);
+            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
         }
     }
 
@@ -202,6 +206,7 @@ public class ServerMain implements Closeable {
         getEngine().awaitTable(tableName, 30, TimeUnit.SECONDS);
     }
 
+    @TestOnly
     public void awaitTxn(String tableName, long txn) {
         getEngine().awaitTxn(tableName, txn, 15, TimeUnit.SECONDS);
     }
@@ -209,6 +214,12 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            if (hydrateMetadataThread != null) {
+                try {
+                    hydrateMetadataThread.join();
+                } catch (InterruptedException ignored) {
+                }
+            }
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
@@ -242,6 +253,13 @@ public class ServerMain implements Closeable {
         throw CairoException.nonCritical().put("http server is not running");
     }
 
+    public int getPgWireServerPort() {
+        if (pgServer != null) {
+            return pgServer.getPort();
+        }
+        throw CairoException.nonCritical().put("pgwire server is not running");
+    }
+
     public WorkerPoolManager getWorkerPoolManager() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");
@@ -259,7 +277,7 @@ public class ServerMain implements Closeable {
 
     @TestOnly
     public void resetQueryCache() {
-        pgWireServer.resetQueryCache();
+        pgServer.resetQueryCache();
     }
 
     public void start() {
@@ -303,61 +321,55 @@ public class ServerMain implements Closeable {
     private synchronized void initialize() {
         initialized = true;
         final ServerConfiguration config = bootstrap.getConfiguration();
-        final Metrics metrics = bootstrap.getMetrics();
-        // create the worker pool manager, and configure the shared pool
-        final boolean walSupported = config.getCairoConfiguration().isWalSupported();
-        final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
-        final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+        // create the worker pool manager, and configure the shared pool
+        final boolean walSupported = cairoConfig.isWalSupported();
+        final boolean isReadOnly = cairoConfig.isReadOnlyInstance();
+        final boolean walApplyEnabled = cairoConfig.isWalApplyEnabled();
+        final boolean matViewEnabled = cairoConfig.isMatViewEnabled();
 
-        if (config instanceof DynamicServerConfiguration) {
-            if (((DynamicServerConfiguration) config).isConfigReloadEnabled()) {
-                try (Path path = new Path()) {
-                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
-                    fileWatcher = FileWatcherFactory.getFileWatcher(
-                            path,
-                            (DynamicServerConfiguration) config
-                    );
-                }
-                fileWatcher.start();
-            }
-        }
-
-        workerPoolManager = new WorkerPoolManager(config, metrics) {
+        workerPoolManager = new WorkerPoolManager(config) {
             @Override
-            protected void configureSharedPool(WorkerPool sharedPool) {
+            protected void configureWorkerPools(final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite) {
                 try {
-                    sharedPool.assign(engine.getEngineMaintenanceJob());
+                    sharedPoolWrite.assign(engine.getEngineMaintenanceJob());
+                    WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
-                    WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
+                    QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
+                    sharedPoolQuery.assign(queryTracingJob);
+                    freeOnExit.register(queryTracingJob);
 
                     if (!isReadOnly) {
-                        WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
+                        WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
 
                         if (walSupported) {
-                            sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
+                            sharedPoolWrite.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
                             final WalPurgeJob walPurgeJob = config.getFactoryProvider().getWalJobFactory().createWalPurgeJob(engine);
                             engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
-                            sharedPool.assign(walPurgeJob);
-                            sharedPool.freeOnExit(walPurgeJob);
+                            sharedPoolWrite.assign(walPurgeJob);
+                            sharedPoolWrite.freeOnExit(walPurgeJob);
 
                             // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPool, engine, sharedPool.getWorkerCount());
+                                setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                             }
                         }
 
                         // text import
-                        CopyJob.assignToPool(engine.getMessageBus(), sharedPool);
+                        CopyJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
-                                    Math.max(1, sharedPool.getWorkerCount() - 2)
+                                    Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPool.assign(copyRequestJob);
-                            sharedPool.freeOnExit(copyRequestJob);
+                            sharedPoolWrite.assign(copyRequestJob);
+                            sharedPoolWrite.freeOnExit(copyRequestJob);
+                        }
+
+                        if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
+                            setupMatViewJobs(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                         }
                     }
 
@@ -366,7 +378,7 @@ public class ServerMain implements Closeable {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                            sharedPool.assign(telemetryJob);
+                            sharedPoolWrite.assign(telemetryJob);
                         }
                     }
 
@@ -376,42 +388,49 @@ public class ServerMain implements Closeable {
             }
         };
 
+        engine.buildMatViewGraph();
+
+        if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
+            // create dedicated worker pool for materialized view refresh
+            WorkerPool matViewRefreshWorkerPool = workerPoolManager.getInstanceWrite(
+                    config.getMatViewRefreshPoolConfiguration(),
+                    WorkerPoolManager.Requester.MAT_VIEW_REFRESH
+            );
+            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        }
+
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
+            WorkerPool walApplyWorkerPool = workerPoolManager.getInstanceWrite(
                     config.getWalApplyPoolConfiguration(),
-                    metrics,
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         // http
         freeOnExit.register(httpServer = services().createHttpServer(
                 config,
                 engine,
-                workerPoolManager,
-                metrics
+                workerPoolManager
         ));
 
         // http min
         freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                workerPoolManager,
-                metrics
+                workerPoolManager
         ));
 
         // pg wire
-        freeOnExit.register(pgWireServer = services().createPGWireServer(
+        freeOnExit.register(pgServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
-                workerPoolManager,
-                metrics
+                workerPoolManager
         ));
 
-        workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
+        workerPoolManager.getSharedPoolNetwork().assign(new FlushQueryCacheJob(
                 engine.getMessageBus(),
                 httpServer,
-                pgWireServer
+                pgServer
         ));
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
@@ -419,8 +438,7 @@ public class ServerMain implements Closeable {
             freeOnExit.register(services().createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
-                    workerPoolManager,
-                    metrics
+                    workerPoolManager
             ));
 
             // ilp/udp
@@ -432,8 +450,8 @@ public class ServerMain implements Closeable {
         }
 
         // metadata hydration
-        Thread hydrateCairoMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
-        hydrateCairoMetadataThread.start();
+        hydrateMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        hydrateMetadataThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
@@ -443,16 +461,31 @@ public class ServerMain implements Closeable {
         return Services.INSTANCE;
     }
 
-    protected void setupWalApplyJob(
-            WorkerPool workerPool,
+    protected void setupMatViewJobs(
+            WorkerPool sharedPoolWrite,
             CairoEngine engine,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
-        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
+        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
-            workerPool.assign(i, applyWal2TableJob);
-            workerPool.freeOnExit(applyWal2TableJob);
+            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, sharedQueryWorkerCount);
+            sharedPoolWrite.assign(i, matViewRefreshJob);
+            sharedPoolWrite.freeOnExit(matViewRefreshJob);
+        }
+        final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
+        sharedPoolWrite.assign(matViewTimerJob);
+    }
+
+    protected void setupWalApplyJob(
+            WorkerPool sharedPoolWrite,
+            CairoEngine engine,
+            int sharedQueryWorkerCount
+    ) {
+        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
+            sharedPoolWrite.assign(i, applyWal2TableJob);
+            sharedPoolWrite.freeOnExit(applyWal2TableJob);
         }
     }
 

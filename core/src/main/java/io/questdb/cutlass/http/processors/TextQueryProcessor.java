@@ -26,11 +26,26 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpKeywords;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -38,58 +53,52 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Interval;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 
-public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
+public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
 
+    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
-    @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
-    private final int doubleScale;
     private final CairoEngine engine;
-    private final int floatScale;
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    @TestOnly
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount
-    ) {
-        this(configuration, engine, workerCount, workerCount);
-    }
-
-    public TextQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
-        this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getMillisecondClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
-        this.doubleScale = configuration.getDoubleScale();
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
@@ -146,7 +155,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (retries == maxSqlRecompileAttempts) {
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
-                            info(state).$(e.getFlyweightMessage()).$();
+                            info(state).$safe(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -177,6 +186,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override
@@ -270,9 +284,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void putStringOrNull(HttpChunkedResponse r, CharSequence cs) {
+    private static void putStringOrNull(HttpChunkedResponse response, CharSequence cs) {
         if (cs != null) {
-            r.putQuote().escapeJsonStr(cs).putQuote();
+            response.putQuote().escapeCsvStr(cs).putQuote();
         }
     }
 
@@ -283,9 +297,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Numbers.appendUuid(lo, hi, response);
     }
 
-    private static void putVarcharOrNull(HttpChunkedResponse r, Utf8Sequence us) {
+    private static void putVarcharOrNull(HttpChunkedResponse response, Utf8Sequence us) {
         if (us != null) {
-            r.putQuote().escapeJsonStr(us).putQuote();
+            response.putQuote().escapeCsvStr(us).putQuote();
         }
     }
 
@@ -319,7 +333,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         final HttpChunkedResponse response = context.getChunkedResponse();
-        final int columnCount = state.metadata.getColumnCount();
+        final RecordMetadata metadata = state.recordCursorFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
 
         OUT:
         while (true) {
@@ -339,7 +354,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }
@@ -382,10 +397,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD:
                         while (state.columnIndex < columnCount) {
-                            if (state.columnIndex > 0) {
+                            if (state.columnIndex > 0 && state.columnValueFullySent) {
                                 response.putAscii(state.delimiter);
                             }
-                            putValue(response, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            putValue(response, state);
                             state.columnIndex++;
                             response.bookmark();
                         }
@@ -414,10 +429,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
                 } else {
-                    // what we have here is out unit of data, column value or query
-                    // is larger that response content buffer
-                    // all we can do in this scenario is to log appropriately
-                    // and disconnect socket
+                    // out unit of data, column value or query is larger than response content buffer
                     info(state).$("Response buffer is too small, state=").$(state.queryState).$();
                     throw PeerDisconnectedException.INSTANCE;
                 }
@@ -447,38 +459,37 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             // Give up and close the connection.
             throw ServerDisconnectException.INSTANCE;
         }
-        int code = e instanceof CairoException && ((CairoException) e).isInterruption() ? 408 : 400;
-        sendException(response, 0, e.getMessage(), code, state);
+        sendException(response, 0, e.getMessage(), state);
     }
 
     private void logInternalError(Throwable e, TextQueryProcessorState state) {
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                info(state).$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
-                        .$("`, q=`").utf8(state.query)
+                info(state).$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             } else if (ce.isCritical()) {
-                critical(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                critical(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").utf8(state.query)
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             } else {
-                error(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                error(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").utf8(state.query)
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
-            error(state).$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").utf8(state.query)
+            error(state).$("internal HTTP server error [reason=`").$safe(((HttpException) e).getFlyweightMessage())
+                    .$("`, q=`").$safe(state.query)
                     .$("`]").$();
         } else {
             critical(state).$("internal error [ex=").$(e)
-                    .$(", q=`").utf8(state.query)
+                    .$(", q=`").$safe(state.query)
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.health().incrementUnhandledErrors();
+            metrics.healthMetrics().incrementUnhandledErrors();
         }
     }
 
@@ -491,7 +502,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
         if (query == null || query.size() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
-            sendException(response, 0, "No query text", 400, state);
+            sendException(response, 0, "No query text", state);
             return false;
         }
 
@@ -530,7 +541,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.query.clear();
         if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), state.query)) {
             info(state).$("Bad UTF8 encoding").$();
-            sendException(response, 0, "Bad UTF8 encoding in query text", 400, state);
+            sendException(response, 0, "Bad UTF8 encoding in query text", state);
             return false;
         }
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
@@ -549,61 +560,82 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
-        state.noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
-        state.countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
+        state.noMeta = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_NM));
+        state.countRows = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_COUNT));
         return true;
     }
 
-    private void putValue(HttpChunkedResponse response, int type, Record rec, int col) {
+    private void putArrayValue(HttpChunkedResponse response, TextQueryProcessorState state, Record record, int columnIdx, int columnType) {
+        state.arrayState.of(response);
+        var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
+        try {
+            state.arrayState.putCharIfNew(response, '"');
+            ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState);
+            state.arrayState.putCharIfNew(response, '"');
+            state.arrayState.clear();
+            state.columnValueFullySent = true;
+        } catch (Throwable e) {
+            // we have to disambiguate here if this is the first attempt to send the value, which failed,
+            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            state.columnValueFullySent = state.arrayState.isNothingWritten();
+            state.arrayState.reset(arrayView);
+            throw e;
+        }
+    }
+
+    private void putValue(HttpChunkedResponse response, TextQueryProcessorState state) {
         long l;
-        switch (ColumnType.tagOf(type)) {
+        final int columnType = state.metadata.getColumnType(state.columnIndex);
+        final int columnIndex = state.columnIndex;
+        final Record rec = state.record;
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
-                response.put(rec.getBool(col));
+                response.put(rec.getBool(columnIndex));
                 break;
             case ColumnType.BYTE:
-                response.put((int) rec.getByte(col));
+                response.put((int) rec.getByte(columnIndex));
                 break;
             case ColumnType.DOUBLE:
-                double d = rec.getDouble(col);
-                if (d == d) {
-                    response.put(d, doubleScale);
+                double d = rec.getDouble(columnIndex);
+                if (Numbers.isFinite(d)) {
+                    response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
-                float f = rec.getFloat(col);
-                if (f == f) {
-                    response.put(f, floatScale);
+                float f = rec.getFloat(columnIndex);
+                if (Numbers.isFinite(f)) {
+                    response.put(f);
                 }
                 break;
             case ColumnType.INT:
-                final int i = rec.getInt(col);
-                if (i > Integer.MIN_VALUE) {
+                final int i = rec.getInt(columnIndex);
+                if (i != Numbers.INT_NULL) {
                     response.put(i);
                 }
                 break;
             case ColumnType.LONG:
-                l = rec.getLong(col);
-                if (l > Long.MIN_VALUE) {
+                l = rec.getLong(columnIndex);
+                if (l != Numbers.LONG_NULL) {
                     response.put(l);
                 }
                 break;
             case ColumnType.DATE:
-                l = rec.getDate(col);
-                if (l > Long.MIN_VALUE) {
+                l = rec.getDate(columnIndex);
+                if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODateMillis(l).putAscii('"');
                 }
                 break;
             case ColumnType.TIMESTAMP:
-                l = rec.getTimestamp(col);
-                if (l > Long.MIN_VALUE) {
+                l = rec.getTimestamp(columnIndex);
+                if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODate(l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
-                response.put(rec.getShort(col));
+                response.put(rec.getShort(columnIndex));
                 break;
             case ColumnType.CHAR:
-                char c = rec.getChar(col);
+                char c = rec.getChar(columnIndex);
                 if (c > 0) {
                     response.put(c);
                 }
@@ -613,39 +645,42 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
-                putStringOrNull(response, rec.getStrA(col));
+                putStringOrNull(response, rec.getStrA(columnIndex));
                 break;
             case ColumnType.VARCHAR:
-                putVarcharOrNull(response, rec.getVarcharA(col));
+                putVarcharOrNull(response, rec.getVarcharA(columnIndex));
                 break;
             case ColumnType.SYMBOL:
-                putStringOrNull(response, rec.getSymA(col));
+                putStringOrNull(response, rec.getSymA(columnIndex));
                 break;
             case ColumnType.LONG256:
-                rec.getLong256(col, response);
+                rec.getLong256(columnIndex, response);
                 break;
             case ColumnType.GEOBYTE:
-                putGeoHashStringValue(response, rec.getGeoByte(col), type);
+                putGeoHashStringValue(response, rec.getGeoByte(columnIndex), columnType);
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHashStringValue(response, rec.getGeoShort(col), type);
+                putGeoHashStringValue(response, rec.getGeoShort(columnIndex), columnType);
                 break;
             case ColumnType.GEOINT:
-                putGeoHashStringValue(response, rec.getGeoInt(col), type);
+                putGeoHashStringValue(response, rec.getGeoInt(columnIndex), columnType);
                 break;
             case ColumnType.GEOLONG:
-                putGeoHashStringValue(response, rec.getGeoLong(col), type);
+                putGeoHashStringValue(response, rec.getGeoLong(columnIndex), columnType);
                 break;
             case ColumnType.UUID:
-                putUuidOrNull(response, rec.getLong128Lo(col), rec.getLong128Hi(col));
+                putUuidOrNull(response, rec.getLong128Lo(columnIndex), rec.getLong128Hi(columnIndex));
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
             case ColumnType.IPv4:
-                putIPv4Value(response, rec, col);
+                putIPv4Value(response, rec, columnIndex);
                 break;
             case ColumnType.INTERVAL:
-                putInterval(response, rec, col);
+                putInterval(response, rec, columnIndex);
+                break;
+            case ColumnType.ARRAY:
+                putArrayValue(response, state, rec, columnIndex, columnType);
                 break;
             default:
                 assert false;
@@ -673,10 +708,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponse response,
             int position,
             CharSequence message,
-            int responseCode,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        headerJsonError(response, responseCode);
+        headerJsonError(response);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.query);
     }
 
@@ -685,10 +719,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state).$("syntax-error [q=`").utf8(state.query)
+        info(state).$("syntax-error [q=`").$safe(state.query)
                 .$("`, at=").$(container.getPosition())
-                .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
-        sendException(response, container.getPosition(), container.getFlyweightMessage(), 400, state);
+                .$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
+        sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
     }
 
     protected void header(
@@ -706,8 +740,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         response.sendHeader();
     }
 
-    protected void headerJsonError(HttpChunkedResponse response, int responseCode) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(responseCode, CONTENT_TYPE_JSON);
+    protected void headerJsonError(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.status(400, CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
     }

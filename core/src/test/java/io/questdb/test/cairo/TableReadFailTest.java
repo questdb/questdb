@@ -25,7 +25,13 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -47,6 +53,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -62,6 +69,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+        spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
@@ -78,6 +86,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
+            spinLockTimeout = 1;
             String x = "x";
             TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
@@ -96,9 +105,9 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // home path at txn file
                 TableToken tableToken = engine.verifyTableName(x);
-                path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter writer = newOffPoolWriter(configuration, x, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, x)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -137,6 +146,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // this should time out
                 try {
+                    spinLockTimeout = 100;
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException e) {
@@ -152,10 +162,10 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.close();
                 mem.close();
 
-                // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
+                // Make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter writer = newOffPoolWriter(configuration, x, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, x)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow();
@@ -169,7 +179,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // does positive reload work?
                 Assert.assertTrue(reader.reload());
 
-                // can reader still see correct data?
+                // can reader still see the correct data?
                 cursor.toTop();
                 rnd.reset();
                 count = 0;
@@ -181,6 +191,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 Assert.assertEquals(2 * N, count);
             }
+            engine.clear();
         });
     }
 
@@ -211,19 +222,21 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     private void assertConstructorFail(FilesFacade ff) throws Exception {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try {
-                newOffPoolReader(new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return ff;
-                    }
+                newOffPoolReader(
+                        new DefaultTestCairoConfiguration(root) {
+                            @Override
+                            public @NotNull FilesFacade getFilesFacade() {
+                                return ff;
+                            }
 
-                    @Override
-                    public long getSpinLockTimeout() {
-                        return 1;
-                    }
-                }, "all").close();
+                            @Override
+                            public long getSpinLockTimeout() {
+                                return 1;
+                            }
+                        }, "all"
+                ).close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }

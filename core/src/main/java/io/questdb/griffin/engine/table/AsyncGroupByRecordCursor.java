@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -52,6 +51,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -78,7 +78,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
-            CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             MessageBus messageBus
@@ -94,9 +93,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
+        buildMapConditionally();
         mapCursor.calculateSize(circuitBreaker, counter);
     }
 
@@ -138,15 +135,24 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
+        buildMapConditionally();
         return mapCursor.hasNext();
+    }
+
+    @Override
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+        buildMapConditionally();
+        mapCursor.longTopK(list, recordFunctions.getQuick(columnIndex));
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return isDataMapBuilt ? 1 : 0;
     }
 
     @Override
@@ -196,7 +202,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (task.hasError()) {
                         throw CairoException.nonCritical()
                                 .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg());
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -238,6 +247,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
         isDataMapBuilt = true;
+    }
+
+    private void buildMapConditionally() {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
     }
 
     private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {
@@ -305,7 +320,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         GroupByMergeShardTask task = queue.get(cursor);
                         GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
                         reclaimed++;
+                    } else {
+                        Os.pause();
                     }
+                } else {
+                    Os.pause();
                 }
                 mergedCount = mergeDoneLatch.getCount();
             }
@@ -341,7 +360,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
         this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
+        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
         frameLimit = -1;
     }

@@ -31,6 +31,7 @@ open module io.questdb.test {
     requires static org.postgresql.jdbc;
     requires static java.management;
     requires jdk.management;
+    requires org.checkerframework.checker.qual;
 
     uses io.questdb.griffin.FunctionFactory;
 

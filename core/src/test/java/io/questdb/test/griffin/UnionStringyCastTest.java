@@ -35,40 +35,6 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class UnionStringyCastTest extends AbstractCairoTest {
 
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {"varchar", "boolean", "false"},
-                {"varchar", "byte", "1"},
-                {"varchar", "short", "1"},
-                {"varchar", "int", "0"},
-                {"varchar", "long", "1"},
-                {"varchar", "long256", "0x568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db4b0f595f143e5d72"},
-                {"varchar", "float", "0.4622"},
-                {"varchar", "double", "0.5243722859289777"},
-                {"varchar", "date", "2024-08-25T20:37:19.653Z"},
-                {"varchar", "timestamp", "2024-09-23T10:11:44.610041Z"},
-                {"varchar", "char", "G"},
-                {"varchar", "symbol", "sym1"},
-                {"varchar", "uuid4", "c718ab5c-bb3f-4261-81bf-6c24be538768"},
-                {"varchar", "string", "UDE"},
-                {"str", "boolean", "false"},
-                {"str", "byte", "1"},
-                {"str", "short", "0"},
-                {"str", "int", "0"},
-                {"str", "long", "0"},
-                {"str", "long256", "0xc72bfc5230158059980eca62a219a0f16846d7a3aa5aecce322a2198864beb14"},
-                {"str", "float", "0.1920"},
-                {"str", "double", "0.22452340856088226"},
-                {"str", "date", "2024-07-16T06:10:13.449Z"},
-                {"str", "timestamp", "2024-06-21T14:36:33.471269Z"},
-                {"str", "char", "U"},
-                {"str", "symbol", "sym1"},
-                {"str", "uuid4", "8d076bf9-91c0-4e88-88b1-863d4316f9c7"},
-                {"str", "string", "TGP"},
-        });
-    }
-
     private final String castTableDdl = "create table cast_table as (select" +
             " rnd_boolean() a_boolean," +
             " rnd_byte(0,1) a_byte," +
@@ -85,12 +51,11 @@ public class UnionStringyCastTest extends AbstractCairoTest {
             " rnd_uuid4() a_uuid4," +
             " rnd_str(3,3,0) a_string" +
             " from long_sequence(1))";
-
-    private final String stringyType;
-    private final String selectFromCastTable;
+    private final String expectedCastValue;
     private final String expectedColTypeOf;
     private final String expectedStringyValue;
-    private final String expectedCastValue;
+    private final String selectFromCastTable;
+    private final String stringyType;
 
     public UnionStringyCastTest(String stringyType, String castType, String expectedCastValue) {
         this.stringyType = stringyType;
@@ -109,9 +74,48 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         }
     }
 
+    @Parameterized.Parameters(name = "{0}-{1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {"varchar", "boolean", "false"},
+                {"varchar", "byte", "1"},
+                {"varchar", "short", "1"},
+                {"varchar", "int", "0"},
+                {"varchar", "long", "1"},
+                {"varchar", "long256", "0x568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db4b0f595f143e5d72"},
+                {"varchar", "float", "0.46218354"},
+                {"varchar", "double", "0.5243722859289777"},
+                {"varchar", "date", "2024-08-25T20:37:19.653Z"},
+                {"varchar", "timestamp", "2024-09-23T10:11:44.610041Z"},
+                {"varchar", "char", "G"},
+                {"varchar", "symbol", "sym1"},
+                {"varchar", "uuid4", "c718ab5c-bb3f-4261-81bf-6c24be538768"},
+                {"varchar", "string", "UDE"},
+                {"str", "boolean", "false"},
+                {"str", "byte", "1"},
+                {"str", "short", "0"},
+                {"str", "int", "0"},
+                {"str", "long", "0"},
+                {"str", "long256", "0xc72bfc5230158059980eca62a219a0f16846d7a3aa5aecce322a2198864beb14"},
+                {"str", "float", "0.19202209"},
+                {"str", "double", "0.22452340856088226"},
+                {"str", "date", "2024-07-16T06:10:13.449Z"},
+                {"str", "timestamp", "2024-06-21T14:36:33.471269Z"},
+                {"str", "char", "U"},
+                {"str", "symbol", "sym1"},
+                {"str", "uuid4", "8d076bf9-91c0-4e88-88b1-863d4316f9c7"},
+                {"str", "string", "TGP"},
+        });
+    }
+
     @Test
     public void testUnionAllStringyLeft() throws Exception {
         testUnionStringyLeft0(" all");
+    }
+
+    @Test
+    public void testUnionAllStringyRight() throws Exception {
+        testUnionStringyRight0(" all");
     }
 
     @Test
@@ -119,8 +123,17 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         testUnionStringyLeft0("");
     }
 
+    @Test
+    public void testUnionStringyRight() throws Exception {
+        testUnionStringyRight0("");
+    }
+
+    private static String stringyTableDdl(String typeName) {
+        return "create table " + typeName + "_table as (select rnd_" + typeName + "(3,3,0) a from long_sequence(1))";
+    }
+
     private void testUnionStringyLeft0(String allOrEmpty) throws Exception {
-        compile(stringyTableDdl(stringyType));
+        execute(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
         String query = String.format("select a, typeOf(a) from (%s_table union%s %s)",
                 stringyType, allOrEmpty, selectFromCastTable);
@@ -130,27 +143,13 @@ public class UnionStringyCastTest extends AbstractCairoTest {
         assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
     }
 
-    @Test
-    public void testUnionAllStringyRight() throws Exception {
-        testUnionStringyRight0(" all");
-    }
-
-    @Test
-    public void testUnionStringyRight() throws Exception {
-        testUnionStringyRight0("");
-    }
-
     private void testUnionStringyRight0(String allOrEmpty) throws Exception {
-        compile(stringyTableDdl(stringyType));
+        execute(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
         String query = String.format("select a, typeOf(a) from (%s union%s %s_table)", selectFromCastTable, allOrEmpty, stringyType);
         String expected = "a\ttypeOf\n" +
                 expectedCastValue + '\t' + expectedColTypeOf + '\n' +
                 expectedStringyValue + '\t' + expectedColTypeOf + '\n';
         assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
-    }
-
-    private static String stringyTableDdl(String typeName) {
-        return "create table " + typeName + "_table as (select rnd_" + typeName + "(3,3,0) a from long_sequence(1))";
     }
 }

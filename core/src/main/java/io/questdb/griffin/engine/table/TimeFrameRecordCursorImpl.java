@@ -24,25 +24,44 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.std.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * The only supported partition order is forward, i.e. navigation
  * should start with a {@link #next()} call.
  */
-public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
+public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();
     private final LongList frameRowCounts = new LongList();
-    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord();
-    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord();
+    private final RecordMetadata metadata;
+    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
-    private final int timestampIndex;
     private int frameCount = 0;
     private PageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
@@ -52,12 +71,11 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     public TimeFrameRecordCursorImpl(
             @NotNull CairoConfiguration configuration,
-            @NotNull @Transient RecordMetadata metadata
+            @NotNull RecordMetadata metadata
     ) {
+        this.metadata = metadata;
         frameAddressCache = new PageFrameAddressCache(configuration);
-        frameAddressCache.of(metadata);
-        timestampIndex = metadata.getTimestampIndex();
-        frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
@@ -122,9 +140,9 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         return false;
     }
 
-    public TimeFrameRecordCursor of(PageFrameCursor frameCursor) {
+    public TimeFrameRecordCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
-        frameAddressCache.clear();
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);
@@ -147,7 +165,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
             timeFrame.rowLo = 0;
             timeFrame.rowHi = rowCount;
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            final long timestampAddress = frameMemory.getPageAddress(timestampIndex);
+            final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
             timeFrame.timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
             timeFrame.timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1;
             return rowCount;
@@ -181,6 +199,12 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
+    }
+
+    @Override
+    public void recordAtRowIndex(Record record, long rowIndex) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryRecord.setRowIndex(rowIndex);
     }
 
     @Override

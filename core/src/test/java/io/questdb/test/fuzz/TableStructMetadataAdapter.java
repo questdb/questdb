@@ -113,17 +113,12 @@ public class TableStructMetadataAdapter implements TableStructure {
 
     @Override
     public boolean isDedupKey(int columnIndex) {
-        return false;
+        return metadata.isDedupKey(columnIndex);
     }
 
     @Override
     public boolean isIndexed(int columnIndex) {
         return ColumnType.isSymbol(metadata.getColumnType(columnIndex));
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return true;
     }
 
     @Override

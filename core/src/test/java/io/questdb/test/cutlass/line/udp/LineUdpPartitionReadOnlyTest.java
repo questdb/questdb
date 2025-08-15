@@ -25,7 +25,14 @@
 package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -208,11 +215,12 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         .col("i", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL).symbolCapacity(32)
                         .timestamp("ts");
-                tableToken = engine.lockTableName(tableName, 1, false);
+                tableToken = engine.lockTableName(tableName, 1, false, false);
                 Assert.assertNotNull(tableToken);
-                engine.registerTableToken(tableToken);
                 createTable(tableModel, cairoConfig, ColumnType.VERSION, 1, tableToken);
-                engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
+                engine.registerTableToken(tableToken);
+                CharSequence insertSql = insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4);
+                engine.execute(insertSql, context);
                 engine.unlockTableName(tableToken);
                 Assert.assertNotNull(tableToken);
 

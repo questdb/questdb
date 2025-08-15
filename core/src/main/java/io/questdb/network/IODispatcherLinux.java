@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.std.LongMatrix;
+import io.questdb.std.Misc;
 
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private static final int EVM_DEADLINE = 1;
@@ -48,7 +49,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     @Override
     public void close() {
         super.close();
-        epoll.close();
+        Misc.free(epoll);
         LOG.info().$("closed").$();
     }
 
@@ -377,7 +378,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     @Override
     protected void registerListenerFd() {
-        this.epoll.listen(serverFd);
+        epoll.listen(serverFd);
     }
 
     @Override

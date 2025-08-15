@@ -47,7 +47,7 @@ public class HashJoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinDoesNotAllocateMemoryPriorToCursorOpenAndAfterCursorCloseForNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table weather_data_historical (\n" +
+            execute("create table weather_data_historical (\n" +
                     "  sensor_time timestamp not null,\n" +
                     "  sensor_day symbol,\n" +
                     "  min_temperature_out float,\n" +
@@ -59,7 +59,7 @@ public class HashJoinTest extends AbstractCairoTest {
                     ")\n" +
                     "TIMESTAMP(sensor_time);", sqlExecutionContext);
 
-            compile("insert into weather_data_historical \n" +
+            execute("insert into weather_data_historical \n" +
                     "select cast(x*1000000000 as timestamp), to_str( cast(x*1000000000 as timestamp), 'MM-dd'), \n" +
                     "       rnd_float()*100, rnd_float()*100, rnd_float()*100, rnd_float()*200, rnd_float()*100, rnd_float()*300\n" +
                     "from long_sequence(1000);");
@@ -121,11 +121,11 @@ public class HashJoinTest extends AbstractCairoTest {
     @Test
     public void testHashOuterLeftJoinWithFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (i long, locale_name symbol )");
-            compile("create table tabb (i long, state symbol, city symbol)");
-            insert("insert into taba values (1, 'pl')");
-            insert("insert into tabb values (1, 'a', 'pl')");
-            insert("insert into tabb values (1, 'b', 'b')");
+            execute("create table taba (i long, locale_name symbol )");
+            execute("create table tabb (i long, state symbol, city symbol)");
+            execute("insert into taba values (1, 'pl')");
+            execute("insert into tabb values (1, 'a', 'pl')");
+            execute("insert into tabb values (1, 'b', 'b')");
 
             assertQueryNoLeakCheck("i\tlocale_name\ti1\tstate\tcity\n" +
                     "1\tpl\t1\ta\tpl\n", "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);

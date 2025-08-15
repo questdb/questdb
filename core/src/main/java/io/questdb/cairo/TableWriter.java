@@ -26,19 +26,24 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -49,17 +54,18 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.O3JobParallelismRegulator;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
-import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -67,8 +73,11 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -80,20 +89,20 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
-import io.questdb.std.LongObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.PagedDirectLongList;
@@ -102,7 +111,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
-import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -121,6 +129,7 @@ import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -132,10 +141,11 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.openAppend;
+import static io.questdb.cairo.TableUtils.openRO;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.std.Files.FILES_RENAME_OK;
-import static io.questdb.std.Files.PAGE_SIZE;
+import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
@@ -156,7 +166,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
-    private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
@@ -193,18 +202,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
-    private final FrameFactory frameFactory;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
-    // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
-    // and is owned by the engine. Since TableWriter would not have ownership of the bus it must not free it up.
-    // On other hand when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
-    // message bus is with the TableWriter. Therefore, message bus must be freed when writer is freed.
+    // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
+    // and is owned by the engine. Since TableWriter would not have ownership of the bus, it must not free it up.
+    // On another hand, when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
+    // message bus is with the TableWriter. Therefore, message bus must be freed when the writer is freed.
     // To indicate ownership, the message bus owned by the writer will be assigned to `ownMessageBus`. This reference
     // will be released by the writer
     private final MessageBus messageBus;
-    private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
     private final boolean mixedIOFlag;
@@ -222,6 +229,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path other;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
+    private final DirectIntList parquetColumnIdsAndTypes;
+    private final PartitionDecoder parquetDecoder = new PartitionDecoder();
+    private final RowGroupStatBuffers parquetStatBuffers;
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
@@ -232,21 +242,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
+    private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
+    private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
-    private final MemoryMARW todoMem = Vm.getMARWInstance();
+    private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
-    private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
-    private final LongObjHashMap<LongList> walFdCache = new LongObjHashMap<>();
-    private final WeakClosableObjectPool<LongList> walFdCacheListPool = new WeakClosableObjectPool<>(LongList::new, 5, true);
-    private final LongObjHashMap.LongObjConsumer<LongList> walFdCloseCachedFdAction;
-    private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -258,10 +265,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
+    private BlockFileWriter blockFileWriter;
     private int columnCount;
+    private long commitRowCount;
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
+    private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
@@ -269,10 +279,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
+    private long lastOpenPartitionTxnName = -1;
     private long lastPartitionTimestamp;
+    private long lastWalCommitTimestampMicros;
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
     private long masterRef = 0L;
+    // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
+    // set to a "shifted" state and the state has to be cleaned.
+    private boolean memColumnShifted;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
@@ -304,15 +319,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ColumnTaskHandler cthMergeWalColumnWithLag = this::cthMergeWalColumnWithLag;
     private final ColumnTaskHandler cthO3MoveUncommittedRef = this::cthO3MoveUncommitted;
     private final ColumnTaskHandler cthO3ShiftColumnInLagToTopRef = this::cthO3ShiftColumnInLagToTop;
+    private DirectLongList tempDirectMemList;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
     private long todoTxn;
-    private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
-    private int walFdCacheSize;
+    private long walRowsProcessed;
     private WalTxnDetails walTxnDetails;
+    private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
+    private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments;
+
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -324,16 +342,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence root,
             DdlListener ddlListener,
             DatabaseCheckpointStatus checkpointStatus,
-            Metrics metrics,
             CairoEngine cairoEngine
     ) {
-        LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
+        this(
+                configuration,
+                tableToken,
+                messageBus,
+                ownMessageBus,
+                lock,
+                lifecycleManager,
+                root,
+                ddlListener,
+                checkpointStatus,
+                cairoEngine,
+                cairoEngine.getTxnScoreboardPool()
+        );
+    }
+
+    public TableWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            MessageBus messageBus,
+            MessageBus ownMessageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager,
+            CharSequence root,
+            DdlListener ddlListener,
+            DatabaseCheckpointStatus checkpointStatus,
+            CairoEngine cairoEngine,
+            TxnScoreboardPool txnScoreboardPool
+    ) {
+        LOG.info().$("open '").$safe(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.checkpointStatus = checkpointStatus;
-        this.frameFactory = new FrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
         this.messageBus = ownMessageBus != null ? ownMessageBus : messageBus;
         this.lifecycleManager = lifecycleManager;
@@ -345,11 +389,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
+        this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         try {
-            this.path = new Path().of(root);
+            this.path = new Path();
+            path.of(root);
             this.pathRootSize = path.size();
             path.concat(tableToken);
-            this.other = new Path().of(root).concat(tableToken);
+            this.other = new Path();
+            other.of(root).concat(tableToken);
             this.pathSize = path.size();
             if (lock) {
                 lock();
@@ -360,16 +407,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
-            this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
-            this.metaMem = Vm.getCMRInstance();
-            openMetaFile(ff, path, pathSize, metaMem);
-            this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
+            this.ddlMem = Vm.getCMARWInstance();
+            this.metadata = new TableWriterMetadata(this.tableToken);
+            openMetaFile(ff, path, pathSize, ddlMem, metadata);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
-            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(pathSize));
+            this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
+            this.parquetStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
+            this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
 
             if (metadata.isWalEnabled()) {
                 // O3 columns will be allocated to the size of the transaction, not reason to over allocate.
@@ -446,20 +494,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3LastTimestampSpreads = new long[configuration.getO3LagCalculationWindowsSize()];
             Arrays.fill(o3LastTimestampSpreads, 0);
 
-            // Some wal specific initialization
-            if (metadata.isWalEnabled()) {
-                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
-                walFdCloseCachedFdAction = (key, fdList) -> {
-                    for (int i = 0, n = fdList.size(); i < n; i++) {
-                        ff.close(fdList.getQuick(i));
-                    }
-                    fdList.clear();
-                    walFdCacheListPool.push(fdList);
-                };
-            } else {
-                walColumnMemoryPool = null;
-                walFdCloseCachedFdAction = null;
-            }
+            // wal specific
+            segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -486,8 +522,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
+        return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
+    }
+
+    public static void validateDesignatedTimestampBounds(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        if (timestamp < Timestamps.O3_MIN_TS) {
+            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
+        }
+        if (timestamp >= Timestamps.YEAR_10000) {
+            throw CairoException.nonCritical().put(
+                    "designated timestamp beyond 9999-12-31 is not allowed");
+        }
     }
 
     @Override
@@ -528,39 +577,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
-    @Override
-    public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isDedupKey,
-            SecurityContext securityContext
-    ) {
-        addColumn(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                false,
-                isDedupKey,
-                securityContext
-        );
-    }
-
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
-     * already have data this function will create ".top" file in addition to column files. ".top" file contains
-     * size of partition at the moment of column creation. It must be used to accurately position inside new
+     * already have data, this function will create ".top" file in addition to column files. ".top" file contains
+     * the size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
      *
      * <b>Failures</b>
-     * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
-     * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
+     * Adding new column can fail in many situations. None of the failures affect the integrity of data that is already in
+     * the table but can leave instance of TableWriter in inconsistent state. When this happens, function will throw CairoError.
      * Calling code must close TableWriter instance and open another when problems are rectified. Those problems would be
      * either with disk or memory or both.
      * <p>
@@ -569,17 +594,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * <b>Transactions</b>
      * <p>
-     * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
+     * Pending transaction will be committed before the function attempts to add column. Even when function is unsuccessful, it may
      * still have committed transaction.
      *
      * @param columnName              of column either ASCII or UTF8 encoded.
-     * @param symbolCapacity          when column columnType is SYMBOL this parameter specifies approximate capacity for symbol map.
-     *                                It should be equal to number of unique symbol values stored in the table and getting this
+     * @param symbolCapacity          when column columnType is a SYMBOL, this parameter specifies approximate capacity for the symbol map.
+     *                                It should be equal to the number of unique symbol values stored in the table, and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
-     * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
+     * @param indexValueBlockCapacity approximation of number of rows for a single index key must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
     public void addColumn(
@@ -600,16 +625,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         checkColumnName(columnName);
 
-        if (getColumnIndexQuiet(metaMem, columnName, columnCount) != -1) {
+        if (metadata.getColumnIndexQuiet(columnName) != -1) {
             throw CairoException.duplicateColumn(columnName);
         }
 
         commit();
 
         long columnNameTxn = getTxn();
-        LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$substr(pathRootSize, path).$();
+        LOG.info()
+                .$("adding column '").$safe(columnName)
+                .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
+                .$(" to ").$substr(pathRootSize, path)
+                .$();
 
-        addColumnToMeta(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, -1);
+        addColumnToMeta(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isDedupKey,
+                columnNameTxn,
+                -1,
+                metadata
+        );
+
 
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
@@ -623,33 +664,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
-                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, columnName, e);
+                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
             }
         }
 
+        clearTodoAndCommitMetaStructureVersion();
+
         try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-            // remove _todo
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
+            if (!Os.isWindows()) {
+                try {
+                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+                } catch (CairoException e) {
+                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                }
+            }
 
-        bumpMetadataAndColumnStructureVersion();
+            if (securityContext != null) {
+                ddlListener.onColumnAdded(securityContext, tableToken, columnName);
+            }
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey, symbolCacheFlag);
-
-        if (!Os.isWindows()) {
-            ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
-        }
-
-        if (securityContext != null) {
-            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
-        }
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
         }
     }
 
@@ -659,49 +702,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         checkDistressed();
 
-        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
         if (columnIndex == -1) {
             throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
         }
 
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+
         commit();
 
-        if (isColumnIndexed(metaMem, columnIndex)) {
+        if (columnMetadata.isSymbolIndexFlag()) {
             throw CairoException.invalidMetadataRecoverable("column is already indexed", columnName);
         }
 
-        final int existingType = getColumnType(metaMem, columnIndex);
-        LOG.info().$("adding index to '").utf8(columnName).$("' [").$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
+        final int existingType = columnMetadata.getColumnType();
+        LOG.info().$("adding index to '").$safe(columnName).$("' [")
+                .$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
 
         if (!ColumnType.isSymbol(existingType)) {
-            LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$substr(pathRootSize, path).I$();
+            LOG.error().$("cannot create index for [column='").$safe(columnName)
+                    .$(", type=").$(ColumnType.nameOf(existingType))
+                    .$(", path=").$substr(pathRootSize, path).I$();
             throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration);
         writeIndex(columnName, indexValueBlockSize, columnIndex, indexer);
-        // set index flag in metadata and  create new _meta.swp
-        metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, true, indexValueBlockSize);
 
-        swapMetaFile(columnName);
+        columnMetadata.setSymbolIndexFlag(true);
+        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        // set the index flag in metadata and create new _meta.swp
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
 
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
-        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        columnMetadata.setIndexed(true);
-        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
-
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
-        LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
+        LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
+                .$("]' to ").$substr(pathRootSize, path).$();
     }
 
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
-        metrics.tableWriter().addPhysicallyWrittenRows(rows);
+        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -715,20 +763,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return rowsAffected;
         } catch (CairoException ex) {
+            // rollback in case on any dirty state.
+            // Do not catch rollback exceptions, let the calling code handle distressed writer
+            rollback();
+
             if (ex.isWALTolerable()) {
-                try {
-                    rollback(); // rollback in case on any dirty state
-                    commitSeqTxn(seqTxn);
-                } catch (Throwable th2) {
-                    LOG.critical().$("could not rollback, table is distressed [table=").utf8(tableToken.getTableName()).$(", error=").$(th2).I$();
-                }
+                // Mark the transaction as applied and ignore it.
+                commitSeqTxn(seqTxn);
+                return 0;
+            } else {
+                // Mark the transaction as not applied.
+                setSeqTxn(seqTxn - 1);
             }
             throw ex;
         } catch (Throwable th) {
             try {
                 rollback(); // rollback seqTxn
             } catch (Throwable th2) {
-                LOG.critical().$("could not rollback, table is distressed [table=").utf8(tableToken.getTableName()).$(", error=").$(th2).I$();
+                LOG.critical().$("could not rollback, table is distressed [table=")
+                        .$safe(tableToken.getTableName()).$(", error=").$(th2).I$();
             }
             throw th;
         }
@@ -769,45 +822,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (inTransaction()) {
-            LOG.info().$("committing open transaction before applying attach partition command [table=").utf8(tableToken.getTableName())
+            assert !tableToken.isWal();
+            LOG.info().$("committing open transaction before applying attach partition command [table=").$safe(tableToken.getTableName())
                     .$(", partition=").$ts(timestamp).I$();
             commit();
 
-            // Check that partition we're about to attach hasn't appeared after commit
+            // Check that the partition we're about to attach hasn't appeared after commit
             if (txWriter.attachedPartitionsContains(timestamp)) {
                 LOG.info().$("partition is already attached [path=").$substr(pathRootSize, path).I$();
                 return AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS;
             }
         }
 
-        // final name of partition folder after attach
-        setPathForPartition(path.trimTo(pathSize), partitionBy, timestamp, getTxn());
+        // final name of partition folder after attachment
+        setPathForNativePartition(path.trimTo(pathSize), partitionBy, timestamp, getTxn());
         if (ff.exists(path.$())) {
             // Very unlikely since txn is part of the folder name
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken);
-        setPathForPartition(detachedPath, partitionBy, timestamp, -1L);
+        Path detachedPath = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
+        setPathForNativePartition(detachedPath, partitionBy, timestamp, -1L);
         detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         int detachedRootLen = detachedPath.size();
         boolean forceRenamePartitionDir = partitionSize < 0;
-
         boolean checkPassed = false;
         boolean isSoftLink;
+        boolean isParquet;
+        long parquetSize = -1L;
         try {
             if (ff.exists(detachedPath.$())) {
-
                 isSoftLink = ff.isSoftLink(detachedPath.$()); // returns false regardless in Windows
 
+                isParquet = ff.exists(detachedPath.concat(PARQUET_PARTITION_NAME).$());
+                if (isParquet) {
+                    parquetSize = ff.length(detachedPath.$());
+                }
                 // detached metadata files validation
-                CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
+                CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getColumnName();
                 if (partitionSize > -1L) {
                     // read detachedMinTimestamp and detachedMaxTimestamp
-                    readPartitionMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, partitionSize);
+                    readPartitionMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, parquetSize, partitionSize);
                 } else {
                     // read size, detachedMinTimestamp and detachedMaxTimestamp
-                    partitionSize = readPartitionSizeMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName);
+                    partitionSize = readPartitionSizeMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, parquetSize);
                 }
 
                 if (partitionSize < 1) {
@@ -818,11 +876,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
                 }
 
-                // main columnVersionWriter is now aligned with the detached partition values read from partition _cv file
+                // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
                 // in case of an error it has to be clean up
 
                 if (forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are read-only, no copy involved
-                    // Copy partition if configured to do so and it's not CSV import
+                    // Copy partition if configured to do so, and it's not CSV import
                     if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
                         LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
@@ -863,26 +921,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (isSoftLink) {
                 txWriter.setPartitionReadOnlyByTimestamp(timestamp, true);
             }
+
+            if (isParquet) {
+                txWriter.setPartitionParquetFormat(timestamp, parquetSize, true);
+            }
+
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(denseSymbolMapWriters);
 
-            LOG.info().$("partition attached [table=").utf8(tableToken.getTableName())
+            LOG.info().$("partition attached [table=").$safe(tableToken.getTableName())
                     .$(", partition=").$ts(timestamp).I$();
 
             if (appendPartitionAttached) {
-                LOG.info().$("switch partition after partition attach [tableName=").utf8(tableToken.getTableName())
+                LOG.info().$("switch partition after partition attach [tableName=").$safe(tableToken.getTableName())
                         .$(", partition=").$ts(timestamp).I$();
                 freeColumns(true);
                 configureAppendPosition();
             }
             return AttachDetachStatus.OK;
         } catch (Throwable e) {
-            // This is pretty serious, after partition copied there are no OS operations to fail
+            // This is pretty serious; after partition copied, there are no OS operations to fail.
             // Do full rollback to clean up the state
-            LOG.critical().$("failed on attaching partition to the table and rolling back [tableName=").utf8(tableToken.getTableName())
+            LOG.critical().$("failed on attaching partition to the table and rolling back [tableName=").$safe(tableToken.getTableName())
                     .$(", error=").$(e).I$();
             rollback();
             throw e;
@@ -898,19 +961,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
         if (symbolMapWriter.isCached() != cache) {
             symbolMapWriter.updateCacheFlag(cache);
-            TableWriterMetadata.WriterTableColumnMetadata columnMetadata = (TableWriterMetadata.WriterTableColumnMetadata) metadata.getColumnMetadata(columnIndex);
-            columnMetadata.setSymbolCached(cache);
-            updateMetaStructureVersion();
-            txWriter.bumpTruncateVersion();
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
+            TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+            columnMetadata.setSymbolCacheFlag(cache);
+            writeMetadataToDisk();
         }
     }
 
     @Override
     public void changeColumnType(
-            CharSequence columnName,
+            CharSequence name,
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
@@ -919,12 +978,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential,
             SecurityContext securityContext
     ) {
-
-        int existingColIndex = metadata.getColumnIndexQuiet(columnName);
+        int existingColIndex = metadata.getColumnIndexQuiet(name);
         if (existingColIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+            throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(name).put(']');
         }
+        String columnName = metadata.getColumnName(existingColIndex);
 
         if (existingColIndex == metadata.getTimestampIndex()) {
             throw CairoException.nonCritical().put("cannot change column type, column is the designated timestamp [table=")
@@ -945,7 +1004,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             commit();
 
-            LOG.info().$("converting column [table=").$(tableToken).$(", column=").utf8(columnName)
+            LOG.info().$("converting column [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
@@ -955,101 +1014,207 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Set txn number in the column version file to mark the transaction where the column is added
             long firstPartitionTsm = columnVersionWriter.getColumnTopPartitionTimestamp(existingColIndex);
-            if (firstPartitionTsm == Long.MIN_VALUE && txWriter.getPartitionCount() > 0) {
-                firstPartitionTsm = txWriter.getPartitionTimestampByIndex(0);
-            }
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
                 createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
             } else {
-                // maintain sparse list of symbol writers
+                // maintain a sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-            try {
-                convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
+            boolean existingIsIndexed = metadata.isColumnIndexed(existingColIndex) && existingType == ColumnType.SYMBOL;
+            convertOperator.convertColumn(columnName, existingColIndex, existingType, existingIsIndexed, columnIndex, newType);
 
-                // Column converted, add new one to _meta file and remove the existing column
-                addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+            // Column converted, add new one to _meta file and remove the existing column
+            metadata.removeColumn(existingColIndex);
 
-                // close old column files
-                freeColumnMemory(existingColIndex);
+            // close old column files
+            freeColumnMemory(existingColIndex);
 
-                // remove symbol map writer or entry for such
-                removeSymbolMapWriter(existingColIndex);
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(existingColIndex);
 
-                // remove old column to in-memory metadata object and add new one
-                metadata.removeColumn(existingColIndex);
-                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey, existingColIndex + 1, symbolCacheFlag); // by convention, replacingIndex is +1
+            addColumnToMeta(
+                    columnName,
+                    newType,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    isDedupKey,
+                    columnNameTxn,
+                    existingColIndex,
+                    metadata
+            );
 
-                // open new column files
-                if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-                    long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                    setStateForTimestamp(path, partitionTimestamp);
-                    openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                    setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
-                    path.trimTo(pathSize);
-                }
-
-                // write index if necessary or remove the old one
-                // index must be created before column is initialised because
-                // it uses primary column object as temporary tool
-                if (isIndexed) {
-                    SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                    writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
-                    // add / remove indexers
-                    indexers.extendAndSet(columnIndex, indexer);
-                    populateDenseIndexerList();
-                }
-
-                try {
-                    // open _meta file
-                    openMetaFile(ff, path, pathSize, metaMem);
-                    // remove _todo
-                    clearTodoLog();
-                } catch (CairoException e) {
-                    throwDistressException(e);
-                }
-
-                // commit transaction to _txn file
-                bumpMetadataAndColumnStructureVersion();
-
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.hydrateTable(metadata);
-                }
-            } finally {
-                // clear temp resources
-                convertOperator.finishColumnConversion();
+            // open new column files
+            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                setStateForTimestamp(path, partitionTimestamp);
+                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(pathSize);
             }
+
+            // write index if necessary or remove the old one
+            // index must be created before column is initialised because
+            // it uses the primary column object as a temporary tool
+            if (isIndexed) {
+                SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
+                writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
+                // add / remove indexers
+                indexers.extendAndSet(columnIndex, indexer);
+                populateDenseIndexerList();
+            }
+
+            clearTodoAndCommitMetaStructureVersion();
         } catch (Throwable th) {
-            LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+            LOG.critical().$("could not change column type [table=").$safe(tableToken.getTableName()).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
+            distressed = true;
             throw th;
+        } finally {
+            // clear temp resources
+            convertOperator.finishColumnConversion();
+            path.trimTo(pathSize);
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    @Override
+    public void changeSymbolCapacity(
+            CharSequence colName,
+            int newSymbolCapacity,
+            SecurityContext securityContext
+    ) {
+        int columnIndex = metadata.getColumnIndexQuiet(colName);
+        if (columnIndex < 0) {
+            // Log it as non-critical because it's not a structural change.
+            // It is possible in concurrent schema modification that SQL compiler allowed
+            // this alter, but by the time it is applied, the colum type has changed.
+            LOG.error().$("cannot change column type, column does not exist [table=").$(tableToken)
+                    .$(", column=").$safe(colName).I$();
+            return;
+        }
+
+        String columnName = metadata.getColumnName(columnIndex);
+        int existingType = metadata.getColumnType(columnIndex);
+        assert existingType > 0;
+
+        if (!ColumnType.isSymbol(existingType)) {
+            // Log it as non-critical because it's not a structural change.
+            // It is possible in concurrent schema modification that SQL compiler allowed
+            // this alter, but by the time it is applied, the colum type has changed.
+            LOG.error().$("cannot symbol capacity, column is not symbol [table=").$(tableToken)
+                    .$(", column=").$safe(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
+            return;
+        }
+
+
+        var oldSymbolWriter = (SymbolMapWriter) symbolMapWriters.getQuick(columnIndex);
+        int oldCapacity = oldSymbolWriter.getSymbolCapacity();
+        boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
+
+        newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
+        try {
+            TableUtils.validateSymbolCapacity(0, newSymbolCapacity);
+        } catch (SqlException e) {
+            LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken)
+                    .$(", column=").$safe(columnName)
+                    .$(", from=").$(oldCapacity)
+                    .$(", to=").$(newSymbolCapacity)
+                    .I$();
+
+            throw CairoException.nonCritical().put("invalid symbol capacity [name=").put(columnName).put(", capacity=").put(newSymbolCapacity).put(']');
+        }
+
+        LOG.info().$("changing symbol capacity [table=").$(tableToken).$(", column=").$safe(columnName)
+                .$(", from=").$(oldCapacity)
+                .$(", to=").$(newSymbolCapacity).I$();
+
+        if (oldCapacity == newSymbolCapacity) {
+            // Nothing to do.
+            return;
+        }
+
+        try {
+            commit();
+            long columnNameTxn = getTxn();
+            metadata.updateColumnSymbolCapacity(columnIndex, newSymbolCapacity);
+            rewriteAndSwapMetadata(metadata);
+
+            try {
+                // remove _todo
+                clearTodoLog();
+
+                // linking of the files has to be done after _todo is removed
+                hardLinkAndPurgeColumnFiles(
+                        columnName,
+                        columnIndex,
+                        metadata.isIndexed(columnIndex),
+                        columnName,
+                        ColumnType.SYMBOL,
+                        true
+                );
+                oldSymbolWriter.rebuildCapacity(
+                        configuration,
+                        path,
+                        columnName,
+                        columnNameTxn,
+                        newSymbolCapacity,
+                        symbolCacheFlag
+                );
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
+
+            bumpMetadataVersion();
+
+            // Call finish purge to remove old column files before renaming them in metadata
+            finishColumnPurge();
+
+            // open new column files
+            long transientRowCount = txWriter.getTransientRowCount();
+            if (transientRowCount > 0) {
+                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                setStateForTimestamp(path, partitionTimestamp);
+                int plen = path.size();
+                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                setColumnAppendPosition(columnIndex, transientRowCount, false);
+                path.trimTo(pathSize);
+
+                if (metadata.isIndexed(columnIndex)) {
+                    ColumnIndexer indexer = indexers.get(columnIndex);
+                    final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
+                    assert indexer != null;
+                    indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+                }
+            }
+        } catch (Throwable th) {
+            LOG.critical().$("could not change column type [table=").$safe(tableToken.getTableName()).$(", column=").$safe(columnName)
+                    .$(", error=").$(th).I$();
+            distressed = true;
+            throw th;
+        } finally {
+            partitionRemoveCandidates.clear();
+            // clear temp resources
+            path.trimTo(pathSize);
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.isInProgress()) {
+        if (checkpointStatus.partitionsLocked()) {
             // do not alter scoreboard while checkpoint is in progress
             return true;
         }
-        long lastCommittedTxn = txWriter.getTxn();
-        try {
-            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
-                txnScoreboard.releaseTxn(lastCommittedTxn);
-            }
-        } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall writing because of that.
-            // Schedule async purge and continue
-            LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
-                    .utf8(tableToken.getTableName())
-                    .$(", txn=").$(lastCommittedTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
-        }
-
-        return txnScoreboard.getMin() != lastCommittedTxn;
+        return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
     @Override
@@ -1060,14 +1225,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void closeActivePartition(boolean truncate) {
-        LOG.debug().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
+        LOG.debug().$("closing last partition [table=").$safe(tableToken.getTableName()).I$();
         closeAppendMemoryTruncate(truncate);
         freeIndexers();
     }
 
     @Override
-    public long commit() {
-        return commit(0);
+    public void commit() {
+        commit(0);
     }
 
     public void commitSeqTxn(long seqTxn) {
@@ -1077,26 +1242,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void commitSeqTxn() {
         if (txWriter.inTransaction()) {
-            metrics.tableWriter().incrementCommits();
+            metrics.tableWriterMetrics().incrementCommits();
             syncColumns();
         }
         txWriter.commit(denseSymbolMapWriters);
     }
 
-    public long commitWalTransaction(
+    public void commitWalInsertTransactions(
             @Transient Path walPath,
-            boolean inOrder,
-            long rowLo,
-            long rowHi,
-            long o3TimestampMin,
-            long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor,
             long seqTxn,
-            O3JobParallelismRegulator regulator
+            TableWriterPressureControl pressureControl
     ) {
         if (hasO3() || columnVersionWriter.hasChanges()) {
-            // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
-            // Set the writer to distressed state and throw exception so that writer is re-created.
+            // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
+            // Set the writer to distressed state and throw exception so that the writer is re-created.
             distressed = true;
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
@@ -1104,33 +1263,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
 
-        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath).$(", roLo=").$(rowLo)
-                .$(", roHi=").$(rowHi)
-                .$(", seqTxn=").$(seqTxn)
-                .$(", tsMin=").$ts(o3TimestampMin).$(", tsMax=").$ts(o3TimestampMax)
-                .$(", commitToTs=").$ts(commitToTimestamp)
-                .I$();
-
-        final long committedRowCount = txWriter.getRowCount();
-        final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
-        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
         boolean committed;
+        final long initialCommittedRowCount = txWriter.getRowCount();
+        walRowsProcessed = 0;
+
         try {
-            committed = processWalBlock(
-                    walPath,
-                    metadata.getTimestampIndex(),
-                    inOrder,
-                    rowLo,
-                    rowHi,
-                    o3TimestampMin,
-                    o3TimestampMax,
-                    mapDiffCursor,
-                    commitToTimestamp,
-                    walSegmentId,
-                    isLastSegmentUsage,
-                    regulator
-            );
+            if (transactionBlock == 1) {
+                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp);
+            } else {
+                try {
+                    int blockSize = processWalCommitBlock(
+                            seqTxn,
+                            transactionBlock,
+                            pressureControl
+                    );
+                    committed = blockSize > 0;
+                    seqTxn += blockSize - 1;
+                } catch (CairoException e) {
+                    if (e.isBlockApplyError()) {
+                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+                            // Do not re-try the application as 1 by 1 in tests.
+                            throw e;
+                        }
+                        pressureControl.onBlockApplyError();
+                        pressureControl.updateInflightTxnBlockLength(
+                                1,
+                                Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
+                        );
+                        LOG.info().$("failed to apply block, trying to apply 1 by 1 [table=").$(tableToken)
+                                .$(", startTxn=").$(seqTxn)
+                                .I$();
+                        // Try applying 1 transaction at a time
+                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp);
+                    } else {
+                        throw e;
+                    }
+                }
+            }
         } catch (CairoException e) {
             if (e.isOutOfMemory()) {
                 // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
@@ -1138,63 +1309,71 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             throw e;
         }
-        final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
+        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
         if (committed) {
-            // Useful for debugging
             assert txWriter.getLagRowCount() == 0;
 
-            updateIndexes();
-            columnVersionWriter.commit();
             txWriter.setSeqTxn(seqTxn);
             txWriter.setLagTxnCount(0);
             txWriter.setLagOrdered(true);
 
-            syncColumns();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
-
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriter().incrementCommits();
-
+            commit00();
+            lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
+            housekeep();
             shrinkO3Mem();
+
+            assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
+                    .$(", minTs=").$ts(txWriter.getMinTimestamp())
+                    .$(", maxTs=").$ts(txWriter.getMaxTimestamp()).I$();
         }
 
-        // Nothing was committed to the table, only copied to LAG.
-        // Sometimes data from LAG made visible to the table using fast commit that increment transient row count.
+        // Sometimes nothing is committed to the table, only copied to LAG.
+        // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
-        metrics.tableWriter().addCommittedRows(rowsAdded);
-        return rowsAdded;
+        metrics.tableWriterMetrics().addCommittedRows(txWriter.getRowCount() - initialCommittedRowCount);
     }
 
     @Override
-    public boolean convertPartition(long partitionTimestamp) {
-        final int memoryTag = MemoryTag.MMAP_PARTITION_CONVERTER;
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+        final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
 
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing open transaction before applying convert partition to parquet command [table=")
-                    .utf8(tableToken.getTableName())
+                    .$safe(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
                     .I$();
             commit();
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            // The partition is active; conversion is currently unsupported.
+            LOG.info()
+                    .$("skipping active partition as it cannot be converted to parquet format [table=")
+                    .$safe(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .I$();
+            return true;
+        }
+
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
                     .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        if (txWriter.isPartitionParquet(partitionIndex)) {
+            return true; // Partition is already in Parquet format.
         }
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
@@ -1202,125 +1381,128 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
-        setPathForPartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
-        final int partitionLen = path.size();
+        setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = path.size();
         if (!ff.exists(path.$())) {
-            throw CairoException.nonCritical().put("partition folder does not exist [path=").put(path).put(']');
+            throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
         }
 
         // upgrade partition version
-        TableUtils.setPathForPartition(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
-        TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
-        final int newPartitionFolderLen = other.size();
+        setPathForNativePartition(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
+        createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        final int newPartitionDirLen = other.size();
 
-        // set parquet file full path
-        TableUtils.setParquetPartitionPath(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
+        // set the parquet file full path
+        setPathForParquetPartition(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
 
         LOG.info().$("converting partition to parquet [path=").$substr(pathRootSize, path).I$();
         long parquetFileLength;
         try {
-            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor()) {
-
+            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final long partitionRowCount = getPartitionSize(partitionIndex);
                 final int timestampIndex = metadata.getTimestampIndex();
                 partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex);
 
                 final int columnCount = metadata.getColumnCount();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    final String columnName = metadata.getColumnName(columnIndex);
                     final int columnType = metadata.getColumnType(columnIndex);
+                    if (columnType <= 0) {
+                        continue; // skip deleted columns
+                    }
+                    final String columnName = metadata.getColumnName(columnIndex);
                     final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
-                    if (columnType > 0) {
-                        final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
-                        final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                        final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
 
-                        if (columnRowCount != 0) {
-                            // Do not add the column to the parquet file if there are no rows
+                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                    final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
 
-                            if (ColumnType.isSymbol(columnType)) {
-                                long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
-                                long columnAddr = TableUtils.mapRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                    if (columnRowCount > 0) {
+                        if (ColumnType.isSymbol(columnType)) {
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop
+                            );
 
-                                offsetFileName(path.trimTo(pathSize), columnName, columnNameTxn);
-                                if (!ff.exists(path.$())) {
-                                    LOG.error().$(path).$(" is not found").$();
-                                    throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
-                                }
+                            final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
+                            final long columnAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                            partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
-                                long fileLength = ff.length(path.$());
-                                if (fileLength < SymbolMapWriter.HEADER_SIZE) {
-                                    LOG.error().$(path).$("symbol file is too short [fileLength=").$(fileLength).$(']').$();
-                                    throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
-                                }
+                            // root symbol files use separate txn
+                            final long defaultColumnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
 
-                                final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
-                                final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
-
-                                long symbolOffsetsAddr = TableUtils.mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
-
-                                final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, columnNameTxn);
-                                long columnSecondarySize = ff.length(charFileName);
-                                long columnSecondaryAddr = TableUtils.mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
-
-                                partitionDescriptor.addColumn(
-                                        columnName,
-                                        columnType,
-                                        columnId,
-                                        columnTop,
-                                        columnAddr,
-                                        columnSize,
-                                        columnSecondaryAddr,
-                                        columnSecondarySize,
-                                        symbolOffsetsAddr + HEADER_SIZE,
-                                        symbolCount
-                                );
-
-                                // recover partition path
-                                setPathForPartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
-                            } else if (ColumnType.isVarSize(columnType)) {
-                                final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                                long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
-                                long auxVectorAddr = TableUtils.mapRO(ff, iFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
-
-                                long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
-                                if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                                    LOG.critical().$("Invalid var len column size [column=").$(columnName).$(", size=").$(dataSize).$(", path=").$(path).I$();
-                                    throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
-                                }
-
-                                long dataAddr = dataSize == 0 ? 0 : TableUtils.mapRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG, dataSize, memoryTag);
-                                partitionDescriptor.addColumn(
-                                        columnName,
-                                        columnType,
-                                        columnId,
-                                        columnTop,
-                                        dataAddr,
-                                        dataSize,
-                                        auxVectorAddr,
-                                        auxVectorSize,
-                                        0,
-                                        0
-                                );
-                            } else {
-                                long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
-                                long fixedAddr = TableUtils.mapRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
-                                partitionDescriptor.addColumn(
-                                        columnName,
-                                        columnType,
-                                        columnId,
-                                        columnTop,
-                                        fixedAddr,
-                                        mapBytes,
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                );
+                            offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
+                            if (!ff.exists(path.$())) {
+                                LOG.error().$(path).$(" is not found").$();
+                                throw CairoException.fileNotFound().put("offset file does not exist: ").put(path);
                             }
+
+                            final long fileLength = ff.length(path.$());
+                            if (fileLength < SymbolMapWriter.HEADER_SIZE) {
+                                LOG.error().$(path).$("symbol file is too small [fileLength=").$(fileLength).$(']').$();
+                                throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
+                            }
+
+                            final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
+                            final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
+                            final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
+                            partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
+
+                            final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
+                            final long columnSecondarySize = ff.length(charFileName);
+                            final long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
+                            partitionDescriptor.setSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
+
+                            // recover the partition path
+                            setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+                        } else if (ColumnType.isVarSize(columnType)) {
+                            partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop);
+
+                            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                            final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
+                            final long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                            partitionDescriptor.setSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
+
+                            final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
+                            if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                                LOG.critical().$("Invalid var len column size [column=").$safe(columnName)
+                                        .$(", size=").$(dataSize)
+                                        .$(", path=").$(path)
+                                        .I$();
+                                throw CairoException.critical(0).put("Invalid column size [column=").put(path)
+                                        .put(", size=").put(dataSize)
+                                        .put(']');
+                            }
+
+                            final long dataAddr = dataSize > 0
+                                    ? mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag)
+                                    : 0;
+                            partitionDescriptor.setColumnAddr(dataAddr, dataSize);
+                        } else {
+                            final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
+                            final long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop,
+                                    fixedAddr,
+                                    mapBytes,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                            );
                         }
                     } else {
-                        throw CairoException.critical(0).put("unsupported column type [column=").put(columnName).put(", type=").put(columnType).put(']');
+                        // no rows in column
+                        partitionDescriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                partitionRowCount
+                        );
                     }
                 }
 
@@ -1340,17 +1522,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         rowGroupSize,
                         dataPageSize,
                         parquetVersion
-
                 );
                 parquetFileLength = ff.length(other.$());
             }
         } catch (CairoException e) {
-            LOG.error().$("could not convert partition to parquet [table=").utf8(tableToken.getTableName())
+            LOG.error().$("could not convert partition to parquet [table=").$safe(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
-                    .$(", error=").$(e.getMessage()).I$();
+                    .$(", error=").$safe(e.getMessage()).I$();
 
             // rollback
-            if (!ff.rmdir(other.trimTo(newPartitionFolderLen).slash())) {
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove parquet file [path=").$(other).I$();
             }
             throw e;
@@ -1358,6 +1539,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
+
+        LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
+        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
         final long originalSize = txWriter.getPartitionSize(partitionIndex);
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
@@ -1369,20 +1554,200 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
         }
 
-        // remove old partition folder
+        // remove old partition dir
         safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
 
         if (lastPartitionConverted) {
             // Open last partition as read-only
-            openPartition(partitionTimestamp);
+            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
+            setAppendPosition(txWriter.getTransientRowCount(), false);
+        }
+        return true;
+    }
+
+    @Override
+    public boolean convertPartitionParquetToNative(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            LOG.info()
+                    .$("committing open transaction before applying convert partition to parquet command [table=")
+                    .$safe(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink)
+                    .put(']');
+        }
+
+        if (!txWriter.isPartitionParquet(partitionIndex)) {
+            return true; // Partition already has a Native format
+        }
+
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+
+        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = path.size();
+        // set the parquet file full path
+        setPathForParquetPartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+        if (!ff.exists(path.$())) {
+            throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
+        }
+
+        // upgrade partition version
+        setPathForNativePartition(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
+        createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        final int newPartitionDirLen = other.size();
+
+        // packed as [auxFd, dataFd, dataVecBytesWritten]
+        // dataVecBytesWritten is used to adjust offsets in the auxiliary vector
+        final DirectLongList columnFdAndDataSize = getTempDirectLongList(3L * columnCount);
+
+        // path is now pointing to the parquet file
+        // other is pointing to the new partition folder
+        LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
+        final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+        final long parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+
+        long parquetRowCount = 0;
+        try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
+            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+            parquetMetadata.copyTo(metadata, false);
+
+            parquetColumnIdsAndTypes.clear();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                final String columnName = metadata.getColumnName(i);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
+
+                parquetColumnIdsAndTypes.add(i);
+                parquetColumnIdsAndTypes.add(columnType);
+
+                if (ColumnType.isVarSize(columnType)) {
+                    final long auxIndex = columnFdAndDataSize.size();
+                    columnFdAndDataSize.add(-1); // aux
+                    columnFdAndDataSize.add(-1); // data
+                    columnFdAndDataSize.add(0);  // data bytes written
+                    final long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    columnFdAndDataSize.set(auxIndex, dstAuxFd);
+                    final long dstDataFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    columnFdAndDataSize.set(auxIndex + 1, dstDataFd);
+                } else {
+                    final long auxIndex = columnFdAndDataSize.size();
+                    columnFdAndDataSize.add(-1); // aux
+                    columnFdAndDataSize.add(-1); // data
+                    columnFdAndDataSize.add(0);  // data bytes written
+                    final long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    columnFdAndDataSize.set(auxIndex + 1, dstFixFd);
+                }
+            }
+
+            final int rowGroupCount = parquetMetadata.rowGroupCount();
+            for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                final long rowGroupRowCount = parquetDecoder.decodeRowGroup(
+                        rowGroupBuffers,
+                        parquetColumnIdsAndTypes,
+                        rowGroupIndex,
+                        0,
+                        parquetMetadata.rowGroupSize(rowGroupIndex)
+                );
+                parquetRowCount += rowGroupRowCount;
+                for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                    final int columnType = metadata.getColumnType(columnIndex);
+
+                    final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(columnIndex);
+                    final long srcDataSize = rowGroupBuffers.getChunkDataSize(columnIndex);
+
+                    long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
+                    long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
+
+                    if (ColumnType.isVarSize(columnType)) {
+                        ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                        final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
+                        final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                        final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
+
+                        if (rowGroupIndex > 0) {
+                            // Adjust offsets in the auxiliary vector
+                            columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
+                            // Remove the extra entry for string columns
+                            final long adjust = columnTypeDriver.getMinAuxVectorSize();
+                            srcAuxPtr += adjust;
+                            srcAuxSize -= adjust;
+                        }
+
+                        appendBuffer(dstDataFd, srcDataPtr, srcDataSize);
+                        appendBuffer(dstAuxFd, srcAuxPtr, srcAuxSize);
+                        columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + srcDataSize);
+                    } else {
+                        final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                        appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not convert partition to native [table=").$safe(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", error=").$safe(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove native partition dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+            for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
+                final long dstAuxFd = columnFdAndDataSize.get(3L * i);
+                ff.close(dstAuxFd);
+                final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                ff.close(dstDataFd);
+            }
+            columnFdAndDataSize.resetCapacity();
+            parquetDecoder.close();
+            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+        }
+
+        LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
+        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
+        // used to update txn and bump recordStructureVersion
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
+        txWriter.resetPartitionParquetFormat(partitionTimestamp);
+        txWriter.bumpPartitionTableVersion();
+        txWriter.commit(denseSymbolMapWriters);
+
+        if (lastPartitionConverted) {
+            closeActivePartition(false);
+        }
+
+        // remove old partition dir
+        safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+
+        if (lastPartitionConverted) {
+            // Open last partition as read-only
+            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
+            setAppendPosition(txWriter.getTransientRowCount(), false);
         }
         return true;
     }
 
     public void destroy() {
-        // Closes all the files and makes this instance unusable e.g. it cannot return to the pool on close.
-        LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())
-                .$(", dirName=").utf8(tableToken.getDirName()).I$();
+        // Closes all the files and makes this instance unusable e.g., it cannot return to the pool on close.
+        LOG.info().$("closing table files [table=").$(tableToken).I$();
         distressed = true;
         doClose(false);
     }
@@ -1393,9 +1758,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing open transaction before applying detach partition command [table=")
-                    .utf8(tableToken.getTableName())
+                    .$safe(tableToken.getTableName())
                     .$(", partition=").$ts(timestamp)
                     .I$();
             commit();
@@ -1412,12 +1778,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
         }
 
-        // To detach the partition, squash it into single folder if required
+        // To detach the partition, squash it into a single folder if required
         squashPartitionForce(partitionIndex);
 
-        // To check that partition is squashed get the next partition and
+        // To check that partition is squashed, get the next partition and
         // verify that it's not the same timestamp as the one we are trying to detach.
-        // The next partition should exist, since last partition cannot be detached.
+        // The next partition should exist, since the last partition cannot be detached.
         assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
 
         long minTimestamp = txWriter.getMinTimestamp();
@@ -1426,7 +1792,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             // path: partition folder to be detached
-            setPathForPartition(path.trimTo(pathSize), partitionBy, timestamp, partitionNameTxn);
+            setPathForNativePartition(path.trimTo(pathSize), partitionBy, timestamp, partitionNameTxn);
             if (!ff.exists(path.$())) {
                 LOG.error().$("partition folder does not exist [path=").$substr(pathRootSize, path).I$();
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
@@ -1439,8 +1805,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 attachDetachStatus = AttachDetachStatus.OK;
                 LOG.info().$("detaching partition via unlink [path=").$substr(pathRootSize, path).I$();
             } else {
-
-                detachedPath.of(configuration.getRoot()).concat(tableToken.getDirName());
+                detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 int detachedRootLen = detachedPath.size();
                 // detachedPath: detached partition folder
                 if (!ff.exists(detachedPath.slash$())) {
@@ -1448,11 +1813,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // (server.conf: cairo.sql.detached.root)
                     if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
                         LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
-                                .$(", path=").$(detachedPath).I$();
+                                .$(", path=").$(detachedPath)
+                                .I$();
                         return AttachDetachStatus.DETACH_ERR_MKDIR;
                     }
                 }
-                setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, -1L);
+                setPathForNativePartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, -1L);
                 detachedPath.put(DETACHED_DIR_MARKER);
                 detachedPathLen = detachedPath.size();
                 if (ff.exists(detachedPath.$())) {
@@ -1518,8 +1884,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // find out if we are removing min partition
                 long nextMinTimestamp = minTimestamp;
                 if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                    other.of(path).trimTo(pathSize);
-                    nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestampByIndex(1));
+                    nextMinTimestamp = readMinTimestamp();
                 }
 
                 // all good, commit
@@ -1559,40 +1924,52 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void disableDeduplication() {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
-        LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
-        updateMetadataWithDeduplicationUpsertKeys(false, null);
+        LOG.info().$("disabling row deduplication [table=").$safe(tableToken.getTableName()).I$();
+        for (int i = 0; i < columnCount; i++) {
+            metadata.getColumnMetadata(i).setDedupKeyFlag(false);
+        }
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+        if (dedupColumnCommitAddresses != null) {
+            dedupColumnCommitAddresses.setDedupColumnCount(0);
+        }
+
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
     }
 
     @Override
-    public void dropIndex(@NotNull CharSequence columnName) {
+    public void dropIndex(@NotNull CharSequence name) {
         checkDistressed();
 
-        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
+        final int columnIndex = metadata.getColumnIndexQuiet(name);
         if (columnIndex == -1) {
-            throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
+            throw CairoException.invalidMetadataRecoverable("column does not exist", name);
         }
-        if (!isColumnIndexed(metaMem, columnIndex)) {
+        String columnName = metadata.getColumnName(columnIndex);
+
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        if (!columnMetadata.isSymbolIndexFlag()) {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing current transaction before DROP INDEX execution [txn=").$(txWriter.getTxn())
-                    .$(", table=").utf8(tableToken.getTableName())
-                    .$(", column=").utf8(columnName)
+                    .$(", table=").$safe(tableToken.getTableName())
+                    .$(", column=").$safe(columnName)
                     .I$();
             commit();
         }
 
         try {
             LOG.info().$("removing index [txn=").$(txWriter.getTxn())
-                    .$(", table=").utf8(tableToken.getTableName())
-                    .$(", column=").utf8(columnName)
+                    .$(", table=").$safe(tableToken.getTableName())
+                    .$(", column=").$safe(columnName)
                     .I$();
             // drop index
             if (dropIndexOperator == null) {
@@ -1600,12 +1977,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
             // swap meta commit
-            metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, false, defaultIndexValueBlockSize);
-            swapMetaFile(columnName); // bumps structure version, this is in effect a commit
+
             // refresh metadata
-            TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-            columnMetadata.setIndexed(false);
+            columnMetadata.setSymbolIndexFlag(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
+            rewriteAndSwapMetadata(metadata);
+            clearTodoAndCommitMeta();
+
             // remove indexer
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
             if (columnIndexer != null) {
@@ -1613,19 +1991,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Misc.free(columnIndexer);
                 populateDenseIndexerList();
             }
+
             // purge old column versions
             finishColumnPurge();
-            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
+            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).I$();
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
-                    .$(", table=").utf8(tableToken.getTableName())
-                    .$(", column=").utf8(columnName)
+                    .$(", table=").$safe(tableToken.getTableName())
+                    .$(", column=").$safe(columnName)
                     .I$();
+        } catch (CairoException e) {
+            // LOG original exception detail
+            LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
+                    .$(", table=").$safe(tableToken.getTableName())
+                    .$(", column=").$safe(columnName)
+                    .$(", errno=").$(e.errno)
+                    .$(", error=").$((Throwable) e).I$();
+
+            throw CairoException.critical(e.errno)
+                    .put("cannot remove index for [txn=").put(txWriter.getTxn())
+                    .put(", table=").put(tableToken.getTableName())
+                    .put(", column=").put(columnName)
+                    .put("]: ").put(e.getMessage());
         } catch (Throwable e) {
+            // LOG original exception detail
+            LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
+                    .$(", table=").$safe(tableToken.getTableName())
+                    .$(", column=").$safe(columnName)
+                    .$(", error=").$(e).I$();
+
             throw CairoException.critical(0)
                     .put("cannot remove index for [txn=").put(txWriter.getTxn())
                     .put(", table=").put(tableToken.getTableName())
@@ -1635,11 +2033,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
-        LogRecord logRec = LOG.info().$("enabling row deduplication [table=").utf8(tableToken.getTableName()).$(", columns=[");
+        LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$safe(tableToken.getTableName()).$(", columns=[");
 
+        boolean isSubsetOfOldKeys = true;
         try {
             int upsertKeyColumn = columnsIndexes.size();
             for (int i = 0; i < upsertKeyColumn; i++) {
@@ -1654,17 +2053,169 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
                             .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
                 }
+
+                isSubsetOfOldKeys &= metadata.isDedupKey(dedupColIndex);
+
                 if (i > 0) {
                     logRec.$(',');
                 }
-                logRec.$(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
+                logRec.$safe(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
             }
         } finally {
             logRec.I$();
         }
-        updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
+
+        columnsIndexes.sort();
+        for (int i = 0, j = 0; i < columnCount && j < columnsIndexes.size(); i++) {
+            if (i == columnsIndexes.getQuick(j)) {
+                // Set dedup key flag for the column
+                metadata.getColumnMetadata(i).setDedupKeyFlag(true);
+                // Go to the next dedup column index
+                j++;
+            }
+        }
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+
+        if (dedupColumnCommitAddresses == null) {
+            dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
+        } else {
+            dedupColumnCommitAddresses.clear();
+        }
+        dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
+
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+        return isSubsetOfOldKeys;
+    }
+
+    public void enforceTtl() {
+        partitionRemoveCandidates.clear();
+        final int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            return;
+        }
+        if (metadata.getPartitionBy() == PartitionBy.NONE) {
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            return;
+        }
+        if (getPartitionCount() < 2) {
+            return;
+        }
+        long maxTimestamp = getMaxTimestamp();
+        long evictedPartitionTimestamp = -1;
+        boolean dropped = false;
+        do {
+            long partitionTimestamp = getPartitionTimestamp(0);
+            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
+            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
+                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                continue;
+            }
+            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+            // TTL < 0 means it's in months
+            boolean shouldEvict = ttl > 0
+                    ? maxTimestamp - partitionCeiling >= Timestamps.HOUR_MICROS * ttl
+                    : Timestamps.getMonthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+            if (shouldEvict) {
+                LOG.info()
+                        .$("Partition's TTL expired, evicting. table=").$safe(metadata.getTableName())
+                        .$(" partitionTs=").microTime(partitionTimestamp)
+                        .$();
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evictedPartitionTimestamp = partitionTimestamp;
+            } else {
+                // Partitions are sorted by timestamp, no need to check the rest
+                break;
+            }
+        } while (getPartitionCount() > 1);
+
+        if (dropped) {
+            commitRemovePartitionOperation();
+        }
+    }
+
+    @Override
+    public void forceRemovePartitions(LongList partitionTimestamps) {
+        long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
+        long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+        boolean firstPartitionDropped = false;
+        boolean activePartitionDropped = false;
+
+        txWriter.beginPartitionSizeUpdate();
+        partitionRemoveCandidates.clear();
+
+        int removedCount = 0;
+        for (int i = 0; i < partitionTimestamps.size(); i++) {
+            long timestamp = partitionTimestamps.getQuick(i);
+            final int index = txWriter.getPartitionIndex(timestamp);
+            if (index < 0) {
+                LOG.debug().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
+                continue;
+            }
+
+            removedCount++;
+            if (!activePartitionDropped) {
+                activePartitionDropped = timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp);
+                if (activePartitionDropped) {
+                    // Need to do this only once
+                    closeActivePartition(false);
+                }
+            }
+
+            firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
+            columnVersionWriter.removePartition(timestamp);
+            txWriter.removeAttachedPartitions(timestamp);
+            // Add the partition to the partition remove list that can be deleted if there are no open readers
+            // after the commit
+            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index));
+        }
+
+        if (removedCount > 0) {
+            if (txWriter.getPartitionCount() > 0) {
+                if (firstPartitionDropped) {
+                    minTimestamp = readMinTimestamp();
+                    txWriter.setMinTimestamp(minTimestamp);
+                }
+
+                if (activePartitionDropped) {
+                    final int partitionIndex = txWriter.getPartitionCount() - 1;
+                    long activePartitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                    long activePartitionRows = txWriter.getPartitionSize(partitionIndex);
+                    long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+                    long txn = txWriter.getPartitionNameTxn(partitionIndex);
+                    setPathForNativePartition(path.trimTo(pathSize), partitionBy, activePartitionTs, txn);
+                    try {
+                        readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetSize, activePartitionRows);
+                        maxTimestamp = attachMaxTimestamp;
+                    } finally {
+                        path.trimTo(pathSize);
+                    }
+                }
+
+                txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
+                if (activePartitionDropped) {
+                    openLastPartition();
+                }
+                txWriter.bumpTruncateVersion();
+
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+                txWriter.commit(denseSymbolMapWriters);
+            } else {
+                // all partitions are deleted, effectively the same as truncating the table
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+                txWriter.resetTimestamp();
+                columnVersionWriter.truncate();
+                freeColumns(false);
+                releaseIndexerWriters();
+                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+            }
+
+            // Call O3 methods to remove check TxnScoreboard and remove partition directly
+            processPartitionRemoveCandidates();
         }
     }
 
@@ -1728,11 +2279,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public long getMetaO3MaxLag() {
-        return metadata.getO3MaxLag();
-    }
-
-    @Override
     public TableMetadata getMetadata() {
         return metadata;
     }
@@ -1755,6 +2301,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionCount();
     }
 
+    public byte getPartitionFormat(int partitionIndex) {
+        return txWriter.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE;
+    }
+
     public int getPartitionIndexByTimestamp(long timestamp) {
         return txWriter.getPartitionIndex(timestamp);
     }
@@ -1770,7 +2320,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes /
-                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata)));
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata)));
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {
@@ -1819,7 +2369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
         return tableToken;
     }
 
@@ -1888,9 +2438,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
+    public boolean isCommitDedupMode() {
+        if (!isDeduplicationEnabled()) {
+            return false;
+        }
+        return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT || dedupMode == WalUtils.WAL_DEDUP_MODE_UPSERT_NEW;
+    }
+
+    public boolean isCommitPlainInsert() {
+        return (dedupMode == WalUtils.WAL_DEDUP_MODE_NO_DEDUP || !isDeduplicationEnabled()) && dedupMode != WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+    }
+
+    public boolean isCommitReplaceMode() {
+        return dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+    }
+
     public boolean isDeduplicationEnabled() {
         int tsIndex = metadata.timestampIndex;
         return tsIndex > -1 && metadata.isDedupKey(tsIndex);
+    }
+
+    public boolean isDistressed() {
+        return distressed;
     }
 
     public boolean isOpen() {
@@ -1905,6 +2474,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
+    public void markDistressed() {
+        this.distressed = true;
+    }
+
     public void markSeqTxnCommitted(long seqTxn) {
         setSeqTxn(seqTxn);
         txWriter.commit(denseSymbolMapWriters);
@@ -1917,49 +2490,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public Row newRow(long timestamp) {
+        if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
+            validateDesignatedTimestampBounds(timestamp);
+        }
         switch (rowAction) {
-            case ROW_ACTION_OPEN_PARTITION:
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
-                if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
-                    txWriter.setMinTimestamp(timestamp);
-                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
-                }
-                // fall thru
-
-                rowAction = ROW_ACTION_SWITCH_PARTITION;
-
-            default: // switch partition
-                bumpMasterRef();
-                if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
-                    if (timestamp < txWriter.getMaxTimestamp()) {
-                        return newRowO3(timestamp);
-                    }
-
-                    if (timestamp > partitionTimestampHi && PartitionBy.isPartitioned(partitionBy)) {
-                        switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
-                    }
-                }
-                if (lastOpenPartitionIsReadOnly) {
-                    masterRef--;
-                    noOpRowCount++;
-                    return NOOP_ROW;
-                }
-                updateMaxTimestamp(timestamp);
-                break;
             case ROW_ACTION_NO_PARTITION:
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical()
+                            .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
-
                 bumpMasterRef();
                 updateMaxTimestamp(timestamp);
                 break;
@@ -1970,6 +2509,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 bumpMasterRef();
                 o3TimestampSetter(timestamp);
                 return row;
+            case ROW_ACTION_OPEN_PARTITION:
+                if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
+                    txWriter.setMinTimestamp(timestamp);
+                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                }
+                rowAction = ROW_ACTION_SWITCH_PARTITION;
+                // fall thru
+            case ROW_ACTION_SWITCH_PARTITION:
+                bumpMasterRef();
+                if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
+                    if (timestamp < txWriter.getMaxTimestamp()) {
+                        return newRowO3(timestamp);
+                    }
+
+                    if (PartitionBy.isPartitioned(partitionBy)) {
+                        switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                    }
+                }
+                if (lastOpenPartitionIsReadOnly) {
+                    masterRef--;
+                    noOpRowCount++;
+                    return NOOP_ROW;
+                }
+                updateMaxTimestamp(timestamp);
+                break;
+            default:
+                throw new AssertionError("Invalid row action constant");
         }
         txWriter.append();
         return row;
@@ -2007,7 +2573,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     break;
                 default:
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
-                    // Don't block the queue even if command is unknown
+                    // Don't block the queue even if the command is unknown
                     commandSubSeq.done(cursor);
                     break;
             }
@@ -2016,281 +2582,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$("not my command [cmdTableId=").$(cmd.getTableId())
                     .$(", cmdTableName=").$(cmd.getTableToken())
                     .$(", myTableId=").$(getMetadata().getTableId())
-                    .$(", myTableName=").utf8(tableToken.getTableName())
+                    .$(", myTableName=").$safe(tableToken.getTableName())
                     .I$();
             commandSubSeq.done(cursor);
-        }
-    }
-
-    // returns true if the tx was committed into the table and can be made visible to readers
-    // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
-    public boolean processWalBlock(
-            @Transient Path walPath,
-            int timestampIndex,
-            boolean ordered,
-            long rowLo,
-            long rowHi,
-            final long o3TimestampMin,
-            final long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor,
-            long commitToTimestamp,
-            long walSegmentId,
-            boolean isLastSegmentUsage,
-            O3JobParallelismRegulator regulator
-    ) {
-        int walRootPathLen = walPath.size();
-        long maxTimestamp = txWriter.getMaxTimestamp();
-        if (isLastPartitionClosed()) {
-            if (isEmptyTable()) {
-                // The table is empty, last partition does not exist
-                // WAL processing needs last partition to store LAG data
-                // Create artificial partition at the point of o3TimestampMin.
-                openPartition(o3TimestampMin);
-                txWriter.setMaxTimestamp(o3TimestampMin);
-                // Add the partition to the list of partitions with 0 size.
-                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
-            } else {
-                throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
-                        .put(path).put(']');
-            }
-        }
-
-        assert maxTimestamp == Long.MIN_VALUE ||
-                txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
-
-        lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
-        boolean success = true;
-        try {
-            boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
-            final long maxLagRows = getWalMaxLagRows();
-            final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            mmapWalColumns(walPath, walSegmentId, timestampIndex, rowLo, rowHi);
-            final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
-            long initialPartitionTimestampHi = partitionTimestampHi;
-            long commitMaxTimestamp, commitMinTimestamp;
-
-            long walLagRowCount = txWriter.getLagRowCount();
-            long o3Hi = rowHi;
-            try {
-                long o3Lo = rowLo;
-                long commitRowCount = rowHi - rowLo;
-                boolean copiedToMemory;
-
-                long totalUncommitted = walLagRowCount + commitRowCount;
-                long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
-                boolean needFullCommit = forceFullCommit
-                        // Too many rows in LAG
-                        || totalUncommitted > maxLagRows
-                        // Can commit without O3 and LAG has just enough rows
-                        || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
-                        // Too many uncommitted transactions in LAG
-                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount());
-
-                boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
-                boolean lagOrderedNew = !isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
-                boolean canFastCommitNew = applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
-
-                // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
-                // Also fast LAG commit will not cause O3 with the current transaction.
-                if (!needFullCommit && canFastCommit && !canFastCommitNew && txWriter.getLagMaxTimestamp() <= o3TimestampMin) {
-                    // Fast commit lag data and then proceed.
-                    applyFromWalLagToLastPartition(commitToTimestamp, false);
-
-                    // Re-evaluate commit decision
-                    walLagRowCount = txWriter.getLagRowCount();
-                    totalUncommitted = commitRowCount;
-                    newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
-                    needFullCommit =
-                            // Too many rows in LAG
-                            totalUncommitted > maxLagRows
-                                    // Can commit without O3 and LAG has just enough rows
-                                    || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
-                                    // Too many uncommitted transactions in LAG
-                                    || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
-                }
-
-                if (!needFullCommit || canFastCommitNew) {
-                    // Don't commit anything, move everything to lag area of last partition instead.
-                    // This usually happens when WAL transactions are very small, so it's faster
-                    // to squash several of them together before writing anything to all the partitions.
-                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
-
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-                    // This will copy data from mmap files to memory.
-                    // Symbols are already mapped to the correct destination.
-                    dispatchColumnTasks(
-                            o3Hi - o3Lo,
-                            IGNORE,
-                            o3Lo,
-                            walLagRowCount,
-                            1,
-                            this.cthAppendWalColumnToLastPartition
-                    );
-                    walLagRowCount += commitRowCount;
-                    addPhysicallyWrittenRows(commitRowCount);
-                    txWriter.setLagRowCount((int) walLagRowCount);
-                    txWriter.setLagOrdered(lagOrderedNew);
-                    txWriter.setLagMinTimestamp(newMinLagTimestamp);
-                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-                    txWriter.setLagTxnCount(txWriter.getLagTxnCount() + 1);
-
-                    if (canFastCommitNew) {
-                        applyFromWalLagToLastPartition(commitToTimestamp, false);
-                    }
-
-                    return forceFullCommit;
-                }
-
-                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
-                // This application will not include the current transaction data, only what's already in WAL lag.
-                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), true) != Long.MIN_VALUE) {
-                    walLagRowCount = txWriter.getLagRowCount();
-                    totalUncommitted = walLagRowCount + commitRowCount;
-                }
-
-                // Re-valuate WAL lag min/max with impact of the current transaction.
-                txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
-                txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-                boolean needsOrdering = !ordered || walLagRowCount > 0;
-                boolean needsDedup = isDeduplicationEnabled();
-
-                long timestampAddr = 0;
-                MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
-                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-
-                if (needsOrdering || needsDedup) {
-                    if (needsOrdering) {
-                        LOG.info().$("sorting WAL [table=").$(tableToken)
-                                .$(", ordered=").$(ordered)
-                                .$(", lagRowCount=").$(walLagRowCount)
-                                .$(", walRowLo=").$(rowLo)
-                                .$(", walRowHi=").$(rowHi).I$();
-
-                        final long timestampMemorySize = totalUncommitted << 4;
-                        o3TimestampMem.jumpTo(timestampMemorySize);
-                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
-
-                        MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
-                        final long tsLagOffset = txWriter.getTransientRowCount() << 3;
-                        final long tsLagSize = walLagRowCount << 3;
-                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-                        timestampAddr = o3TimestampMem.getAddress();
-
-                        final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
-                        try {
-                            Vect.radixSortABLongIndexAscChecked(
-                                    Math.abs(tsLagBufferAddr),
-                                    walLagRowCount,
-                                    mappedTimestampIndexAddr,
-                                    commitRowCount,
-                                    timestampAddr,
-                                    o3TimestampMemCpy.addressOf(0)
-                            );
-                        } finally {
-                            mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
-                        }
-                    } else {
-                        // Needs deduplication only
-                        timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
-                    }
-
-                    if (needsDedup) {
-                        o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        long dedupTimestampAddr = o3TimestampMem.getAddress();
-                        long deduplicatedRowCount = deduplicateSortedIndex(
-                                totalUncommitted,
-                                timestampAddr,
-                                dedupTimestampAddr,
-                                o3TimestampMemCpy.addressOf(0),
-                                walLagRowCount
-                        );
-                        if (deduplicatedRowCount > 0) {
-                            // There are timestamp duplicates, reshuffle the records
-                            needsOrdering = true;
-                            timestampAddr = dedupTimestampAddr;
-                            totalUncommitted = deduplicatedRowCount;
-                        }
-                    }
-                }
-
-                if (needsOrdering) {
-                    dispatchColumnTasks(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, cthMergeWalColumnWithLag);
-                    swapO3ColumnsExcept(timestampIndex);
-
-                    // Sorted data is now sorted in memory copy of the data from mmap files
-                    // Row indexes start from 0, not rowLo
-                    o3Hi = totalUncommitted;
-                    o3Lo = 0L;
-                    walLagRowCount = 0L;
-                    o3Columns = o3MemColumns1;
-                    copiedToMemory = true;
-                } else {
-                    // Wal column can are lazily mapped to improve performance. It works ok, except in this case
-                    // where access getAddress() calls be concurrent. Map them eagerly now.
-                    mmapWalColsEager();
-
-                    timestampAddr = walTimestampColumn.addressOf(0);
-                    copiedToMemory = false;
-                }
-
-                // We could commit some portion of the lag into the partitions and keep some data in the lag
-                // like 70/30 split, but it would break snapshot assumptions and this optimization is removed
-                // in the next release after v7.3.9.
-                // Commit everything.
-                walLagRowCount = 0;
-                commitMinTimestamp = txWriter.getLagMinTimestamp();
-                commitMaxTimestamp = txWriter.getLagMaxTimestamp();
-                txWriter.setLagMinTimestamp(Long.MAX_VALUE);
-                txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
-
-                o3RowCount = o3Hi - o3Lo + walLagRowCount;
-
-                // Real data writing into table happens here.
-                // Everything above it is to figure out how much data to write now,
-                // map symbols and sort data if necessary.
-                if (o3Hi > o3Lo) {
-                    // Now that everything from WAL lag is in memory or in WAL columns,
-                    // we can remove artificial 0 length partition created to store lag when table did not have any partitions
-                    if (txWriter.getRowCount() == 0 && txWriter.getPartitionCount() == 1 && txWriter.getPartitionSize(0) == 0) {
-                        txWriter.setMaxTimestamp(Long.MIN_VALUE);
-                        lastPartitionTimestamp = Long.MIN_VALUE;
-                        closeActivePartition(false);
-                        partitionTimestampHi = Long.MIN_VALUE;
-                        long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
-                        long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
-                        txWriter.removeAttachedPartitions(partitionTimestamp);
-                        safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-                    }
-
-                    processO3Block(
-                            walLagRowCount,
-                            timestampIndex,
-                            timestampAddr,
-                            o3Hi,
-                            commitMinTimestamp,
-                            commitMaxTimestamp,
-                            copiedToMemory,
-                            o3Lo,
-                            regulator
-                    );
-
-                    finishO3Commit(initialPartitionTimestampHi);
-                }
-                txWriter.setLagOrdered(true);
-                txWriter.setLagRowCount((int) walLagRowCount);
-            } finally {
-                finishO3Append(walLagRowCount);
-                o3Columns = o3MemColumns1;
-            }
-
-            return true;
-        } catch (Throwable th) {
-            success = false;
-            throw th;
-        } finally {
-            walPath.trimTo(walRootPathLen);
-            closeWalColumns(isLastSegmentUsage || !success, walSegmentId);
         }
     }
 
@@ -2313,17 +2607,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
         if (walTxnDetails == null) {
             // Lazy creation
-            walTxnDetails = new WalTxnDetails(ff, configuration.getWalApplyLookAheadTransactionCount() * 10);
+            walTxnDetails = new WalTxnDetails(ff, configuration, getWalMaxLagRows());
         }
 
-        long appliedSeqTxn = getAppliedSeqTxn();
-        transactionLogCursor.setPosition(Math.max(appliedSeqTxn, walTxnDetails.getLastSeqTxn()));
-        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, appliedSeqTxn, txWriter.getMaxTimestamp());
+        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp());
     }
 
     /**
      * Truncates table partitions leaving symbol files.
-     * Used for truncate without holding Read lock on the table like in case of WAL tables.
+     * Used to truncate without holding Read lock on the table like in case of WAL tables.
      * This method leaves symbol files intact.
      */
     public final void removeAllPartitions() {
@@ -2351,7 +2643,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         closeActivePartition(false);
         processPartitionRemoveCandidates();
 
-        LOG.info().$("removed all partitions (soft truncated) [name=").utf8(tableToken.getTableName()).I$();
+        LOG.info().$("removed all partitions (soft truncated) [name=").$safe(tableToken.getTableName()).I$();
     }
 
     @Override
@@ -2363,11 +2655,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
+        final boolean isIndexed = metadata.isIndexed(index);
+        String columnName = metadata.getColumnName(index);
 
-        LOG.info().$("removing [column=").utf8(name).$(", path=").$substr(pathRootSize, path).I$();
+        LOG.info().$("removing [column=").$safe(name).$(", path=").$substr(pathRootSize, path).I$();
 
         // check if we are moving timestamp from a partitioned table
-        final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        final int timestampIndex = metadata.getTimestampIndex();
         boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
@@ -2376,64 +2670,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
-        metaSwapIndex = removeColumnFromMeta(index);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(name);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(name);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(name);
-
-        // remove column objects
-        freeColumnMemory(index);
-
-        // remove symbol map writer or entry for such
-        removeSymbolMapWriter(index);
-
-        // reset timestamp limits
-        if (timestamp) {
-            txWriter.resetTimestamp();
-            timestampSetter = value -> {
-            };
-        }
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-
-            // remove _todo
-            clearTodoLog();
-
-            // remove column files has to be done after _todo is removed
-            removeColumnFiles(index, type);
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        bumpMetadataAndColumnStructureVersion();
-
         metadata.removeColumn(index);
         if (timestamp) {
             metadata.clearTimestampIndex();
         }
+        rewriteAndSwapMetadata(metadata);
 
-        finishColumnPurge();
+        try {
+            // remove column objects
+            freeColumnMemory(index);
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(index);
+
+            // reset timestamp limits
+            if (timestamp) {
+                txWriter.resetTimestamp();
+                timestampSetter = value -> {
+                };
+            }
+
+            // remove column files
+            removeColumnFiles(index, columnName, type, isIndexed);
+            clearTodoAndCommitMetaStructureVersion();
+
+            finishColumnPurge();
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+            LOG.info().$("REMOVED column '").$safe(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
         }
-        LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
     @Override
     public boolean removePartition(long timestamp) {
+        partitionRemoveCandidates.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
@@ -2443,62 +2719,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Handle split partitions.
         // One logical partition may be split into multiple physical partitions.
-        // For example partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
+        // For example, partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
         long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
-        int partitionIndex = txWriter.getPartitionIndex(logicalPartitionTimestampToDelete);
+        int partitionIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(logicalPartitionTimestampToDelete);
+        if (partitionIndex < 0) {
+            // A partition slit can exist without the partition itself.
+            // For example, it is allowed to have partition '2024-02-24T12' without partition '2024-02-24'
+            // To delete all the splits, start from the index that is next or equal to the timestamp parameter.
+            partitionIndex = -partitionIndex - 1;
+        }
+        partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
+
         boolean dropped = false;
-        if (partitionIndex >= 0) {
-            long partitionTimestamp;
-            while (partitionIndex < txWriter.getPartitionCount() &&
-                    txWriter.getLogicalPartitionTimestamp(
-                            partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
-                    ) == logicalPartitionTimestampToDelete) {
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-            }
+        long partitionTimestamp;
+        while (partitionIndex < txWriter.getPartitionCount() &&
+                txWriter.getLogicalPartitionTimestamp(
+                        partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
+                ) == logicalPartitionTimestampToDelete) {
+            dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+        }
+
+        if (dropped) {
+            commitRemovePartitionOperation();
         }
         return dropped;
     }
 
     @Override
     public void renameColumn(
-            @NotNull CharSequence currentName,
+            @NotNull CharSequence name,
             @NotNull CharSequence newName,
             SecurityContext securityContext
     ) {
         checkDistressed();
         checkColumnName(newName);
 
-        final int index = getColumnIndex(currentName);
+        final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
+        final boolean isIndexed = metadata.isIndexed(index);
+        String columnName = metadata.getColumnName(index);
 
-        LOG.info().$("renaming column '").utf8(currentName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$substr(pathRootSize, path).$();
+        LOG.info().$("renaming column '").$safe(columnName).$('[')
+                .$(ColumnType.nameOf(type)).$("]' to '").$safe(newName)
+                .$("' in ").$substr(pathRootSize, path).$();
 
         commit();
 
-        this.metaSwapIndex = renameColumnFromMeta(index, newName);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(currentName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(currentName);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(currentName);
+        metadata.renameColumn(columnName, newName);
+        String newColumnName = metadata.getColumnName(index);
+        rewriteAndSwapMetadata(metadata);
 
         try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-
             // remove _todo
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(currentName, index, newName, type);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -2507,21 +2783,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Call finish purge to remove old column files before renaming them in metadata
         finishColumnPurge();
-        metadata.renameColumn(currentName, newName);
 
         if (index == metadata.getTimestampIndex()) {
-            designatedTimestampColumnName = Chars.toString(newName);
+            designatedTimestampColumnName = newColumnName;
         }
 
         if (securityContext != null) {
-            ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
+            ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
         }
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
 
-        LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
+        LOG.info().$("RENAMED column '").$safe(columnName).$("' to '").$safe(newColumnName).$("' from ").$substr(pathRootSize, path).$();
     }
 
     @Override
@@ -2530,17 +2805,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // always match tableWriter's table name
         LOG.debug().$("renaming table [path=").$substr(pathRootSize, path).$(", seqTxn=").$(txWriter.getSeqTxn()).I$();
         try {
-            TableUtils.overwriteTableNameFile(path, ddlMem, ff, toTableName);
+            overwriteTableNameFile(path, ddlMem, ff, toTableName);
         } finally {
             path.trimTo(pathSize);
         }
-        // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
+        // Record column structure version bump in txn file for WAL sequencer structure version to match the writer structure version.
         bumpColumnStructureVersion();
-
-//        try (MetadataCacheWriter metadataRW = engine.getCairoMetadata().write()) {
-//            metadataRW.dropTable(fromTableName);
-//            metadataRW.hydrateTable(metadata, true);
-//        }
     }
 
     @Override
@@ -2548,16 +2818,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         if (o3InError || inTransaction()) {
             try {
-                LOG.info().$("tx rollback [name=").utf8(tableToken.getTableName()).I$();
+                LOG.info().$("tx rollback [name=").$safe(tableToken.getTableName()).I$();
                 partitionRemoveCandidates.clear();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
-                    masterRef++;
+                    // Potentially failed in row writing like putSym() call.
+                    // This can mean that the writer state is corrupt. Force re-open writer with next transaction
+                    LOG.critical().$("detected line append failure, writer marked as distressed [table=").$(tableToken).I$();
+                    distressed = true;
+                    checkDistressed();
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
                 rollbackIndexes();
-                rollbackSymbolTables();
+                rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
@@ -2565,13 +2839,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3InError = false;
                 // when we rolled transaction back, hasO3() has to be false
                 o3MasterRef = -1;
-                LOG.info().$("tx rollback complete [name=").utf8(tableToken.getTableName()).I$();
+                LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
                 processCommandQueue(false);
-                metrics.tableWriter().incrementRollbacks();
+                metrics.tableWriterMetrics().incrementRollbacks();
             } catch (Throwable e) {
-                LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e).I$();
+                LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
             }
+            // If it's a manual rollback call, throw exception to indicate that the rollback was not successful
+            // and the writer must be closed.
+            checkDistressed();
         }
     }
 
@@ -2584,54 +2861,83 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        try {
-            commit();
-            long metaSize = copyMetadataAndUpdateVersion();
-            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
-            try {
-                ddlMem.jumpTo(META_OFFSET_MAX_UNCOMMITTED_ROWS);
-                ddlMem.putInt(maxUncommittedRows);
-                ddlMem.jumpTo(metaSize);
-            } finally {
-                ddlMem.close();
-            }
+    public void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        assert tableToken.isMatView();
 
-            finishMetaSwapUpdate();
-            metadata.setMaxUncommittedRows(maxUncommittedRows);
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-
-        } finally {
-            ddlMem.close();
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateRefreshParams(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStart,
+                Chars.toString(timerTimeZone),
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+        updateMatViewDefinition(newDefinition);
+    }
+
+    @Override
+    public void setMatViewRefreshLimit(int limitHoursOrMonths) {
+        assert tableToken.isMatView();
+
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+        }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
+        updateMatViewDefinition(newDefinition);
+    }
+
+    @Override
+    public void setMatViewRefreshTimer(long start, int interval, char unit) {
+        assert tableToken.isMatView();
+
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+        }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
+        updateMatViewDefinition(newDefinition);
+    }
+
+    @Override
+    public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
+        commit();
+        metadata.setMaxUncommittedRows(maxUncommittedRows);
+        writeMetadataToDisk();
     }
 
     @Override
     public void setMetaO3MaxLag(long o3MaxLagUs) {
-        try {
-            commit();
-            long metaSize = copyMetadataAndUpdateVersion();
-            openMetaSwapFileByIndex(ff, ddlMem, path, pathSize, this.metaSwapIndex);
-            try {
-                ddlMem.jumpTo(META_OFFSET_O3_MAX_LAG);
-                ddlMem.putLong(o3MaxLagUs);
-                ddlMem.jumpTo(metaSize);
-            } finally {
-                ddlMem.close();
-            }
+        commit();
+        metadata.setO3MaxLag(o3MaxLagUs);
+        writeMetadataToDisk();
+    }
 
-            finishMetaSwapUpdate();
-            metadata.setO3MaxLag(o3MaxLagUs);
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-        } finally {
-            ddlMem.close();
-        }
+    @Override
+    public void setMetaTtl(int ttlHoursOrMonths) {
+        commit();
+        metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
+        writeMetadataToDisk();
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -2640,7 +2946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long size() {
-        // This is uncommitted row count
+        // This is an uncommitted row count
         return txWriter.getRowCount() + getO3RowCount();
     }
 
@@ -2655,7 +2961,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < txWriter.getPartitionCount(); i++) {
             squashPartitionForce(i);
         }
-        // Reopen last partition if we've closed it.
+        // Reopen the last partition if we've closed it.
         if (isLastPartitionClosed() && !isEmptyTable()) {
             openLastPartition();
         }
@@ -2668,7 +2974,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
-     * Does not accept structure changes, e.g. equivalent to tick(false)
+     * Does not accept structure changes, e.g., equivalent to tick(false)
      * Some tick calls can result into transaction commit.
      */
     @Override
@@ -2681,7 +2987,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Some tick calls can result into transaction commit.
      *
      * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
-     *                                         structure changes like column drop, rename
+     *                                         structure changes like a column drop, rename
      */
     public void tick(boolean contextAllowsAnyStructureChanges) {
         // Some alter table trigger commit() which trigger tick()
@@ -2700,9 +3006,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table including symbol tables. When operation is unsuccessful it throws CairoException.
-     * With that truncate can be retried or alternatively table can be closed. Outcome of any other operation
-     * with the table is undefined and likely to cause segmentation fault. When table re-opens any partial
+     * Truncates table including symbol tables. When the operation is unsuccessful, it throws CairoException.
+     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
+     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
      * truncate will be retried.
      */
     @Override
@@ -2711,9 +3017,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table, but keeps symbol tables. When operation is unsuccessful it throws CairoException.
-     * With that truncate can be retried or alternatively table can be closed. Outcome of any other operation
-     * with the table is undefined and likely to cause segmentation fault. When table re-opens any partial
+     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws CairoException.
+     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
+     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
      * truncate will be retried.
      */
     @Override
@@ -2731,8 +3037,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Eagerly sets up writer instance. Otherwise, writer will initialize lazily. Invoking this method could improve
-     * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
+     * Eagerly sets up writer instance. Otherwise, the writer will initialize lazily. Invoking this method could improve
+     * the performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
      */
     public void warmUp() {
         Row r = newRow(Math.max(Timestamps.O3_MIN_TS, txWriter.getMaxTimestamp()));
@@ -2742,6 +3048,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             r.cancel();
+        }
+    }
+
+    private static void clearMemColumnShifts(ObjList<MemoryCARW> memColumns) {
+        for (int i = 0, n = memColumns.size(); i < n; i++) {
+            MemoryCARW col = memColumns.get(i);
+            if (col != null) {
+                col.shiftAddressRight(0);
+            }
+        }
+    }
+
+    private static void closeRemove(FilesFacade ff, long fd, LPSZ path) {
+        if (!ff.closeRemove(fd, path)) {
+            throw CairoException.critical(ff.errno()).put("cannot remove ").put(path);
         }
     }
 
@@ -2808,27 +3129,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
-     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
-     * high performance of name check does not matter much.
-     *
-     * @param name to check
-     * @return 0 based column index.
-     */
-    private static int getColumnIndexQuiet(MemoryMR metaMem, CharSequence name, int columnCount) {
-        long nameOffset = getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStrA(nameOffset);
-            int columnType = getColumnType(metaMem, i); // Negative means deleted column
-            if (columnType > 0 && Chars.equalsIgnoreCase(col, name)) {
-                return i;
-            }
-            nameOffset += Vm.getStorageLength(col);
-        }
-        return -1;
-    }
-
     private static void linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
@@ -2836,7 +3136,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             } else if (ff.exists(to)) {
                 LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
-                ff.remove(to);
+                try {
+                    ff.remove(to);
+                } catch (CairoException e) {
+                    if (Os.isWindows() && ff.errno() == CairoException.ERRNO_ACCESS_DENIED_WIN) {
+                        // On Windows, it's not possible to delete a link if the original file is open.
+                        // Here we assume that it's exactly what we need, linking the correct from/to paths.
+                        // There is no good way to verify that, but there is no hypothetical scenario found
+                        // when this is false.
+                        LOG.info().$("cannot delete file to create link with the same name," +
+                                " assuming already correctly linked [path=").$(to).$(", linkSrc=").$(from).I$();
+                        return;
+                    } else {
+                        throw e;
+                    }
+                }
                 if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                     LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                     return;
@@ -2866,10 +3180,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
+    private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR ddlMem, TableWriterMetadata metadata) {
         path.concat(META_FILE_NAME);
-        try {
-            metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+        try (ddlMem) {
+            ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+            metadata.reload(ddlMem);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2891,40 +3206,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential,
             boolean isDedupKey,
             long columnNameTxn,
-            int replaceColumnIndex
+            int replaceColumnIndex,
+            TableWriterMetadata metadata
     ) {
-        // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta0(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, replaceColumnIndex);
+        // If this is a column type change, find the index of the very first column this one replaces
+        int prevReplaceColumnIndex = replaceColumnIndex;
+        while (prevReplaceColumnIndex > -1) {
+            replaceColumnIndex = prevReplaceColumnIndex;
+            prevReplaceColumnIndex = metadata.getReplacingColumnIndex(replaceColumnIndex);
+        }
 
-        // close _meta so we can rename it
-        metaMem.close();
+        metadata.addColumn(
+                columnName,
+                columnType,
+                isIndexed,
+                indexValueBlockCapacity,
+                metadata.getColumnCount(),
+                symbolCapacity,
+                isDedupKey,
+                replaceColumnIndex,
+                symbolCacheFlag
+        );
 
-        // validate new meta
-        validateSwapMeta(columnName);
+        rewriteAndSwapMetadata(metadata);
 
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(columnName);
-
-        // don't create symbol writer when column conversion happens, it should be created before the conversion
+        // don't create a symbol writer when column conversion happens, it should be created before the conversion
         if (replaceColumnIndex < 0) {
             if (ColumnType.isSymbol(columnType)) {
                 try {
                     createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
                 } catch (CairoException e) {
-                    runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
+                    try {
+                        recoverFromSymbolMapWriterFailure(columnName);
+                    } catch (CairoException e2) {
+                        LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
+                        throwDistressException(e2);
+                    }
+                    throw e;
                 }
             } else {
-                // maintain sparse list of symbol writers
+                // maintain the sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
         }
@@ -2939,79 +3262,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnCount++;
     }
 
-    private int addColumnToMeta0(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            boolean sequentialFlag,
-            boolean dedupKeyFlag,
-            int replaceColumnIndex
-    ) {
-        int index;
-        try {
-            index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount + 1);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == replaceColumnIndex);
-            }
-
-            // add new column metadata to bottom of list
-            ddlMem.putInt(type);
-            long flags = 0;
-            if (indexFlag) {
-                flags |= META_FLAG_BIT_INDEXED;
-            }
-
-            if (sequentialFlag) {
-                flags |= META_FLAG_BIT_SEQUENTIAL;
-            }
-
-            if (dedupKeyFlag) {
-                flags |= META_FLAG_BIT_DEDUP_KEY;
-            }
-
-            ddlMem.putLong(flags);
-            ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.putLong(configuration.getRandom().nextLong());
-
-            // Write place where to put this column when reading the metadata.
-            // The column can be replaced multiple times, find the very original index of the column
-            if (replaceColumnIndex > -1) {
-                int originColumnIndex = TableUtils.getReplacingColumnIndex(metaMem, replaceColumnIndex);
-                if (originColumnIndex > -1) {
-                    replaceColumnIndex = originColumnIndex;
-                }
-            }
-
-            ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
-            ddlMem.skip(4);
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            ddlMem.putStr(name);
-            ddlMem.sync(false);
-        } finally {
-            // truncate _meta file exactly, the file size never changes.
-            // Metadata updates are written to a new file and then swapped by renaming.
-            ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
+    private void appendBuffer(long fd, long address, long len) {
+        if (ff.append(fd, address, len) != len) {
+            throw CairoException.critical(ff.errno()).put("cannot append data [fd=")
+                    .put(fd).put(", len=").put(len).put(']');
         }
-        return index;
     }
 
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean allowPartial) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
-        if (!isDeduplicationEnabled()
+        if (!isCommitDedupMode()
                 && txWriter.getLagRowCount() > 0
                 && txWriter.isLagOrdered()
                 && txWriter.getMaxTimestamp() <= lagMinTimestamp
@@ -3047,7 +3307,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             commitToTimestamp,
                             0,
                             lagRows - 1,
-                            BinarySearch.SCAN_DOWN
+                            Vect.BIN_SEARCH_SCAN_DOWN
                     );
                     long applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint + 1;
 
@@ -3074,7 +3334,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
-        return !isDeduplicationEnabled()
+        return !isCommitDedupMode()
                 && lagRowCount > 0
                 && lagOrdered
                 && committedMaxTimestamp <= lagMinTimestamp
@@ -3133,7 +3393,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        TableUtils.dFile(partitionPath, columnName, columnNameTxn);
+        dFile(partitionPath, columnName, columnNameTxn);
         if (!ff.exists(partitionPath.$())) {
             LOG.info().$("attaching partition with missing column [path=").$substr(pathRootSize, partitionPath).I$();
             columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, partitionSize);
@@ -3169,7 +3429,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         int pathLen = partitionPath.size();
-        TableUtils.iFile(partitionPath, columnName, columnNameTxn);
+        iFile(partitionPath, columnName, columnNameTxn);
         long indexLength = ff.length(partitionPath.$());
         if (indexLength > 0) {
             long indexFd = openRO(ff, partitionPath.$(), LOG);
@@ -3192,7 +3452,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     partitionPath.trimTo(pathLen);
-                    TableUtils.dFile(partitionPath, columnName, columnNameTxn);
+                    dFile(partitionPath, columnName, columnNameTxn);
                     long dataLength = ff.length(partitionPath.$());
                     long prevDataAddress = dataLength;
                     for (long row = columnSize - 1; row >= 0; row--) {
@@ -3235,7 +3495,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         int pathLen = partitionPath.size();
-        TableUtils.dFile(partitionPath, columnName, columnNameTxn);
+        dFile(partitionPath, columnName, columnNameTxn);
         if (!ff.exists(partitionPath.$())) {
             columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, partitionSize);
             return;
@@ -3288,14 +3548,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (metadata.isColumnIndexed(columnIndex)) {
                 valueFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.fileNotFound()
                             .put("Symbol index value file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
                 }
                 keyFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.fileNotFound()
                             .put("Symbol index key file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
@@ -3318,12 +3578,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (attachMetadata == null) {
                 attachMetaMem = Vm.getCMRInstance();
-                attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata = new TableWriterMetadata(tableToken, attachMetaMem);
-            } else {
-                attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata.reload(attachMetaMem);
+                attachMetadata = new TableWriterMetadata(tableToken);
             }
+            attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
+            attachMetadata.reload(attachMetaMem);
 
             if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -3377,8 +3635,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (tableColType != attachColType) {
                     // This is very suspicious. The column was deleted in the detached partition,
                     // but it exists in the target table.
-                    LOG.info().$("detached partition has column deleted while the table has the same column alive [tableName=").utf8(tableToken.getTableName())
-                            .$(", column=").utf8(columnName)
+                    LOG.info().$("detached partition has column deleted while the table has the same column alive [tableName=").$safe(tableToken.getTableName())
+                            .$(", column=").$safe(columnName)
                             .$(", columnType=").$(ColumnType.nameOf(tableColType))
                             .I$();
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, partitionSize);
@@ -3475,6 +3733,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
+    private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
+        if (txWriter.getLagRowCount() > 0) {
+            pressureControl.updateInflightTxnBlockLength(
+                    1,
+                    Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
+            );
+            return 1;
+        }
+        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows());
+    }
+
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
         if (fromTxn < 0) {
@@ -3482,7 +3751,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         long toTxn = txWriter.getTxn();
         if (partitionIndex + 1 < txWriter.getPartitionCount()) {
-            // If next partition is a split partition part of same logical partition
+            // If the next partition is a split partition part of same logical partition
             // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
             // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
             if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
@@ -3500,7 +3769,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void checkColumnName(CharSequence name) {
-        if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
+        if (!isValidColumnName(name, configuration.getMaxFileNameLength())) {
             throw CairoException.nonCritical().put("invalid column name [table=").put(tableToken.getTableName()).put(", column=").putAsPrintable(name).put(']');
         }
     }
@@ -3517,8 +3786,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lastErrno == O3_ERRNO_FATAL) {
                 distressed = true;
                 throw new CairoError("commit failed with fatal error, see logs for details [table=" +
-                        tableToken.getTableName() +
-                        ", tableDir=" + tableToken.getDirName() + "]");
+                        tableToken.getTableName() + ", tableDir=" + tableToken.getDirName() + "]");
             } else {
                 throw CairoException.critical(lastErrno)
                         .setOutOfMemory(o3oomObserved)
@@ -3530,12 +3798,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void clearMemColumnShifts() {
+        clearMemColumnShifts(o3MemColumns1);
+        clearMemColumnShifts(o3MemColumns2);
+        memColumnShifted = false;
+    }
+
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
         rowAction = ROW_ACTION_SWITCH_PARTITION;
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
+    }
+
+    private void clearTodoAndCommitMeta() {
+        try {
+            // remove _todo
+            clearTodoLog();
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+        bumpMetadataVersion();
+    }
+
+    private void clearTodoAndCommitMetaStructureVersion() {
+        try {
+            // remove _todo
+            clearTodoLog();
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+        bumpMetadataAndColumnStructureVersion();
     }
 
     private void clearTodoLog() {
@@ -3548,7 +3842,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.putLong(32, 0);
             Unsafe.getUnsafe().storeFence();
             todoMem.putLong(24, todoTxn);
-            // ensure file is closed with correct length
+            // ensure the file is closed with the correct length
             todoMem.jumpTo(40);
             todoMem.sync(false);
         } finally {
@@ -3565,78 +3859,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void closeWalColumns(boolean isLastSegmentUsage, long walSegmentId) {
-        int key = walFdCache.keyIndex(walSegmentId);
-        boolean cacheIsFull = !isLastSegmentUsage && key > -1 && walFdCacheSize == configuration.getWalMaxSegmentFileDescriptorsCache();
-        if (isLastSegmentUsage || cacheIsFull) {
-            if (key < 0) {
-                LongList fds = walFdCache.valueAt(key);
-                walFdCache.removeAt(key);
-                walFdCacheSize--;
-                fds.clear();
-                walFdCacheListPool.push(fds);
-            }
-
-            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                if (mappedColumnMem != null) {
-                    Misc.free(mappedColumnMem);
-                    walColumnMemoryPool.push(mappedColumnMem);
-                }
-            }
-        } else {
-            LongList fds = null;
-            if (key > -1) {
-                // Add FDs to a new FD cache list
-                fds = walFdCacheListPool.pop();
-                walFdCache.putAt(key, walSegmentId, fds);
-                walFdCacheSize++;
-            }
-
-            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                if (mappedColumnMem != null) {
-                    long fd = mappedColumnMem.detachFdClose();
-                    if (fds != null) {
-                        fds.add(fd);
-                    }
-                    walColumnMemoryPool.push(mappedColumnMem);
-                }
-            }
-        }
-
-        if (cacheIsFull) {
-            // Close all cached FDs.
-            // It is possible to use more complicated algo and evict only those which
-            // will not be used in the near future, but it's non-trivial
-            // and can ruin the benefit of caching any FDs.
-            // This supposed to happen rarely.
-            closeWalFiles();
-        }
-    }
-
-    private void closeWalFiles() {
-        walFdCache.forEach(walFdCloseCachedFdAction);
-        walFdCache.clear();
-        walFdCacheSize = 0;
-    }
-
     /**
-     * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
+     * Commits newly added rows of data. This method updates transaction file with pointers to the end of appended data.
      * <p>
      * <b>Pending rows</b>
-     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
+     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in the partially appended row will be lost.</p>
      *
      * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
-     * @return commit transaction number or -1 if there was nothing to commit
      */
-    private long commit(long o3MaxLag) {
+    private void commit(long o3MaxLag) {
         checkDistressed();
         physicallyWrittenRowsSinceLastCommit.set(0);
 
         if (o3InError) {
             rollback();
-            return TableSequencer.NO_TXN;
+            return;
         }
 
         if ((masterRef & 1) != 0) {
@@ -3650,13 +3887,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (noop) {
                     // Bookmark masterRef to track how many rows is in uncommitted state
                     this.committedMasterRef = masterRef;
-                    return getTxn();
+                    return;
                 } else if (o3MaxLag > 0) {
                     // It is possible that O3 commit will create partition just before
-                    // the last one, leaving last partition row count 0 when doing ic().
+                    // the last one, leaving the last partition row count 0 when doing ic().
                     // That's when the data from the last partition is moved to in-memory lag.
-                    // One way to detect this is to check if index of the "last" partition is not
-                    // last partition in the attached partition list.
+                    // One way to detect this is to check if the index of the "last" partition is not
+                    // the last partition in the attached partition list.
                     if (reconcileOptimisticPartitions()) {
                         this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
                         this.partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
@@ -3665,7 +3902,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else if (noOpRowCount > 0) {
                 LOG.critical()
-                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                        .$("o3 ignoring write on read-only partition [table=").$(tableToken)
                         .$(", timestamp=").$ts(lastOpenPartitionTs)
                         .$(", numRows=").$(noOpRowCount)
                         .$();
@@ -3675,30 +3912,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
-            updateIndexes();
-            syncColumns();
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
-
-            // Check if partitions are split into too many pieces and merge few of them back.
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            this.committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriter().incrementCommits();
-            metrics.tableWriter().addCommittedRows(rowsAdded);
+            commit00();
+            housekeep();
+            metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
                 addPhysicallyWrittenRows(rowsAdded);
             }
 
             noOpRowCount = 0L;
-            return getTxn();
+
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
+                    .$(", minTs=").$ts(txWriter.getMinTimestamp())
+                    .$(", maxTs=").$ts(txWriter.getMaxTimestamp())
+                    .I$();
         }
-        return TableSequencer.NO_TXN;
+    }
+
+    private void commit00() {
+        updateIndexes();
+        syncColumns();
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        // Bookmark masterRef to track how many rows is in uncommitted state
+        this.committedMasterRef = masterRef;
+    }
+
+    private void commitRemovePartitionOperation() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        processPartitionRemoveCandidates();
     }
 
     private void configureAppendPosition() {
@@ -3734,12 +3979,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW o3AuxMem2;
 
         if (type > 0) {
-            dataMem = Vm.getMAInstance(configuration.getCommitMode());
+            dataMem = Vm.getPMARInstance(configuration);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             if (ColumnType.isVarSize(type)) {
-                auxMem = Vm.getMAInstance(configuration.getCommitMode());
+                auxMem = Vm.getPMARInstance(configuration);
                 o3AuxMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                 o3AuxMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             } else {
@@ -3830,77 +4075,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkO3Errors();
     }
 
-    private int copyMetadataAndSetIndexAttrs(int columnIndex, boolean indexedFlag, int indexValueBlockSize) {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                if (i != columnIndex) {
-                    writeColumnEntry(i, false);
-                } else {
-                    ddlMem.putInt(getColumnType(metaMem, i));
-                    long flags = getColumnFlags(metaMem, columnIndex);
-                    if (indexedFlag) {
-                        flags |= META_FLAG_BIT_INDEXED;
-                    } else {
-                        flags &= ~META_FLAG_BIT_INDEXED;
-                    }
-                    ddlMem.putLong(flags);
-                    ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.skip(16);
-                }
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            return index;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private long copyMetadataAndUpdateVersion() {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            this.metaSwapIndex = index;
-            return nameOffset;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
     private int copyOverwrite(Path to) {
         int res = ff.copy(other.$(), to.$());
         if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
             // Windows throws an error the destination file already exists, other platforms do not
             if (!ff.removeQuiet(to.$())) {
-                // If file is open, return here so that errno is 5 in the error message
+                // If the file is open, return here so that errno is 5 in the error message
                 return -1;
             }
             return ff.copy(other.$(), to.$());
@@ -3908,23 +4088,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return res;
     }
 
-    private void copyVersionAndLagValues() {
-        ddlMem.putInt(ColumnType.VERSION);
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putLong(metaMem.getLong(META_OFFSET_O3_MAX_LAG));
-        ddlMem.putLong(txWriter.getMetadataVersion() + 1);
-        ddlMem.putBool(metaMem.getBool(META_OFFSET_WAL_ENABLED));
-        metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
+    private void copyPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+        try {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final String columnName = metadata.getColumnName(columnIndex);
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+
+                    // no data in partition for this column
+                    if (columnTop == -1) {
+                        continue;
+                    }
+
+                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+
+                    BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    BitmapIndexUtils.keyFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.copy(path.$(), other.$()) < 0) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not copy index key file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+
+                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.copy(path.$(), other.$()) < 0) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not copy index value file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not copy index files [table=").$safe(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", error=").$safe(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
     }
 
     /**
-     * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
-     * append index data. Therefore, it must be called before primary column is initialized.
+     * Creates bitmap index files for a column. This method uses primary column instance as a temporary tool to
+     * append index data. Therefore, it must be called before the primary column is initialized.
      *
      * @param columnName              column name
      * @param indexValueBlockCapacity approximate number of values per index key
-     * @param plen                    path length. This is used to trim shared path object to.
+     * @param plen                    path length. This is used to trim the shared path object to.
      */
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, int plen, boolean force) {
         try {
@@ -3932,6 +4156,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (!force && ff.exists(path.$())) {
                 return;
+            } else {
+                ff.removeQuiet(path.$());
             }
 
             // reuse memory column object to create index and close it at the end
@@ -3940,10 +4166,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ddlMem.truncate();
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
-                // looks like we could not create key file properly
-                // lets not leave half-baked file sitting around
+                // looks like we could not create the key file properly;
+                // let's not leave a half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
+                        .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 if (!ff.removeQuiet(path.$())) {
@@ -3978,19 +4205,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.size(),
                 txWriter
         );
-        // In case there are some dirty files left from rolled back transaction
-        // clean the newly created symbol files.
-        w.truncate();
+
+        try {
+            // In case, there are some dirty files left from rolled back transaction
+            // clean the newly created symbol files.
+            w.truncate();
+        } catch (Throwable t) {
+            // oh, well, we tried and it failed. this can happen if there is e.g., I/O issue.
+            // we can't do much about it but make sure we close the writer to avoid leaks
+            w.close();
+            throw t;
+        }
+
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-        symbolMap.setPos(symbolMapDiff.getSize());
+        symbolMap.setPos(symbolMapDiff.getRecordCount());
 
         // This is defensive. It validates that all the symbols used in WAL are set in SymbolMapDiff
-        symbolMap.setAll(symbolMapDiff.getSize(), -1);
+        symbolMap.setAll(symbolMapDiff.getRecordCount(), -1);
         final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
@@ -4003,7 +4239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final CharSequence symbolValue = entry.getSymbol();
             final int newKey = mapWriter.put(symbolValue);
             identical &= newKey == entry.getKey();
-            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
+            symbolMap.set(entry.getKey() - cleanSymbolCount, newKey);
         }
         return identical;
     }
@@ -4050,7 +4286,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3dstDataOffset = 0;
                 }
 
-                // move count + 1 rows, to make sure index column remains n+1
+                // move count+1 rows, to make sure index column remains n+1
                 // the data is copied back to start of the buffer, no need to set dataVectorCopySize first
                 long o3dstAuxAddr = mapAppendColumnBuffer(dstAuxMem, o3dstAuxOffset, o3dstAuxSize, true);
                 assert o3dstAuxAddr != 0;
@@ -4115,7 +4351,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             } else if (designatedTimestamp) {
-                // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
+                // WAL format has timestamp written as 2 LONGs per record in so-called timestamp index data structure.
                 // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
                 // The sort will convert the format back to timestamp index data structure.
                 long srcLo = o3SrcDataMem.addressOf(o3srcDataOffset);
@@ -4163,7 +4399,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
             final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
-            long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
+            long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl : 0;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long srcLag = Math.abs(lagAddr);
@@ -4194,22 +4430,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 switch (shl) {
                     case 0:
-                        Vect.mergeShuffle8BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle8Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 1:
-                        Vect.mergeShuffle16BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle16Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 2:
-                        Vect.mergeShuffle32BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle32Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 3:
-                        Vect.mergeShuffle64BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle64Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 4:
-                        Vect.mergeShuffle128BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle128Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 5:
-                        Vect.mergeShuffle256BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle256Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     default:
                         assert false : "col type is unsupported";
@@ -4263,7 +4499,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final long src1DataSize = columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1);
             assert o3dataMem.size() >= src1DataSize;
-            final long lagAuxOffset = columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex));
+            final long lagAuxOffset = lagRows > 0 ? columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex)) : 0;
             final long lagAuxSize = columnTypeDriver.getAuxVectorSize(lagRows);
             final long signedLagAuxAddr = lagRows > 0 ? mapAppendColumnBuffer(lagAuxMem, lagAuxOffset, lagAuxSize, false) : 0;
 
@@ -4365,7 +4601,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Linux requires the mmap offset to be page aligned
                         final long alignedOffset = Files.floorPageSize(colAuxMemOffset);
                         alignedExtraLen = colAuxMemOffset - alignedOffset;
-                        colAuxMemAddr = mapRO(ff, colAuxMem.getFd(), colAuxMemRequiredSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                        colAuxMemAddr = TableUtils.mapRO(ff, colAuxMem.getFd(), colAuxMemRequiredSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
@@ -4425,7 +4661,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long address = srcDataMem.map(srcFixOffset, srcFixLen);
                 boolean locallyMapped = address == 0;
 
-                // column could not provide necessary length of buffer
+                // column could not provide the necessary length of buffer
                 // because perhaps its internal buffer is not big enough
                 if (!locallyMapped) {
                     alignedExtraLen = 0;
@@ -4494,12 +4730,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long dataSize = columnTypeDriver.getDataVectorSize(srcAuxMem.addressOf(0), columnDataRowOffset, columnDataRowOffset + copyToLagRowCount - 1);
                     final long destOffset = existingLagRows == 0 ? 0L : columnTypeDriver.getDataVectorOffset(dstAuxMem.addressOf(0), existingLagRows);
 
-                    // adjust append position of the index column to
+                    // adjust the append-position of the index column to
                     // maintain n+1 number of entries
                     long rowLimit = columnTypeDriver.getAuxVectorSize(existingLagRows + copyToLagRowCount);
                     dstAuxMem.jumpTo(rowLimit);
 
-                    // move count + 1 rows, to make sure index column remains n+1
+                    // move count+1 rows, to make sure index column remains n+1
                     // the data is copied back to start of the buffer, no need to set dataSize first
                     long dstAddr = dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows));
                     long dstAddrLimit = dstAuxMem.addressOf(rowLimit);
@@ -4526,16 +4762,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     Vect.memmove(dstDataMem.addressOf(destOffset), srcDataMem.addressOf(sourceOffset), size);
                 }
 
-                // the data is copied back to start of the buffer, no need to set size first
+                // the data is copied back to the start of the buffer, no need to set size first
             } else {
                 MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
 
                 // Special case, designated timestamp column
-                // Move values and set index to  0..copyToLagRowCount
+                // Move values and set index to 0..copyToLagRowCount
                 final long sourceOffset = columnDataRowOffset << 4;
                 o3TimestampMem.jumpTo((copyToLagRowCount + existingLagRows) << 4);
                 final long dstTimestampAddr = o3TimestampMem.getAddress() + (existingLagRows << 4);
-                Vect.shiftTimestampIndexChecked(o3SrcDataMem.addressOf(sourceOffset), copyToLagRowCount, dstTimestampAddr);
+                Vect.shiftTimestampIndex(o3SrcDataMem.addressOf(sourceOffset), copyToLagRowCount, dstTimestampAddr);
             }
         } catch (Throwable ex) {
             handleColumnTaskException(
@@ -4649,7 +4885,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
-        LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken).$(", totalRows=").$(longIndexLength).$(", lagRows=").$(lagRows).I$();
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
         try {
@@ -4694,7 +4929,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             if (lagRows > 0) {
                                 long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
-                                long roHi = roLo + lagRows;
 
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
@@ -4706,7 +4940,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 long lagVarDataAddrRaw = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
                                 long lagVarDataAddr = Math.abs(lagVarDataAddrRaw);
                                 // Aux points into the var buffer as if it's mapped from 0 row.
-                                // Compensate the mapped with offset address of var buffer by subtracting lagVarDataOffset
+                                // Compensate mapped with offset address of var buffer by subtracting lagVarDataOffset
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, lagAuxKeyAddr, lagVarDataAddr - lagVarDataOffset, lagVarDataSize + lagVarDataOffset);
                                 DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddrRaw, lagAuxOffset, lagAuxSize);
                                 DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddrRaw, lagVarDataOffset);
@@ -4718,7 +4952,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 assert dedupKeyIndex <= dedupColumnCommitAddresses.getColumnCount();
             }
-            return Vect.dedupSortedTimestampIndexIntKeysChecked(
+            long deduplicatedRowCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
                     indexSrcAddr,
                     longIndexLength,
                     indexDstAddr,
@@ -4726,6 +4960,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupKeyIndex,
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
             );
+
+            LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
+                    .$(", totalRows=").$(longIndexLength)
+                    .$(", lagRows=").$(lagRows)
+                    .$(", dups=")
+                    .$(deduplicatedRowCount > 0 ? longIndexLength - deduplicatedRowCount : 0)
+                    .I$();
+            return deduplicatedRowCount;
         } finally {
             if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
                 // Release mapped column buffers for lag rows
@@ -4770,7 +5012,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnType > 0) {
                 long cursor = pubSeq.next();
 
-                // Pass column index as -1 when it's designated timestamp column to o3 move method
+                // Pass column index as -1 when it's a designated timestamp column to o3 move method
                 if (cursor > -1) {
                     try {
                         final ColumnTask task = queue.get(cursor);
@@ -4805,7 +5047,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.freeObjList(indexers);
         denseIndexers.clear();
         Misc.free(txWriter);
-        Misc.free(metaMem);
         Misc.free(ddlMem);
         Misc.free(other);
         Misc.free(todoMem);
@@ -4817,14 +5058,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
-        closeWalFiles();
+        Misc.free(parquetDecoder);
+        Misc.free(parquetStatBuffers);
+        Misc.free(parquetColumnIdsAndTypes);
+        Misc.free(segmentCopyInfo);
+        Misc.free(walTxnDetails);
+        Misc.free(blockFileWriter);
+        tempDirectMemList = Misc.free(tempDirectMemList);
+        if (segmentFileCache != null) {
+            segmentFileCache.closeWalFiles();
+        }
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         convertOperatorImpl = Misc.free(convertOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
-        Misc.free(frameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         try {
@@ -4838,15 +5087,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tempMem16b != 0) {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
-            LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            LOG.info().$("closed '").$(tableToken).I$();
         }
     }
 
     private boolean dropPartitionByExactTimestamp(long timestamp) {
-        final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
-        final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+        final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
+        final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
-        timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
@@ -4856,7 +5104,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
-
             // removing active partition
 
             // calculate new transient row count, min/max timestamps and find the partition to open next
@@ -4869,66 +5116,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 prevTimestamp = 0L; // meaningless
             } else {
                 final int prevIndex = index - 1;
+                final long parquetSize = txWriter.getPartitionParquetFileSize(prevIndex);
                 prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 try {
-                    setPathForPartition(path.trimTo(pathSize), partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                    setPathForNativePartition(path.trimTo(pathSize), partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetSize, newTransientRowCount);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
                     path.trimTo(pathSize);
                 }
             }
 
-            columnVersionWriter.removePartition(timestamp);
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
+            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);
 
             if (index != 0) {
-                openPartition(prevTimestamp);
+                openPartition(prevTimestamp, newTransientRowCount);
                 setAppendPosition(newTransientRowCount, false);
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
             }
         } else {
-
             // when we want to delete first partition we must find out minTimestamp from
-            // next partition if it exists, or next partition, and so on
+            // the next partition if it exists, or the next partition, and so on
             //
             // when somebody removed data directories manually and then attempts to tidy
-            // up metadata with logical partition delete we have to uphold the effort and
+            // up metadata with logical partition delete, we have to uphold the effort and
             // re-compute table size and its minTimestamp from what remains on disk
 
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
             if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestampByIndex(1));
+                nextMinTimestamp = readMinTimestamp();
             }
 
-            columnVersionWriter.removePartition(timestamp);
-
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
+            columnVersionWriter.removePartition(timestamp);
         }
 
-        // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         return true;
     }
 
@@ -4952,50 +5194,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 tableToken,
                 partitionBy,
                 asyncOnly,
-                metadata,
                 getTruncateVersion(),
                 getTxn()
         );
         purgingOperator.clear();
-    }
-
-    private void finishMetaSwapUpdate() {
-        finishMetadataSwap();
-        bumpMetadataVersion();
-        clearTodoLog();
-    }
-
-    private void finishMetaSwapUpdateStructural() {
-        // rename _meta to _meta.prev
-        finishMetadataSwap();
-
-        bumpMetadataAndColumnStructureVersion();
-        clearTodoLog();
-    }
-
-    private void finishMetadataSwap() {
-        // rename _meta to _meta.prev
-        this.metaPrevIndex = rename(fileOperationRetryCount);
-        writeRestoreMetaTodo();
-
-        try {
-            // rename _meta.swp to -_meta
-            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-        } catch (CairoException e) {
-            try {
-                recoverFromTodoWriteFailure(null);
-            } catch (CairoException e2) {
-                throwDistressException(e2);
-            }
-            throw e;
-        }
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
     }
 
     private void finishO3Append(long o3LagRowCount) {
@@ -5006,14 +5208,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Alright, we finished updating partitions. Now we need to get this writer instance into
         // a consistent state.
         //
-        // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
-        // move append memory to new set of files. Otherwise, we stay on the same set but advance to append position.
+        // We start with ensuring append memory is in ready-to-use state. When max timestamp changes, we need to
+        // move append memory to a new set of files. Otherwise, we stay on the same set but advance to append position.
         avoidIndexOnCommit = o3ErrorCount.get() == 0;
         if (o3LagRowCount == 0) {
             clearO3();
             LOG.debug().$("lag segment is empty").$();
         } else {
-            // adjust O3 master ref so that virtual row count becomes equal to value of "o3LagRowCount"
+            // adjust O3 master ref so that virtual row count becomes equal to the value of "o3LagRowCount"
             this.o3MasterRef = this.masterRef - o3LagRowCount * 2 + 1;
             LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount0()).I$();
         }
@@ -5023,28 +5225,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!o3InError) {
             updateO3ColumnTops();
         }
-        if (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit) {
-            openPartition(txWriter.getLastPartitionTimestamp());
+        if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
+            openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
         }
 
         // Data is written out successfully, however, we can still fail to set append position, for
-        // example when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+        // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
         // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
         // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
         try {
-            setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+            // Set append position if this commit did not result in full table truncate
+            // which is possible with replace commits.
+            if (txWriter.getTransientRowCount() > 0) {
+                setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+            }
         } catch (Throwable e) {
             LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
             distressed = true;
             throw e;
         }
 
-        metrics.tableWriter().incrementO3Commits();
+        metrics.tableWriterMetrics().incrementO3Commits();
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
         utf8Sink.clear();
-        TableUtils.setSinkForPartition(utf8Sink, partitionBy, partitionTimestamp, nameTxn);
+        setSinkForNativePartition(utf8Sink, partitionBy, partitionTimestamp, nameTxn);
         return utf8Sink;
     }
 
@@ -5158,6 +5364,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
+    @NotNull
+    private DirectLongList getTempDirectLongList(long capacity) {
+        if (tempDirectMemList == null) {
+            tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
+            tempDirectMemList.zero();
+            return tempDirectMemList;
+        }
+        tempDirectMemList.clear();
+        tempDirectMemList.setCapacity(capacity);
+        tempDirectMemList.zero();
+        return tempDirectMemList;
+    }
+
     private long getWalMaxLagRows() {
         return Math.min(
                 Math.max(0L, (long) configuration.getWalLagRowsMultiplier() * metadata.getMaxUncommittedRows()),
@@ -5168,7 +5387,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long getWalMaxLagSize() {
         long maxLagSize = configuration.getWalMaxLagSize();
         return (maxLagSize /
-                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
+                (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata))));
     }
 
     private void handleColumnTaskException(
@@ -5182,8 +5401,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Throwable e
     ) {
         o3ErrorCount.incrementAndGet();
-        LogRecord logRecord = LOG.critical().$(message + " [table=").$(tableToken.getTableName())
-                .$(", column=").$(getColumnNameSafe(columnIndex))
+        LogRecord logRecord = LOG.critical().$(message + " [table=").$safe(tableToken.getTableName())
+                .$(", column=").$safe(getColumnNameSafe(columnIndex))
                 .$(", type=").$(ColumnType.nameOf(columnType))
                 .$(", long0=").$(long0)
                 .$(", long1=").$(long1)
@@ -5192,8 +5411,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (e instanceof CairoException) {
             o3oomObserved = ((CairoException) e).isOutOfMemory();
             lastErrno = lastErrno == 0 ? ((CairoException) e).errno : lastErrno;
-            logRecord.$(", errno=").$(lastErrno)
-                    .$(", ex=").$(((CairoException) e).getFlyweightMessage())
+            logRecord
+                    .$(", msg=").$safe(((CairoException) e).getFlyweightMessage())
+                    .$(", errno=").$(lastErrno)
                     .I$();
         } else {
             lastErrno = O3_ERRNO_FATAL;
@@ -5201,7 +5421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, int columnType) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
@@ -5212,7 +5432,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
                     if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
                         long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                         columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
@@ -5220,18 +5440,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, isIndexed, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
                 long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
 
             if (ColumnType.isSymbol(columnType)) {
                 // Link .o, .c, .k, .v symbol files in the table root folder
-                linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                purgingOperator.add(columnIndex, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+                try {
+                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    if (!symbolCapacityChange) {
+                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    } else {
+                        // in case it's symbol capacity rebuild copy symbol offset file.
+                        // it's almost the same but the capacity in the file header is changed
+                        ff.copy(offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    }
+                } catch (Throwable e) {
+                    ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    throw e;
+                }
+                purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
             }
             long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
             columnVersionWriter.upsertDefaultTxnName(columnIndex, newColumnNameTxn, columnAddedPartition);
@@ -5241,55 +5475,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, int columnType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
-        setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
-        setPathForPartition(other, partitionBy, partitionTimestamp, partitionNameTxn);
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, boolean isIndexed, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
+        setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(other, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, newColumnNameTxn));
         if (ColumnType.isVarSize(columnType)) {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
-        } else if (ColumnType.isSymbol(columnType) && metadata.isColumnIndexed(columnIndex)) {
+        } else if (ColumnType.isSymbol(columnType) && isIndexed) {
             linkFile(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn), keyFileName(other.trimTo(plen), newName, newColumnNameTxn));
             linkFile(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn), valueFileName(other.trimTo(plen), newName, newColumnNameTxn));
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        purgingOperator.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    /**
+     * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
+     * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
+     * the data IS committed.
+     * <p>
+     * What we need to achieve, is to report that data has been committed, but table writes should be discarded. It is
+     * necessary when housekeeping runs into an error. To indicate the situation where data is committed.
+     */
+    private void housekeep() {
+        try {
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
+            processPartitionRemoveCandidates();
+            metrics.tableWriterMetrics().incrementCommits();
+            enforceTtl();
+        } catch (Throwable e) {
+            // Log the exception stack.
+            LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
+                    .$(", error=").$(e)
+                    .I$();
+            CairoException ex;
+            if (e instanceof Sinkable) {
+                ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
+            } else {
+                ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
+            }
+            ex.setHousekeeping(true);
+            throw ex;
+        }
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, int columnIndex) {
-        long ts = this.txWriter.getMaxTimestamp();
+        long ts = txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NULL) {
             try {
                 // Index last partition separately
                 for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
-
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, timestamp);
 
                     if (ff.exists(path.$())) {
                         final int plen = path.size();
-
-                        long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
-
-                        if (ff.exists(TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn))) {
-                            path.trimTo(plen);
-                            LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
-
-                            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
-                            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-                            final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
-
-                            if (columnTop > -1L && partitionSize > columnTop) {
-                                long columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
-                                try {
-                                    indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                                    indexer.index(ff, columnDataFd, columnTop, partitionSize);
-                                } finally {
-                                    ff.close(columnDataFd);
-                                }
-                            }
+                        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
+                        if (txWriter.isPartitionParquet(i)) {
+                            indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, plen, timestamp);
+                        } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
+                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, plen, timestamp);
                         }
                     }
                 }
@@ -5310,6 +5558,116 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
+    }
+
+    private void indexNativePartition(
+            SymbolColumnIndexer indexer,
+            CharSequence columnName,
+            int columnIndex,
+            long columnNameTxn,
+            int indexValueBlockSize,
+            int plen,
+            long timestamp
+    ) {
+        path.trimTo(plen);
+        LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
+
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+
+        if (columnTop > -1 && partitionSize > columnTop) {
+            long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
+            try {
+                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                indexer.index(ff, columnDataFd, columnTop, partitionSize);
+            } finally {
+                ff.close(columnDataFd);
+            }
+        }
+    }
+
+    private void indexParquetPartition(
+            SymbolColumnIndexer indexer,
+            CharSequence columnName,
+            int partitionIndex,
+            int columnIndex,
+            long columnNameTxn,
+            int indexValueBlockSize,
+            int plen,
+            long timestamp
+    ) {
+        // parquet partition
+        path.trimTo(plen);
+        LOG.info().$("indexing parquet [path=").$substr(pathRootSize, path).I$();
+
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
+            parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+            parquetAddr = mapRO(ff, path.concat(PARQUET_PARTITION_NAME).$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+
+            int parquetColumnIndex = -1;
+            for (int idx = 0, cnt = parquetMetadata.columnCount(); idx < cnt; idx++) {
+                if (parquetMetadata.columnId(idx) == columnIndex) {
+                    parquetColumnIndex = idx;
+                    break;
+                }
+            }
+            if (parquetColumnIndex == -1) {
+                path.trimTo(plen);
+                LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$substr(pathRootSize, path)
+                        .$(", columnIndex=").$(columnIndex)
+                        .I$();
+                return;
+            }
+
+            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+            final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+
+            if (columnTop > -1 && partitionSize > columnTop) {
+                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+
+                parquetColumnIdsAndTypes.clear();
+                parquetColumnIdsAndTypes.add(parquetColumnIndex);
+                parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
+
+                long rowCount = 0;
+                final int rowGroupCount = parquetMetadata.rowGroupCount();
+                final BitmapIndexWriter indexWriter = indexer.getWriter();
+                for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                    final int rowGroupSize = parquetMetadata.rowGroupSize(rowGroupIndex);
+                    if (rowCount + rowGroupSize <= columnTop) {
+                        rowCount += rowGroupSize;
+                        continue;
+                    }
+
+                    parquetDecoder.decodeRowGroup(
+                            rowGroupBuffers,
+                            parquetColumnIdsAndTypes,
+                            rowGroupIndex,
+                            (int) Math.max(0, columnTop - rowCount),
+                            rowGroupSize
+                    );
+
+                    long rowId = Math.max(rowCount, columnTop);
+                    final long addr = rowGroupBuffers.getChunkDataPtr(0);
+                    final long size = rowGroupBuffers.getChunkDataSize(0);
+                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p)), rowId);
+                    }
+
+                    rowCount += rowGroupSize;
+                }
+                indexWriter.setMaxValue(partitionSize - 1);
+            }
+        } finally {
+            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            Misc.free(parquetDecoder);
+        }
     }
 
     private void initLastPartition(long timestamp) {
@@ -5358,7 +5716,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         column.jumpTo(offset + size);
         long address = column.map(offset, size);
 
-        // column could not provide necessary length of buffer
+        // column could not provide the necessary length of buffer
         // because perhaps its internal buffer is not big enough
         if (address != 0) {
             return address;
@@ -5373,105 +5731,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void mmapWalColsEager() {
-        for (int i = 0, n = walMappedColumns.size(); i < n; i++) {
-            MemoryCR columnMem = o3Columns.get(i);
-            if (columnMem != null) {
-                columnMem.map();
-            }
-        }
-    }
-
-    private void mmapWalColumns(@Transient Path walPath, long walSegmentId, int timestampIndex, long rowLo, long rowHi) {
-        walMappedColumns.clear();
-        int walPathLen = walPath.size();
-        final int columnCount = metadata.getColumnCount();
-        int key = walFdCache.keyIndex(walSegmentId);
-        LongList fds = null;
-        if (key < 0) {
-            fds = walFdCache.valueAt(key);
-        }
-
-        try {
-            int file = 0;
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                final int columnType = metadata.getColumnType(columnIndex);
-                o3RowCount = rowHi - rowLo;
-                if (columnType > 0) {
-                    int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
-
-                    if (ColumnType.isVarSize(columnType)) {
-                        MemoryCMOR auxMem = walColumnMemoryPool.pop();
-                        MemoryCMOR dataMem = walColumnMemoryPool.pop();
-
-                        walMappedColumns.add(dataMem);
-                        walMappedColumns.add(auxMem);
-
-                        final long dataFd = fds != null ? fds.get(file++) : -1;
-                        final long auxFd = fds != null ? fds.get(file++) : -1;
-
-                        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-
-                        LPSZ ifile = auxFd == -1 ? iFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
-                        LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        columnTypeDriver.configureAuxMemOM(
-                                configuration.getFilesFacade(),
-                                auxMem,
-                                auxFd,
-                                ifile,
-                                rowLo,
-                                rowHi,
-                                MemoryTag.MMAP_TABLE_WRITER,
-                                CairoConfiguration.O_NONE
-                        );
-                        walPath.trimTo(walPathLen);
-
-                        LPSZ dfile = dataFd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
-                        LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", wal=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        columnTypeDriver.configureDataMemOM(
-                                configuration.getFilesFacade(),
-                                auxMem,
-                                dataMem,
-                                dataFd,
-                                dfile,
-                                rowLo,
-                                rowHi,
-                                MemoryTag.MMAP_TABLE_WRITER,
-                                CairoConfiguration.O_NONE
-                        );
-                    } else {
-                        MemoryCMOR primary = walColumnMemoryPool.pop();
-                        walMappedColumns.add(primary);
-                        walMappedColumns.add(null);
-
-                        long fd = fds != null ? fds.get(file++) : -1;
-                        LPSZ dfile = fd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
-                        LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        primary.ofOffset(
-                                configuration.getFilesFacade(),
-                                fd,
-                                dfile,
-                                rowLo << sizeBitsPow2,
-                                rowHi << sizeBitsPow2,
-                                MemoryTag.MMAP_TX_LOG,
-                                CairoConfiguration.O_NONE
-                        );
-                    }
-                    walPath.trimTo(walPathLen);
-                } else {
-                    walMappedColumns.add(null);
-                    walMappedColumns.add(null);
-                }
-            }
-            o3Columns = walMappedColumns;
-        } catch (Throwable th) {
-            closeWalColumns(true, walSegmentId);
-            throw th;
-        }
-    }
-
     private Row newRowO3(long timestamp) {
-        LOG.info().$("switched to o3 [table=").utf8(tableToken.getTableName()).I$();
+        LOG.info().$("switched to o3 [table=").$safe(tableToken.getTableName()).I$();
         txWriter.beginPartitionSizeUpdate();
         o3OpenColumns();
         o3InError = false;
@@ -5482,12 +5743,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Commits O3 data. Lag is optional. When 0 is specified the entire O3 segment is committed.
+     * Commits O3 data. Lag is optional. When 0 is specified, the entire O3 segment is committed.
      *
      * @param o3MaxLag interval in microseconds that determines the length of O3 segment that is not going to be
-     *                 committed to disk. The interval starts at max timestamp of O3 segment and ends <i>o3MaxLag</i>
+     *                 committed to disk. The interval starts at max timestamp of the O3 segment and ends <i>o3MaxLag</i>
      *                 microseconds before this timestamp.
-     * @return <i>true</i> when commit has is a NOOP, e.g. no data has been committed to disk. <i>false</i> otherwise.
+     * @return <i>true</i> when commit has is a NOOP, e.g., no data has been committed to disk. <i>false</i> otherwise.
      */
     private boolean o3Commit(long o3MaxLag) {
         o3RowCount = getO3RowCount0();
@@ -5505,19 +5766,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
             //
-            // to determine that 'ooTimestampLo' goes into current partition
+            // to determine that 'ooTimestampLo' goes into the current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            LOG.debug().$("sorting o3 [table=").utf8(tableToken.getTableName()).I$();
+            LOG.debug().$("sorting o3 [table=").$safe(tableToken.getTableName()).I$();
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
-            // ensure there is enough size
+            // resize timestamp memory if needed
             assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
-                Vect.radixSortLongIndexAscInPlaceChecked(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+                Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
             } else {
-                Vect.quickSortLongIndexAscInPlaceChecked(sortedTimestampsAddr, o3RowCount);
+                Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
             }
 
             // we have three frames:
@@ -5529,13 +5790,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
             if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             // Safe check of the sort. No known way to reproduce
@@ -5544,9 +5805,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (o3MaxLag > 0) {
                 long lagError = 0;
                 if (getMaxTimestamp() != Long.MIN_VALUE) {
-
                     // When table already has data we can calculate the overlap of the newly added
-                    // batch of records with existing data in the table. Positive value of the overlap
+                    // batch of records with existing data in the table. The positive value of the overlap
                     // means that our o3EffectiveLag was undersized.
 
                     lagError = getMaxTimestamp() - o3CommitBatchTimestampMin;
@@ -5583,7 +5843,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             lagThresholdTimestamp,
                             0,
                             o3RowCount - 1,
-                            BinarySearch.SCAN_DOWN
+                            Vect.BIN_SEARCH_SCAN_DOWN
                     );
                     o3LagRowCount = o3RowCount - lagThresholdRow - 1;
                     if (o3LagRowCount > maxUncommittedRows) {
@@ -5605,7 +5865,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                LOG.info().$("o3 commit [table=").utf8(tableToken.getTableName())
+                LOG.info().$("o3 commit [table=").$safe(tableToken.getTableName())
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
                         .$(", o3TimestampMin=").$ts(o3TimestampMin)
                         .$(", o3TimestampMax=").$ts(o3TimestampMax)
@@ -5621,7 +5881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             } else {
                 LOG.info()
-                        .$("o3 commit [table=").utf8(tableToken.getTableName())
+                        .$("o3 commit [table=").$safe(tableToken.getTableName())
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
                 srcOooMax = o3RowCount;
@@ -5645,7 +5905,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             dispatchColumnTasks(sortedTimestampsAddr, sortedTimestampsRowCount, IGNORE, IGNORE, IGNORE, cthO3SortColumnRef);
             swapO3ColumnsExcept(timestampColumnIndex);
             LOG.info()
-                    .$("sorted [table=").utf8(tableToken.getTableName())
+                    .$("sorted [table=").$safe(tableToken.getTableName())
                     .$(", o3RowCount=").$(o3RowCount)
                     .I$();
 
@@ -5658,7 +5918,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampMax,
                     true,
                     0L,
-                    O3JobParallelismRegulator.EMPTY
+                    TableWriterPressureControl.EMPTY
             );
         } finally {
             finishO3Append(o3LagRowCount);
@@ -5685,7 +5945,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
-            boolean isParquet
+            boolean isParquet,
+            long o3TimestampLo,
+            long o3TimestampHi
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -5713,7 +5975,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     oldPartitionSize,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    isParquet
+                    isParquet,
+                    o3TimestampLo,
+                    o3TimestampHi
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -5740,7 +6004,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     oldPartitionSize,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    isParquet
+                    isParquet,
+                    o3TimestampLo,
+                    o3TimestampHi
             );
         }
     }
@@ -5749,6 +6015,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long blockIndex = -1;
 
         long commitTransientRowCount = txWriter.transientRowCount;
+        boolean partitionsRemoved = false, firstPartitionRemoved = false, lastPartitionRemoved = false;
 
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
@@ -5762,55 +6029,77 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+                if (!partitionMutates && srcDataNewPartitionSize < 0) {
+                    // noop
+                    continue;
+                }
 
-                txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
+                boolean isMinPartitionUpdate = partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
+                        && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
+                boolean isFirstPartitionReplaced = isCommitReplaceMode() && isMinPartitionUpdate;
+
+                txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
 
                 final long newPartitionTimestamp = partitionTimestamp;
                 final int newPartitionIndex = partitionIndexRaw;
                 if (partitionIndexRaw < 0) {
-                    // This is partition split. Instead of rewriting partition because of O3 merge
+                    // This is partition split. Instead of rewriting partition because of O3 merge,
                     // the partition is kept, and its tail rewritten.
                     // The new partition overlaps in time with the previous one.
                     partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestamp);
                     partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                 }
 
+                if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
+                    if (!partitionMutates) {
+                        // Replace resulted in trimming the partition.
+                        // Now trim the column tops so that they don't exceed the partition size
+                        o3ConsumePartitionUpdateSink_trimPartitionColumnTops(partitionTimestamp, srcDataNewPartitionSize);
+                    }
+
+                    if (partitionTimestamp == lastPartitionTimestamp) {
+                        // Recalculate max timestamp
+                        partitionsRemoved = true;
+                        lastPartitionRemoved = true;
+                    }
+                }
+
                 if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
-                        // Last partition is rewritten.
+                        // The last partition is rewritten.
                         closeActivePartition(true);
                     } else if (!isLastWrittenPartition) {
-                        // Last partition is appended, and it is not the last partition anymore.
+                        // The last partition is appended, and it is not the last partition anymore.
                         closeActivePartition(srcDataNewPartitionSize);
                     } else {
-                        // Last partition is appended, and it is still the last partition.
+                        // The last partition is appended, and it is still the last partition.
                         setAppendPosition(srcDataNewPartitionSize, false);
                     }
                 }
 
                 if (partitionTimestamp < lastPartitionTimestamp) {
                     // increment fixedRowCount by number of rows old partition incremented
-                    this.txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
+                    txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
                 } else {
                     if (partitionTimestamp != lastPartitionTimestamp) {
-                        this.txWriter.fixedRowCount += commitTransientRowCount;
+                        txWriter.fixedRowCount += commitTransientRowCount;
                     }
                     if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" active becomes fixed
-                        this.txWriter.fixedRowCount += srcDataNewPartitionSize;
+                        txWriter.fixedRowCount += srcDataNewPartitionSize;
                         commitTransientRowCount = o3SplitPartitionSize;
                     } else {
                         commitTransientRowCount = srcDataNewPartitionSize;
                     }
                 }
 
-                LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
+                LOG.info().$("o3 partition update [timestampMin=").$ts(timestampMin)
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)
-                        .$(", lastPartitionTimestamp=").$(lastPartitionTimestamp)
+                        .$(", lastPartitionTimestamp=").$ts(lastPartitionTimestamp)
                         .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
                         .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                         .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
@@ -5820,7 +6109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (newPartitionTimestamp != partitionTimestamp) {
                     LOG.info()
-                            .$("o3 split partition [table=").utf8(tableToken.getTableName())
+                            .$("o3 split partition [table=").$safe(tableToken.getTableName())
                             .$(", part1=").$(
                                     formatPartitionForTimestamp(
                                             partitionTimestamp,
@@ -5836,7 +6125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.bumpPartitionTableVersion();
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
-                        // Close last partition without truncating it.
+                        // Close the last partition without truncating it.
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
                         closeActivePartition(committedLastPartitionSize);
                     }
@@ -5845,19 +6134,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {
                     final long srcNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
                     LOG.info()
-                            .$("merged partition [table=`").utf8(tableToken.getTableName())
+                            .$("merged partition [table=`").$safe(tableToken.getTableName())
                             .$("`, ts=").$ts(partitionTimestamp)
-                            .$(", txn=").$(txWriter.txn).I$();
+                            .$(", txn=").$(txWriter.txn)
+                            .$(", rows=").$(srcDataNewPartitionSize)
+                            .I$();
 
-                    final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
-                    if (parquetFileSize > -1) {
-                        // Since we're technically performing an "append" here,
-                        // there's no need to increment the txn or partition table version.
-                        txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
-                        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                    if (isCommitReplaceMode() && srcDataNewPartitionSize == 0) {
+                        // Partition data is fully removed by the replace-commit
+                        int partIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                        boolean isSplitPartition = partIndex > 0
+                                && txWriter.getPartitionFloor(txWriter.getPartitionTimestampByIndex(partIndex - 1)) == txWriter.getPartitionFloor(partitionTimestamp);
+
+                        // It is not easy to remove the split
+                        // the parent can become writable and we can overwrite / truncate data visible to the readers
+                        if (!isSplitPartition) {
+                            LOG.info().$("partition is fully removed in range replace [table=").$(tableToken)
+                                    .$(", ts=").$ts(partitionTimestamp)
+                                    .I$();
+
+                            txWriter.removeAttachedPartitions(partitionTimestamp);
+                            columnVersionWriter.removePartition(partitionTimestamp);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        } else {
+                            // Set partition size to 0 and process all 0 size partitions at the end of the method.
+                            // It will be removed if there are no readers on the previous partition.
+                            txWriter.updatePartitionSizeByTimestamp(partitionTimestamp, srcDataNewPartitionSize);
+                        }
+
+                        partitionsRemoved = true;
+                        firstPartitionRemoved |= partIndex == 0;
+                        boolean removedIsLast = partIndex == txWriter.getPartitionCount();
+                        lastPartitionRemoved |= removedIsLast;
+
+                        if (removedIsLast) {
+                            if (partIndex > 0) {
+                                int newLastPartitionIndex = partIndex - 1;
+                                long newLastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(newLastPartitionIndex);
+                                long newLastPartitionSize = txWriter.getPartitionSize(newLastPartitionIndex);
+                                columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
+
+                                // If a split partition is removed, it may leave the previous partition
+                                // with column top sticking out of the partition size.
+                                // This "sticking out" is not handled if it is the last partition.
+                                o3ConsumePartitionUpdateSink_trimPartitionColumnTops(newLastPartitionTimestamp, newLastPartitionSize);
+                            } else {
+                                // All partitions are removed
+                                columnVersionWriter.truncate();
+                            }
+                        }
                     } else {
-                        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
-                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
+                        if (parquetFileSize > -1) {
+                            txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                        } else {
+                            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        }
                         txWriter.bumpPartitionTableVersion();
                     }
                 } else {
@@ -5868,7 +6202,193 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
-        txWriter.transientRowCount = commitTransientRowCount;
+        if (partitionsRemoved) {
+            o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
+
+            // Replace commit removed some of the partitions
+            if (txWriter.getPartitionCount() > 0) {
+                try {
+                    if (firstPartitionRemoved) {
+                        // First partition is removed and no data added in the replace commit
+                        // We need to read the min timestamp from the next partition
+                        long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+                        long partitionSize = txWriter.getPartitionSize(0);
+                        setPathForNativePartition(path, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
+                        readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        txWriter.minTimestamp = attachMinTimestamp;
+                    }
+
+                    if (lastPartitionRemoved) {
+                        int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+                        long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
+                        long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
+                        setPathForNativePartition(path.trimTo(pathSize), partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
+                        readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        txWriter.maxTimestamp = attachMaxTimestamp;
+                    }
+                } finally {
+                    path.trimTo(pathSize);
+                }
+
+                txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), txWriter.getMaxTimestamp());
+                assert partitionTimestampHi != Long.MIN_VALUE;
+            } else {
+                LOG.info().$("replace commit truncated the table [table=").$(tableToken).$();
+                // All partitions are removed. The table is in the same state as softly truncated
+                freeColumns(false);
+                releaseIndexerWriters();
+                partitionTimestampHi = Long.MIN_VALUE;
+                lastPartitionTimestamp = Long.MIN_VALUE;
+
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+                txWriter.resetTimestamp();
+
+                columnVersionWriter.truncate();
+                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+            }
+            txWriter.bumpPartitionTableVersion();
+        } else {
+            txWriter.transientRowCount = commitTransientRowCount;
+        }
+    }
+
+    private void o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(Path partitionPath, long partitionTimestamp, long partitionSize) {
+        // Find how many rows of the same timestamp we need to split out to create a minimum size split partition
+        // this is needed sometimes when split partition is fully removed in a replace commit
+        int pathSize = partitionPath.size();
+        try {
+            CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+            final long fd = openRO(ff, dFile(partitionPath, tsColumnName, COLUMN_NAME_TXN_NONE), LOG);
+            try {
+                final long mapSize = partitionSize * Long.BYTES;
+                final long addr = mapRO(ff, fd, mapSize, MemoryTag.MMAP_TABLE_WRITER);
+                try {
+                    long lastTs = Unsafe.getUnsafe().getLong(addr + (partitionSize - 1) * Long.BYTES);
+
+                    long currentTs = lastTs - 1;
+                    long row = partitionSize - 2;
+                    for (; row >= 0; row--) {
+                        currentTs = Unsafe.getUnsafe().getLong(addr + row * Long.BYTES);
+                        if (currentTs != lastTs) {
+                            break;
+                        }
+                    }
+                    // Use attachMinTimestamp field to pass new partition size
+                    attachMinTimestamp = row + 1;
+                    // Use attachMaxTimestamp field to pass new partition max timestamp
+                    attachMaxTimestamp = row > -1 ? currentTs + 1 : partitionTimestamp;
+                } finally {
+                    ff.munmap(addr, mapSize, MemoryTag.MMAP_TABLE_WRITER);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            partitionPath.trimTo(pathSize);
+        }
+    }
+
+    private void o3ConsumePartitionUpdateSink_processSplitPartitionRemoval() {
+        // Process all the partitions with 0 sizes
+        // after running o3ConsumePartitionUpdateSink()
+        // 0 size partition means that the partition cannot be removed
+        // straight away because it is
+        // - split partition, say 2024-02-24T1258
+        // - parent partition 2024-02-24 may be used by a reader locked on txn before the split
+        //   and cannot have any data to be appended or partition files to be truncated
+        // The solution to this situation is before removal of the split partition 2024-02-24T1258
+        // we split one more partition from the parent partition 2024-02-24
+        // with 1 line (or minimum number of lines with the same timestamp)
+        // to another split, for example 2024-02-24T1257
+        // and then drop the split partition 2024-02-24T1258
+        for (int i = txWriter.getPartitionCount() - 1; i > 0; i--) {
+            long partitionSize = txWriter.getPartitionSize(i);
+            if (partitionSize == 0) {
+                // This is a split partition that is fully removed in the last commit.
+                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                long prevPartitionTimestamp = txWriter.getPartitionTimestampByIndex(i - 1);
+                long prevPartitionSize = txWriter.getPartitionSize(i - 1);
+                long prevPartitionTxn = txWriter.getPartitionNameTxn(i - 1);
+
+                if (txWriter.getPartitionFloor(partitionTimestamp) != txWriter.getPartitionFloor(prevPartitionTimestamp)
+                        || prevPartitionSize == 0
+                        || prevPartitionTxn == txWriter.txn
+                ) {
+                    // Previous partition is not the parent partition of this removed split
+                    // or previous partition is also 0 size, e.g. removed split
+                    // or the previous partition was just re-created in this commit
+                    // in this case we can remove the current partition fully
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                    txWriter.removeAttachedPartitions(partitionTimestamp);
+                } else {
+                    try {
+                        // The safe way to remove the split is to split one line from the parent partition
+                        // See comment in the beginning of this method.
+                        long prevPartitionNameTxn = setStateForTimestamp(path, prevPartitionTimestamp);
+                        o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(
+                                path,
+                                prevPartitionTimestamp,
+                                prevPartitionSize
+                        );
+                        long newPrevPartitionSize = attachMinTimestamp;
+                        long newSplitPartitionTimestamp = attachMaxTimestamp;
+
+                        assert newSplitPartitionTimestamp < partitionTimestamp || (newPrevPartitionSize == 0 && newSplitPartitionTimestamp == partitionTimestamp);
+
+                        // This logging should be quite rare, we can afford info level.
+                        LOG.info().$("splitting last line of the partition [table=").$(tableToken)
+                                .$(", partition=").$ts(prevPartitionTimestamp)
+                                .$(", oldSize=").$(prevPartitionSize)
+                                .$(", newSize=").$(newPrevPartitionSize)
+                                .$(", splitPartition=").$ts(newSplitPartitionTimestamp)
+                                .$(", splitPartitionNameTxn=").$(txWriter.txn)
+                                .$(", deletedSplitPartition=").$ts(partitionTimestamp)
+                                .$();
+
+                        int insertPartitionIndex = i;
+                        FrameFactory frameFactory = engine.getFrameFactory();
+                        try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
+                            // Create the source frame and then manipulate partitions in txWriter
+                            // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
+                            // to open 2 frames to the same partition timestamp
+                            if (newPrevPartitionSize == 0) {
+                                // newSplitPartitionTimestamp can be equal to partitionTimestamp
+                                partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
+                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
+                            } else {
+                                txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                            }
+
+                            txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
+                            setStateForTimestamp(other, newSplitPartitionTimestamp);
+                            ff.mkdir(other.$(), configuration.getMkDirMode());
+                            try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
+                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, configuration.getCommitMode());
+                            }
+                        }
+                        addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
+
+                        // Now it's safe to remove the empty split partition
+                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                    } finally {
+                        path.trimTo(pathSize);
+                        other.trimTo(pathSize);
+                    }
+                }
+            }
+        }
+    }
+
+    private void o3ConsumePartitionUpdateSink_trimPartitionColumnTops(long partitionTimestamp, long newPartitionSize) {
+        int columnCount = metadata.getColumnCount();
+        for (int column = 0; column < columnCount; column++) {
+            long colTop = getColumnTop(partitionTimestamp, column, -1);
+            if (colTop > newPartitionSize) {
+                columnVersionWriter.upsertColumnTop(partitionTimestamp, column, newPartitionSize);
+            }
+        }
     }
 
     private void o3ConsumePartitionUpdates() {
@@ -5918,7 +6438,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (cursor > -1) {
                 O3CopyTask copyTask = copyQueue.get(cursor);
                 if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
-                    O3CopyJob.copyIdle(
+                    O3CopyJob.unmapAndClose(
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
                             copyTask.getTimestampMergeIndexAddr(),
@@ -5974,7 +6494,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long transientRowsAdded = Math.min(transientRowCount, rowsAdded);
         if (transientRowsAdded > 0) {
             LOG.debug()
-                    .$("o3 move uncommitted [table=").utf8(tableToken.getTableName())
+                    .$("o3 move uncommitted [table=").$safe(tableToken.getTableName())
                     .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
             final long committedTransientRowCount = transientRowCount - transientRowsAdded;
@@ -6040,7 +6560,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryARW o3IndexMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
-            if (null == o3IndexMem) {
+            if (o3IndexMem == null) {
                 // Fixed size column
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
@@ -6097,7 +6617,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openLastPartitionAndSetAppendPosition(long ts) {
-        openPartition(ts);
+        openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
@@ -6112,15 +6632,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Adding column in the current transaction.
             long columnNameTxn = getTxn();
 
-            // index must be created before column is initialised because
-            // it uses primary column object as temporary tool
+            // index must be created before a column is initialised because
+            // it uses a primary column object as a temporary tool
             if (indexFlag) {
                 createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, plen, true);
             }
 
             openColumnFiles(name, columnNameTxn, columnIndex, plen);
             if (txWriter.getTransientRowCount() > 0) {
-                // write top offset to column version file
+                // write top offset to the column version file
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, txWriter.getTransientRowCount());
             }
 
@@ -6135,7 +6655,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ColumnType.getDriver(columnType).configureAuxMemMA(getSecondaryColumn(columnCount - 1));
             }
 
-            LOG.info().$("ADDED column '").utf8(name)
+            LOG.info().$("ADDED column '").$safe(name)
                     .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
                     .$(" to ").$substr(pathRootSize, path)
                     .$(" with columnTop ").$(txWriter.getTransientRowCount())
@@ -6145,10 +6665,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void openPartition(long timestamp) {
+    private void openPartition(long timestamp, long rowCount) {
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
-            setStateForTimestamp(path, timestamp);
+            lastOpenPartitionTxnName = setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
             int plen = path.size();
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
@@ -6169,8 +6689,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // prepare index writer if column requires indexing
                     if (indexer != null) {
                         // we have to create files before columns are open
-                        // because we are reusing MAMemoryImpl object from columns list
-                        createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, txWriter.getTransientRowCount() < 1);
+                        // because we are reusing MAMemoryImpl object from columns' list
+                        createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, rowCount < 1);
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);
@@ -6182,7 +6702,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             populateDenseIndexerList();
-            LOG.info().$("switched partition [path=").$substr(pathRootSize, path).I$();
+
+            LOG.info().$("switched partition [path=").$substr(pathRootSize, path)
+                    .$(", rowCount=").$(rowCount)
+                    .I$();
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -6213,7 +6736,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 return todoMem.getLong(32);
             } else {
-                TableUtils.resetTodoLog(ff, path, pathSize, todoMem);
+                resetTodoLog(ff, path, pathSize, todoMem);
                 todoTxn = 0;
                 return 0;
             }
@@ -6224,7 +6747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void performRecovery() {
         rollbackIndexes();
-        rollbackSymbolTables();
+        rollbackSymbolTables(false);
         performRecovery = false;
     }
 
@@ -6257,7 +6780,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             publishTableWriterEvent(cmdType, tableId, correlationId, AsyncWriterCommand.Error.OK, null, 0L, TSK_BEGIN);
             LOG.info()
                     .$("received async cmd [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", table=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .$(", cursor=").$(cursor)
@@ -6267,7 +6790,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
                     .$("cannot complete async cmd, reader is out of date [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", table=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
@@ -6276,7 +6799,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (AlterTableContextException ex) {
             LOG.info()
                     .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", tableName=").$(tableToken)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
@@ -6287,7 +6810,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             errorMsg = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             LOG.error().$("error on processing async cmd [type=").$(cmdType)
-                    .$(", tableName=").utf8(tableToken.getTableName())
+                    .$(", tableName=").$safe(tableToken.getTableName())
                     .$(", ex=").$(ex)
                     .I$();
             errorCode = UNEXPECTED_ERROR;
@@ -6324,11 +6847,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int timestampIndex,
             long sortedTimestampsAddr,
             final long srcOooMax,
-            long o3TimestampMin,
-            long o3TimestampMax,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
             boolean flattenTimestamp,
             long rowLo,
-            O3JobParallelismRegulator regulator
+            TableWriterPressureControl pressureControl
     ) {
         o3ErrorCount.set(0);
         o3oomObserved = false;
@@ -6336,9 +6859,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
         o3BasketPool.clear();
+        commitRowCount = srcOooMax;
 
-        // move uncommitted is liable to change max timestamp
-        // however we need to identify last partition before max timestamp skips to NULL for example
+        // move uncommitted is liable to change max timestamp,
+        // however, we need to identify the last partition before max timestamp skips to NULL, for example
         final long maxTimestamp = txWriter.getMaxTimestamp();
         final long transientRowCount = txWriter.transientRowCount;
 
@@ -6348,21 +6872,70 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int latchCount = 0;
         long srcOoo = rowLo;
         int pCount = 0;
-        int partitionParallelism = regulator.getMaxO3MergeParallelism();
+        int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
+        long replaceMaxTimestamp = Long.MIN_VALUE;
+        long partitionTimestamp = o3TimestampMin;
+        final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
+        long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
+
         try {
             resizePartitionUpdateSink();
 
             // One loop iteration per partition.
             int inflightPartitions = 0;
-            while (srcOoo < srcOooMax) {
-                inflightPartitions++;
-                regulator.updateInflightPartitions(inflightPartitions);
+            while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <= o3TimestampMax)) {
+                pressureControl.updateInflightPartitions(++inflightPartitions);
                 try {
                     final long srcOooLo = srcOoo;
-                    final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                    final long o3Timestamp;
+                    if (!isCommitReplaceMode()) {
+                        o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                    } else {
+                        if (srcOoo < srcOooMax) {
+                            // There is o3 data to process
+                            long o3ts = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                            if (o3ts < partitionTimestamp) {
+                                // o3 data is before next existing partition, add partition
+                                o3Timestamp = o3ts;
+                            } else {
+                                long o3PartitionTs = txWriter.getPartitionTimestampByTimestamp(o3ts);
+                                if (o3PartitionTs == partitionTimestamp) {
+                                    // o3 data is at the same partition as the next partition
+                                    o3Timestamp = o3ts;
+                                } else {
+                                    if (txWriter.isInsideExistingPartition(partitionTimestamp)) {
+                                        // o3 data is after the existing partition
+                                        // but the partition is inside replace range.
+                                        // Process the partition to remove it from the partitions list
+                                        o3Timestamp = partitionTimestamp;
+                                    } else {
+                                        // there is no partition and no O3 data to process
+                                        // switch partition to the next one and continue
+                                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                                        continue;
+                                    }
+                                }
+                            }
+                        } else {
+                            // There is no O3 data for this partition, but it's inside the replacement range
+                            // e.g. the partition will be fully or partially deleted
+                            if (txWriter.isInsideExistingPartition(partitionTimestamp)) {
+                                // o3 data is after the existing partition
+                                // but the partition is inside replace range.
+                                // Process the partition to remove it from the partitions list
+                                o3Timestamp = partitionTimestamp;
+                            } else {
+                                // there is no partition and no O3 data to process
+                                // switch partition to the next one and continue
+                                partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                                continue;
+                            }
+                        }
+                    }
+                    partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
 
                     // Check that the value is not 0 (or another unreasonable value) because of reading beyond written range.
-                    assert o3Timestamp >= Math.min(o3TimestampMin, Math.max(txWriter.getMinTimestamp(), 0));
+                    assert o3Timestamp >= o3TimestampMin;
 
                     final long srcOooHi;
                     // keep ceil inclusive in the interval
@@ -6373,13 +6946,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcOooTimestampCeil,
                                 srcOooLo,
                                 srcOooMax - 1,
-                                BinarySearch.SCAN_DOWN
+                                Vect.BIN_SEARCH_SCAN_DOWN
                         );
                     } else {
                         srcOooHi = srcOooMax - 1;
                     }
-
-                    final long partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
 
                     // This partition is the last partition.
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
@@ -6399,21 +6970,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else {
                         srcDataMax = 0;
                         // A version needed to housekeep dropped partitions.
-                        // When partition created without O3 merge, use `txn-1` as partition version.
+                        // When partition is created without an O3 merge, use `txn-1` as the partition version.
                         // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
-                        // be written within the same commit when new partition initially written in order
+                        // be written within the same commit when new partition is initially written in order
                         // and then O3 triggers a merge of the partition.
                         srcNameTxn = txWriter.getTxn() - 1;
                     }
 
                     // We're appending onto the last (active) partition.
-                    final boolean append = last && (srcDataMax == 0 || (isDeduplicationEnabled() && o3Timestamp > maxTimestamp) || (!isDeduplicationEnabled() && o3Timestamp >= maxTimestamp));
+                    final boolean append = last && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
+                            // If it's replace commit, the append is only possible if the last partition data is
+                            // before the replace range.
+                            && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
 
                     // Number of rows to insert from the O3 segment into this partition.
                     final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
                     // Final partition size after current insertions.
-                    final long newPartitionSize = srcDataMax + srcOooBatchRowSize;
+                    long newPartitionSize = srcDataMax + srcOooBatchRowSize;
 
                     // check partition read-only state
                     final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
@@ -6421,7 +6995,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     pCount++;
 
-                    LOG.info().$("o3 partition task [table=").utf8(tableToken.getTableName())
+                    LOG.info().$("o3 partition task [table=").$safe(tableToken.getTableName())
                             .$(", partitionTs=").$ts(partitionTimestamp)
                             .$(", partitionIndex=").$(partitionIndexRaw)
                             .$(", last=").$(last)
@@ -6445,7 +7019,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (partitionIsReadOnly) {
                         // move over read-only partitions
                         LOG.critical()
-                                .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                                .$("o3 ignoring write on read-only partition [table=").$safe(tableToken.getTableName())
                                 .$(", timestamp=").$ts(partitionTimestamp)
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
@@ -6455,8 +7029,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Basket.checkCapacity(configuration, columnCount, indexCount);
                     AtomicInteger columnCounter = o3ColumnCounters.next();
 
+                    if (isCommitReplaceMode() && srcOooLo > srcOooHi && (srcDataMax == 0 || append)) {
+                        // Nothing to insert and replace range does not intersect with existing data
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
+                        continue;
+                    }
+
                     // To collect column top values and partition updates
-                    // from o3 partition tasks add them to pre-allocated continuous block of memory
+                    // from o3 partition tasks, add them to pre-allocated continuous block of memory
                     long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
 
                     o3PartitionUpdRemaining.incrementAndGet();
@@ -6465,14 +7046,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // mid-column-count.
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
-                    Vect.memsetChecked(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+                    Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
                     Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
+                    if (
+                            isCommitReplaceMode()
+                                    && partitionTimestamp >= lastPartitionTimestamp
+                                    && o3TimestampMax >= txWriter.getMaxTimestamp()
+                                    && srcOooLo < srcOooMax
+                    ) {
+                        replaceMaxTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+                    }
 
                     if (append) {
-                        // we are appending last partition, make sure it has been mapped!
+                        // we are appending the last partition, make sure it has been mapped!
                         // this also might fail, make sure exception is trapped and partitions are
                         // counted down correctly
                         try {
@@ -6484,11 +7073,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             throw e;
                         }
 
-                        columnCounter.set(TableUtils.compressColumnCount(metadata));
+                        columnCounter.set(compressColumnCount(metadata));
                         Path pathToPartition = Path.getThreadLocal(path);
-                        TableUtils.setPathForPartition(pathToPartition, partitionBy, txWriter.getPartitionTimestampByTimestamp(o3TimestampMin), srcNameTxn);
+                        setPathForNativePartition(pathToPartition, partitionBy, txWriter.getPartitionTimestampByTimestamp(o3TimestampMin), srcNameTxn);
                         final int plen = pathToPartition.size();
                         int columnsPublished = 0;
+                        long minTimestamp = isCommitReplaceMode() ? txWriter.getMinTimestamp() : o3TimestampMin;
                         for (int i = 0; i < columnCount; i++) {
                             final int columnType = metadata.getColumnType(i);
                             if (columnType < 0) {
@@ -6509,7 +7099,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final MemoryMA dstFixMem;
                             final MemoryMA dstVarMem;
                             if (!ColumnType.isVarSize(columnType)) {
-                                srcOooFixAddr = oooMem1.addressOf(0);
+                                srcOooFixAddr = notTheTimestamp ? oooMem1.addressOf(0) : sortedTimestampsAddr;
                                 srcOooVarAddr = 0;
                                 dstFixMem = mem1;
                                 dstVarMem = null;
@@ -6533,7 +7123,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         srcOooLo,
                                         srcOooHi,
                                         srcOooMax,
-                                        o3TimestampMin,
+                                        minTimestamp,
                                         partitionTimestamp,
                                         srcDataTop,
                                         srcDataMax,
@@ -6564,6 +7154,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             flattenTimestamp = false;
                         }
                         final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
+
+                        long o3TimestampLo, o3TimestampHi;
+                        if (isCommitReplaceMode()) {
+                            if (isParquet) {
+                                // Parquet partitions do not support replace commits feature yet
+                                o3PartitionUpdRemaining.decrementAndGet();
+                                latchCount--;
+                                pressureControl.updateInflightPartitions(--inflightPartitions);
+                                throw CairoException.critical(0)
+                                        .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
+                                        .put(", partition=").ts(partitionTimestamp).put(']');
+                            }
+                            o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
+                            o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
+                                    txWriter.getNextPartitionTimestamp(partitionTimestamp) - 1;
+                        } else {
+                            o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+                            o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
+                        }
+
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -6581,7 +7191,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcDataMax,
                                 partitionUpdateSinkAddr,
                                 dedupColSinkAddr,
-                                isParquet
+                                isParquet,
+                                o3TimestampLo,
+                                o3TimestampHi
                         );
                     }
                 } catch (CairoException | CairoError e) {
@@ -6594,18 +7206,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3DoneLatch.await(latchCount);
                     inflightPartitions = 0;
                 }
+                partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            this.partitionTimestampHi = Math.max(this.partitionTimestampHi, txWriter.getNextPartitionTimestamp(o3TimestampMax) - 1);
-            this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getNextPartitionTimestamp(o3TimestampMax) - 1);
+
+            if (!isCommitReplaceMode()) {
+                txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+            } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
+                txWriter.updateMaxTimestamp(replaceMaxTimestamp);
+            }
         } catch (Throwable th) {
-            LOG.error().$(th).$();
+            LOG.error().$("failed to commit data block [table=").$(tableToken).$(", error=").$(th).I$();
             throw th;
         } finally {
             // we are stealing work here it is possible we get exception from this method
             LOG.debug()
-                    .$("o3 expecting updates [table=").utf8(tableToken.getTableName())
+                    .$("o3 expecting updates [table=").$safe(tableToken.getTableName())
                     .$(", partitionsPublished=").$(pCount)
                     .I$();
 
@@ -6623,14 +7241,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (o3LagRowCount > 0 && !metadata.isWalEnabled()) {
-            LOG.info().$("shifting lag rows up [table=").$(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
+            LOG.info().$("shifting lag rows up [table=").$safe(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
             dispatchColumnTasks(
                     o3LagRowCount,
                     IGNORE,
                     srcOooMax,
                     0L,
                     0,
-                    this.cthO3ShiftColumnInLagToTopRef
+                    cthO3ShiftColumnInLagToTopRef
             );
         }
     }
@@ -6655,11 +7273,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < n; i += 2) {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
-                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                final long txn = partitionRemoveCandidates.get(i + 1);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
-                // that are not attached to the table most likely as result of a rollback
+                // that are not attached to the table most likely as a result of a rollback
                 if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
-                    setPathForPartition(
+                    setPathForNativePartition(
                             other,
                             partitionBy,
                             timestamp,
@@ -6670,7 +7288,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
-                                .$(", errno=").$(ff.errno()).I$();
+                                .$(", errno=").$(ff.errno())
+                                .I$();
                         scheduleAsyncPurge = true;
                     }
                 } else {
@@ -6685,11 +7304,1157 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Any more complicated case involve looking at what folders are present on disk before removing
             // do it async in O3PartitionPurgeJob
             if (schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
-                LOG.info().$("scheduled to purge partitions [table=").utf8(tableToken.getTableName()).I$();
+                LOG.debug().$("scheduled to purge partitions [table=").$safe(tableToken.getTableName()).I$();
             } else {
-                LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableToken.getTableName()).I$();
+                LOG.error().$("could not queue for purge, queue is full [table=").$safe(tableToken.getTableName()).I$();
             }
         }
+    }
+
+    // returns true if the tx was committed into the table and can be made visible to readers
+    // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
+    private boolean processWalCommit(
+            @Transient Path walPath,
+            boolean ordered,
+            long rowLo,
+            long rowHi,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            @Nullable SymbolMapDiffCursor mapDiffCursor,
+            long commitToTimestamp,
+            long walIdSegmentId,
+            boolean isLastSegmentUsage,
+            TableWriterPressureControl pressureControl
+    ) {
+        int initialSize = segmentFileCache.getWalMappedColumns().size();
+        int timestampIndex = metadata.getTimestampIndex();
+        int walRootPathLen = walPath.size();
+        long maxTimestamp = txWriter.getMaxTimestamp();
+        if (isLastPartitionClosed()) {
+            if (isEmptyTable()) {
+                // The table is empty, last partition does not exist
+                // WAL processing needs last partition to store LAG data
+                // Create artificial partition at the point of o3TimestampMin.
+                openPartition(o3TimestampMin, 0);
+                txWriter.setMaxTimestamp(o3TimestampMin);
+                // Add the partition to the list of partitions with 0 size.
+                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
+            } else {
+                throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
+                        .put(path).put(']');
+            }
+        }
+
+        assert maxTimestamp == Long.MIN_VALUE ||
+                txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
+
+        lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
+        boolean success = true;
+        try {
+            boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
+            final long maxLagRows = getWalMaxLagRows();
+            final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
+            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+            o3Columns = segmentFileCache.getWalMappedColumns();
+            final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
+            long initialPartitionTimestampHi = partitionTimestampHi;
+
+            long walLagRowCount = txWriter.getLagRowCount();
+            long o3Hi = rowHi;
+            try {
+                long o3Lo = rowLo;
+                long commitRowCount = rowHi - rowLo;
+                boolean copiedToMemory;
+
+                long totalUncommitted = walLagRowCount + commitRowCount;
+                long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                boolean needFullCommit = forceFullCommit
+                        // Too many rows in LAG
+                        || totalUncommitted > maxLagRows
+                        // Can commit without O3 and LAG has just enough rows
+                        || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
+                        // Too many uncommitted transactions in LAG
+                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
+                        // when the time between commits is too long we need to commit regardless of the row count or volume filled
+                        // this is to bring the latency of data visibility inline with user expectations
+                        || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
+
+                boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+                boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
+                boolean canFastCommitNew = applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
+
+                // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
+                // Also fast LAG commit will not cause O3 with the current transaction.
+                if (!needFullCommit && canFastCommit && !canFastCommitNew && txWriter.getLagMaxTimestamp() <= o3TimestampMin) {
+                    // Fast commit lag data and then proceed.
+                    applyFromWalLagToLastPartition(commitToTimestamp, false);
+
+                    // Re-evaluate commit decision
+                    walLagRowCount = txWriter.getLagRowCount();
+                    totalUncommitted = commitRowCount;
+                    newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                    needFullCommit =
+                            // Too many rows in LAG
+                            totalUncommitted > maxLagRows
+                                    // Can commit without O3 and LAG has just enough rows
+                                    || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
+                                    // Too many uncommitted transactions in LAG
+                                    || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
+                }
+
+                if (!needFullCommit || canFastCommitNew) {
+                    // Don't commit anything, move everything to lag area of last partition instead.
+                    // This usually happens when WAL transactions are very small, so it's faster
+                    // to squash several of them together before writing anything to all the partitions.
+                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
+
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                    // This will copy data from mmap files to memory.
+                    // Symbols are already mapped to the correct destination.
+                    dispatchColumnTasks(
+                            o3Hi - o3Lo,
+                            IGNORE,
+                            o3Lo,
+                            walLagRowCount,
+                            1,
+                            this.cthAppendWalColumnToLastPartition
+                    );
+                    walLagRowCount += commitRowCount;
+                    addPhysicallyWrittenRows(commitRowCount);
+                    txWriter.setLagRowCount((int) walLagRowCount);
+                    txWriter.setLagOrdered(lagOrderedNew);
+                    txWriter.setLagMinTimestamp(newMinLagTimestamp);
+                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
+                    txWriter.setLagTxnCount(txWriter.getLagTxnCount() + 1);
+
+                    if (canFastCommitNew) {
+                        applyFromWalLagToLastPartition(commitToTimestamp, false);
+                    }
+
+                    return forceFullCommit;
+                }
+
+                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
+                // This application will not include the current transaction data, only what's already in WAL lag.
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), true) != Long.MIN_VALUE) {
+                    walLagRowCount = txWriter.getLagRowCount();
+                    totalUncommitted = walLagRowCount + commitRowCount;
+                }
+
+                // Re-valuate WAL lag min/max with impact of the current transaction.
+                txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
+                txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
+                boolean needsOrdering = !ordered || walLagRowCount > 0;
+                boolean needsDedup = isCommitDedupMode();
+
+                long timestampAddr = 0;
+                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
+                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+                if (needsOrdering || needsDedup) {
+                    if (needsOrdering) {
+                        LOG.debug().$("sorting WAL [table=").$(tableToken)
+                                .$(", ordered=").$(ordered)
+                                .$(", lagRowCount=").$(walLagRowCount)
+                                .$(", walRowLo=").$(rowLo)
+                                .$(", walRowHi=").$(rowHi).I$();
+
+                        final long timestampMemorySize = totalUncommitted << 4;
+                        o3TimestampMem.jumpTo(timestampMemorySize);
+                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
+
+                        MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
+                        final long tsLagOffset = txWriter.getTransientRowCount() << 3;
+                        final long tsLagSize = walLagRowCount << 3;
+                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                        timestampAddr = o3TimestampMem.getAddress();
+
+                        final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
+                        try {
+                            long rowCount = Vect.radixSortABLongIndexAsc(
+                                    Math.abs(tsLagBufferAddr),
+                                    walLagRowCount,
+                                    mappedTimestampIndexAddr,
+                                    commitRowCount,
+                                    timestampAddr,
+                                    o3TimestampMemCpy.addressOf(0),
+                                    txWriter.getLagMinTimestamp(),
+                                    txWriter.getLagMaxTimestamp()
+                            );
+                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                        } finally {
+                            mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
+                        }
+                    } else {
+                        // Needs deduplication only
+                        timestampAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
+                    }
+
+                    if (needsDedup) {
+                        o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        long dedupTimestampAddr = o3TimestampMem.getAddress();
+                        long deduplicatedRowCount = deduplicateSortedIndex(
+                                totalUncommitted,
+                                timestampAddr,
+                                dedupTimestampAddr,
+                                o3TimestampMemCpy.addressOf(0),
+                                walLagRowCount
+                        );
+                        if (deduplicatedRowCount > 0) {
+                            // There are timestamp duplicates, reshuffle the records
+                            needsOrdering = true;
+                            timestampAddr = dedupTimestampAddr;
+                            totalUncommitted = deduplicatedRowCount;
+                        }
+                    }
+                }
+
+                if (needsOrdering) {
+                    dispatchColumnTasks(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, cthMergeWalColumnWithLag);
+                    swapO3ColumnsExcept(timestampIndex);
+
+                    // Sorted data is now sorted in memory copy of the data from mmap files
+                    // Row indexes start from 0, not rowLo
+                    o3Hi = totalUncommitted;
+                    o3Lo = 0L;
+                    walLagRowCount = 0L;
+                    o3Columns = o3MemColumns1;
+                    copiedToMemory = true;
+                } else {
+                    // Wal column can are lazily mapped to improve performance. It works ok, except in this case
+                    // where access getAddress() calls are concurrent. Map them eagerly now.
+                    segmentFileCache.mmapWalColsEager();
+
+                    timestampAddr = walTimestampColumn.addressOf(0);
+                    copiedToMemory = false;
+                }
+
+                // We could commit some portion of the lag into the partitions and keep some data in the lag
+                // like 70/30 split, but it would break snapshot assumptions and this optimization is removed
+                // in the next release after v7.3.9.
+                // Commit everything.
+                walLagRowCount = 0;
+                processWalCommitFinishApply(walLagRowCount, timestampAddr, o3Lo, o3Hi, pressureControl, copiedToMemory, initialPartitionTimestampHi);
+            } finally {
+                finishO3Append(walLagRowCount);
+                o3Columns = o3MemColumns1;
+            }
+
+            return true;
+        } catch (Throwable th) {
+            success = false;
+            throw th;
+        } finally {
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            walPath.trimTo(walRootPathLen);
+            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+        }
+    }
+
+    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
+        int walId = walTxnDetails.getWalId(seqTxn);
+        long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
+        long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
+        long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
+        long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
+        boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
+        byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
+        long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
+        long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
+
+        LogRecord logLine = LOG.info();
+        logLine.$("processing WAL [path=").$substr(pathRootSize, walPath)
+                .$(", roLo=").$(rowLo)
+                .$(", roHi=").$(rowHi)
+                .$(", seqTxn=").$(seqTxn)
+                .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
+                .$(", commitToTs=").$ts(commitToTimestamp);
+
+        if (replaceRangeTsLo < replaceRangeTsHi) {
+            logLine.$(", replaceRangeTsLo=").$ts(replaceRangeTsLo)
+                    .$(", replaceRangeTsHi=").$ts(replaceRangeTsHi);
+        }
+        logLine.I$();
+
+        final int segmentId = walTxnDetails.getSegmentId(seqTxn);
+        boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
+        SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
+
+        long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+        walRowsProcessed = rowHi - rowLo;
+
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            processWalCommitDedupReplace(
+                    walPath,
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    txnMinTs,
+                    txnMaxTs,
+                    mapDiffCursor,
+                    walIdSegmentId,
+                    isLastSegmentUsage,
+                    pressureControl,
+                    replaceRangeTsLo,
+                    replaceRangeTsHi
+            );
+
+            // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
+            assert txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
+            // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
+            assert txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+
+            return true;
+        } else {
+            return processWalCommit(
+                    walPath,
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    txnMinTs,
+                    txnMaxTs,
+                    mapDiffCursor,
+                    commitToTimestamp,
+                    walIdSegmentId,
+                    isLastSegmentUsage,
+                    pressureControl
+            );
+        }
+    }
+
+    private int processWalCommitBlock(
+            long startSeqTxn,
+            int blockTransactionCount,
+            TableWriterPressureControl pressureControl
+    ) {
+        segmentCopyInfo.clear();
+        walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo, denseSymbolMapWriters.size() > 0);
+        if (isLastPartitionClosed()) {
+            if (isEmptyTable()) {
+                populateDenseIndexerList();
+            }
+        }
+
+        LOG.info().$("processing WAL transaction block [table=").$(tableToken)
+                .$(", seqTxn=").$(startSeqTxn).$("..").$(startSeqTxn + blockTransactionCount - 1)
+                .$(", rows=").$(segmentCopyInfo.getTotalRows())
+                .$(", segments=").$(segmentCopyInfo.getSegmentCount())
+                .$(", minTimestamp=").$ts(segmentCopyInfo.getMinTimestamp())
+                .$(", maxTimestamp=").$ts(segmentCopyInfo.getMaxTimestamp())
+                .I$();
+
+        walRowsProcessed = segmentCopyInfo.getTotalRows();
+        if (segmentCopyInfo.hasSegmentGaps()) {
+            LOG.info().$("some segments have gaps in committed rows [table=").$(tableToken).I$();
+            throw CairoException.txnApplyBlockError(tableToken);
+        }
+
+        try {
+            segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
+            final long timestampAddr;
+            final boolean copiedToMemory;
+            final long o3Lo;
+            final long o3LoHi;
+
+            if (!isCommitDedupMode() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
+                LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken).I$();
+                // all data comes from a single segment and is already sorted
+                if (denseSymbolMapWriters.size() > 0) {
+                    segmentFileCache.mmapWalColsEager();
+                    o3Columns = processWalCommitBlock_remapSymbols();
+                } else {
+                    // No symbols, nothing to remap
+                    segmentFileCache.mmapWalColsEager();
+                    o3Columns = segmentFileCache.getWalMappedColumns();
+                }
+
+                // There is only one segment
+                o3Lo = segmentCopyInfo.getRowLo(0);
+                o3LoHi = o3Lo + segmentCopyInfo.getTotalRows();
+                MemoryCR tsColumn = o3Columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex()));
+                timestampAddr = tsColumn.addressOf(0);
+                txWriter.setLagMinTimestamp(segmentCopyInfo.getMinTimestamp());
+                txWriter.setLagMaxTimestamp(segmentCopyInfo.getMaxTimestamp());
+                copiedToMemory = false;
+            } else {
+                o3Lo = 0;
+                o3LoHi = processWalCommitBlock_sortWalSegmentTimestamps();
+                timestampAddr = o3TimestampMem.getAddress();
+                copiedToMemory = true;
+            }
+
+            try {
+                lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                processWalCommitFinishApply(
+                        0,
+                        timestampAddr,
+                        o3Lo,
+                        o3LoHi,
+                        pressureControl,
+                        copiedToMemory,
+                        partitionTimestampHi
+                );
+            } finally {
+                finishO3Append(0);
+                o3Columns = o3MemColumns1;
+            }
+            return blockTransactionCount;
+        } finally {
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
+            if (tempDirectMemList != null) {
+                tempDirectMemList.resetCapacity();
+            }
+        }
+    }
+
+    private ObjList<MemoryCR> processWalCommitBlock_remapSymbols() {
+        long columnAddressCount = 2L * metadata.getColumnCount();
+        DirectLongList columnSegmentAddressBuffer = getTempDirectLongList(columnAddressCount);
+        columnSegmentAddressBuffer.setPos(columnAddressCount);
+
+        // Remap the symbols if there are any
+        processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
+                0,
+                segmentCopyInfo.getTotalRows(),
+                columnSegmentAddressBuffer.getAddress(),
+                1,
+                segmentCopyInfo.getRowLo(0),
+                true,
+                false,
+                cthMapSymbols
+        );
+
+        o3ColumnOverrides.clear();
+        o3ColumnOverrides.addAll(segmentFileCache.getWalMappedColumns());
+
+        long columnSegmentAddressesBase = columnSegmentAddressBuffer.getAddress();
+        // Take symbol columns from o3MemColumns2 if remapping happened
+        int tsColIndex = metadata.getTimestampIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (i != tsColIndex && columnType > 0) {
+                if (ColumnType.isSymbol(columnType)) {
+                    // -1 is the indicator that column is remapped.
+                    // Otherwise, the symbol remapping did not happen because there were no new symbols
+                    if (Unsafe.getUnsafe().getLong(columnSegmentAddressesBase) == -1L) {
+                        int primaryColumnIndex = getPrimaryColumnIndex(i);
+                        MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
+                        assert remappedColumn.size() >= (segmentCopyInfo.getTotalRows() << ColumnType.pow2SizeOf(columnType));
+                        o3ColumnOverrides.set(primaryColumnIndex, remappedColumn);
+
+                        LOG.info().$("using remapped column buffer [table=").$(tableToken)
+                                .$(", name=").$safe(metadata.getColumnName(i)).$(", index=").$(i).I$();
+                    }
+                }
+                columnSegmentAddressesBase += Long.BYTES;
+                if (ColumnType.isVarSize(columnType)) {
+                    columnSegmentAddressesBase += Long.BYTES;
+                }
+            }
+        }
+        columnSegmentAddressBuffer.resetCapacity();
+        return o3ColumnOverrides;
+    }
+
+    // The name of the method starts from processWalCommitBlock to keep the methods close together after code formatting
+    private long processWalCommitBlock_sortWalSegmentTimestamps() {
+        int timestampIndex = metadata.getTimestampIndex();
+
+        // For each column, we will need a dense list of column addresses
+        // across all the segments. It will be used in column shuffling/remapping procs
+        // Allocate enough space to store all the addresses, e.g., for every segment 2x long for every column.
+        int walColumnCountPerSegment = metadata.getColumnCount() * 2;
+        long totalSegmentAddresses = segmentCopyInfo.getSegmentCount();
+        long totalColumnAddressSize = totalSegmentAddresses * walColumnCountPerSegment;
+        DirectLongList tsAddresses = getTempDirectLongList(totalColumnAddressSize);
+        tsAddresses.setPos(totalColumnAddressSize);
+
+        try {
+            segmentFileCache.createAddressBuffersPrimary(timestampIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), tsAddresses.getAddress());
+            long totalRows = segmentCopyInfo.getTotalRows();
+            // This sort apart from creating normal merge index with 2 longs
+            // creates reverse long index at the end, e.g. it needs one more long per row
+            // It does not need all 64 bits, most of the cases it can do with 32bit but here we over allocate
+            // and let native code to use what's needed
+            // One more 64bit is used to add additional flags the native code passes
+            // between sort and shuffle calls about the format of the index
+            // e.g. how many bits is used for segment index values
+            o3TimestampMem.jumpTo(totalRows * Long.BYTES * 3 + Long.BYTES);
+            o3TimestampMemCpy.jumpTo(totalRows * Long.BYTES * 3 + Long.BYTES);
+
+            long timestampAddr = o3TimestampMem.getAddress();
+
+            boolean needsDedup = isDeduplicationEnabled();
+            long minTs = segmentCopyInfo.getMinTimestamp();
+            long maxTs = segmentCopyInfo.getMaxTimestamp();
+
+            LOG.debug().$("sorting [table=").$safe(tableToken.getTableName())
+                    .$(", rows=").$(segmentCopyInfo.getTotalRows())
+                    .$(", segments=").$(segmentCopyInfo.getSegmentCount())
+                    .$(", minTs=").$ts(minTs)
+                    .$(", maxTs=").$ts(maxTs)
+                    .I$();
+
+            long indexFormat = Vect.radixSortManySegmentsIndexAsc(
+                    timestampAddr,
+                    o3TimestampMemCpy.addressOf(0),
+                    tsAddresses.getAddress(),
+                    (int) tsAddresses.size(),
+                    segmentCopyInfo.getTxnInfoAddress(),
+                    segmentCopyInfo.getTxnCount(),
+                    segmentCopyInfo.getMaxTxRowCount(),
+                    0,
+                    0,
+                    minTs,
+                    maxTs,
+                    totalRows,
+                    needsDedup ? Vect.DEDUP_INDEX_FORMAT : Vect.SHUFFLE_INDEX_FORMAT
+            );
+
+            // the result of the sort is sort index. The format of the index is different
+            // if the dedup is needed. See comments on Vect.DEDUP_INDEX_FORMAT and Vect.SHUFFLE_INDEX_FORMAT
+            // to understand the difference
+
+            // Clean timestamp addresses, otherwise the shuffle code will lazily re-use them
+            tsAddresses.set(0, 0L);
+
+            if (!Vect.isIndexSuccess(indexFormat)) {
+                LOG.info().$("transaction sort error, will switch to 1 commit [table=").$(tableToken)
+                        .$(", totalRows=").$(totalRows)
+                        .$(", indexFormat=").$(indexFormat)
+                        .I$();
+
+                throw CairoException.txnApplyBlockError(tableToken);
+            }
+
+            if (isDeduplicationEnabled()) {
+                if (denseSymbolMapWriters.size() > 0 && dedupColumnCommitAddresses.getColumnCount() > 0) {
+                    // Remap the symbols if there are any SYMBOL dedup keys
+                    processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
+                            timestampAddr,
+                            totalRows,
+                            tsAddresses.getAddress(),
+                            totalSegmentAddresses,
+                            0,
+                            true,
+                            true,
+                            cthMapSymbols
+                    );
+                }
+
+                indexFormat = processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(
+                        indexFormat,
+                        timestampAddr,
+                        o3TimestampMemCpy.addressOf(0),
+                        tsAddresses.getAddress()
+                );
+
+                // The last call to dedup the index converts it to the shuffle format.
+                // See comments on Vect.DEDUP_INDEX_FORMAT and Vect.SHUFFLE_INDEX_FORMAT
+                // to understand the difference
+
+                if (!Vect.isIndexSuccess(indexFormat)) {
+                    LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken)
+                            .$(", totalRows=").$(totalRows)
+                            .$(", indexFormat=").$(indexFormat)
+                            .I$();
+
+                    throw CairoException.txnApplyBlockError(tableToken);
+                }
+
+                long dedupedRowCount = Vect.readIndexResultRowCount(indexFormat);
+                LOG.info().$("WAL dedup sorted commit index [table=").$(tableToken)
+                        .$(", totalRows=").$(totalRows)
+                        .$(", dups=").$(totalRows - dedupedRowCount)
+                        .I$();
+
+                // Swap tsMemory and tsMemoryCopy, result of index dedup is in o3TimestampMemCpy
+                timestampAddr = swapTimestampInMemCols(timestampIndex);
+                totalRows = dedupedRowCount;
+            }
+
+            LOG.debug().$("shuffling [table=").$(tableToken).$(", columCount=")
+                    .$(metadata.getColumnCount() - 1)
+                    .$(", rows=").$(totalRows)
+                    .$(", indexFormat=").$(indexFormat).I$();
+
+            processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
+                    timestampAddr,
+                    totalRows,
+                    tsAddresses.getAddress(),
+                    totalSegmentAddresses,
+                    indexFormat,
+                    false,
+                    false,
+                    cthMergeWalColumnManySegments
+            );
+
+            assert o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMem;
+            assert o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMemCpy;
+
+            o3Columns = o3MemColumns1;
+            activeColumns = o3MemColumns1;
+
+            txWriter.setLagMinTimestamp(minTs);
+            txWriter.setLagMaxTimestamp(maxTs);
+
+            return totalRows;
+        } finally {
+            tsAddresses.resetCapacity();
+        }
+    }
+
+    private long processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(
+            long indexFormat,
+            long srcIndexSrcAddr,
+            long outIndexAddr,
+            long columnAddressBufferPrimary
+    ) {
+        int dedupKeyIndex = 0;
+        long dedupCommitAddr = 0;
+        try {
+            if (dedupColumnCommitAddresses.getColumnCount() > 0) {
+                dedupCommitAddr = dedupColumnCommitAddresses.allocateBlock();
+                int columnCount = metadata.getColumnCount();
+                int bytesPerColumn = segmentCopyInfo.getSegmentCount() * Long.BYTES;
+
+                for (int i = 0; i < columnCount; i++) {
+                    int columnType = metadata.getColumnType(i);
+                    if (i != metadata.getTimestampIndex() && columnType > 0) {
+                        if (metadata.isDedupKey(i)) {
+                            long dataAddresses;
+                            int valueSizeBytes = ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType);
+
+                            if (!ColumnType.isSymbol(columnType) || Unsafe.getUnsafe().getLong(columnAddressBufferPrimary) == 0) {
+                                segmentFileCache.createAddressBuffersPrimary(i, columnCount, segmentCopyInfo.getSegmentCount(), columnAddressBufferPrimary);
+                                dataAddresses = columnAddressBufferPrimary;
+                            } else {
+                                // Symbols are already re-mapped, and the buffer is in o3ColumnMem2
+                                dataAddresses = o3MemColumns2.get(getPrimaryColumnIndex(i)).addressOf(0);
+                                // Indicate that it's a special case of the column type; only one address is supplied
+                                valueSizeBytes = -1;
+                            }
+
+                            long addr = DedupColumnCommitAddresses.setColValues(
+                                    dedupCommitAddr,
+                                    dedupKeyIndex++,
+                                    columnType,
+                                    valueSizeBytes,
+                                    0L
+                            );
+
+                            if (!ColumnType.isVarSize(columnType)) {
+                                DedupColumnCommitAddresses.setColAddressValues(addr, dataAddresses);
+                            } else {
+                                long columnAddressBufferSecondary = columnAddressBufferPrimary + bytesPerColumn;
+                                ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                                segmentFileCache.createAddressBuffersPrimary(i, columnCount, segmentCopyInfo.getSegmentCount(), columnAddressBufferPrimary);
+                                segmentFileCache.createAddressBuffersSecondary(i, columnCount, segmentCopyInfo, columnAddressBufferSecondary, driver);
+
+                                DedupColumnCommitAddresses.setColAddressValues(addr, columnAddressBufferSecondary, columnAddressBufferPrimary, 0L);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
+                            }
+                        }
+
+                        // Reserve segment address buffers even for non-dedup columns
+                        // They will be re-used on shuffling
+                        columnAddressBufferPrimary += bytesPerColumn;
+                        if (ColumnType.isVarSize(columnType)) {
+                            // For secondary
+                            columnAddressBufferPrimary += bytesPerColumn;
+                        }
+                    }
+                }
+                assert dedupKeyIndex <= dedupColumnCommitAddresses.getColumnCount();
+            }
+            return Vect.dedupSortedTimestampIndexManyAddresses(
+                    indexFormat,
+                    srcIndexSrcAddr,
+                    outIndexAddr,
+                    dedupKeyIndex,
+                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
+            );
+        } finally {
+            dedupColumnCommitAddresses.clear();
+        }
+    }
+
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
+            long timestampAddr,
+            long totalRows,
+            long columnAddressesBuffer,
+            long totalSegmentAddresses,
+            long indexFormatOrSymbolRowsOffset,
+            boolean symbolColumnsOnly,
+            boolean dedupColumnOnly,
+            ColumnTaskHandler taskHandler
+    ) {
+        // Dispatch processWalCommitBlock column tasks.
+        // This method is used in 3 places:
+        // 1. Remap symbols to table symbol ids before deduplication
+        // 2. Remap symbols to table symbol ids when all transactions are from the same segment and data is in order
+        // 2. Shuffle columns data according to the index
+        final long timestampColumnIndex = metadata.getTimestampIndex();
+        final Sequence pubSeq = this.messageBus.getColumnTaskPubSeq();
+        final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
+        o3DoneLatch.reset();
+        o3ErrorCount.set(0);
+        lastErrno = 0;
+        int queuedCount = 0;
+
+        long totalSegmentAddressesBytes = totalSegmentAddresses * Long.BYTES;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            int columnType = metadata.getColumnType(columnIndex);
+            if (columnIndex != timestampColumnIndex && columnType > 0) {
+
+                // Allocate the column buffers the same way
+                // regardless if it is a symbol only pass or all column pass,
+                // e.g., allocate addresses for non-deleted  columns.
+                // After symbol only remap pass, the buffer addresses
+                // will contain a hint that the symbol remapping is already done and the shuffle proc rely on that flag.
+
+                long mappedAddrBuffPrimary = columnAddressesBuffer;
+                columnAddressesBuffer += totalSegmentAddressesBytes;
+                if (ColumnType.isVarSize(columnType)) {
+                    columnAddressesBuffer += totalSegmentAddressesBytes;
+                }
+
+                if ((!symbolColumnsOnly || ColumnType.isSymbol(columnType)) && (!dedupColumnOnly || metadata.isDedupKey(columnIndex))) {
+                    long cursor = pubSeq.next();
+
+                    if (cursor > -1) {
+                        try {
+                            final ColumnTask task = queue.get(cursor);
+                            task.of(
+                                    o3DoneLatch,
+                                    columnIndex,
+                                    columnType,
+                                    timestampColumnIndex,
+                                    timestampAddr,
+                                    mappedAddrBuffPrimary,
+                                    totalRows,
+                                    indexFormatOrSymbolRowsOffset,
+                                    totalSegmentAddressesBytes,
+                                    taskHandler
+                            );
+                        } finally {
+                            queuedCount++;
+                            pubSeq.done(cursor);
+                        }
+                    } else {
+                        taskHandler.run(
+                                columnIndex,
+                                columnType,
+                                timestampColumnIndex,
+                                timestampAddr,
+                                mappedAddrBuffPrimary,
+                                totalRows,
+                                indexFormatOrSymbolRowsOffset,
+                                totalSegmentAddressesBytes
+                        );
+                    }
+                }
+            }
+        }
+        consumeColumnTasks(queue, queuedCount);
+    }
+
+    // remap symbols column into o3MemColumns2
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols(
+            int columnIndex,
+            int columnType,
+            long timestampColumnIndex,
+            long mergeIndex,
+            long mappedAddrBuffPrimary,
+            long totalRows,
+            long rowsOffset,
+            long totalSegmentAddressesBytes
+    ) {
+        try {
+            assert ColumnType.isSymbol(columnType);
+            final int shl = ColumnType.pow2SizeOf(columnType);
+
+            var mapWriter = symbolMapWriters.get(columnIndex);
+
+            // Use o3MemColumns1 to build symbol maps.
+            // and o3MemColumns2 to store re-mapped symbols
+            var symbolMapMem = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+            symbolMapMem.jumpTo(0);
+
+            boolean needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
+
+            // When there are no new symbols for all the segment transactions, remapping is not needed and not performed
+            if (needsRemapping) {
+                long txnCount = this.segmentCopyInfo.getTxnCount();
+                segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
+                var destinationColumn = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
+
+                destinationColumn.jumpTo((rowsOffset + totalRows) << shl);
+
+                LOG.debug().$("remapping WAL symbols [table=").$safe(tableToken.getTableName())
+                        .$(", column=").$safe(metadata.getColumnName(columnIndex))
+                        .$(", rows=").$(totalRows)
+                        .$(", txnCount=").$(txnCount)
+                        .$(", offset=").$(rowsOffset)
+                        .I$();
+
+                long rowCount = Vect.remapSymbolColumnFromManyAddresses(
+                        mappedAddrBuffPrimary,
+                        destinationColumn.getAddress(),
+                        segmentCopyInfo.getTxnInfoAddress(),
+                        txnCount,
+                        symbolMapMem.getAddress()
+                );
+                destinationColumn.shiftAddressRight(rowsOffset << shl);
+                memColumnShifted |= (rowsOffset << shl) != 0;
+
+                if (rowCount != totalRows) {
+                    throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                }
+
+                // Save the hint that this symbol is already re-mapped, and the results are in o3MemColumns2
+                Unsafe.putLong(mappedAddrBuffPrimary, -1L);
+            } else {
+                // Save the hint that symbol column is not re-mapped
+                Unsafe.putLong(mappedAddrBuffPrimary, 0);
+                LOG.debug().$("no new symbols, no remapping needed [table=").$safe(tableToken.getTableName())
+                        .$(", column=").$safe(metadata.getColumnName(columnIndex))
+                        .$(", rows=").$(totalRows)
+                        .I$();
+            }
+        } catch (Throwable th) {
+            handleColumnTaskException(
+                    "could not copy remap WAL symbols",
+                    columnIndex,
+                    columnType,
+                    totalRows,
+                    mergeIndex,
+                    rowsOffset,
+                    totalSegmentAddressesBytes,
+                    th
+            );
+        }
+    }
+
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments(
+            int columnIndex,
+            int columnType,
+            long timestampColumnIndex,
+            long mergeIndexAddress,
+            long mappedAddrBuffPrimary,
+            long totalRows,
+            long mergeIndexFormat,
+            long totalSegmentAddressesBytes
+    ) {
+        try {
+            boolean varSize = ColumnType.isVarSize(columnType);
+            final int shl = ColumnType.pow2SizeOf(columnType);
+
+            // If this column used for deduplication, the pointers are already created
+            long firstPointer = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary);
+            boolean pointersNotCreated = firstPointer == 0;
+            if (pointersNotCreated) {
+                segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
+            } else {
+                // This should only be the case when table already went thought deduplication
+                assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
+            }
+
+            if (!varSize) {
+                if (!ColumnType.isSymbol(columnType)) {
+                    // When dedup is enabled, all symbols are already remapped at this point
+                    var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                    destinationColumn.jumpTo(totalRows << shl);
+
+                    long rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
+                            (1 << shl),
+                            mergeIndexFormat,
+                            mappedAddrBuffPrimary,
+                            destinationColumn.getAddress(),
+                            mergeIndexAddress,
+                            segmentCopyInfo.getSegmentsAddress(),
+                            segmentCopyInfo.getSegmentCount()
+                    );
+
+                    if (rowCount != totalRows) {
+                        throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                    }
+                } else {
+                    var destinationColumn = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                    destinationColumn.jumpTo(totalRows << shl);
+
+                    // Symbol can be already re-mapped if it's a dedup key, they are stored in o3MemColumn2
+                    // and only need to be re-shuffled
+                    if (firstPointer == -1) {
+                        assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
+                        long rowCount = Vect.shuffleSymbolColumnByReverseIndex(
+                                mergeIndexFormat,
+                                o3MemColumns2.get(getPrimaryColumnIndex(columnIndex)).getAddress(),
+                                destinationColumn.getAddress(),
+                                mergeIndexAddress
+                        );
+
+                        if (rowCount != totalRows) {
+                            throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                        }
+                    } else {
+
+                        // Also, dedup key symbol can be not re-mapped since re-mapping was not necessary,
+                        // but in this case they are not stored in o3MemColumn1 and needs to be shuffled as a 32bit column
+                        boolean needsRemapping = !metadata.isDedupKey(columnIndex) || !isDeduplicationEnabled();
+
+                        // Symbols need remapping. Create mapping from transaction symbol keys to column symbol keys
+                        var mapWriter = symbolMapWriters.get(columnIndex);
+                        long txnCount = this.segmentCopyInfo.getTxnCount();
+
+                        var symbolMapMem = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
+                        symbolMapMem.jumpTo(0);
+
+                        if (needsRemapping) {
+                            // If there are no new symbols, no remapping needed
+                            needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
+                        }
+
+                        long rowCount;
+                        if (needsRemapping) {
+                            rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
+                                    mergeIndexFormat,
+                                    mappedAddrBuffPrimary,
+                                    destinationColumn.getAddress(),
+                                    mergeIndexAddress,
+                                    segmentCopyInfo.getTxnInfoAddress(),
+                                    txnCount,
+                                    symbolMapMem.getAddress(),
+                                    symbolMapMem.getAppendOffset()
+                            );
+                        } else {
+                            // Shuffle as int32, no new symbol values added
+                            rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
+                                    (1 << shl),
+                                    mergeIndexFormat,
+                                    mappedAddrBuffPrimary,
+                                    destinationColumn.getAddress(),
+                                    mergeIndexAddress,
+                                    segmentCopyInfo.getSegmentsAddress(),
+                                    segmentCopyInfo.getSegmentCount()
+                            );
+
+                        }
+                        if (rowCount != totalRows) {
+                            throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                        }
+                    }
+                }
+            } else {
+                long mappedAddrBuffSecondary = mappedAddrBuffPrimary + totalSegmentAddressesBytes;
+                var destinationColumnSecondary = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
+                ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                long totalVarSize = segmentFileCache.createAddressBuffersSecondary(columnIndex, metadata.getColumnCount(), segmentCopyInfo, mappedAddrBuffSecondary, driver);
+
+                destinationColumnSecondary.jumpTo(driver.getAuxVectorSize(totalRows));
+                var destinationColumnPrimary = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
+                destinationColumnPrimary.jumpTo(totalVarSize);
+
+                long rowCount = driver.mergeShuffleColumnFromManyAddresses(
+                        mergeIndexFormat,
+                        mappedAddrBuffPrimary,
+                        mappedAddrBuffSecondary,
+                        destinationColumnPrimary.getAddress(),
+                        destinationColumnSecondary.getAddress(),
+                        mergeIndexAddress,
+                        0,
+                        totalVarSize
+                );
+
+                if (rowCount != totalRows) {
+                    throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
+                }
+            }
+        } catch (Throwable th) {
+            handleColumnTaskException(
+                    "could not copy shuffle WAL segment columns",
+                    columnIndex,
+                    columnType,
+                    totalRows,
+                    mergeIndexAddress,
+                    mergeIndexFormat,
+                    totalSegmentAddressesBytes,
+                    th
+            );
+        }
+    }
+
+    private void processWalCommitDedupReplace(
+            @Transient Path walPath,
+            boolean ordered,
+            long rowLo,
+            long rowHi,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            @Nullable SymbolMapDiffCursor mapDiffCursor,
+            long walIdSegmentId,
+            boolean isLastSegmentUsage,
+            TableWriterPressureControl pressureControl,
+            long replaceRangeTsLow,
+            long replaceRangeTsHiExcl
+    ) {
+        assert txWriter.getLagRowCount() == 0;
+        assert replaceRangeTsHiExcl <= replaceRangeTsLow || replaceRangeTsLow <= o3TimestampMin;
+        assert replaceRangeTsHiExcl <= replaceRangeTsLow || replaceRangeTsHiExcl > o3TimestampMax;
+        long replaceRangeTsHi = replaceRangeTsHiExcl - 1;
+
+        int initialSize = segmentFileCache.getWalMappedColumns().size();
+        int timestampIndex = metadata.getTimestampIndex();
+        int walRootPathLen = walPath.size();
+        boolean success = true;
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+
+        if (isLastPartitionClosed() && isEmptyTable()) {
+            populateDenseIndexerList();
+        }
+
+        try {
+            this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+
+            if (rowLo < rowHi) {
+                segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+                o3Columns = segmentFileCache.getWalMappedColumns();
+
+                try {
+                    MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+                    if (ordered) {
+                        long timestampAddr = walTimestampColumn.addressOf(0);
+
+                        txWriter.setLagMinTimestamp(replaceRangeTsLow);
+                        txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+
+                        // WAL columns are lazily mapped to improve performance. It works ok, except in this case
+                        // where access getAddress() calls are concurrent. Map them eagerly now.
+                        segmentFileCache.mmapWalColsEager();
+
+                        processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, partitionTimestampHi);
+                    } else {
+                        LOG.debug().$("sorting WAL [table=").$(tableToken)
+                                .$(", ordered=false")
+                                .$(", walRowLo=").$(rowLo)
+                                .$(", walRowHi=").$(rowHi)
+                                .I$();
+
+                        long totalUncommitted = rowHi - rowLo;
+                        final long timestampMemorySize = totalUncommitted << 4;
+                        o3TimestampMem.jumpTo(timestampMemorySize);
+                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
+
+                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                        long timestampAddr = o3TimestampMem.getAddress();
+
+                        long rowCount = Vect.radixSortABLongIndexAsc(
+                                0,
+                                0,
+                                mappedTimestampIndexAddr,
+                                totalUncommitted,
+                                timestampAddr,
+                                o3TimestampMemCpy.addressOf(0),
+                                o3TimestampMin,
+                                o3TimestampMax
+                        );
+                        assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                        dispatchColumnTasks(timestampAddr, totalUncommitted, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
+                        swapO3ColumnsExcept(timestampIndex);
+                        o3Columns = o3MemColumns1;
+
+                        txWriter.setLagMinTimestamp(replaceRangeTsLow);
+                        txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+
+                        processWalCommitFinishApply(0, timestampAddr, 0, totalUncommitted, pressureControl, true, partitionTimestampHi);
+                    }
+                } finally {
+                    finishO3Append(0);
+                    o3Columns = o3MemColumns1;
+                }
+
+            } else {
+                // It is possible to get empty commit that deletes data range without adding anything, handle it here.
+                try {
+                    txWriter.setLagMinTimestamp(replaceRangeTsLow);
+                    txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+                    processWalCommitFinishApply(0, 0, 0, 0, pressureControl, true, partitionTimestampHi);
+                } finally {
+                    finishO3Append(0);
+                }
+            }
+        } catch (Throwable th) {
+            success = false;
+            throw th;
+        } finally {
+            this.dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            walPath.trimTo(walRootPathLen);
+            if (rowLo < rowHi) {
+                segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+            }
+        }
+    }
+
+    private void processWalCommitFinishApply(
+            long walLagRowCount,
+            long timestampAddr,
+            long o3Lo,
+            long o3Hi,
+            TableWriterPressureControl pressureControl,
+            boolean copiedToMemory,
+            long initialPartitionTimestampHi
+    ) {
+        long commitMinTimestamp = txWriter.getLagMinTimestamp();
+        long commitMaxTimestamp = txWriter.getLagMaxTimestamp();
+        txWriter.setLagMinTimestamp(Long.MAX_VALUE);
+        txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
+
+        o3RowCount = o3Hi - o3Lo + walLagRowCount;
+
+        // Real data writing into table happens here.
+        // Everything above it is to figure out how much data to write now,
+        // map symbols and sort data if necessary.
+        if (o3Hi > o3Lo || isCommitReplaceMode()) {
+            // Now that everything from WAL lag is in memory or in WAL columns,
+            // we can remove artificial 0-length partition created to store lag when table did not have any partitions
+            if (txWriter.getRowCount() == 0 && txWriter.getPartitionCount() == 1 && txWriter.getPartitionSize(0) == 0) {
+                txWriter.setMaxTimestamp(Long.MIN_VALUE);
+                lastPartitionTimestamp = Long.MIN_VALUE;
+                closeActivePartition(false);
+                partitionTimestampHi = Long.MIN_VALUE;
+                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+                long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
+                txWriter.removeAttachedPartitions(partitionTimestamp);
+                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+            }
+
+            processO3Block(
+                    walLagRowCount,
+                    metadata.getTimestampIndex(),
+                    timestampAddr,
+                    o3Hi,
+                    commitMinTimestamp,
+                    commitMaxTimestamp,
+                    copiedToMemory,
+                    o3Lo,
+                    pressureControl
+            );
+
+            finishO3Commit(initialPartitionTimestampHi);
+        }
+        txWriter.setLagOrdered(true);
+        txWriter.setLagRowCount((int) walLagRowCount);
     }
 
     private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, int errorCode, CharSequence errorMsg, long affectedRowsCount, int eventType) {
@@ -6720,72 +8485,86 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (eventType == TSK_COMPLETE) {
                 LogRecord lg = LOG.info()
                         .$("published async command complete event [type=").$(cmdType)
-                        .$(",tableName=").utf8(tableToken.getTableName())
-                        .$(",tableId=").$(tableId)
-                        .$(",correlationId=").$(correlationId);
+                        .$(", table=").$(tableToken)
+                        .$(", tableId=").$(tableId)
+                        .$(", correlationId=").$(correlationId);
                 if (errorCode != AsyncWriterCommand.Error.OK) {
                     lg.$(",errorCode=").$(errorCode).$(",errorMsg=").$(errorMsg);
                 }
                 lg.I$();
             }
         } else {
-            // Queue is full
+            // The queue is full
             LOG.error()
                     .$("could not publish sync command complete event [type=").$(cmdType)
-                    .$(",tableName=").utf8(tableToken.getTableName())
-                    .$(",tableId=").$(tableId)
-                    .$(",correlationId=").$(correlationId)
+                    .$(", table=").$(tableToken)
+                    .$(", tableId=").$(tableId)
+                    .$(", correlationId=").$(correlationId)
                     .I$();
         }
     }
 
-    private long readMinTimestamp(long partitionTimestamp) {
-        setStateForTimestamp(other, partitionTimestamp);
+    private long readMinTimestamp() {
+        other.of(path).trimTo(pathSize); // reset the path to table root
+        final long timestamp = txWriter.getPartitionTimestampByIndex(1);
+        final boolean isParquet = txWriter.isPartitionParquet(1);
         try {
-            if (ff.exists(dFile(other, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE))) {
-                // read min timestamp value
-                final long fd = TableUtils.openRO(ff, other.$(), LOG);
-                try {
-                    return TableUtils.readLongOrFail(ff, fd, 0, tempMem16b, other.$());
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.critical(0).put("Partition does not exist [path=").put(other).put(']');
-            }
+            setStateForTimestamp(other, timestamp);
+            return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);
         }
     }
 
-    private void readPartitionMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
-        final long fd = TableUtils.openRO(ff, dFile(path, columnName, COLUMN_NAME_TXN_NONE), LOG);
+    private long readMinTimestampNative(Path partitionPath, long partitionTimestamp) {
+        if (ff.exists(dFile(partitionPath, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE))) {
+            // read min timestamp value
+            final long fd = openRO(ff, partitionPath.$(), LOG);
+            try {
+                return readLongOrFail(ff, fd, 0, tempMem16b, partitionPath.$());
+            } finally {
+                ff.close(fd);
+            }
+        } else {
+            LOG.error().$("cannot read next partition min timestamp on attempt to drop the partition, next partition does not exist [path=").$(other).I$();
+            return partitionTimestamp;
+        }
+    }
+
+    private long readMinTimestampParquet(Path partitionPath) {
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        try {
+            parquetSize = txWriter.getPartitionParquetFileSize(1);
+            parquetAddr = mapRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
+            final int timestampIndex = metadata.getTimestampIndex();
+            parquetColumnIdsAndTypes.clear();
+            parquetColumnIdsAndTypes.add(timestampIndex);
+            parquetColumnIdsAndTypes.add(ColumnType.TIMESTAMP);
+            parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
+            return parquetStatBuffers.getMinValueLong(0);
+        } finally {
+            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            Misc.free(parquetDecoder);
+        }
+    }
+
+    private void readNativeMinMaxTimestamps(Path partitionPath, CharSequence columnName, long partitionSize) {
+        final long fd = openRO(ff, dFile(partitionPath, columnName, COLUMN_NAME_TXN_NONE), LOG);
         try {
             attachMinTimestamp = ff.readNonNegativeLong(fd, 0);
             attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
-            if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
-                throw CairoException.critical(ff.errno())
-                        .put("cannot read min, max timestamp from the column [path=").put(path)
-                        .put(", partitionSizeRows=").put(partitionSize)
-                        .put(", errno=").put(ff.errno()).put(']');
-            }
-            if (txWriter.getPartitionTimestampByTimestamp(attachMinTimestamp) != partitionTimestamp
-                    || txWriter.getPartitionTimestampByTimestamp(attachMaxTimestamp) != partitionTimestamp) {
-                throw CairoException.critical(0)
-                        .put("invalid timestamp column data in detached partition, data does not match partition directory name [path=").put(path)
-                        .put(", minTimestamp=").ts(attachMinTimestamp)
-                        .put(", maxTimestamp=").ts(attachMaxTimestamp).put(']');
-            }
         } finally {
             ff.close(fd);
         }
     }
 
     // Scans timestamp file
-    // returns size of partition detected, e.g. size of monotonic increase
+    // returns size of partition detected, e.g., size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
     // It also writes min and max values found in detachedMinTimestamp and detachedMaxTimestamp
-    private long readPartitionSizeMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName) {
+    private long readNativeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
         int pathLen = path.size();
         try {
             path.concat(TXN_FILE_NAME);
@@ -6801,27 +8580,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionSize = attachTxReader.getPartitionRowCountByTimestamp(partitionTimestamp);
                     if (partitionSize <= 0) {
                         throw CairoException.nonCritical()
-                                .put("partition is not preset in detached txn file [path=")
-                                .put(path).put(", partitionSize=").put(partitionSize).put(']');
+                                .put("partition is not preset in detached txn file [path=").put(path)
+                                .put(", partitionSize=").put(partitionSize)
+                                .put(']');
                     }
 
                     // Read min and max timestamp values from the file
-                    readPartitionMinMax(ff, partitionTimestamp, path.trimTo(pathLen), columnName, partitionSize);
+                    readPartitionMinMaxTimestamps(partitionTimestamp, path.trimTo(pathLen), columnName, -1, partitionSize);
                     return partitionSize;
                 } finally {
                     Misc.free(attachTxReader);
                 }
             }
 
-            // No txn file found, scan the file to get min, max timestamp
+            // No txn file found, scan the file to get min; max timestamp
             // Scan forward while value increases
-            final long fd = TableUtils.openRO(ff, dFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE), LOG);
+            final long fd = openRO(ff, dFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE), LOG);
             try {
                 long fileSize = ff.length(fd);
                 if (fileSize <= 0) {
                     throw CairoException.critical(ff.errno())
                             .put("timestamp column is too small to attach the partition [path=")
-                            .put(path).put(", fileSize=").put(fileSize).put(']');
+                            .put(path)
+                            .put(", fileSize=").put(fileSize)
+                            .put(']');
                 }
                 long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
                 try {
@@ -6853,6 +8635,75 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // side effect: sets attachMinTimestamp and attachMaxTimestamp, modifies partitionPath
+    // returns partition size
+    private long readParquetMinMaxTimestamps(Path filePath, long parquetSize) {
+        assert parquetSize > 0;
+        long parquetAddr = 0;
+        try {
+            parquetAddr = mapRO(ff, filePath.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
+            final int timestampIndex = metadata.getTimestampIndex();
+            parquetColumnIdsAndTypes.clear();
+            parquetColumnIdsAndTypes.add(timestampIndex);
+            parquetColumnIdsAndTypes.add(ColumnType.TIMESTAMP);
+            parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
+            attachMinTimestamp = parquetStatBuffers.getMinValueLong(0);
+            final int rowGroupCount = parquetDecoder.metadata().rowGroupCount();
+            parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, rowGroupCount - 1);
+            attachMaxTimestamp = parquetStatBuffers.getMaxValueLong(0);
+
+            return parquetDecoder.metadata().rowCount();
+        } finally {
+            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            Misc.free(parquetDecoder);
+        }
+    }
+
+    private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetSize, long partitionSize) {
+        int partitionLen = path.size();
+        try {
+            if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
+                readParquetMinMaxTimestamps(path, parquetSize);
+            } else {
+                path.trimTo(partitionLen);
+                readNativeMinMaxTimestamps(path, columnName, partitionSize);
+            }
+        } finally {
+            path.trimTo(partitionLen);
+        }
+
+        if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("cannot read min, max timestamp from the [path=").put(path)
+                    .put(", partitionSizeRows=").put(partitionSize)
+                    .put(", errno=").put(ff.errno())
+                    .put(']');
+        }
+        if (txWriter.getPartitionTimestampByTimestamp(attachMinTimestamp) != partitionTimestamp
+                || txWriter.getPartitionTimestampByTimestamp(attachMaxTimestamp) != partitionTimestamp) {
+            throw CairoException.critical(0)
+                    .put("invalid timestamp data in detached partition, data does not match partition directory name [path=").put(path)
+                    .put(", minTimestamp=").ts(attachMinTimestamp)
+                    .put(", maxTimestamp=").ts(attachMaxTimestamp)
+                    .put(']');
+        }
+    }
+
+    private long readPartitionSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetSize) {
+        int partitionLen = path.size();
+        try {
+            if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
+                return readParquetMinMaxTimestamps(path, parquetSize);
+            } else {
+                path.trimTo(partitionLen);
+                return readNativeSizeMinMaxTimestamps(partitionTimestamp, path, columnName);
+            }
+        } finally {
+            path.trimTo(partitionLen);
+        }
+    }
+
     // This method is useful for debugging, it's not used in production code.
     @SuppressWarnings("unused")
     private long readTimestampRaw(long transientRowCount) {
@@ -6868,11 +8719,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int readTodo() {
         long todoCount;
         try {
-            // This is first FS call to the table directory.
-            // If table is removed / renamed this should fail with table does not exist.
+            // This is the first FS call the table directory.
+            // If table is removed / renamed, this should fail with table does not exist.
             todoCount = openTodoMem();
         } catch (CairoException ex) {
-            if (ex.errnoReadPathDoesNotExist()) {
+            if (ex.errnoFileCannotRead()) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName());
             }
             throw ex;
@@ -6897,7 +8748,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         attachIndexBuilder.reindexColumn(
                 ff,
                 attachColumnVersionReader,
-                // use metadata instead of detachedMetadata to get correct value block capacity
+                // use metadata instead of detachedMetadata to get the correct value block capacity
                 // detachedMetadata does not have the column
                 metadata,
                 metadata.getColumnIndex(columnName),
@@ -6925,33 +8776,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    private void recoverFromMetaRenameFailure(CharSequence columnName) {
-        openMetaFile(ff, path, pathSize, metaMem);
+    private void recoverFromMetaRenameFailure() {
+        openMetaFile(ff, path, pathSize, ddlMem, metadata);
     }
 
-    private void recoverFromSwapRenameFailure(CharSequence columnName) {
-        recoverFromTodoWriteFailure(columnName);
+    private void recoverFromSwapRenameFailure() {
+        recoverFromTodoWriteFailure();
         clearTodoLog();
     }
 
     private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
         removeSymbolMapFilesQuiet(columnName, getTxn());
         removeMetaFile();
-        recoverFromSwapRenameFailure(columnName);
+        recoverFromSwapRenameFailure();
     }
 
-    private void recoverFromTodoWriteFailure(CharSequence columnName) {
+    private void recoverFromTodoWriteFailure() {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
-        openMetaFile(ff, path, pathSize, metaMem);
+        openMetaFile(ff, path, pathSize, ddlMem, metadata);
+        columnCount = metadata.getColumnCount();
     }
 
-    private void recoverOpenColumnFailure(CharSequence columnName) {
-        final int index = columnCount - 1;
+    private void recoverOpenColumnFailure() {
         removeMetaFile();
-        removeLastColumn();
-        columnCount--;
-        recoverFromSwapRenameFailure(columnName);
-        removeSymbolMapWriter(index);
+        recoverFromSwapRenameFailure();
+        // Some writer in-memory state will be still dirty, and it's not easy to roll everything back
+        // for all the failure points. It's safer to re-open the writer object after a column-add failure.
+        distressed = true;
     }
 
     private void releaseIndexerWriters() {
@@ -6972,7 +8823,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             try {
-                removeOrException(ff, lockFd, lockName(path));
+                closeRemove(ff, lockFd, lockName(path));
             } finally {
                 path.trimTo(pathSize);
             }
@@ -6980,7 +8831,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(
-            SymbolMapDiffCursor symbolMapDiffCursor,
+            @Nullable SymbolMapDiffCursor symbolMapDiffCursor,
             long rowLo,
             long rowHi,
             Path walPath
@@ -7028,7 +8879,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
                             if (newKey < 0) {
-                                // This symbol was not mapped in WAL
+                                // This symbol was not mapped in WAL.
                                 // WAL is invalid
                                 throw CairoException.critical(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
                                         .put(", columnKey=").put(symKey)
@@ -7041,6 +8892,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         symbolColumnDest.putInt((rowId - rowLo) << 2, symKey);
                     }
                     symbolColumnDest.shiftAddressRight(rowLo << 2);
+                    this.memColumnShifted |= (rowLo != 0);
                 }
             }
         }
@@ -7052,7 +8904,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return o3ColumnOverrides;
     }
 
-    private void removeColumnFiles(int columnIndex, int columnType) {
+    private void removeColumnFiles(int columnIndex, String columnName, int columnType, boolean isIndexed) {
         PurgingOperator purgingOperator = getPurgingOperator();
         long defaultNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
         if (PartitionBy.isPartitioned(partitionBy)) {
@@ -7061,20 +8913,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    purgingOperator.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
                 }
             }
         } else {
-            purgingOperator.add(columnIndex, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1L);
+            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1);
         }
         if (ColumnType.isSymbol(columnType)) {
-            purgingOperator.add(columnIndex, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
+            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
         }
     }
 
     private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp) {
         if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-            setPathForPartition(path, partitionBy, partitionTimestamp, -1);
+            setPathForNativePartition(path, partitionBy, partitionTimestamp, -1);
             int plen = path.size();
             long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
             removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
@@ -7084,71 +8936,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
         } else {
             LOG.critical()
-                    .$("o3 ignoring removal of column in read-only partition [table=").utf8(tableToken.getTableName())
-                    .$(", column=").utf8(columnName)
+                    .$("o3 ignoring removal of column in read-only partition [table=").$safe(tableToken.getTableName())
+                    .$(", column=").$safe(columnName)
                     .$(", timestamp=").$ts(partitionTimestamp)
                     .$();
         }
     }
 
-    private int removeColumnFromMeta(int index) {
-        try {
-            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, pathSize, fileOperationRetryCount);
-            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(partitionBy);
-
-            if (timestampIndex == index) {
-                ddlMem.putInt(-1);
-            } else {
-                ddlMem.putInt(timestampIndex);
-            }
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == index);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-
-            return metaSwapIndex;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private void removeIndexFiles(CharSequence columnName, int columnIndex) {
-        try {
-            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
-            }
-            if (!PartitionBy.isPartitioned(partitionBy)) {
-                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp());
-            }
-        } finally {
-            path.trimTo(pathSize);
-        }
-    }
-
     private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
-        setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
         removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(pathSize);
-    }
-
-    private void removeLastColumn() {
-        freeColumnMemory(columnCount - 1);
     }
 
     private void removeMetaFile() {
@@ -7216,12 +9017,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeSymbolMapFilesQuiet(CharSequence name, long columnNamTxn) {
+    private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
         try {
-            removeFileOrLog(ff, offsetFileName(path.trimTo(pathSize), name, columnNamTxn));
-            removeFileOrLog(ff, charFileName(path.trimTo(pathSize), name, columnNamTxn));
-            removeFileOrLog(ff, keyFileName(path.trimTo(pathSize), name, columnNamTxn));
-            removeFileOrLog(ff, valueFileName(path.trimTo(pathSize), name, columnNamTxn));
+            removeFileOrLog(ff, offsetFileName(path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, charFileName(path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, keyFileName(path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, valueFileName(path.trimTo(pathSize), name, columnNameTxn));
         } finally {
             path.trimTo(pathSize);
         }
@@ -7280,51 +9081,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int renameColumnFromMeta(int index, CharSequence newName) {
-        try {
-            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, pathSize, fileOperationRetryCount);
-            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(partitionBy);
-            ddlMem.putInt(timestampIndex);
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                nameOffset += Vm.getStorageLength(columnName);
-
-                if (i == index && getColumnType(metaMem, i) > 0) {
-                    columnName = newName;
-                }
-                ddlMem.putStr(columnName);
-            }
-
-            return metaSwapIndex;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private void renameMetaToMetaPrev(CharSequence columnName) {
+    private void renameMetaToMetaPrev() {
         try {
             this.metaPrevIndex = rename(fileOperationRetryCount);
         } catch (CairoException e) {
-            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
         }
     }
 
-    private void renameSwapMetaToMeta(CharSequence columnName) {
+    private void renameSwapMetaToMeta() {
         // rename _meta.swp to _meta
         try {
             restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
         } catch (CairoException e) {
-            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, columnName, e);
+            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
         }
     }
 
@@ -7347,7 +9117,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         lastTimestamp = ts;
                     } else {
                         Path other = Path.getThreadLocal2(path.trimTo(p));
-                        TableUtils.oldPartitionName(other, getTxn());
+                        oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
                             if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
@@ -7366,7 +9136,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setStateForTimestamp(path, tsLimit);
                     if (!ff.exists(path.$())) {
                         Path other = Path.getThreadLocal2(path);
-                        TableUtils.oldPartitionName(other, getTxn());
+                        oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
                             if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
@@ -7384,8 +9154,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             transientRowCount = txWriter.getPartitionRowCountByTimestamp(lastTimestamp);
 
                             // 2. read max timestamp
-                            TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
-                            maxTimestamp = TableUtils.readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
+                            dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
+                            maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
                             fixedRowCount -= transientRowCount;
                             txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
                             LOG.info()
@@ -7404,7 +9174,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long expectedSize = txWriter.unsafeReadFixedRowCount();
             if (expectedSize != fixedRowCount || maxTimestamp != this.txWriter.getMaxTimestamp()) {
                 LOG.info()
-                        .$("actual table size has been adjusted [name=`").utf8(tableToken.getTableName()).$('`')
+                        .$("actual table size has been adjusted [name=`").$safe(tableToken.getTableName()).$('`')
                         .$(", expectedFixedSize=").$(expectedSize)
                         .$(", actualFixedSize=").$(fixedRowCount)
                         .I$();
@@ -7469,10 +9239,103 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             path.$();
 
-            TableUtils.renameOrFail(ff, path.$(), other.concat(META_FILE_NAME).$());
+            renameOrFail(ff, path.$(), other.concat(META_FILE_NAME).$());
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+    }
+
+    private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
+        // create new _meta.swp
+        this.metaSwapIndex = rewriteMetadata(metadata);
+
+        // validate new meta
+        validateSwapMeta();
+
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev();
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo();
+
+        // rename _meta.swp to _meta
+        renameSwapMetaToMeta();
+    }
+
+    private int rewriteMetadata(TableWriterMetadata metadata) {
+        try {
+            int columnCount = metadata.getColumnCount();
+            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
+
+            ddlMem.putInt(metadata.getColumnCount());
+            ddlMem.putInt(metadata.getPartitionBy());
+            ddlMem.putInt(metadata.getTimestampIndex());
+            ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metadata.getTableId());
+            ddlMem.putInt(metadata.getMaxUncommittedRows());
+            ddlMem.putLong(metadata.getO3MaxLag());
+
+            int version = txWriter.getMetadataVersion() + 1;
+            metadata.setMetadataVersion(version);
+            ddlMem.putLong(metadata.getMetadataVersion());
+            ddlMem.putBool(metadata.isWalEnabled());
+            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
+            ddlMem.putInt(metadata.getTtlHoursOrMonths());
+
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                ddlMem.putInt(columnType);
+
+                long flags = 0;
+                if (metadata.isIndexed(i)) {
+                    flags |= META_FLAG_BIT_INDEXED;
+                }
+
+                if (metadata.isDedupKey(i)) {
+                    flags |= META_FLAG_BIT_DEDUP_KEY;
+                }
+
+                if (metadata.getSymbolCacheFlag(i)) {
+                    flags |= META_FLAG_BIT_SYMBOL_CACHE;
+                }
+
+                ddlMem.putLong(flags);
+
+                ddlMem.putInt(metadata.getIndexBlockCapacity(i));
+                ddlMem.putInt(metadata.getSymbolCapacity(i));
+                ddlMem.skip(4);
+                int replaceColumnIndex = metadata.getReplacingColumnIndex(i);
+                ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
+                ddlMem.skip(4);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            ddlMem.jumpTo(nameOffset);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metadata.getColumnName(i);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+
+            ddlMem.sync(false);
+            return index;
+        } catch (Throwable th) {
+            LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
+            try {
+                // Revert metadata
+                openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            } catch (Throwable th2) {
+                LOG.critical().$("could not revert metadata, writer distressed [path=").$(path).$(']').$();
+                throwDistressException(th2);
+            }
+            throw th;
+        } finally {
+            // truncate _meta file exactly, the file size never changes.
+            // Metadata updates are written to a new file and then swapped by renaming.
+            ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
     }
 
@@ -7488,10 +9351,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void rollbackSymbolTables() {
+    private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex) {
+        try {
+            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
+                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
+            }
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp());
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    private void rollbackSymbolTables(boolean quiet) {
         int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
         for (int i = 0; i < expectedMapWriters; i++) {
-            denseSymbolMapWriters.getQuick(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            try {
+                denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            } catch (Throwable th) {
+                if (quiet) {
+                    distressed = true;
+                    CharSequence columnName = metadata.getColumnName(i);
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                            .$(", columnName=").$safe(columnName)
+                            .$(", exception=").$(th)
+                            .I$();
+                } else {
+                    throw th;
+                }
+            }
         }
     }
 
@@ -7506,9 +9397,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
+    private void runFragile(FragileCode fragile, CairoException e) {
         try {
-            fragile.run(columnName);
+            fragile.run();
         } catch (CairoException e2) {
             LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
             throwDistressException(e2);
@@ -7532,6 +9423,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setAppendPosition(final long rowCount, boolean doubleAllocate) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                tableToken,
+                lastOpenPartitionTs,
+                lastOpenPartitionTxnName,
+                rowCount
+        );
+
         long recordLength = 0;
         for (int i = 0; i < columnCount; i++) {
             recordLength += setColumnAppendPosition(i, rowCount, doubleAllocate);
@@ -7586,23 +9484,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Sets path member variable to partition directory for the given timestamp and
-     * partitionLo and partitionHi to partition interval in millis. These values are
+     * partitionLo and partitionHi to the partition interval in millis. These values are
      * determined based on input timestamp and value of partitionBy. For any given
-     * timestamp this method will determine either day, month or year interval timestamp falls to.
+     * timestamp, this method will determine either day, month or year interval timestamp falls to.
      * Partition directory name is ISO string of interval start.
      * <p>
-     * Because this method modifies "path" member variable, be sure path is trimmed to original
+     * Because this method modifies "path" member variable, be a sure path trimmed to original
      * state within try..finally block.
      *
      * @param path      path instance to modify
-     * @param timestamp to determine interval for
+     * @param timestamp to determine the interval for
      */
-    private void setStateForTimestamp(Path path, long timestamp) {
-        // When partition is create a txn name must always be set to purge dropped partitions.
+    private long setStateForTimestamp(Path path, long timestamp) {
+        // When partition is created, a txn name must always be set to purge dropped partitions.
         // When partition is created outside O3 merge use `txn-1` as the version
         long partitionTxnName = PartitionBy.isPartitioned(partitionBy) ? txWriter.getTxn() - 1 : -1;
         partitionTxnName = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp, partitionTxnName);
-        TableUtils.setPathForPartition(path, partitionBy, timestamp, partitionTxnName);
+        setPathForNativePartition(path, partitionBy, timestamp, partitionTxnName);
+        return partitionTxnName;
     }
 
     private void shrinkO3Mem() {
@@ -7624,7 +9523,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashPartitionForce(int partitionIndex) {
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        assert lastLogicalPartitionTimestamp == txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+        if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
+            lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+            // We can have a split partition without the parent logical partition
+            // after some replace commits
+            // We need to create a logical partition to squash into
+            txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
+            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
+            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
+            }
+            partitionIndex++;
+        }
 
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         while (partitionIndex < txWriter.getPartitionCount()) {
@@ -7658,53 +9568,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long squashPartitionTimestamp(long ts) {
-        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(ts);
-        if (partitionIndex < 0) {
-            partitionIndex = -partitionIndex - 1;
-        }
-        if (partitionIndex >= txWriter.getPartitionCount()) {
-            return Long.MAX_VALUE;
-        }
-        return txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex));
-    }
-
     private void squashSplitPartitions(long timestampMin, long timestampMax, int maxLastSubPartitionCount) {
         if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
             return;
         }
 
-        // Take the control of split partition population here.
+        // Take control of the split partition population here.
         // When the number of split partitions is too big, start merging them together.
         // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
-        long logicalPartition = squashPartitionTimestamp(timestampMin);
-        int partitionIndex = txWriter.getPartitionIndex(logicalPartition);
-        if (partitionIndex > -1) {
-            int partitionIndexLo = partitionIndex;
-            int partitionCount = txWriter.getPartitionCount();
+        long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
+        int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
 
-            while (logicalPartition < timestampMax && ++partitionIndex < partitionCount) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                long newLogicalPartition = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        boolean splitsKept = false;
+        if (partitionIndexLo < txWriter.getPartitionCount()) {
+            int partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
+            int partitionIndex = partitionIndexLo + 1;
 
-                if (logicalPartition != newLogicalPartition) {
-                    squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+            for (; partitionIndex < partitionIndexHi; partitionIndex++) {
 
-                    // txn records can be changed by squashing. Reset the position and the partition count.
-                    partitionCount = txWriter.getPartitionCount();
-                    partitionIndex = txWriter.getPartitionIndex(newLogicalPartition);
+                long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                long nextPartitionLogicalTimestamp = txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp);
 
-                    // switch to the next logical partition
-                    logicalPartition = newLogicalPartition;
-                    partitionIndexLo = partitionIndex;
+                if (nextPartitionLogicalTimestamp != logicalPartitionTimestamp) {
+                    int splitCount = partitionIndex - partitionIndexLo;
+                    if (splitCount > 1) {
+                        int partitionCount = txWriter.getPartitionCount();
+                        squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+                        int partitionReduction = partitionCount - txWriter.getPartitionCount();
+                        splitsKept = partitionReduction < splitCount - 1;
+
+                        logicalPartitionTimestamp = nextPartitionTimestamp;
+
+                        // Squashing changes the partitions, re-calculate the loop index and boundaries
+                        partitionIndexLo = partitionIndex = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(nextPartitionTimestamp);
+                        partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
+                    } else {
+                        partitionIndexLo = partitionIndex;
+                        logicalPartitionTimestamp = nextPartitionLogicalTimestamp;
+                    }
+
+                    if (!splitsKept && timestampMin == minSplitPartitionTimestamp) {
+                        // All splits seen are squashed, move minSplitPartitionTimestamp forward.
+                        minSplitPartitionTimestamp = nextPartitionTimestamp;
+                    }
                 }
             }
 
-            // This can shift last partition timestamp, save what was the last partition timestamp before squashing
-            long lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-            squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
-            if (lastPartitionTimestamp != txWriter.getLastPartitionTimestamp()) {
-                openLastPartition();
+            if (partitionIndex - partitionIndexLo > 1) {
+                squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
             }
         }
     }
@@ -7715,8 +9626,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        if (checkpointStatus.isInProgress()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
+        if (checkpointStatus.partitionsLocked()) {
+            LOG.info().$("cannot squash partition [table=").$safe(tableToken.getTableName())
+                    .$("], checkpoint in progress").$();
             return;
         }
 
@@ -7748,17 +9660,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
-        TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
+        setPathForNativePartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
         final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
+        FrameFactory frameFactory = engine.getFrameFactory();
         Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
         try {
             if (copyTargetFrame) {
                 try {
-                    TableUtils.setPathForPartition(other, partitionBy, targetPartition, txWriter.txn);
-                    TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+                    setPathForNativePartition(other, partitionBy, targetPartition, txWriter.txn);
+                    createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
@@ -7785,7 +9698,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 other.trimTo(pathSize);
                 long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
+                setPathForNativePartition(other, partitionBy, sourcePartition, sourceNameTxn);
                 long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
                 lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
                 if (lastPartitionSquashed) {
@@ -7806,12 +9719,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
                     addPhysicallyWrittenRows(sourceFrame.getRowCount());
                 } catch (Throwable th) {
-                    LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
+                    LOG.critical().$("partition squashing failed [table=").$(tableToken)
+                            .$(", error=").$(th).I$();
                     throw th;
                 }
 
                 txWriter.removeAttachedPartitions(sourcePartition);
-                columnVersionWriter.removePartition(sourcePartition);
+                columnVersionWriter.squashPartition(targetPartition, sourcePartition);
                 partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
                 if (sourcePartition == minSplitPartitionTimestamp) {
                     minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
@@ -7833,34 +9747,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
+        if (lastPartitionSquashed) {
+            openLastPartition();
+        }
+
         // Commit the new transaction with the partitions squashed
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
-        processPartitionRemoveCandidates();
     }
 
-    private void swapMetaFile(CharSequence columnName) {
-        // close _meta so we can rename it
-        metaMem.close();
-        // validate new meta
-        validateSwapMeta(columnName);
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-        // rename _meta.swp to -_meta
-        renameSwapMetaToMeta(columnName);
-        try {
-            // open _meta file
-            openMetaFile(ff, path, pathSize, metaMem);
-            // remove _todo
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
+    private int squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(long timestampMax) {
+        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(timestampMax);
+        if (partitionIndex < 0) {
+            return -partitionIndex - 1;
         }
-        bumpMetadataVersion();
+        return partitionIndex;
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
@@ -7883,13 +9785,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = o3NullSetters1;
     }
 
+    private long swapTimestampInMemCols(int timestampIndex) {
+        long timestampAddr;
+        var tsMem1 = o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
+        var tsMem2 = o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex));
+
+        o3MemColumns1.set(getPrimaryColumnIndex(timestampIndex), tsMem2);
+        o3TimestampMem = tsMem2;
+
+        o3MemColumns2.set(getPrimaryColumnIndex(timestampIndex), tsMem1);
+        o3TimestampMemCpy = tsMem1;
+
+        timestampAddr = o3TimestampMem.getAddress();
+        return timestampAddr;
+    }
+
     private void switchPartition(long timestamp) {
-        // Before partition can be switched we need to index records
+        // Before partition can be switched, we need to index records
         // added so far. Index writers will start point to different
         // files after switch.
         updateIndexes();
         txWriter.switchPartitions(timestamp);
-        openPartition(timestamp);
+        openPartition(timestamp, 0);
         setAppendPosition(0, false);
     }
 
@@ -7917,8 +9834,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void throwDistressException(CairoException cause) {
-        LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
+    private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
+        LOG.error().$("wal block apply failed [table=").$(tableToken)
+                .$(", column=").$safe(metadata.getColumnName(columnIndex))
+                .$(", columnType=").$(ColumnType.nameOf(columnType))
+                .$(", expectedResult=").$(totalRows)
+                .$(", actualResult=").$(rowCount)
+                .I$();
+
+        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+            // This exception is thrown to indicate that the applying block failed,
+            // and it is not of CairoException type so that it is not intercepted and re-tried in tests.
+            // The purpose is to have the special debug test mode where this exception
+            // suspends the table and fails the testing code instead of switching to 1 by 1 commit mode.
+            throw new IllegalStateException("apply block failed");
+        }
+        throw CairoException.txnApplyBlockError(tableToken);
+    }
+
+    private void throwDistressException(Throwable cause) {
+        try {
+            Sinkable sinkable = (Sinkable) cause;
+            LOG.critical().$("writer error [table=").$(tableToken).$(", e=").$(sinkable).I$();
+        } catch (Throwable th) {
+            LOG.critical().$("writer error [table=").$(tableToken).$(", e=").$(cause).I$();
+        }
         distressed = true;
         throw new CairoError(cause);
     }
@@ -7971,7 +9911,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
 
-        LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
+        LOG.info().$("truncated [name=").$safe(tableToken.getTableName()).I$();
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
@@ -8007,13 +9947,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final Sequence indexPubSequence = this.messageBus.getIndexerPubSequence();
         final RingQueue<ColumnIndexerTask> indexerQueue = this.messageBus.getIndexerQueue();
 
-        LOG.info().$("parallel indexing [table=").utf8(tableToken.getTableName())
+        LOG.info().$("parallel indexing [table=").$safe(tableToken.getTableName())
                 .$(", indexCount=").$(indexCount)
                 .$(", rowCount=").$(hi - lo)
                 .I$();
         int serialIndexCount = 0;
 
-        // we are going to index last column in this thread while other columns are on the queue
+        // we are going to index the last column in this thread while other columns are on the queue
         OUT:
         for (int i = 0; i < nParallelIndexes; i++) {
 
@@ -8054,7 +9994,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexAndCountDown(denseIndexers.getQuick(indexCount - 1), lo, hi, indexLatch);
         serialIndexCount++;
 
-        // At this point we have re-indexed our column and if things are flowing nicely
+        // At this point, we have re-indexed our column and if things are flowing nicely
         // all other columns should have been done by other threads. Instead of actually
         // waiting we gracefully check latch count.
         if (!indexLatch.await(configuration.getWorkStealTimeoutNanos())) {
@@ -8085,7 +10025,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void updateIndexesSerially(long lo, long hi) {
-        LOG.info().$("serial indexing [table=").utf8(tableToken.getTableName())
+        LOG.debug().$("serial indexing [table=").$safe(tableToken.getTableName())
                 .$(", indexCount=").$(indexCount)
                 .$(", rowCount=").$(hi - lo)
                 .I$();
@@ -8097,7 +10037,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throwDistressException(e);
             }
         }
-        LOG.info().$("serial indexing done [table=").utf8(tableToken.getTableName()).I$();
+        LOG.debug().$("serial indexing done [table=").$safe(tableToken.getTableName()).I$();
     }
 
     private void updateIndexesSlow() {
@@ -8110,63 +10050,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void updateMatViewDefinition(MatViewDefinition newDefinition) {
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try (BlockFileWriter definitionWriter = blockFileWriter) {
+            definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+            MatViewDefinition.append(newDefinition, definitionWriter);
+        } finally {
+            path.trimTo(pathSize);
+        }
+
+        // Unlike mat view state write-through behavior, we update the in-memory definition
+        // object here, after updating the definition file.
+        engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
+    }
+
     private void updateMaxTimestamp(long timestamp) {
         txWriter.updateMaxTimestamp(timestamp);
         this.timestampSetter.accept(timestamp);
-    }
-
-    private void updateMetaStructureVersion() {
-        try {
-            copyMetadataAndUpdateVersion();
-            finishMetaSwapUpdate();
-        } finally {
-            ddlMem.close();
-        }
-    }
-
-    private void updateMetadataWithDeduplicationUpsertKeys(boolean enable, LongList columnsIndexes) {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntryWithDedupFlag(i, enable && columnsIndexes.indexOf(i) >= 0);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStrA(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            this.metaSwapIndex = index;
-        } finally {
-            ddlMem.close();
-        }
-
-        finishMetaSwapUpdateStructural();
-
-        for (int i = 0; i < columnCount; i++) {
-            metadata.getColumnMetadata(i).setDedupKeyFlag(enable && columnsIndexes.indexOf(i) >= 0);
-        }
-
-        if (enable) {
-            if (dedupColumnCommitAddresses == null) {
-                dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
-            } else {
-                dedupColumnCommitAddresses.clear();
-            }
-            dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
-        } else {
-            if (dedupColumnCommitAddresses != null) {
-                dedupColumnCommitAddresses.setDedupColumnCount(0);
-            }
-        }
     }
 
     private void updateO3ColumnTops() {
@@ -8204,53 +10107,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void validateSwapMeta(CharSequence columnName) {
+    private void validateSwapMeta() {
         try {
             try {
                 path.concat(META_SWAP_FILE_NAME);
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                // Map meta-swap file for verification to exact length.
+                long len = ff.length(path.$());
+                // Check that file length is ok, do not allow you to map to default page size if it's returned as -1.
+                if (len < 1) {
+                    throw CairoException.critical(ff.errno()).put("cannot swap metadata file, invalid size: ").put(path);
+                }
+                ddlMem.of(ff, path.$(), ff.getPageSize(), len, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE, POSIX_MADV_RANDOM);
                 validationMap.clear();
-                validateMeta(metaMem, validationMap, ColumnType.VERSION);
+                validateMeta(ddlMem, validationMap, ColumnType.VERSION);
             } finally {
-                metaMem.close();
+                ddlMem.close(false);
                 path.trimTo(pathSize);
             }
         } catch (CairoException e) {
-            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
         }
-    }
-
-    private void writeColumnEntry(int i, boolean changeToDeleted) {
-        int columnType = getColumnType(metaMem, i);
-        // When column is deleted it's written to metadata with negative type
-        if (changeToDeleted) {
-            columnType = -Math.abs(columnType);
-        }
-        ddlMem.putInt(columnType);
-        long flags = getColumnFlags(metaMem, i);
-        ddlMem.putLong(flags);
-        ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(8);
-        ddlMem.putInt(getReplacingColumnIndexRaw(metaMem, i));
-        ddlMem.skip(4);
-    }
-
-    private void writeColumnEntryWithDedupFlag(int i, boolean changeToDedup) {
-        int columnType = getColumnType(metaMem, i);
-        // When column is deleted it's written to metadata with negative type
-        ddlMem.putInt(columnType);
-        long flags = getColumnFlags(metaMem, i);
-        if (changeToDedup) {
-            flags |= META_FLAG_BIT_DEDUP_KEY;
-        } else {
-            flags &= ~META_FLAG_BIT_DEDUP_KEY;
-        }
-        ddlMem.putLong(flags);
-        ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(16);
     }
 
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, int columnIndex, SymbolColumnIndexer indexer) {
@@ -8259,8 +10138,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             try {
                 // edge cases here are:
-                // column spans only part of table - e.g. it was added after table was created and populated
-                // column has top value, e.g. does not span entire partition
+                // column spans only part of table - e.g., it was added after table was created and populated
+                // column has top value, e.g., does not span the entire partition
                 // to this end, we have a super-edge case:
 
                 // This piece of code is unbelievably fragile!
@@ -8282,35 +10161,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 path.trimTo(pathSize);
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
-            removeIndexFiles(columnName, columnIndex);
-            throw e;
+            rollbackRemoveIndexFiles(columnName, columnIndex);
+            throw th;
         }
     }
 
-    private void writeRestoreMetaTodo(CharSequence columnName) {
-        try {
-            writeRestoreMetaTodo();
-        } catch (CairoException e) {
-            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
+    private void writeMetadataToDisk() {
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMeta();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
         }
     }
 
     private void writeRestoreMetaTodo() {
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.getUnsafe().storeFence();
-        todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_RESTORE_META);
-        todoMem.putLong(48, metaPrevIndex);
-        Unsafe.getUnsafe().storeFence();
-        todoMem.putLong(24, todoTxn);
-        todoMem.jumpTo(56);
-        todoMem.sync(false);
+        try {
+            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+            todoMem.putLong(16, configuration.getDatabaseIdHi());
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(32, 1);
+            todoMem.putLong(40, TODO_RESTORE_META);
+            todoMem.putLong(48, metaPrevIndex);
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(24, todoTxn);
+            todoMem.jumpTo(56);
+            todoMem.sync(false);
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
+        }
     }
 
     static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
@@ -8326,6 +10209,119 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     boolean allowMixedIO() {
         return mixedIOFlag;
+    }
+
+    /**
+     * This method is thread safe, e.g. can be triggered from multiple partition merge tasks
+     *
+     * @param partitionTimestamp timestamp of the partition to check
+     * @param partitionNameTxn   transaction name of the partition to check
+     * @param partitionRowCount  row count of the partition to check
+     * @param partitionLo        starting row index of the partition to check
+     * @param partitionHi        ending row index of the partition to check, inclusive
+     * @param commitLo           starting row index of the commit to check
+     * @param commitHi           ending row index of the commit to check, inclusive
+     * @param mergeIndexAddr     address of the merge index
+     * @param mergeIndexRows     number of rows in the merge index
+     * @return true if the commit is identical to the partition, false otherwise
+     */
+    boolean checkDedupCommitIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi,
+            long mergeIndexAddr,
+            long mergeIndexRows
+    ) {
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    // Do not compare dedup keys, already a match
+                    if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+                            i,
+                            partitionFrame,
+                            partitionLo,
+                            partitionHi + 1,
+                            commitFrame,
+                            commitLo,
+                            commitHi + 1,
+                            mergeIndexAddr,
+                            mergeIndexRows
+                    )) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * This method is thread safe, e.g. can be triggered from multiple partition merge tasks
+     *
+     * @param partitionTimestamp timestamp of the partition to check
+     * @param partitionNameTxn   transaction name of the partition to check
+     * @param partitionRowCount  row count of the partition to check
+     * @param partitionLo        starting row index of the partition to check
+     * @param partitionHi        ending row index of the partition to check, inclusive
+     * @param commitLo           starting row index of the commit to check
+     * @param commitHi           ending row index of the commit to check, inclusive
+     * @return true if the commit is identical to the partition, false otherwise
+     */
+    boolean checkReplaceCommitIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi
+    ) {
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+
+                    // Compare all columns, dedup keys and non-keys
+                    if (i != metadata.getTimestampIndex()) {
+                        // Non-designated timestamp
+                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1,
+                                0,
+                                commitHi + 1 - commitLo
+                        )) {
+                            return false;
+                        }
+                    } else {
+                        // Designated timestamp
+                        if (!FrameAlgebra.isDesignatedTimestampColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1
+                        )) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     void closeActivePartition(long size) {
@@ -8408,7 +10404,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 masterRef--;
                 setO3AppendPosition(o3RowCount);
             } else {
-                // Cancelling first row in o3, reverting to non-o3
+                // Cancelling the first row in o3, reverting to non-o3
                 setO3AppendPosition(0);
                 masterRef--;
                 clearO3();
@@ -8425,7 +10421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // dirty timestamp should be 1 because newRow() increments it
         if (dirtyTransientRowCount == 1) {
             if (PartitionBy.isPartitioned(partitionBy)) {
-                // we have to undo creation of partition
+                // we have to undo the creation of partition
                 closeActivePartition(false);
                 if (removeDirOnCancelRow) {
                     try {
@@ -8443,7 +10439,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
                         txWriter.setMaxTimestamp(rollbackToMaxTimestamp);
-                        openPartition(rollbackToMaxTimestamp);
+                        openPartition(rollbackToMaxTimestamp, rollbackToTransientRowCount);
                         setAppendPosition(rollbackToTransientRowCount, false);
                     } catch (Throwable e) {
                         freeColumns(false);
@@ -8465,7 +10461,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } else {
             txWriter.cancelRow();
-            // we are staying within same partition, prepare append positions for row count
+            // we are staying within the same partition, prepare append positions for row count
             boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
             if (!rowChanged) {
                 // verify if any of the columns have been changed
@@ -8478,14 +10474,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // is no column has been changed we take easy option and do nothing
+            // if no column has been changed we take easy option and do nothing
             if (rowChanged) {
                 setAppendPosition(dirtyTransientRowCount - 1, false);
             }
         }
         rowValueIsNotNull.fill(0, columnCount, --masterRef);
 
-        // Some executions path in this method already call txWriter.removeAllPartitions()
+        // Some execution path in this method already call txWriter.removeAllPartitions()
         // which resets transientRowCount.
         if (txWriter.transientRowCount > 0) {
             txWriter.transientRowCount--;
@@ -8513,7 +10509,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @FunctionalInterface
     private interface FragileCode {
-        void run(CharSequence columnName);
+        void run();
     }
 
     public interface Row {
@@ -8521,6 +10517,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void append();
 
         void cancel();
+
+        void putArray(int columnIndex, @NotNull ArrayView array);
 
         void putBin(int columnIndex, long address, long len);
 
@@ -8573,12 +10571,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
         /**
-         * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
+         * Writes UTF8-encoded string to WAL. As the name of the function suggests the storage format is
          * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
          *
          * @param columnIndex index of the column we are writing to
          * @param value       UTF8 bytes represented as CharSequence interface.
-         *                    On this interface getChar() returns a byte, not complete character.
+         *                    On this interface, getChar() returns a byte, not complete character.
          */
         void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
 
@@ -8597,6 +10595,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
+        @SuppressWarnings("unused")
+            // Used by assembler
         void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);
@@ -8612,6 +10612,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void cancel() {
+            // no-op
+        }
+
+        @Override
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
             // no-op
         }
 
@@ -8800,6 +10805,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void cancel() {
             rowCancel();
+        }
+
+        @Override
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
+            ArrayTypeDriver.appendValue(
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
+                    array
+            );
+            setRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -9002,7 +11017,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             utf8Sink.clear();
             utf8Sink.put(value);
             VarcharTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
                     utf8Sink
             );
             setRowValueNotNull(columnIndex);
@@ -9011,7 +11027,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
             VarcharTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
                     value
             );
             setRowValueNotNull(columnIndex);

@@ -24,19 +24,24 @@
 
 package io.questdb.test.sqllogictest;
 
+import io.questdb.network.NetworkError;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -48,71 +53,22 @@ import java.util.Collection;
 import java.util.List;
 
 import static io.questdb.PropertyKey.*;
-import static io.questdb.std.Files.notDots;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(Parameterized.class)
 public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
-    private static short pgPort;
-    private static TestServerMain serverMain;
+    protected final boolean parallelReadParquet;
     private final String testFile;
+    private short pgPort;
+    private TestServerMain serverMain;
 
     public AbstractSqllogicTestRunner(String testFile) {
+        this(testFile, true);
+    }
+
+    public AbstractSqllogicTestRunner(String testFile, boolean parallelReadParquet) {
         this.testFile = testFile;
-    }
-
-    public static void removeNonSystemTables(CharSequence dbRoot) {
-        try (Path path = new Path()) {
-            path.of(dbRoot);
-            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            path.slash();
-            if (!removeNonSystemTables(path, false)) {
-                StringSink dir = new StringSink();
-                dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
-            }
-        }
-    }
-
-    public static boolean removeNonSystemTables(Path path, boolean haltOnFail) {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        path.$();
-        long pFind = ff.findFirst(path.$());
-        if (pFind > 0L) {
-            int len = path.size();
-            boolean res;
-            int type;
-            long nameUtf8Ptr;
-            try {
-                do {
-                    nameUtf8Ptr = ff.findName(pFind);
-                    path.trimTo(len).concat(nameUtf8Ptr).$();
-                    type = ff.findType(pFind);
-                    if (type == Files.DT_FILE) {
-                        if (!ff.removeQuiet(path.$()) && haltOnFail) {
-                            return false;
-                        }
-                    } else if (notDots(nameUtf8Ptr)) {
-                        if (path.size() - len < 4 || !Utf8s.equalsAscii("sys.", path, len, len + 4)) {
-                            res = type == Files.DT_LNK ? ff.unlink(path.$()) == 0 : ff.rmdir(path, haltOnFail);
-                            if (!res && haltOnFail) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                while (ff.findNext(pFind) > 0);
-            } finally {
-                ff.findClose(pFind);
-                path.trimTo(len).$();
-            }
-
-            if (ff.isSoftLink(path.$())) {
-                return ff.unlink(path.$()) == 0;
-            }
-            return true;
-        }
-        return false;
+        this.parallelReadParquet = parallelReadParquet;
     }
 
     @BeforeClass
@@ -129,45 +85,45 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         }
     }
 
-    @AfterClass
-    public static void tearDownUpStatic() {
-        serverMain = Misc.free(serverMain);
-        AbstractBootstrapTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();
         try (Path path = new Path()) {
-            if (serverMain == null) {
-                pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
+            Rnd rnd = TestUtils.generateRandom(null);
+            while (true) {
+                pgPort = (short) (10000 + rnd.nextInt(1000));
                 String testResourcePath = getTestResourcePath();
                 path.of(testResourcePath).concat("test");
 
-                serverMain = startWithEnvVariables(
-                        PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
-                        CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
-                        HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                        HTTP_ENABLED.getEnvVarName(), "false",
-                        LINE_TCP_ENABLED.getEnvVarName(), "false",
-                        TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
-                );
-                serverMain.start();
-            } else {
-                serverMain.reset();
+                try {
+                    serverMain = startWithEnvVariables(
+                            PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
+                            CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
+                            CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
+                            HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                            HTTP_ENABLED.getEnvVarName(), "false",
+                            LINE_TCP_ENABLED.getEnvVarName(), "false",
+                            TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true",
+                            CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), testResourcePath,
+                            CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getEnvVarName(), String.valueOf(parallelReadParquet)
+                    );
+                    serverMain.start();
+                    break;
+                } catch (NetworkError e) {
+                    Misc.free(serverMain);
+                    if (e.getMessage() == null || !Chars.contains(e.getMessage(), "could not bind socket")) {
+                        throw e;
+                    }
+                }
             }
         }
     }
 
     @After
     public void tearDown() throws Exception {
-        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        if (serverMain != null) {
-            serverMain.reset();
-            removeNonSystemTables(root + Files.SEPARATOR + "db");
-        }
-        Path.clearThreadLocals();
+        serverMain = Misc.free(serverMain);
+        pgPort = 0;
+        super.tearDown();
     }
 
     @Test
@@ -176,7 +132,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
             String testResourcePath = getTestResourcePath();
             path.of(testResourcePath).concat("test").concat(testFile);
             Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
-
             Sqllogictest.run(pgPort, path.$().ptr());
         }
     }
@@ -191,53 +146,24 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         }
     }
 
-    private static int runRecursive(FilesFacade ff, String dirName, Path src, List<Object[]> paths) {
-        int srcLen = src.size();
-        int len = src.size();
-        long p = ff.findFirst(src.$());
-        String root = src.toString();
-
-        if (p > 0) {
-            try {
-                int res;
-                do {
-                    long name = ff.findName(p);
-                    if (notDots(name)) {
-                        int type = ff.findType(p);
-                        src.trimTo(len);
-                        src.concat(name);
-                        if (type == Files.DT_FILE) {
-                            if (Utf8s.endsWithAscii(src, ".test") && !Utf8s.containsAscii(src, ".ignore.")) {
-                                String path = src.toString();
-                                paths.add(
-                                        new Object[]{
-                                                path.substring(root.length() - dirName.length())
-                                        }
-                                );
-                            }
-                        } else {
-                            if ((res = runRecursive(ff, dirName, src, paths)) < 0) {
-                                return res;
-                            }
-                        }
-                        src.trimTo(srcLen);
-                    }
-                } while (ff.findNext(p) > 0);
-            } finally {
-                ff.findClose(p);
-                src.trimTo(srcLen);
-            }
-        }
-
-        return 0;
-    }
-
     protected static Collection<Object[]> files(String dirName) {
         String testResourcePath = getTestResourcePath();
         try (Path path = new Path()) {
-            path.concat(testResourcePath).concat("test").concat(dirName);
+            path.concat(testResourcePath).concat("test");
+            int basePathLen = path.size();
+            path.concat(dirName);
             List<Object[]> paths = new ArrayList<>();
-            runRecursive(FilesFacadeImpl.INSTANCE, dirName, path, paths);
+            final StringSink sink = new StringSink();
+            Files.walk(path, (pUtf8NameZ, type) -> {
+                if (Files.notDots(pUtf8NameZ)) {
+                    path.concat(pUtf8NameZ).$();
+                    if (Utf8s.endsWithAscii(path, ".test") && !Utf8s.containsAscii(path, ".ignore.")) {
+                        sink.clear();
+                        sink.put(path, basePathLen, path.size());
+                        paths.add(new Object[]{sink.toString()});
+                    }
+                }
+            });
             return paths;
         }
     }

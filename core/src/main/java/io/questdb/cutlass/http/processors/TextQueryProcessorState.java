@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -39,13 +40,15 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
-    boolean hasNext;
+    HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
+    boolean columnValueFullySent = true;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
     String fileName;
+    boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
     boolean pausedQuery = false;
@@ -66,11 +69,10 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     public void clear() {
         delimiter = ',';
         fileName = null;
-        metadata = null;
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
-        if (null != recordCursorFactory) {
+        if (recordCursorFactory != null) {
             if (queryCacheable) {
                 httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
             } else {
@@ -88,6 +90,9 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         noMeta = false;
         countRows = false;
         pausedQuery = false;
+        arrayState.clear();
+        columnValueFullySent = true;
+        metadata = null;
     }
 
     @Override

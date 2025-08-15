@@ -27,12 +27,19 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Interval;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
@@ -101,7 +108,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     sink.val("\")");
                 }
             } catch (SqlException e) {
-                LOG.error().$("Can't calculate intervals: ").$(e.getFlyweightMessage()).$();
+                LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
             }
             sink.val(']');
         }
@@ -142,14 +149,14 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 dynamicFunction.init(null, sqlExecutionContext);
 
                 if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                    long dynamicValue = getTimestamp(dynamicFunction);
+                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext);
                     long dynamicValue2 = 0;
                     if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                         // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
                         i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
                         dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
                         dynamicFunction.init(null, sqlExecutionContext);
-                        dynamicValue2 = hi = getTimestamp(dynamicFunction);
+                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext);
                         lo = dynamicValue;
                     } else {
                         if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
@@ -262,8 +269,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
     }
 
-    private long getTimestamp(Function dynamicFunction) {
-        if (ColumnType.isString(dynamicFunction.getType())) {
+    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final int functionType = dynamicFunction.getType();
+        if (ColumnType.isString(functionType)) {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
@@ -273,6 +281,17 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 }
             }
             return Numbers.LONG_NULL;
+        } else if (functionType == ColumnType.CURSOR) {
+            // special case for ts = (<subquery>) and similar cases
+            final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
+            assert factory != null;
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    return cursor.getRecord().getTimestamp(0);
+                } else {
+                    return Numbers.LONG_NULL;
+                }
+            }
         }
         return dynamicFunction.getTimestamp(null);
     }

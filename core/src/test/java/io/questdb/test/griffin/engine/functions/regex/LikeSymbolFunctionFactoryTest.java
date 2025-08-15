@@ -40,13 +40,13 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVariableConcatIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('aha', 'hhh') name from long_sequence(10))");
+            execute("create table x as (select rnd_symbol('aha', 'hhh') name from long_sequence(10))");
 
             bindVariableService.setStr(0, "h");
             try (RecordCursorFactory factory = select("select * from x where name like '%' || $1 || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertNotEquals(sink.toString().indexOf('h'), -1);
+                    Assert.assertNotEquals(-1, sink.toString().indexOf('h'));
                 }
             }
         });
@@ -55,22 +55,32 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVariableConcatNamed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('aha', 'hhh') name from long_sequence(10))");
+            execute("create table x as (select rnd_symbol('aha', 'hhh') name from long_sequence(10))");
 
             bindVariableService.setStr("sym", "h");
             try (RecordCursorFactory factory = select("select * from x where name like '%' || :sym || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertNotEquals(sink.toString().indexOf('h'), -1);
+                    Assert.assertNotEquals(-1, sink.toString().indexOf('h'));
                 }
             }
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: name ~ concat(['%',:sym::string,'%']) [case-sensitive] [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where name like '%' || :sym || '%'"
+            );
         });
     }
 
     @Test
     public void testEmptyLike() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -92,7 +102,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -114,11 +124,11 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeCharacterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('a','b','c') name from long_sequence(2000))");
+            execute("create table x as (select rnd_symbol('a','b','c') name from long_sequence(2000))");
             try (RecordCursorFactory factory = select("select * from x where name like 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertEquals(Chars.indexOf(sink, 'H'), -1);
+                    Assert.assertEquals(-1, Chars.indexOf(sink, 'H'));
                 }
             }
         });
@@ -203,11 +213,11 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('a','b','c') name from long_sequence(2000))");
+            execute("create table x as (select rnd_symbol('a','b','c') name from long_sequence(2000))");
             try (RecordCursorFactory factory = select("select * from x where name like 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertEquals(sink.toString().indexOf("XJ"), -1);
+                    Assert.assertEquals(-1, sink.toString().indexOf("XJ"));
                 }
             }
         });
@@ -237,7 +247,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "union\n" +
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
-            ddl(sql);
+            execute(sql);
             assertSql(
                     "name\n" +
                             "ABCGE\n",
@@ -258,7 +268,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "union\n" +
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
-            ddl(sql);
+            execute(sql);
             assertSql(
                     "name\n" +
                             "BDGDGGG\n",
@@ -279,7 +289,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "union\n" +
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
-            ddl(sql);
+            execute(sql);
             assertSql(
                     "name\n" +
                             "ABCGE\n",
@@ -300,7 +310,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "union\n" +
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
-            ddl(sql);
+            execute(sql);
             assertSql(
                     "name\n" +
                             "ABCGE\n" +
@@ -313,7 +323,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeUnderscoreAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('ABCGE' as symbol) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -335,7 +345,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('a','b','c') name from long_sequence(10))");
+            execute("create table x as (select rnd_symbol('a','b','c') name from long_sequence(10))");
             assertException("select * from x where name like rnd_str('foo','bar')", 32, "use constant or bind variable");
         });
     }
@@ -353,7 +363,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "ope\n" +
                     "ope\n" +
                     "ope\n";
-            ddl("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
+            execute("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("(select name::symbol name from x) where name like '%op%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -367,7 +377,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('H', 'A', 'ZK') name from long_sequence(20))");
+            execute("create table x as (select rnd_symbol('H', 'A', 'ZK') name from long_sequence(20))");
             assertSql(
                     "name\n" +
                             "A\n" +
@@ -392,7 +402,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotLikeMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('KL', 'VK', 'XJ', 'TTT') name from long_sequence(30))");
+            execute("create table x as (select rnd_symbol('KL', 'VK', 'XJ', 'TTT') name from long_sequence(30))");
             assertSql(
                     "name\n" +
                             "KL\n" +
@@ -427,7 +437,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
+            execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
             assertQuery(
                     "name\n",
                     "select * from x where name like null",
@@ -450,7 +460,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "ope\n" +
                     "ope\n" +
                     "ope\n";
-            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
+            execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("select * from x where name like '%op%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -464,25 +474,86 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimplePatternLike() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s symbol ) ");
-            compile("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
+            execute("create table x ( s symbol ) ");
+            execute("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
 
-            assertLike("s\nv\n", "select * from x where s like 'v'", false);
-            assertLike("s\nv\n", "select * from x where s like '_'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like '%'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like 'v%'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like '%v'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like '%v%'", false);
-            assertLike("s\n", "select * from x where s like 'w%'", false);
-            assertLike("s\n", "select * from x where s like '%w'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like '%%'", false);
-            assertLike("s\n", "select * from x where s like '%\\%'", false);
-            assertLike("s\n", "select * from x where s like '\\_'", false);
+            assertLike("s\nv\n", "select * from x where s like 'v'");
+            assertLike("s\nv\n", "select * from x where s like '_'");
+            assertLike("s\nv\nvv\n", "select * from x where s like '%'");
+            assertLike("s\nv\nvv\n", "select * from x where s like 'v%'");
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s ilike v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s ilike 'v%'"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s like 'v%'"
+            );
+
+            assertLike("s\nv\nvv\n", "select * from x where s like '%v'");
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like %v [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s like '%v'"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s ilike %v [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s ilike '%v'"
+            );
+
+            assertLike("s\nv\nvv\n", "select * from x where s like '%v%'");
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like %v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s like '%v%'"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s ilike %v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s ilike '%v%'"
+            );
+            assertLike("s\n", "select * from x where s like 'w%'");
+            assertLike("s\n", "select * from x where s like '%w'");
+            assertLike("s\nv\nvv\n", "select * from x where s like '%%'");
+            assertLike("s\n", "select * from x where s like '%\\%'");
+            assertLike("s\n", "select * from x where s like '\\_'");
         });
     }
 
-    private void assertLike(String expected, String query, boolean expectSize) throws Exception {
-        assertQueryNoLeakCheck(expected, query, null, true, expectSize);
-        assertQueryNoLeakCheck(expected, query.replace("like", "ilike"), null, true, expectSize);
+    private void assertLike(String expected, String query) throws Exception {
+        assertQueryNoLeakCheck(expected, query, null, true, false);
+        assertQueryNoLeakCheck(expected, query.replace("like", "ilike"), null, true, false);
     }
 }

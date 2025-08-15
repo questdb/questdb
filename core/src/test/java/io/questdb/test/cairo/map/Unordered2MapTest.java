@@ -28,12 +28,21 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.MapValueMergeFunction;
+import io.questdb.cairo.map.Unordered2Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
@@ -777,6 +786,41 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 Assert.assertEquals(42, record.getLong(0));
             }
         }
+    }
+
+    @Test
+    public void testTopK() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int heapCapacity = 42;
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.SHORT);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    Unordered2Map map = new Unordered2Map(keyTypes, valueTypes);
+                    DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                for (int i = 0; i < 100; i++) {
+                    MapKey key = map.withKey();
+                    key.putShort((short) i);
+
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
+
+                MapRecordCursor mapCursor = map.getCursor();
+                mapCursor.longTopK(list, LongColumn.newInstance(0));
+
+                Assert.assertEquals(heapCapacity, list.size());
+
+                MapRecord mapRecord = mapCursor.getRecord();
+                DirectLongLongSortedList.Cursor heapCursor = list.getCursor();
+                for (int i = 0; i < heapCapacity; i++) {
+                    Assert.assertTrue(heapCursor.hasNext());
+                    mapCursor.recordAt(mapRecord, heapCursor.index());
+                    Assert.assertEquals(heapCursor.value(), mapRecord.getLong(0));
+                }
+            }
+        });
     }
 
     @Test

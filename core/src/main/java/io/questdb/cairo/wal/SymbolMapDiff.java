@@ -31,7 +31,7 @@ public interface SymbolMapDiff {
 
     int getColumnIndex();
 
-    int getSize();
+    int getRecordCount();
 
     boolean hasNullValue();
 

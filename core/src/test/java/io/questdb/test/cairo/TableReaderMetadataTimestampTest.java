@@ -166,14 +166,14 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     private void assertThat(int expectedInitialTimestampIndex) throws Exception {
         int columnCount = 12;
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String tableName = "all";
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.load();
                 Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structureVersion;
-                try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                     writer.removeColumn("timestamp");
                     structureVersion = writer.getMetadataVersion();
                 }
@@ -210,14 +210,14 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedInitialTimestampIndex,
                                             int expectedFinalTimestampIndex,
                                             int expectedColumnCount) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String tableName = "all";
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.load();
                 Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structVersion;
-                try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                     manipulator.restructure(writer);
                     structVersion = writer.getMetadataVersion();
                 }

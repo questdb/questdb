@@ -32,11 +32,12 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+
+import static org.junit.Assert.*;
 
 public class SecurityContextTest {
     private static final Object[] NO_PARAM_ARGS = {};
@@ -50,7 +51,10 @@ public class SecurityContextTest {
 
     @Test
     public void testAllowAllSecurityContext() throws InvocationTargetException, IllegalAccessException {
-        SecurityContext sc = AllowAllSecurityContext.INSTANCE;
+        final SecurityContext sc = AllowAllSecurityContext.INSTANCE;
+        assertTrue(sc.isSystemAdmin());
+        assertTrue(sc.isQueryCancellationAllowed());
+        assertFalse(sc.isExternal());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -83,7 +87,10 @@ public class SecurityContextTest {
 
     @Test
     public void testDenyAllSecurityContext() throws IllegalAccessException {
-        SecurityContext sc = DenyAllSecurityContext.INSTANCE;
+        final SecurityContext sc = DenyAllSecurityContext.INSTANCE;
+        assertTrue(sc.isSystemAdmin());
+        assertFalse(sc.isQueryCancellationAllowed());
+        assertFalse(sc.isExternal());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -92,7 +99,7 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            Assert.fail();
+                            fail();
                             break;
                         case 1:
                             if (name.equals("authorizeCopyCancel")) {
@@ -102,22 +109,22 @@ public class SecurityContextTest {
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
-                            Assert.fail();
+                            fail();
                             break;
                         case 2:
                             method.invoke(sc, TWO_PARAM_ARGS);
-                            Assert.fail();
+                            fail();
                             break;
                         case 3:
                             method.invoke(sc, THREE_PARAM_ARGS);
-                            Assert.fail();
+                            fail();
                         default:
                             throw new IndexOutOfBoundsException();
                     }
                 } catch (IllegalArgumentException iae) {
                     throw new RuntimeException("Call failed for " + method, iae);
                 } catch (InvocationTargetException err) {
-                    Assert.assertTrue(err.getTargetException().getMessage().contains("permission denied"));
+                    assertTrue(err.getTargetException().getMessage().contains("permission denied"));
                 }
             }
         }
@@ -125,7 +132,10 @@ public class SecurityContextTest {
 
     @Test
     public void testReadOnlySecurityContext() throws IllegalAccessException {
-        SecurityContext sc = ReadOnlySecurityContext.INSTANCE;
+        final SecurityContext sc = ReadOnlySecurityContext.INSTANCE;
+        assertTrue(sc.isSystemAdmin());
+        assertFalse(sc.isQueryCancellationAllowed());
+        assertFalse(sc.isExternal());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -134,11 +144,11 @@ public class SecurityContextTest {
                     switch (parameters.length) {
                         case 0:
                             method.invoke(sc, NO_PARAM_ARGS);
-                            if (name.startsWith("authorizeAdminAction")
+                            if (name.startsWith("authorizeSystemAdmin") || name.equals("authorizeSqlEngineAdmin") || name.equals("authorizeSettings")
                                     || name.equals("authorizeHttp") || name.equals("authorizePGWire") || name.equals("authorizeLineTcp")) {
                                 continue;
                             }
-                            Assert.fail();
+                            fail();
                             break;
                         case 1:
                             if (name.equals("authorizeCopyCancel")) {
@@ -152,18 +162,18 @@ public class SecurityContextTest {
                                     || name.startsWith("authorizeSelect")) {
                                 continue;
                             }
-                            Assert.fail();
+                            fail();
                             break;
                         case 2:
                             method.invoke(sc, TWO_PARAM_ARGS);
                             if (name.equals("authorizeSelect")) {
                                 continue;
                             }
-                            Assert.fail();
+                            fail();
                             break;
                         case 3:
                             method.invoke(sc, THREE_PARAM_ARGS);
-                            Assert.fail();
+                            fail();
                             break;
                         default:
                             throw new IndexOutOfBoundsException();
@@ -171,7 +181,7 @@ public class SecurityContextTest {
                 } catch (IllegalArgumentException iae) {
                     throw new RuntimeException("Call failed for " + method, iae);
                 } catch (InvocationTargetException err) {
-                    Assert.assertTrue(err.getTargetException().getMessage().contains("permission denied"));
+                    assertTrue(err.getTargetException().getMessage().contains("permission denied"));
                 }
             }
         }

@@ -24,7 +24,15 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -161,7 +169,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            insert("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
+            execute("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
 
             int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
             Assert.assertEquals(1, sym1D);
@@ -415,7 +423,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         AtomicInteger count = new AtomicInteger();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "sym2.k")) {
                     if (count.incrementAndGet() == 29) {
                         return -1;
@@ -643,7 +651,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     private static void runReindexSql(String query) {
         try {
-            ddl(query);
+            execute(query);
         } catch (SqlException ex) {
             LOG.error().$((Throwable) ex).I$();
             Assert.fail(ex.getMessage());
@@ -653,18 +661,18 @@ public class IndexBuilderTest extends AbstractCairoTest {
     private void checkRebuildIndexes(FilesFacade ff, String createTableSql, Action<String> changeTable, Action<IndexBuilder> rebuildIndexAction) throws Exception {
         assertMemoryLeak(ff, () -> {
             for (String sql : createTableSql.split(";")) {
-                ddl(sql);
+                execute(sql);
             }
             int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B = countByFullScan("select * from xxx where sym1 = 'B'");
             int sym1C = countByFullScan("select * from xxx where sym1 = 'C'");
-            ddl("create table copy as (select * from xxx)", sqlExecutionContext);
+            execute("create table copy as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
             TableToken xxx = engine.verifyTableName("xxx");
-            String tablePath = configuration.getRoot() + Files.SEPARATOR + xxx.getDirName();
+            String tablePath = configuration.getDbRoot() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             indexBuilder.clear();
@@ -679,7 +687,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             Assert.assertEquals(sym1B, sym1B2);
             Assert.assertEquals(sym1C, sym1C2);
 
-            insert("insert into xxx select * from copy");
+            execute("insert into xxx select * from copy");
 
             int sym1A3 = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B3 = countByFullScan("select * from xxx where sym1 = 'B'");
@@ -707,7 +715,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
-            TableUtils.setPathForPartition(path, partitionBy, partitionTs, partitionNameTxn);
+            TableUtils.setPathForNativePartition(path, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));

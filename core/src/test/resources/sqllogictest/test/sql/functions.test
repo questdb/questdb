@@ -6,6 +6,6 @@ timestamp(ts) partition by HOUR DEDUP UPSERT KEYS(ts, s);
 statement error
 insert into size_control(s, x, ts)
 select '2022-02-24' || '-' || x , x, timestamp_sequence('2022-02-24', 1000000)
-from long_sequence(60 * 60 * 2.5));
+from long_sequence(60 * 60 * 2.5);
 ----
 db error: ERROR: argument type DOUBLE is not supported

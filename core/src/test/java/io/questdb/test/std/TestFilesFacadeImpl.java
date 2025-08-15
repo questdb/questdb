@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Os;
 import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
@@ -79,7 +78,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public long openRW(LPSZ name, int opts) {
         long fd = super.openRW(name, opts);
         track(name, fd);
         return fd;

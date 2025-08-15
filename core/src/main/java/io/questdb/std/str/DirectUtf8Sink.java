@@ -45,12 +45,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     public DirectUtf8Sink(long initialCapacity, boolean alloc) {
-        sink = new DirectByteSink(initialCapacity, alloc) {
-            @Override
-            protected int memoryTag() {
-                return MemoryTag.NATIVE_DIRECT_UTF8_SINK;
-            }
-        };
+        sink = new DirectByteSink(initialCapacity, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
     }
 
     @Override
@@ -99,7 +94,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         }
         setAscii(isAscii() & us.isAscii());
         final int size = us.size();
-        final long dest = sink.checkCapacity(size);
+        final long dest = sink.ensureCapacity(size);
         for (int i = 0; i < size; i++) {
             Unsafe.putByte(dest + i, us.byteAt(i));
         }
@@ -120,6 +115,14 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         setAscii(isAscii() & b >= 0);
         sink.put(b);
         return this;
+    }
+
+    /**
+     * Same as {@link #putAny(byte)}, but writes 8 consequent bytes (a long).
+     */
+    public void putAny8(long w) {
+        setAscii(isAscii() & Utf8s.isAscii(w));
+        sink.putLong(w);
     }
 
     @Override

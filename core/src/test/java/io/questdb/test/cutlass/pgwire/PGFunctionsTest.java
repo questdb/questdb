@@ -38,7 +38,8 @@ public class PGFunctionsTest extends BasePGTest {
 
     @Test
     public void testListTablesDoesntLeakMetaFds() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
+        maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table a (i int)")) {
                 st1.execute();
             }

@@ -28,7 +28,6 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.ServerMain;
-import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
@@ -55,7 +54,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     return -1;
                 }
@@ -95,7 +94,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     throw new OutOfMemoryError();
                 }
@@ -132,26 +131,16 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     @Test
     public void testCommitFailed() {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
-            private final AtomicInteger counter = new AtomicInteger(2);
-
-            private long fd;
+            private final AtomicInteger counter = new AtomicInteger(1);
 
             @Override
-            public long append(long fd, long buf, int len) {
-                if (fd == this.fd && counter.decrementAndGet() == 0) {
-                    throw CairoException.critical(24).put("test error");
-                }
-                return Files.append(fd, buf, len);
-            }
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                long fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
-                        && Utf8s.containsAscii(name, "failed_table")) {
-                    this.fd = fd;
+                        && Utf8s.containsAscii(name, "failed_table")
+                        && (counter.getAndDecrement() > 0)) {
+                    return -1;
                 }
-                return fd;
+                return super.openRW(name, opts);
             }
         };
 
@@ -169,8 +158,12 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 points.add("first_table,ok=true allgood=true\n");
                 points.add("second_table,ok=true allgood=true\n");
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
-                        "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error\",\"errorId\":"
+
+                InfluxDBUtils.assertRequestErrorContains(
+                        influxDB,
+                        points,
+                        "failed_table,tag1=value1 f1=1i,y=12i",
+                        "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: failed_table, errno: 2, error: could not open read-write"
                 );
 
                 // Retry is ok
@@ -186,10 +179,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table m1");
+                        server.get().getEngine().execute("drop table m1");
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }
@@ -226,10 +219,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table m1");
+                        server.get().getEngine().execute("drop table m1");
                     } catch (SqlException e) {
                         throw new AssertionError(e);
                     }
@@ -294,7 +287,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private final AtomicInteger counter = new AtomicInteger(0);
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "z.d") && counter.getAndIncrement() == 0) {
                     throw new UnsupportedOperationException();
                 }
@@ -328,10 +321,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
 
             serverMain.awaitTxn("good", 1);
-            assertSql(serverMain.getEngine(), "select count() from good", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from good", "count()\n" +
                     "1\n");
             serverMain.awaitTable("drop");
-            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count()\n" +
                     "1\n");
         }
     }
@@ -343,10 +336,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "good_y.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table \"drop\"");
+                        server.get().getEngine().execute("drop table \"drop\"");
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }

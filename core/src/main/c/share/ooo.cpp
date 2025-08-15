@@ -21,12 +21,14 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 #include "jni.h"
 #include <cstring>
+#include <cassert>
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
+#include <algorithm>
+#include "ooo_radix.h"
 
 #ifdef OOO_CPP_PROFILE_TIMING
 #include <atomic>
@@ -61,115 +63,50 @@ struct long_3x {
     }
 };
 
-#define RADIX_SHUFFLE 0
-
-#if RADIX_SHUFFLE == 0
-
-template<uint16_t sh, typename T>
-inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_t size) {
-    MM_PREFETCH_T0(counts);
-    for (uint64_t x = 0; x < size; x++) {
-        const auto digit = (src[x] >> sh) & 0xffu;
-        dest[counts[digit]] = src[x];
-        counts[digit]++;
-        MM_PREFETCH_T2(src + x + 64);
-    }
-}
-
-
-template<uint16_t sh>
-inline void radix_shuffle_ab(uint64_t *counts, const uint64_t *srcA, const uint64_t sizeA, const index_t *srcB,
-                             const uint64_t sizeB, index_t *dest) {
+inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
+                             const uint64_t sizeB, index_t *dest, int64_t minValue, uint16_t sh) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < sizeA; x++) {
-        const auto digit = (srcA[x] >> sh) & 0xffu;
-        dest[counts[digit]].ts = srcA[x];
+        const uint64_t value = srcA[x] - minValue;
+        const auto digit = (value >> sh) & 0xffu;
+        dest[counts[digit]].ts = value;
         dest[counts[digit]].i = x | (1ull << 63);
         counts[digit]++;
         MM_PREFETCH_T2(srcA + x + 64);
     }
 
     for (uint64_t x = 0; x < sizeB; x++) {
-        const auto digit = (srcB[x] >> sh) & 0xffu;
-        dest[counts[digit]] = srcB[x];
+        const uint64_t value = srcB[x].ts - minValue;
+        const auto digit = (value >> sh) & 0xffu;
+        dest[counts[digit]].ts = value;
+        dest[counts[digit]].i = srcB[x].i;
         counts[digit]++;
         MM_PREFETCH_T2(srcB + x + 64);
     }
 }
 
-#elif RADIX_SHUFFLE == 1
+inline void
+radix_shuffle_ab_one_pass(uint64_t *counts, const int64_t *src_a, const uint64_t size_a, const index_l *src_b,
+                          const uint64_t size_b, index_t *dest, int64_t min_value) {
+    MM_PREFETCH_T0(counts);
+    for (uint64_t x = 0; x < size_a; x++) {
+        const uint64_t value = src_a[x] - min_value;
+        const auto digit = value & 0xffu;
+        dest[counts[digit]].ts = value + min_value;
+        dest[counts[digit]].i = x | (1ull << 63);
+        counts[digit]++;
+        MM_PREFETCH_T2(src_a + x + 64);
+    }
 
-template<uint16_t sh>
-inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
-    Vec4q vec;
-    Vec4q digitVec;
-    int64_t values[4];
-    int64_t digits[4];
-    for (uint64_t x = 0; x < size; x += 4) {
-        _mm_prefetch(src + x + 64, _MM_HINT_T0);
-        vec.load(src + x);
-        digitVec = (vec >> sh) & 0xff;
-
-        vec.store(values);
-        digitVec.store(digits);
-
-        dest[counts[digits[0]]] = values[0];
-        counts[digits[0]]++;
-
-        dest[counts[digits[1]]] = values[1];
-        counts[digits[1]]++;
-
-        dest[counts[digits[2]]] = values[2];
-        counts[digits[2]]++;
-
-        dest[counts[digits[3]]] = values[3];
-        counts[digits[3]]++;
+    for (uint64_t x = 0; x < size_b; x++) {
+        const uint64_t value = src_b[x].ts - min_value;
+        const auto digit = value & 0xffu;
+        dest[counts[digit]].ts = value + min_value;
+        dest[counts[digit]].i = src_b[x].i;
+        counts[digit]++;
+        MM_PREFETCH_T2(src_b + x + 64);
     }
 }
-
-#elif RADIX_SHUFFLE == 2
-template<uint16_t sh>
-inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
-    Vec8q vec;
-    Vec8q digitVec;
-    int64_t values[8];
-    int64_t digits[8];
-    for (uint64_t x = 0; x < size; x += 8) {
-        _mm_prefetch(src + x + 64, _MM_HINT_T0);
-        vec.load(src + x);
-        digitVec = (vec >> sh) & 0xff;
-
-        vec.store(values);
-        digitVec.store(digits);
-
-        dest[counts[digits[0]]] = values[0];
-        counts[digits[0]]++;
-
-        dest[counts[digits[1]]] = values[1];
-        counts[digits[1]]++;
-
-        dest[counts[digits[2]]] = values[2];
-        counts[digits[2]]++;
-
-        dest[counts[digits[3]]] = values[3];
-        counts[digits[3]]++;
-
-        dest[counts[digits[4]]] = values[4];
-        counts[digits[4]]++;
-
-        dest[counts[digits[5]]] = values[5];
-        counts[digits[5]]++;
-
-        dest[counts[digits[6]]] = values[6];
-        counts[digits[6]]++;
-
-        dest[counts[digits[7]]] = values[7];
-        counts[digits[7]]++;
-    }
-}
-#endif
 
 template<typename T>
 void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
@@ -231,108 +168,122 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     }
 
     // radix
-    radix_shuffle<0u>(counts.c8, array, cpy, size);
-    radix_shuffle<8u>(counts.c7, cpy, array, size);
-    radix_shuffle<16u>(counts.c6, array, cpy, size);
-    radix_shuffle<24u>(counts.c5, cpy, array, size);
-    radix_shuffle<32u>(counts.c4, array, cpy, size);
-    radix_shuffle<40u>(counts.c3, cpy, array, size);
-    radix_shuffle<48u>(counts.c2, array, cpy, size);
-    radix_shuffle<56u>(counts.c1, cpy, array, size);
+    radix_shuffle(counts.c8, array, cpy, size, 0u);
+    radix_shuffle(counts.c7, cpy, array, size, 8u);
+    radix_shuffle(counts.c6, array, cpy, size, 16u);
+    radix_shuffle(counts.c5, cpy, array, size, 24u);
+    radix_shuffle(counts.c4, array, cpy, size, 32u);
+    radix_shuffle(counts.c3, cpy, array, size, 40u);
+    radix_shuffle(counts.c2, array, cpy, size, 48u);
+    radix_shuffle(counts.c1, cpy, array, size, 56u);
+}
+template<typename T1, typename T2>
+inline bool arrays_dont_overlap(const T1 *a, size_t a_count, const T2 *b, size_t b_count) {
+    return ((uintptr_t) a + a_count * sizeof(T1) <= (uintptr_t) b ||
+            (uintptr_t) b + b_count * sizeof(T2) <= (uintptr_t) a);
 }
 
+template<uint16_t N>
 void
-radix_sort_ab_long_index_asc(const uint64_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB,
-                             index_t *out, index_t *cpy) {
-    rscounts_t counts;
-    memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
-    uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
-    uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
+radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const index_l *arrayB, const uint64_t sizeB,
+                             index_l *out, index_l *cpy, int64_t minValue) {
+    uint64_t counts[N][256] = {{0}};
     uint64_t x;
 
     // calculate counts
-    MM_PREFETCH_NTA(counts.c8);
     for (x = 0; x < sizeA; x++) {
-        t8 = arrayA[x] & 0xffu;
-        t7 = (arrayA[x] >> 8u) & 0xffu;
-        t6 = (arrayA[x] >> 16u) & 0xffu;
-        t5 = (arrayA[x] >> 24u) & 0xffu;
-        t4 = (arrayA[x] >> 32u) & 0xffu;
-        t3 = (arrayA[x] >> 40u) & 0xffu;
-        t2 = (arrayA[x] >> 48u) & 0xffu;
-        t1 = (arrayA[x] >> 56u) & 0xffu;
-        counts.c8[t8]++;
-        counts.c7[t7]++;
-        counts.c6[t6]++;
-        counts.c5[t5]++;
-        counts.c4[t4]++;
-        counts.c3[t3]++;
-        counts.c2[t2]++;
-        counts.c1[t1]++;
+        uint64_t value = arrayA[x] - minValue;
+        // should be unrolled by compiler, n is a compile time const
+        constexpr_for<0, N, 1>(
+                [&](auto i) {
+                    constexpr uint64_t shift = 8u * (N - i - 1);
+                    const auto t0 = (value >> shift) & 0xffu;
+                    counts[i][t0]++;
+                }
+        );
         MM_PREFETCH_T2(arrayA + x + 64);
     }
 
     for (x = 0; x < sizeB; x++) {
-        t8 = arrayB[x] & 0xffu;
-        t7 = (arrayB[x] >> 8u) & 0xffu;
-        t6 = (arrayB[x] >> 16u) & 0xffu;
-        t5 = (arrayB[x] >> 24u) & 0xffu;
-        t4 = (arrayB[x] >> 32u) & 0xffu;
-        t3 = (arrayB[x] >> 40u) & 0xffu;
-        t2 = (arrayB[x] >> 48u) & 0xffu;
-        t1 = (arrayB[x] >> 56u) & 0xffu;
-        counts.c8[t8]++;
-        counts.c7[t7]++;
-        counts.c6[t6]++;
-        counts.c5[t5]++;
-        counts.c4[t4]++;
-        counts.c3[t3]++;
-        counts.c2[t2]++;
-        counts.c1[t1]++;
+        uint64_t value = arrayB[x].ts - minValue;
+        // should be unrolled by compiler, n is a compile time const
+        constexpr_for<0, N, 1>(
+                [&](auto i) {
+                    constexpr uint64_t shift = 8u * (N - i - 1);
+                    const auto t0 = (value >> shift) & 0xffu;
+                    counts[i][t0]++;
+                }
+        );
         MM_PREFETCH_T2(arrayB + x + 64);
     }
 
     // convert counts to offsets
     MM_PREFETCH_T0(&counts);
+    uint64_t o[N] = {0};
     for (x = 0; x < 256; x++) {
-        t8 = o8 + counts.c8[x];
-        t7 = o7 + counts.c7[x];
-        t6 = o6 + counts.c6[x];
-        t5 = o5 + counts.c5[x];
-        t4 = o4 + counts.c4[x];
-        t3 = o3 + counts.c3[x];
-        t2 = o2 + counts.c2[x];
-        t1 = o1 + counts.c1[x];
-        counts.c8[x] = o8;
-        counts.c7[x] = o7;
-        counts.c6[x] = o6;
-        counts.c5[x] = o5;
-        counts.c4[x] = o4;
-        counts.c3[x] = o3;
-        counts.c2[x] = o2;
-        counts.c1[x] = o1;
-        o8 = t8;
-        o7 = t7;
-        o6 = t6;
-        o5 = t5;
-        o4 = t4;
-        o3 = t3;
-        o2 = t2;
-        o1 = t1;
+        // should be unrolled by compiler, n is a compile time const
+        constexpr_for<0, N, 1>(
+                [&](auto i) {
+                    auto t0 = o[i] + counts[i][x];
+                    counts[i][x] = o[i];
+                    o[i] = t0;
+                }
+        );
     }
 
     // radix
-    radix_shuffle_ab<0u>(counts.c8, arrayA, sizeA, arrayB, sizeB, cpy);
-
     auto size = sizeA + sizeB;
-    radix_shuffle<8u>(counts.c7, cpy, out, size);
-    radix_shuffle<16u>(counts.c6, out, cpy, size);
-    radix_shuffle<24u>(counts.c5, cpy, out, size);
-    radix_shuffle<32u>(counts.c4, out, cpy, size);
-    radix_shuffle<40u>(counts.c3, cpy, out, size);
-    radix_shuffle<48u>(counts.c2, out, cpy, size);
-    radix_shuffle<56u>(counts.c1, cpy, out, size);
+    auto *ucpy = (index_t *) cpy;
+    auto *uout = (index_t *) out;
+
+    if constexpr (N > 1) {
+        radix_shuffle_ab(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue, 0u);
+
+        if constexpr (N > 2) {
+            radix_shuffle(counts[N - 2], ucpy, uout, size, 8u);
+            if constexpr (N > 3) {
+                radix_shuffle(counts[N - 3], uout, ucpy, size, 16u);
+                if constexpr (N > 4) {
+                    radix_shuffle(counts[N - 4], ucpy, uout, size, 24u);
+                    if constexpr (N > 5) {
+                        radix_shuffle(counts[N - 5], uout, ucpy, size, 32u);
+                        if constexpr (N > 6) {
+                            radix_shuffle(counts[N - 6], ucpy, uout, size, 40u);
+                            if constexpr (N > 7) {
+                                radix_shuffle(counts[N - 7], uout, ucpy, size, 48u);
+                                radix_shuffle(counts[N - 8], ucpy, out, size, minValue, 56u);
+                            } else {
+                                radix_shuffle(counts[N - 7], uout, cpy, size, minValue, 48u);
+                            }
+                        } else {
+                            radix_shuffle(counts[N - 6], ucpy, out, size, minValue, 40u);
+                        }
+                    } else {
+                        radix_shuffle(counts[N - 5], uout, cpy, size, minValue, 32u);
+                    }
+                } else {
+                    radix_shuffle(counts[N - 4], ucpy, out, size, minValue, 24u);
+                }
+            } else {
+                radix_shuffle(counts[N - 3], uout, cpy, size, minValue, 16u);
+            }
+        } else if constexpr (N > 1) {
+            radix_shuffle(counts[N - 2], ucpy, out, size, minValue, 8u);
+        }
+
+        if constexpr (N % 2 == 1) {
+            __MEMCPY(out, cpy, size * sizeof(index_t));
+        }
+    } else {
+        if (arrays_dont_overlap(arrayB, sizeB, out, size) && arrays_dont_overlap(arrayA, sizeA, out, size)) {
+            radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, uout, minValue);
+        } else {
+            radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
+            __MEMCPY(out, cpy, size * sizeof(index_t));
+        }
+    }
 }
+
 
 template<typename T>
 inline void radix_sort_long_index_asc_in_place(T *array, uint64_t size) {
@@ -554,7 +505,7 @@ inline void measure_time(int index, T func) {
 
 extern "C" {
 
-DECLARE_DISPATCHER(platform_memcpy) ;
+DECLARE_DISPATCHER(platform_memcpy);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
         (JNIEnv *e, jclass cl, jlong src, jlong dst, jlong len) {
     platform_memcpy(
@@ -564,7 +515,7 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
     );
 }
 
-DECLARE_DISPATCHER(platform_memcmp) ;
+DECLARE_DISPATCHER(platform_memcmp);
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
         (JNIEnv *e, jclass cl, jlong a, jlong b, jlong len) {
     int res;
@@ -577,7 +528,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
     return res;
 }
 
-DECLARE_DISPATCHER(platform_memmove) ;
+DECLARE_DISPATCHER(platform_memmove);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
         (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
     platform_memmove(
@@ -587,7 +538,7 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
     );
 }
 
-DECLARE_DISPATCHER(platform_memset) ;
+DECLARE_DISPATCHER(platform_memset);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memset
         (JNIEnv *e, jclass cl, jlong dst, jlong len, jint value) {
     platform_memset(
@@ -597,7 +548,7 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memset
     );
 }
 
-DECLARE_DISPATCHER(merge_copy_var_column_int32) ;
+DECLARE_DISPATCHER(merge_copy_var_column_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
                                                jlong merge_index,
@@ -624,7 +575,7 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
     });
 }
 
-DECLARE_DISPATCHER(merge_copy_varchar_column) ;
+DECLARE_DISPATCHER(merge_copy_varchar_column);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
                                                    jlong merge_index,
@@ -651,10 +602,37 @@ Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
     });
 }
 
+DECLARE_DISPATCHER(merge_copy_array_column);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyArrayColumn(JNIEnv *env, jclass cl,
+                                                 jlong merge_index,
+                                                 jlong merge_index_size,
+                                                 jlong src_data_fix,
+                                                 jlong src_data_var,
+                                                 jlong src_ooo_fix,
+                                                 jlong src_ooo_var,
+                                                 jlong dst_fix,
+                                                 jlong dst_var,
+                                                 jlong dst_var_offset) {
+    measure_time(31, [=]() {
+        merge_copy_array_column(
+                reinterpret_cast<index_t *>(merge_index),
+                __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+                reinterpret_cast<int64_t *>(src_data_fix),
+                reinterpret_cast<char *>(src_data_var),
+                reinterpret_cast<int64_t *>(src_ooo_fix),
+                reinterpret_cast<char *>(src_ooo_var),
+                reinterpret_cast<int64_t *>(dst_fix),
+                reinterpret_cast<char *>(dst_var),
+                __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset)
+        );
+    });
+}
+
 // 1 oooMergeCopyStrColumnWithTop removed and now executed as Merge Copy without Top
 // 2 oooMergeCopyBinColumnWithTop removed and now executed as Merge Copy without Top
 
-DECLARE_DISPATCHER(merge_copy_var_column_int64) ;
+DECLARE_DISPATCHER(merge_copy_var_column_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
                                                jlong merge_index,
@@ -699,12 +677,542 @@ Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jl
                                                 reinterpret_cast<index_t *>(pCpy));
 }
 
-JNIEXPORT void JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB,
-                                                 jlong countB, jlong pDataOut, jlong pDataCpy) {
-    radix_sort_ab_long_index_asc(reinterpret_cast<uint64_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
-                                 countB, reinterpret_cast<index_t *>(pDataOut),
-                                 reinterpret_cast<index_t *>(pDataCpy));
+                                                 jlong countB, jlong pDataOut, jlong pDataCpy, jlong minTimestamp,
+                                                 jlong maxTimestamp) {
+    auto minTs = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
+    auto maxTs = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
+
+    if (minTs > maxTs) {
+        // invalid min/max timestamp
+        return -1;
+    }
+
+    if (minTs < 0 && maxTs > INT64_MAX + minTs) {
+        // difference overflows 64 bits
+        return -2;
+    }
+
+    auto ts_range_bytes = range_bytes(maxTs - minTs + 1);
+
+    auto *a = reinterpret_cast<int64_t *>(pDataA);
+    auto *b = reinterpret_cast<index_l *>(pDataB);
+    auto *out = reinterpret_cast<index_l *>(pDataOut);
+    auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
+
+    switch (ts_range_bytes) {
+        case 0:
+            // All rows same timestamp
+            // Copy A and B to out
+            // In case B is the same as out, use memmove and copy it first
+            __MEMMOVE(&out[countA], b, countB * sizeof(index_l));
+            for (int64_t l = 0; l < countA; l++) {
+                out[l].ts = minTs;
+                out[l].i = l | (1ull << 63);
+            }
+            break;
+        case 1:
+            radix_sort_ab_long_index_asc<1>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 2:
+            radix_sort_ab_long_index_asc<2>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 3:
+            radix_sort_ab_long_index_asc<3>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 4:
+            radix_sort_ab_long_index_asc<4>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 5:
+            radix_sort_ab_long_index_asc<5>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 6:
+            radix_sort_ab_long_index_asc<6>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 7:
+            radix_sort_ab_long_index_asc<7>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        case 8:
+            radix_sort_ab_long_index_asc<8>(a, countA, b, countB, out, cpy, minTs);
+            break;
+        default:
+            return -3;
+    }
+
+    return countA + countB;
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_radixSortLongIndexAsc(JNIEnv *env, jclass cl, jlong pLong, jlong len, jlong pCpy,
+                                                             jlong min, jlong max) {
+    return Java_io_questdb_std_Vect_radixSortABLongIndexAsc(
+            env, cl,
+            0, 0,
+            pLong, len,
+            pLong, pCpy,
+            min, max
+    );
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
+        JNIEnv *env,
+        jclass cl,
+        jlong pDataOut,
+        jlong pDataCpy,
+        jlong segmentAddresses,
+        jint segmentCount,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong maxSegmentRowCount,
+        jlong lagTsAddr,
+        jlong lagRowCount,
+        jlong minTimestamp,
+        jlong maxTimestamp,
+        jlong totalRowCount,
+        jbyte resultFormat
+) {
+    auto *out = reinterpret_cast<index_l *>(pDataOut);
+    auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
+    auto **segment_map_addresses = reinterpret_cast<const index_l **>(segmentAddresses);
+    auto *lag_ts_addr = reinterpret_cast<const int64_t *>(lagTsAddr);
+    auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
+    uint8_t result_format = resultFormat;
+
+    auto segment_count = (uint32_t) segmentCount;
+    auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(int64_t, maxSegmentRowCount);
+    auto min_ts = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
+    auto max_ts = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
+    auto lag_row_count = __JLONG_REINTERPRET_CAST__(int64_t, lagRowCount);
+    auto total_row_count = __JLONG_REINTERPRET_CAST__(int64_t, totalRowCount);
+
+    // Add 1 so since 1 value is needed for deduplication to indicate row not used
+    auto total_row_count_bytes = integral_type_bytes(range_bytes(total_row_count + 1));
+
+    auto ts_range_bytes = range_bytes(max_ts - min_ts + 1);
+    auto txn_bytes = range_bytes(txn_count);
+
+    // Check that ts + seq_txn fits 64 bits
+    if (ts_range_bytes + txn_bytes > 8 || ts_range_bytes < 0) {
+        return merge_index_format(error_sort_timestamp_txn_range_overflow, 0, 0, 0);
+    }
+
+    auto row_count_range_bytes = range_bytes(std::max(max_segment_row_count, lag_row_count));
+    auto segments_range_bytes = range_bytes(segment_count + (lag_row_count > 0));
+
+    // Check that segment index + segment row offset fits 64 bits
+    if (row_count_range_bytes + segments_range_bytes > 8 || row_count_range_bytes < 0 || segments_range_bytes < 0) {
+        return merge_index_format(error_sort_segment_index_offset_range_overflow, 0, 0, 0);
+    }
+
+    // Check that total rows fits 64 bits
+    if (total_row_count_bytes > 8) {
+        return merge_index_format(error_sort_row_count_overflow, 0, 0, 0);
+    }
+
+    auto sorted_count = radix_sort_segments_index_asc_precompiled(
+            ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
+            lag_ts_addr, lag_row_count,
+            segment_map_addresses, txn_info_addr, txn_count, out, cpy,
+            segment_count,
+            min_ts,
+            total_row_count_bytes,
+            total_row_count,
+            result_format
+    );
+
+    return merge_index_format((int64_t) sorted_count, total_row_count_bytes, segments_range_bytes, result_format);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleFixedColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jint columnSizeBytes,
+        jlong indexFormat,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong mergeIndex,
+        jlong segmentAddressPtr,
+        jlong segmentCount
+) {
+    auto column_size_bytes = (int32_t) columnSizeBytes;
+    auto reverse_index_format_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto src_addresses = reinterpret_cast<const void **>(srcAddresses);
+    auto dst_address = reinterpret_cast<void *>(dstAddress);
+    auto segment_address_ptr = reinterpret_cast<const seg_info *>(segmentAddressPtr);
+    auto segment_count = __JLONG_REINTERPRET_CAST__(int64_t, segmentCount);
+    auto reverse_index = read_reverse_index_ptr(mergeIndex, indexFormat);
+    auto merge_index_format = read_format(indexFormat);
+
+    switch (column_size_bytes) {
+        case 1:
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint8_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
+            );
+        case 2:
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint16_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
+            );
+        case 4:
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint32_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
+            );
+        case 8:
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<uint64_t>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
+            );
+        case 16:
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<__int128>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
+            );
+        case 32:
+            return merge_shuffle_fixed_columns_by_rev_index_from_many_addresses<long_256bit>(
+                    reverse_index_format_bytes, src_addresses,
+                    dst_address, reverse_index,
+                    segment_address_ptr, segment_count,
+                    merge_index_format
+            );
+        default:
+            // Error, unsupported column size
+            return -1;
+    }
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jint dataLengthBytes,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong dstVarOffset,
+        jlong dstVarSize
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
+    auto dst_var_size = __JLONG_REINTERPRET_CAST__(int64_t, dstVarSize);
+
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
+        return -2;
+    }
+
+    int64_t dst_var_end_offset;
+    switch (dataLengthBytes) {
+        case 4:
+            dst_var_end_offset = merge_shuffle_string_column_from_many_addresses<int32_t>(
+                    index_segment_encoding_bytes * 8, src_primary,
+                    src_secondary, dst_primary, dst_secondary,
+                    merge_index_address, row_count,
+                    dst_var_offset,
+                    2u, dst_var_size
+            );
+            break;
+        case 8:
+            dst_var_end_offset = merge_shuffle_string_column_from_many_addresses<int64_t>(
+                    index_segment_encoding_bytes * 8, src_primary,
+                    src_secondary, dst_primary, dst_secondary,
+                    merge_index_address, row_count,
+                    dst_var_offset,
+                    1u, dst_var_size
+            );
+            break;
+        default:
+            // Error, invalid data length
+            return -1;
+    }
+
+    if (dst_var_end_offset < 0) {
+        // Error occurred, this is error code
+        return dst_var_end_offset;
+    }
+
+    return row_count;
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong dstVarOffset,
+        jlong dstDataSize
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
+    auto dst_data_size = __JLONG_REINTERPRET_CAST__(int64_t, dstDataSize);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
+
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
+        return -2;
+    }
+
+    int64_t end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses(
+            src_primary, src_secondary,
+            dst_primary, dst_secondary,
+            merge_index_address, row_count,
+            dst_var_offset,
+            index_segment_encoding_bytes * 8u,
+            dst_data_size
+    );
+    if (end_dst_var_offset < 0) {
+        // Error occurred, this is error code
+        return end_dst_var_offset;
+    }
+
+    return row_count;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleArrayColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong dstVarOffset,
+        jlong dstDataSize
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
+    auto dst_data_size = __JLONG_REINTERPRET_CAST__(int64_t, dstDataSize);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
+
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
+        return -2;
+    }
+
+    int64_t end_dst_var_offset = merge_shuffle_array_column_from_many_addresses(
+            src_primary, src_secondary,
+            dst_primary, dst_secondary,
+            merge_index_address, row_count,
+            dst_var_offset,
+            index_segment_encoding_bytes * 8u,
+            dst_data_size
+    );
+    if (end_dst_var_offset < 0) {
+        // Error occurred, this is error code
+        return end_dst_var_offset;
+    }
+
+    return row_count;
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong mergeIndex,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong symbolMap,
+        jlong symbolMapSize
+) {
+    auto src = reinterpret_cast<const int32_t **>(srcAddresses);
+    auto dst = reinterpret_cast<int32_t *>(dstAddress);
+    auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
+    auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
+    auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
+    assertm(reverse_index_ptr != nullptr, "reverse index ptr is null, invalid merge index");
+    auto format = read_format(indexFormat);
+    int64_t reverse_index_row_count = read_reverse_index_row_count(mergeIndex, indexFormat);
+
+    jlong rows_processed;
+
+    switch (row_index_bytes) {
+        case 1:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        case 2:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        case 4:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        case 8:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        default:
+            // Error, unsupported row index bytes
+            return -1;
+    }
+
+
+    assertm(rows_processed <= reverse_index_row_count, "rows processed does not match reverse index row count");
+    return rows_processed;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_shuffleSymbolColumnByReverseIndex(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong mergeIndex
+) {
+    auto src = reinterpret_cast<const int32_t *>(srcAddresses);
+    auto dst = reinterpret_cast<int32_t *>(dstAddress);
+    auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
+    auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
+    auto merge_format = read_format(indexFormat);
+    auto rev_index_row_count = read_reverse_index_row_count(mergeIndex, indexFormat);
+
+    switch (row_index_bytes) {
+        case 1:
+            return merge_shuffle_symbol_column_by_reverse_index<uint8_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        case 2:
+            return merge_shuffle_symbol_column_by_reverse_index<uint16_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        case 4:
+            return merge_shuffle_symbol_column_by_reverse_index<uint32_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        case 8:
+            return merge_shuffle_symbol_column_by_reverse_index<uint64_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        default:
+            // Error, unsupported row index bytes
+            return -1;
+    }
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_remapSymbolColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong srcAddresses,
+        jlong dstAddress,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong symbolMap
+) {
+    auto src = reinterpret_cast<const int32_t **>(srcAddresses);
+    auto dst = reinterpret_cast<int32_t *>(dstAddress);
+    auto *txn_info_addr = reinterpret_cast<const txn_info *>(txnInfo);
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
+    auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
+
+    size_t out_index = 0;
+    jlong rows_processed = 0;
+    for (int64_t txn_index = 0; txn_index < txn_count; txn_index++) {
+        auto segment_addr = src[txn_info_addr[txn_index].seg_info_index];
+        uint64_t hi = txn_info_addr[txn_index].segment_row_offset + txn_info_addr[txn_index].row_count;
+        int32_t clean_symbol_count = symbol_map[2 * txn_index];
+        int32_t map_offset = symbol_map[2 * txn_index + 1];
+
+        for (uint64_t seg_row = txn_info_addr[txn_index].segment_row_offset; seg_row < hi; seg_row++, out_index++) {
+            int32_t value = segment_addr[seg_row];
+            if (value >= clean_symbol_count) {
+                auto value2 = symbol_map[map_offset + value - clean_symbol_count];
+                dst[out_index] = value2;
+            } else {
+                dst[out_index] = value;
+            }
+            rows_processed++;
+        }
+    }
+    return rows_processed;
 }
 
 JNIEXPORT void JNICALL
@@ -768,7 +1276,7 @@ Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
     );
 }
 
-DECLARE_DISPATCHER(re_shuffle_int32) ;
+DECLARE_DISPATCHER(re_shuffle_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
@@ -782,7 +1290,7 @@ Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_int64) ;
+DECLARE_DISPATCHER(re_shuffle_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
@@ -796,7 +1304,7 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_128bit) ;
+DECLARE_DISPATCHER(re_shuffle_128bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                               jlong count) {
@@ -810,7 +1318,7 @@ Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_256bit) ;
+DECLARE_DISPATCHER(re_shuffle_256bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle256Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                               jlong count) {
@@ -893,7 +1401,7 @@ Java_io_questdb_std_Vect_mergeShuffle32Bit(JNIEnv *env, jclass cl, jlong src1, j
     });
 }
 
-DECLARE_DISPATCHER(merge_shuffle_int64) ;
+DECLARE_DISPATCHER(merge_shuffle_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
@@ -939,7 +1447,7 @@ Java_io_questdb_std_Vect_mergeShuffle256Bit(JNIEnv *env, jclass cl, jlong src1, 
 
 // Methods 13-16 were mergeShuffleWithTop(s) and replaced with calls to simple mergeShuffle(s)
 
-DECLARE_DISPATCHER(flatten_index) ;
+DECLARE_DISPATCHER(flatten_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
                                       jlong count) {
@@ -976,7 +1484,7 @@ Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData,
     });
 }
 
-DECLARE_DISPATCHER(shift_timestamp_index) ;
+DECLARE_DISPATCHER(shift_timestamp_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc, jlong count, jlong pDest) {
     measure_time(31, [=]() {
@@ -988,7 +1496,7 @@ Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int64) ;
+DECLARE_DISPATCHER(set_memory_vanilla_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlong value,
                                        jlong count) {
@@ -1001,7 +1509,7 @@ Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlon
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int32) ;
+DECLARE_DISPATCHER(set_memory_vanilla_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint value,
                                       jlong count) {
@@ -1014,7 +1522,7 @@ Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint 
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_double) ;
+DECLARE_DISPATCHER(set_memory_vanilla_double);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jdouble value,
                                          jlong count) {
@@ -1027,7 +1535,7 @@ Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jd
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_float) ;
+DECLARE_DISPATCHER(set_memory_vanilla_float);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfloat value,
                                         jlong count) {
@@ -1040,7 +1548,7 @@ Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfl
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_short) ;
+DECLARE_DISPATCHER(set_memory_vanilla_short);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jshort value,
                                         jlong count) {
@@ -1054,12 +1562,12 @@ Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jsh
 }
 
 
-DECLARE_DISPATCHER(set_var_refs_32_bit) ;
+DECLARE_DISPATCHER(set_string_column_null_refs);
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
+Java_io_questdb_std_Vect_setStringColumnNullRefs(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
     measure_time(24, [=]() {
-        set_var_refs_32_bit(
+        set_string_column_null_refs(
                 reinterpret_cast<int64_t *>(pData),
                 __JLONG_REINTERPRET_CAST__(int64_t, offset),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
@@ -1067,12 +1575,12 @@ Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pDa
     });
 }
 
-DECLARE_DISPATCHER(set_var_refs_64_bit) ;
+DECLARE_DISPATCHER(set_binary_column_null_refs);
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
+Java_io_questdb_std_Vect_setBinaryColumnNullRefs(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
     measure_time(25, [=]() {
-        set_var_refs_64_bit(
+        set_binary_column_null_refs(
                 reinterpret_cast<int64_t *>(pData),
                 __JLONG_REINTERPRET_CAST__(int64_t, offset),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
@@ -1080,7 +1588,7 @@ Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pDa
     });
 }
 
-DECLARE_DISPATCHER(copy_index) ;
+DECLARE_DISPATCHER(copy_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong index_size,
                                       jlong pDest) {
@@ -1093,7 +1601,7 @@ Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlon
     });
 }
 
-DECLARE_DISPATCHER(shift_copy) ;
+DECLARE_DISPATCHER(shift_copy);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                       jlong srcHi, jlong dst) {
@@ -1108,7 +1616,7 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
     });
 }
 
-DECLARE_DISPATCHER(shift_copy_varchar_aux) ;
+DECLARE_DISPATCHER(shift_copy_varchar_aux);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                    jlong srcHi, jlong dst) {
@@ -1123,7 +1631,7 @@ Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong
     });
 }
 
-DECLARE_DISPATCHER(copy_index_timestamp) ;
+DECLARE_DISPATCHER(copy_index_timestamp);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong indexLo, jlong indexHi,
                                                 jlong pTs) {
@@ -1137,7 +1645,7 @@ Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pI
     });
 }
 
-DECLARE_DISPATCHER(set_varchar_null_refs) ;
+DECLARE_DISPATCHER(set_varchar_null_refs);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
                                                   jlong count) {
@@ -1146,6 +1654,34 @@ Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong 
                 reinterpret_cast<int64_t *>(aux),
                 __JLONG_REINTERPRET_CAST__(int64_t, offset),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(set_array_null_refs);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setArrayColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
+                                                  jlong count) {
+    measure_time(31, [=]() {
+        set_array_null_refs(
+                reinterpret_cast<int64_t *>(aux),
+                __JLONG_REINTERPRET_CAST__(int64_t, offset),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(shift_copy_array_aux);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_shiftCopyArrayColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
+                                                 jlong srcHi, jlong dst) {
+    measure_time(32, [=]() {
+        shift_copy_array_aux(
+                __JLONG_REINTERPRET_CAST__(int64_t, shift),
+                reinterpret_cast<int64_t *>(src),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcHi),
+                reinterpret_cast<int64_t *>(dst)
         );
     });
 }
@@ -1178,20 +1714,20 @@ Java_io_questdb_std_Vect_resetPerformanceCounters(JNIEnv *env, jclass cl) {
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+Java_io_questdb_std_Vect_sortStringColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
                                        jlong srcDataAddr, jlong srcIndxAddr, jlong tgtDataAddr, jlong tgtIndxAddr) {
 
     const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
-    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const auto count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
     const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
-    const int64_t *src_index = reinterpret_cast<const int64_t *>(srcIndxAddr);
+    const auto *src_index = reinterpret_cast<const int64_t *>(srcIndxAddr);
     char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
-    int64_t *tgt_index = reinterpret_cast<int64_t *>(tgtIndxAddr);
+    auto *tgt_index = reinterpret_cast<int64_t *>(tgtIndxAddr);
 
     int64_t offset = 0;
     for (int64_t i = 0; i < count; ++i) {
         MM_PREFETCH_T0(index + i + 64);
-        const int64_t row = index[i].i;
+        const uint64_t row = index[i].i;
         const int64_t o1 = src_index[row];
         const int64_t o2 = src_index[row + 1];
         const int64_t len = o2 - o1;
@@ -1208,16 +1744,16 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
                                            jlong srcDataAddr, jlong srcAuxAddr, jlong tgtDataAddr, jlong tgtAuxAddr) {
 
     const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
-    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const auto count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
     const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
-    const int64_t *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
+    const auto *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
     char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
-    int64_t *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
+    auto *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
 
     int64_t offset = 0;
     for (int64_t i = 0; i < count; ++i) {
         MM_PREFETCH_T0(index + i + 64);
-        const int64_t row = index[i].i;
+        const uint64_t row = index[i].i;
         const int64_t a1 = src_aux[2 * row];
         const int64_t a2 = src_aux[2 * row + 1];
         tgt_aux[2 * i] = a1;
@@ -1226,8 +1762,40 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
         if ((flags & 5) == 0) {
             // not inlined and not null
             const int64_t size = ((a1 >> 4) & 0xffffff);
-            platform_memcpy(reinterpret_cast<void *>(tgt_data + offset), reinterpret_cast<const void *>(src_data + (a2 >> 16)),
+            platform_memcpy(reinterpret_cast<void *>(tgt_data + offset),
+                            reinterpret_cast<const void *>(src_data + (a2 >> 16)),
                             size);
+            offset += size;
+        }
+    }
+    return __JLONG_REINTERPRET_CAST__(jlong, offset);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sortArrayColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+                                         jlong srcDataAddr, jlong srcAuxAddr, jlong tgtDataAddr, jlong tgtAuxAddr) {
+
+    const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
+    const auto count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
+    const auto *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
+    char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
+    auto *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
+
+    int64_t offset = 0;
+    for (int64_t i = 0; i < count; ++i) {
+        MM_PREFETCH_T0(index + i + 64);
+        const uint64_t row = index[i].i;
+        const int64_t src_offset = src_aux[2 * row] & OFFSET_MAX;
+        const int64_t size = src_aux[2 * row + 1] & ARRAY_SIZE_MAX;
+        tgt_aux[2 * i] = offset;
+        tgt_aux[2 * i + 1] = size;
+        if (size > 0) {
+            platform_memcpy(
+                    reinterpret_cast<void *>(tgt_data + offset),
+                    reinterpret_cast<const void *>(src_data + src_offset),
+                    size
+            );
             offset += size;
         }
     }

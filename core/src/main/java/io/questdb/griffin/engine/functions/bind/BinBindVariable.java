@@ -25,13 +25,13 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
 
-public class BinBindVariable extends BinFunction implements ScalarFunction {
+public class BinBindVariable extends BinFunction implements Function {
     BinarySequence value;
 
     public BinBindVariable(BinarySequence value) {
@@ -49,12 +49,17 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

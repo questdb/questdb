@@ -3,17 +3,8 @@ set(CMAKE_SYSTEM_PROCESSOR          aarch64)
 set (ARM True)
 set (AARCH64 True)
 
-set(CMAKE_AR                        ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-gcc-ar${CMAKE_EXECUTABLE_SUFFIX})
-set(CMAKE_ASM_COMPILER              ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-gcc${CMAKE_EXECUTABLE_SUFFIX})
-set(CMAKE_C_COMPILER                ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-gcc${CMAKE_EXECUTABLE_SUFFIX})
-set(CMAKE_CXX_COMPILER              ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-g++${CMAKE_EXECUTABLE_SUFFIX})
-set(CMAKE_LINKER                    ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-ld)
-set(CMAKE_OBJCOPY                   ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-objcopy CACHE INTERNAL "")
-set(CMAKE_RANLIB                    ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-gcc-ranlib${CMAKE_EXECUTABLE_SUFFIX} CACHE INTERNAL "")
-set(CMAKE_SIZE                      ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-size CACHE INTERNAL "")
-set(CMAKE_STRIP                     ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-strip CACHE INTERNAL "")
 
-set(CMAKE_CXX_FLAGS                 "${CMAKE_C_FLAGS} -fexceptions" CACHE INTERNAL "")
+set(CMAKE_CXX_FLAGS                 "${CMAKE_C_FLAGS} -fno-exceptions" CACHE INTERNAL "")
 
 set(CMAKE_C_FLAGS_DEBUG             "-Os -g" CACHE INTERNAL "")
 set(CMAKE_C_FLAGS_RELEASE           "-Os -DNDEBUG" CACHE INTERNAL "")

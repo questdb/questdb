@@ -94,7 +94,7 @@ jobs:
           submodules: false
       - name: Install toolchains (Rust)
         run: |
-          python3 ./.github/prepare_rust_env.py
+          python3 ./.github/prepare_rust_env.py --match core/rust/qdbr/rust-toolchain.toml
           echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Build linux-x86-64 Rust Library
         run: |

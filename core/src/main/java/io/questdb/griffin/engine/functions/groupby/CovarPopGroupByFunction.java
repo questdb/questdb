@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import org.jetbrains.annotations.NotNull;
 
-public class CovarPopGroupByFunction extends AbstractCovarGroupByFunction {
+public class CovarPopGroupByFunction extends CovarSampleGroupByFunctionFactory.CovarSampleGroupByFunction {
 
     protected CovarPopGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
         super(arg0, arg1);

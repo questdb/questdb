@@ -25,13 +25,25 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,7 +56,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final PageFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
-    private final int[] cursorFactoriesIdx;//used to disable unneeded factories if there are duplicate excluded keys 
+    private final int[] cursorFactoriesIdx; // used to disable unneeded factories if there are duplicate excluded keys
     private final boolean dynamicExcludedKeys;
     private final IntHashSet excludedKeys = new IntHashSet();
     private final Function filter;
@@ -185,7 +197,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
-        if (!heapCursorUsed) {//sorting symbols makes no sense for heap factory
+        if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
@@ -243,6 +255,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(cursor);
         Misc.freeObjList(keyExcludedValueFunctions);
     }
 
@@ -252,10 +265,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (pageFrameCursor.getSymbolTable(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
-            throw TableReferenceOutOfDateException.of(pageFrameCursor.getTableReader().getTableToken().getTableName());
+            throw TableReferenceOutOfDateException.of(partitionFrameCursorFactory.getTableToken());
         }
 
-        Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext);
+        Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
         recalculateIncludedValues(pageFrameCursor);
         cursor.of(pageFrameCursor, executionContext);
         if (filter != null) {

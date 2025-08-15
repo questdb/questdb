@@ -29,7 +29,13 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
-import io.questdb.metrics.*;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.CounterWithOneLabel;
+import io.questdb.metrics.CounterWithTwoLabels;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.metrics.Target;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.ObjList;
@@ -45,7 +51,11 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 public class MetricsIODispatcherTest {
 
@@ -142,8 +152,8 @@ public class MetricsIODispatcherTest {
 
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
-                .withScrapable(metrics)
-                .run(engine -> {
+                .withScrappable(metrics)
+                .run((engine, sqlExecutionContext) -> {
                     metrics.markQueryStart();
                     metrics.markSyntaxError();
                     metrics.markInsertCancelled();
@@ -181,27 +191,34 @@ public class MetricsIODispatcherTest {
                 });
     }
 
-    private static HttpQueryTestBuilder.HttpClientCode buildClientCode(int parallelRequestBatches, int repeatedConnections, HttpQueryTestBuilder.HttpClientCode makeRequest) {
-        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = engine -> {
+    private static HttpQueryTestBuilder.HttpClientCode buildClientCode(
+            int parallelRequestBatches,
+            int repeatedConnections,
+            HttpQueryTestBuilder.HttpClientCode makeRequest
+    ) {
+        final HttpQueryTestBuilder.HttpClientCode repeatedRequest = (engine, sqlExecutionContext) -> {
             for (int i = 0; i < repeatedConnections; i++) {
-                makeRequest.run(engine);
+                makeRequest.run(engine, sqlExecutionContext);
             }
         };
         // Parallel request batches.
         return parallelizeRequests(parallelRequestBatches, repeatedRequest);
     }
 
-    private static HttpQueryTestBuilder.HttpClientCode parallelizeRequests(int parallelRequests, HttpQueryTestBuilder.HttpClientCode makeRequest) {
+    private static HttpQueryTestBuilder.HttpClientCode parallelizeRequests(
+            int parallelRequests,
+            HttpQueryTestBuilder.HttpClientCode makeRequest
+    ) {
         assert parallelRequests > 0;
         if (parallelRequests == 1) {
             return makeRequest;
         }
-        return engine -> {
+        return (engine, sqlExecutionContext) -> {
             final ExecutorService execSvc = Executors.newCachedThreadPool();
             final ObjList<Future<Void>> futures = new ObjList<>(parallelRequests);
             for (int index = 0; index < parallelRequests; index++) {
                 futures.add(execSvc.submit(() -> {
-                    makeRequest.run(engine);
+                    makeRequest.run(engine, sqlExecutionContext);
                     return null;
                 }));
             }
@@ -224,7 +241,7 @@ public class MetricsIODispatcherTest {
         final int workerCount = Math.max(2, Math.min(parallelRequestBatches, 6));
         final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(workerCount);
 
-        Assert.assertEquals(pool.size(), 0);
+        Assert.assertEquals(0, pool.size());
 
         MetricsRegistry metrics = new MetricsRegistryImpl();
         for (int i = 0; i < metricCount; i++) {
@@ -236,10 +253,10 @@ public class MetricsIODispatcherTest {
             expectedResponse.append("questdb_testMetrics").append(i).append("_total ").append(i).append("\n").append("\n");
         }
 
-        final HttpQueryTestBuilder.HttpClientCode makeRequest = engine -> {
+        final HttpQueryTestBuilder.HttpClientCode makeRequest = (engine, sqlExecutionContext) -> {
             try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
                 if (parallelRequestBatches == 1) {
-                    Assert.assertEquals(pool.size(), 0);
+                    Assert.assertEquals(0, pool.size());
                 }
 
                 final StringSink utf16Sink = new StringSink();
@@ -284,17 +301,17 @@ public class MetricsIODispatcherTest {
         final HttpQueryTestBuilder.HttpClientCode clientCode = buildClientCode(parallelRequestBatches, repeatedConnections, makeRequest);
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
-                .withScrapable(metrics)
+                .withScrappable(metrics)
                 .withTcpSndBufSize(tcpSndBufSize)
                 .withSendBufferSize(sendBufferSize)
                 .withWorkerCount(workerCount)
                 .withPrometheusPool(pool)
                 .run(clientCode);
 
-        Assert.assertEquals(pool.size(), 0);
+        Assert.assertEquals(0, pool.size());
     }
 
-    private static class TestMetrics implements Scrapable {
+    private static class TestMetrics implements Target {
         private static final short INSERT = 0;
         private static final short QUERY_CANCELLED = 0;
         private static final CharSequence[] QUERY_TYPE_ID_TO_NAME = new CharSequence[2];

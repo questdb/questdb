@@ -39,18 +39,6 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
             assertSql(
                     "simulate_crash\n" +
                             "false\n",
-                    "select simulate_crash('0')"
-            );
-
-            assertSql(
-                    "simulate_crash\n" +
-                            "false\n",
-                    "select simulate_crash('D')"
-            );
-
-            assertSql(
-                    "simulate_crash\n" +
-                            "false\n",
                     "select simulate_crash('C')"
             );
 
@@ -59,27 +47,27 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
                             "false\n",
                     "select simulate_crash('M')"
             );
+
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('E')"
+            );
+
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('0')"
+            );
         });
     }
 
     @Test
     public void testCrashEnabled() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
-
-        // select simulate_crash('0'), This is total crash, don't simulate it
+        // select simulate_crash('C'), This is total crash, don't simulate it
 
         assertMemoryLeak(() -> {
-            try {
-                assertSql(
-                        "simulate_crash\n" +
-                                "false\n",
-                        "select simulate_crash('C')"
-                );
-                Assert.fail();
-            } catch (CairoError ignore) {
-            }
-
-            // This is total crash, don't use it
             try {
                 assertSql(
                         "simulate_crash\n" +
@@ -94,7 +82,17 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
                 assertSql(
                         "simulate_crash\n" +
                                 "false\n",
-                        "select simulate_crash('D')"
+                        "select simulate_crash('E')"
+                );
+                Assert.fail();
+            } catch (CairoError ignore) {
+            }
+
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('0')"
                 );
                 Assert.fail();
             } catch (CairoException ignore) {

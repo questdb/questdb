@@ -34,19 +34,22 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 public class TextMetadataParserTest {
     private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
     private static TextMetadataParser textMetadataParser;
     private static TypeManager typeManager;
     private static DirectUtf16Sink utf16Sink;
-    private static DirectUtf8Sink utf8Sink;
 
     @BeforeClass
     public static void setUpClass() {
         utf16Sink = new DirectUtf16Sink(1024);
-        utf8Sink = new DirectUtf8Sink(1024);
+        DirectUtf8Sink utf8Sink = new DirectUtf8Sink(1024);
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),
                 utf16Sink,
@@ -62,7 +65,6 @@ public class TextMetadataParserTest {
     public static void tearDown() {
         LEXER.close();
         utf16Sink.close();
-        utf8Sink.close();
         textMetadataParser.close();
     }
 

@@ -60,7 +60,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final Utf8Sequence value = arg.getVarcharA(null);

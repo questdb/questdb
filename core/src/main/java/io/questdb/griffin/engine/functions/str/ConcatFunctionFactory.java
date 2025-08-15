@@ -25,10 +25,15 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -53,10 +58,14 @@ public class ConcatFunctionFactory implements FunctionFactory {
     public Function newInstance(
             int position,
             @Transient ObjList<Function> args,
-            IntList argPositions,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args == null || args.size() == 0) {
+            throw SqlException.$(position, "no arguments provided");
+        }
+
         final int n = args.size();
 
         boolean allConst = true;
@@ -79,7 +88,8 @@ public class ConcatFunctionFactory implements FunctionFactory {
         final int functionCount = functions.size();
         for (int i = 0; i < functionCount; i++) {
             final int type = functions.getQuick(i).getType();
-            final TypeAdapter adapter = adapterReferences.getQuick(type);
+            int tag = ColumnType.tagOf(type);
+            final TypeAdapter adapter = adapterReferences.getQuick(tag);
             if (adapter == null) {
                 throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(nameOf(type));
             }
@@ -113,7 +123,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkFloat(Utf16Sink sink, Function function, Record record) {
-        sink.put(function.getFloat(record), 3);
+        sink.put(function.getFloat(record));
     }
 
     private static void sinkIPv4(Utf16Sink utf16Sink, Function function, Record record) {

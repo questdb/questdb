@@ -153,6 +153,14 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
         return this;
     }
 
+    public void replace(char from, char to) {
+        for (int i = 0; i < pos; i++) {
+            if (buffer[i] == from) {
+                buffer[i] = to;
+            }
+        }
+    }
+
     public void setCharAt(int index, char ch) {
         buffer[index] = ch;
     }
@@ -175,7 +183,7 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
 
     private void checkCapacity(int extra) {
         int len = pos + extra;
-        if (buffer.length > len) {
+        if (buffer.length >= len) {
             return;
         }
         len = Math.max(pos * 2, len);

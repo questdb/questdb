@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -80,7 +79,7 @@ public class PerformanceTest extends AbstractCairoTest {
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(2);
             AbstractCairoTest.create(model);
 
-            try (TableWriter writer = newOffPoolWriter(configuration, "quote", Metrics.disabled())) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "quote")) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
@@ -170,7 +169,7 @@ public class PerformanceTest extends AbstractCairoTest {
         SOCountDownLatch stopLatch = new SOCountDownLatch(2);
         SOCountDownLatch startLatch = new SOCountDownLatch(2);
         try (
-                TableWriter writer = newOffPoolWriter(configuration, "quote", Metrics.disabled());
+                TableWriter writer = newOffPoolWriter(configuration, "quote");
                 TableReader reader = newOffPoolReader(configuration, "quote")
         ) {
             // Writing

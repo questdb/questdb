@@ -36,7 +36,11 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 
 public final class EqUuidStrFunctionFactory implements FunctionFactory {
     @Override
@@ -56,7 +60,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         Function uuidFunc = args.getQuick(0);
         Function strFunc = args.getQuick(1);
         if (strFunc.isConstant()) {

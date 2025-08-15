@@ -66,6 +66,11 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         this.sortColumnFilter = sortColumnFilter;
     }
 
+    public static int getScanDirection(ListColumnFilter sortColumnFilter) {
+        assert sortColumnFilter.size() > 0;
+        return SortedRecordCursorFactory.toOrder(sortColumnFilter.get(0));
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -116,12 +121,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         } else {
             return SCAN_DIRECTION_BACKWARD;
         }
-    }
-
-    static int getScanDirection(ListColumnFilter sortColumnFilter) {
-        assert sortColumnFilter.size() > 0;
-
-        return toOrder(sortColumnFilter.get(0));
     }
 
     @Override

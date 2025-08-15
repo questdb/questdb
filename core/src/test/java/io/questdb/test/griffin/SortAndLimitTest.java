@@ -48,7 +48,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
     public void testInsertAndSelectDesc_Lo_990_Hi_minus5_on_table_with_random_order() throws Exception {
         prepareRandomOrderTable();
 
-        assertQuery("l\n10\n9\n8\n7\n6\n", "select l from sorttest order by l desc limit 990,-5");
+        assertQuery("l\n10\n9\n8\n7\n6\n", "select l from sorttest order by l desc limit 990,-5", true);
     }
 
     @Test
@@ -69,7 +69,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
     public void testInsertAndSelect_Bottom_5_returns_0_records_because_output_is_empty() throws Exception {
         runQueries("create table sorttest(i int);");
 
-        assertQuery("i\n", "select i from sorttest order by i limit 3");
+        assertQuery("select i from sorttest order by i limit 3");
     }
 
     @Test
@@ -114,14 +114,14 @@ public class SortAndLimitTest extends AbstractCairoTest {
                 "insert into sorttest select x from long_sequence(10);"
         );
 
-        assertQuery("i\n2\n3\n4\n5\n6\n7\n8\n9\n", "select i from sorttest order by i limit 1,-1");
+        assertQuery("i\n2\n3\n4\n5\n6\n7\n8\n9\n", "select i from sorttest order by i limit 1,-1", true);
     }
 
     @Test
     public void testInsertAndSelect_Lo_2_Hi_5_returns_0_records_because_output_is_0_size() throws Exception {
         runQueries("create table sorttest(i int);");
 
-        assertQuery("i\n", "select i from sorttest order by i limit 2,5");
+        assertQuery("select i from sorttest order by i limit 2,5");
     }
 
     @Test
@@ -131,7 +131,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
                 "insert into sorttest select x from long_sequence(2);"
         );
 
-        assertQuery("i\n", "select i from sorttest order by i limit 2,5");
+        assertQuery("select i from sorttest order by i limit 2,5");
     }
 
     @Test
@@ -158,7 +158,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
     public void testInsertAndSelect_Lo_990_Hi_minus5_on_table_with_random_order() throws Exception {
         prepareRandomOrderTable();
 
-        assertQuery("l\n991\n992\n993\n994\n995\n", "select l from sorttest order by l limit 990,-5");
+        assertQuery("l\n991\n992\n993\n994\n995\n", "select l from sorttest order by l limit 990,-5", true);
     }
 
     @Test
@@ -179,7 +179,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
     public void testInsertAndSelect_Top_5_returns_0_records_because_table_is_empty() throws Exception {
         runQueries("create table sorttest(i int);");
 
-        assertQuery("i\n", "select i from sorttest order by i limit -5");
+        assertQuery("select i from sorttest order by i limit -5");
     }
 
     @Test
@@ -229,7 +229,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
                 "insert into sorttest select x from long_sequence(1000);"
         );
 
-        assertQuery("i\n995\n996\n997\n998\n999\n", "select i from sorttest order by i limit 994, -1");
+        assertQuery("i\n995\n996\n997\n998\n999\n", "select i from sorttest order by i limit 994, -1", true);
     }
 
     @Test
@@ -297,9 +297,9 @@ public class SortAndLimitTest extends AbstractCairoTest {
         assertQueryExpectSize("i\n8\n9\n9\n10\n10\n", "select i from sorttest order by i limit -5");
     }
 
-    private void assertQuery(String expected, String query) throws Exception {
+    private void assertQuery(String query) throws Exception {
         assertQuery(
-                expected,
+                "i\n",
                 query,
                 null,
                 null,
@@ -335,7 +335,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                ddl(query);
+                execute(query);
             }
         });
     }

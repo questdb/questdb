@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -151,7 +152,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(createStatement);
+            execute(createStatement);
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
@@ -186,6 +187,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errorCount.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     latch.countDown();
                 }
             }).start();
@@ -226,6 +228,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errorCount.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     latch.countDown();
                 }
             }).start();
@@ -240,7 +243,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            ddl("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
+            execute("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
             TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
@@ -295,7 +298,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );

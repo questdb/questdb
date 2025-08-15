@@ -29,14 +29,22 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Os;
+import io.questdb.std.Rows;
+import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -55,7 +63,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private boolean isFrameCacheBuilt;
     private boolean isTreeMapBuilt;
     private int keyCount;
-    private int workerCount;
+    private int sharedQueryWorkerCount;
 
     public LatestByAllIndexedRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -95,7 +103,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
-        workerCount = executionContext.getSharedWorkerCount();
+        // If the worker count is 0
+        sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
         rows.clear();
         keyCount = -1;
         argumentsAddress = 0;
@@ -106,6 +115,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isTreeMapBuilt ? 1 : 0;
+    }
+
+    @Override
     public long size() {
         return isTreeMapBuilt ? aLimit - indexShift : -1;
     }
@@ -113,7 +127,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("workers").val(workerCount);
+        sink.meta("workers").val(sharedQueryWorkerCount + 1);
 
         if (prefixes.size() > 2) {
             int geoHashColumnIndex = (int) prefixes.get(0);
@@ -138,8 +152,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         aIndex = indexShift;
     }
 
-    private static long getChunkSize(int keyCount, int workerCount) {
-        return (keyCount + workerCount - 1) / workerCount;
+    private static long getChunkSize(int keyCount, int sharedWorkerCount) {
+        return sharedWorkerCount > 0 ? (keyCount + sharedWorkerCount - 1) / sharedWorkerCount : keyCount;
     }
 
     private static int getTaskCount(int keyCount, long chunkSize) {
@@ -150,7 +164,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         int taskCount;
         if (keyCount < 0) {
             keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
-            final long chunkSize = getChunkSize(keyCount, workerCount);
+            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
             rows.setCapacity(keyCount);
             GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
@@ -169,7 +183,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
             sharedCircuitBreaker.reset();
         } else {
-            final long chunkSize = getChunkSize(keyCount, workerCount);
+            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
         }
 
@@ -206,8 +220,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
-                doneLatch.reset();
-
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
@@ -217,7 +229,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valueBaseAddress = indexReader.getValueBaseAddress();
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
-                final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
+                final long unIndexedNullCount = indexReader.getColumnTop();
+
+                doneLatch.reset();
 
                 queuedCount = 0;
                 for (long i = 0; i < taskCount; i++) {
@@ -282,8 +296,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     long seq = subSeq.next();
                     if (seq > -1) {
-                        queue.get(seq).run();
-                        subSeq.done(seq);
+                        try {
+                            queue.get(seq).run();
+                        } finally {
+                            subSeq.done(seq);
+                        }
                     } else {
                         Os.pause();
                     }
@@ -300,9 +317,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         } catch (DataUnavailableException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 
             throw e;
-        } catch (Throwable t) {
+        } catch (Throwable th) {
             sharedCircuitBreaker.cancel();
-            throw t;
+            throw th;
         } finally {
             processTasks(queuedCount);
             if (sharedCircuitBreaker.checkIfTripped()) {
@@ -335,8 +352,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 if (circuitBreaker.checkIfTripped()) {
                     sharedCircuitBreaker.cancel();
                 }
-                queue.get(seq).run();
-                subSeq.done(seq);
+                try {
+                    queue.get(seq).run();
+                } finally {
+                    subSeq.done(seq);
+                }
             } else {
                 Os.pause();
             }

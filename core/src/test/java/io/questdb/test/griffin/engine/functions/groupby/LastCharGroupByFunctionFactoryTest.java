@@ -37,7 +37,7 @@ public class LastCharGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-        ddl("create table tab (f char)");
+        execute("create table tab (f char)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 10; i > 0; i--) {

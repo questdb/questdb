@@ -328,29 +328,27 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFailsWithSingleArg() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table alex as (" +
-                    "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
-                    " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
-                    " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
-                    " from long_sequence(6)" +
-                    ")");
+            execute(
+                    "create table alex as (" +
+                            "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
+                            " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
+                            " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
+                            " from long_sequence(6)" +
+                            ")"
+            );
 
-            try {
-                ddl(
-                        "select coalesce(b)\n" +
-                                "from alex"
-                );
-                Assert.fail("SqlException expected");
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().contains("coalesce"));
-            }
+            assertExceptionNoLeakCheck(
+                    "select coalesce(b) from alex",
+                    7,
+                    "coalesce can be used with 2 or more arguments"
+            );
         });
     }
 
     @Test
     public void testFailsWithUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table alex as (" +
+            execute("create table alex as (" +
                     "select CAST(NULL as binary) x, CAST(NULL as binary) a" +
                     " from long_sequence(6)" +
                     ")");
@@ -368,11 +366,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testFloat3Args() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10.0000\t10.0000\tnull\t10.0000\tnull\n" +
+                        "10.0\t10.0\tnull\t10.0\tnull\n" +
                         "null\tnull\tnull\tnull\tnull\n" +
-                        "0.5000\t0.5000\t0.5000\tnull\tnull\n" +
-                        "10.0000\t10.0000\tnull\t10.0000\t4.0000\n" +
-                        "5.0000\tnull\tnull\tnull\t5.0000\n",
+                        "0.5\t0.5\t0.5\tnull\tnull\n" +
+                        "10.0\t10.0\tnull\t10.0\t4.0\n" +
+                        "5.0\tnull\tnull\tnull\t5.0\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
@@ -481,6 +479,15 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testNoArgs() throws Exception {
+        assertException(
+                "select coalesce();",
+                7,
+                "coalesce can be used with 2 or more arguments"
         );
     }
 
@@ -831,7 +838,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testUnsupportedBindVariables() throws Exception {
-        ddl("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
+        execute("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
         assertException(
                 "select coalesce(a, $1, $2) from test",
                 19,

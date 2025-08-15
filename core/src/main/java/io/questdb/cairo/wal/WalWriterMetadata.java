@@ -34,7 +34,11 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -57,7 +61,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public WalWriterMetadata(FilesFacade ff, boolean readonly) {
         this.ff = ff;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARWInstance();
+            roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();
@@ -73,12 +77,26 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean suspended,
             RecordMetadata metadata
     ) {
+        final boolean firstWrite = metaMem.getAppendOffset() == 0;
         metaMem.jumpTo(0);
         // Size of metadata
-        metaMem.putInt(0);
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // When overwriting the file, don't "blip" the size to zero
+            // in case there are concurrent readers.
+            metaMem.skip(Integer.BYTES);
+        }
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion);
-        metaMem.putInt(columnCount);
+        final long columnCountOffset = metaMem.getAppendOffset();
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // Same as for the file-size, keep the old size until
+            // a new col count is patched at the end.
+            metaMem.skip(Integer.BYTES);
+        }
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
         metaMem.putBool(suspended);
@@ -88,8 +106,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.putStr(metadata.getColumnName(i));
         }
 
-        // update metadata size
-        metaMem.putInt(0, (int) metaMem.getAppendOffset());
+        // To avoid consistency issues with concurrent readers,
+        // update the column count and file size last.
+        final long size = metaMem.getAppendOffset();
+        metaMem.putInt(0, (int) size);
+        metaMem.putInt(columnCountOffset, columnCount);
     }
 
     @Override
@@ -100,13 +121,55 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity
     ) {
-        addColumn0(columnName, columnType);
+        addColumn0(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolIsCached,
+                isDedupKey
+        );
     }
 
-    public void addColumn(CharSequence columnName, int columnType) {
-        addColumn0(columnName, columnType);
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity
+    ) {
+        addColumn0(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolIsCached,
+                isDedupKey
+        );
+        structureVersion++;
+    }
+
+    public void changeColumnType(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        TableUtils.changeColumnTypeInMetadata(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                columnNameIndexMap,
+                columnMetadata
+        );
+        columnCount++;
         structureVersion++;
     }
 
@@ -123,8 +186,13 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public boolean enableDeduplicationWithUpsertKeys() {
+        boolean isSubsetOfOldKeys = true;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            isSubsetOfOldKeys &= isDedupKey(columnIndex);
+        }
         structureVersion++;
+        return isSubsetOfOldKeys;
     }
 
     @Override
@@ -148,7 +216,16 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount, @Transient IntList readColumnOrder) {
+    public void of(
+            TableToken tableToken,
+            int tableId,
+            int timestampIndex,
+            int compressedTimestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount,
+            @Transient IntList readColumnOrder
+    ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
@@ -166,12 +243,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void changeColumnType(CharSequence columnName, int newType) {
-        TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
-        columnCount++;
-        structureVersion++;
-    }
-
     public void renameTable(TableToken toTableToken) {
         assert toTableToken != null;
         tableToken = toTableToken;
@@ -186,11 +257,20 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, suspended, this);
     }
 
-    private void addColumn0(CharSequence columnName, int columnType) {
+    private void addColumn0(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isDedupKey
+    ) {
         final String name = columnName.toString();
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
         }
+        // sequencer metadata is servicing WALs, and it does not have
+        // information about symbol indexing and index storage parameters
+        // therefore we ignore the incoming parameters and assume defaults
         columnMetadata.add(
                 new TableColumnMetadata(
                         name,
@@ -200,7 +280,10 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                         false,
                         null,
                         columnMetadata.size(),
-                        false
+                        isDedupKey,
+                        0,
+                        symbolCacheFlag,
+                        symbolCapacity
                 )
         );
         columnCount++;

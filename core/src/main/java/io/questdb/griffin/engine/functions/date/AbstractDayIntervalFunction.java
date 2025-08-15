@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -33,12 +34,42 @@ import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractDayIntervalFunction extends IntervalFunction {
+public abstract class AbstractDayIntervalFunction extends IntervalFunction implements FunctionExtension {
     protected final Interval interval = new Interval();
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public @NotNull Interval getInterval(Record rec) {
         return interval;
+    }
+
+    @Override
+    public Record getRecord(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -50,12 +81,17 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction {
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

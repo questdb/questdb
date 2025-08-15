@@ -35,7 +35,7 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('foobar','barbaz') s from long_sequence(3))");
+            execute("create table x as (select rnd_str('foobar','barbaz') s from long_sequence(3))");
 
             try (RecordCursorFactory factory = select("select regexp_replace(s, $1, $2) from x")) {
                 bindVariableService.setStr(0, "foo");

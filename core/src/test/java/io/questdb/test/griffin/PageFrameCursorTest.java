@@ -45,7 +45,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
     public void testStringColumnWithColumnTop() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl("create table x as (select" +
+                    execute("create table x as (select" +
                             " rnd_int() a," +
                             " rnd_str() b," +
                             " timestamp_sequence(to_timestamp('2022-01-13T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t" +
@@ -53,9 +53,9 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                             ") timestamp (t) partition by DAY"
                     );
 
-                    ddl("alter table x add column c string");
+                    execute("alter table x add column c string");
 
-                    insert(
+                    execute(
                             "insert into x " +
                                     "select" +
                                     " rnd_int() a," +
@@ -113,7 +113,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
     public void testStringSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl("create table x as (select" +
+                    execute("create table x as (select" +
                             " rnd_int() a," +
                             " rnd_str() b," +
                             " timestamp_sequence(0, 100000000) t" +
@@ -229,7 +229,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testColumnTop(int maxLength) throws SqlException {
-        ddl("create table x as (select" +
+        execute("create table x as (select" +
                 " rnd_int() a," +
                 " rnd_varchar(1, " + maxLength + ", 1) b," +
                 " timestamp_sequence(to_timestamp('2022-01-13T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t" +
@@ -237,9 +237,9 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 ") timestamp (t) partition by DAY"
         );
 
-        ddl("alter table x add column c varchar");
+        execute("alter table x add column c varchar");
 
-        insert(
+        execute(
                 "insert into x " +
                         "select" +
                         " rnd_int() a," +
@@ -253,7 +253,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testSimple(int maxLength) throws SqlException {
-        ddl("create table x as (select" +
+        execute("create table x as (select" +
                 " rnd_int() a," +
                 " rnd_varchar(1, " + maxLength + ", 1) b," +
                 " timestamp_sequence(0, 100000000) t" +

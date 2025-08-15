@@ -63,6 +63,13 @@ public class LineProtocolException extends CairoException {
         return instance;
     }
 
+    public static LineProtocolException designatedTimestampMustBePositive(String tableNameUtf16, long timestamp) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put(", timestamp: ").put(timestamp)
+                .put("; designated timestamp before 1970-01-01 is not allowed");
+    }
+
     public static LineProtocolException invalidColNameError(CharSequence columnName, String tableNameUtf16) {
         return instance()
                 .put("table: ").put(tableNameUtf16)

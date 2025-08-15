@@ -29,7 +29,13 @@
 
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
-import io.questdb.std.histogram.org.HdrHistogram.*;
+import io.questdb.std.histogram.org.HdrHistogram.AbstractHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.Histogram;
+import io.questdb.std.histogram.org.HdrHistogram.IntCountsHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.PackedDoubleHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.PackedHistogram;
+import io.questdb.std.histogram.org.HdrHistogram.ShortCountsHistogram;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.experimental.theories.DataPoints;
@@ -162,7 +168,7 @@ public class HistogramEncodingTest {
     }
 
     @Test
-    public void testHistogramEncoding_ByteBufferHasCorrectPositionSetAfterEncoding() throws Exception {
+    public void testHistogramEncoding_ByteBufferHasCorrectPositionSetAfterEncoding() {
         Histogram histogram = new Histogram(highestTrackableValue, 3);
         int size = histogram.getNeededByteBufferCapacity();
         ByteBuffer buffer = ByteBuffer.allocate(size);
@@ -176,7 +182,7 @@ public class HistogramEncodingTest {
     }
 
     @Test
-    public void testResizingHistogramBetweenCompressedEncodings() throws Exception {
+    public void testResizingHistogramBetweenCompressedEncodings() {
         Class<?>[] testClasses = new Class[]{
                 Histogram.class,
                 PackedHistogram.class,
@@ -204,7 +210,7 @@ public class HistogramEncodingTest {
     }
 
     @Test
-    public void testSimpleDoubleHistogramEncoding() throws Exception {
+    public void testSimpleDoubleHistogramEncoding() {
         Class<?>[] testClasses = new Class[]{
                 DoubleHistogram.class,
                 PackedDoubleHistogram.class
@@ -227,7 +233,7 @@ public class HistogramEncodingTest {
     }
 
     @Test
-    public void testSimpleIntegerHistogramEncoding() throws Exception {
+    public void testSimpleIntegerHistogramEncoding() {
         Class<?>[] testClasses = new Class[]{
                 Histogram.class,
                 PackedHistogram.class,

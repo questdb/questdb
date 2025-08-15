@@ -40,6 +40,18 @@ public class MCSequence extends AbstractMSequence {
         super(cycle, waitStrategy);
     }
 
+    public void clear() {
+        while (true) {
+            long n = next();
+            if (n == -1) {
+                break;
+            }
+            if (n != -2) {
+                done(n);
+            }
+        }
+    }
+
     public <T> void consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
         long cursor;
         do {
@@ -71,17 +83,5 @@ public class MCSequence extends AbstractMSequence {
             }
         }
         return casValue(current, next) ? next : -2;
-    }
-
-    public void clear() {
-        while (true) {
-            long n = next();
-            if (n == -1) {
-                break;
-            }
-            if (n != -2) {
-                done(n);
-            }
-        }
     }
 }

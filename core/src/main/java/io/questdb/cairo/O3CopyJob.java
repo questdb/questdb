@@ -25,16 +25,15 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -192,21 +191,37 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     break;
             }
         } catch (Throwable th) {
-            FilesFacade ff = tableWriter.getFilesFacade();
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstAuxAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+            // Notify table writer of error before clocking down done counters
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
 
-            closeColumnIdle(
-                    columnCounter,
-                    timestampMergeIndexAddr,
-                    timestampMergeIndexSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    tableWriter
-            );
+            // We cannot close / unmap fds here. Other copy jobs may still be running and using them.
+            // exception handling code of the stack will check if all the parts are finished before closing the memory / fds.
+            if (partCounter == null || partCounter.decrementAndGet() == 0) {
+                unmapAndCloseAllPartsComplete(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        dstFixFd,
+                        dstAuxAddr,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        tableWriter
+                );
+            }
+
             throw th;
         }
 
@@ -303,63 +318,82 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
         subSeq.done(cursor);
 
-        copy(
-                columnCounter,
-                partCounter,
-                columnType,
-                blockType,
-                timestampMergeIndexAddr,
-                timestampMergeIndexSize,
-                srcDataFixFd,
-                srcDataFixAddr,
-                srcDataFixOffset,
-                srcDataFixSize,
-                srcDataVarFd,
-                srcDataVarAddr,
-                srcDataVarOffset,
-                srcDataVarSize,
-                srcDataLo,
-                srcDataHi,
-                srcDataTop,
-                srcDataMax,
-                srcOooFixAddr,
-                srcOooVarAddr,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                srcOooPartitionLo,
-                srcOooPartitionHi,
-                timestampMin,
-                partitionTimestamp,
-                dstFixFd,
-                dstAuxAddr,
-                dstFixOffset,
-                dstFixFileOffset,
-                dstFixSize,
-                dstVarFd,
-                dstVarAddr,
-                dstVarOffset,
-                dstVarAdjust,
-                dstVarSize,
-                dstKFd,
-                dskVFd,
-                dstIndexOffset,
-                dstIndexAdjust,
-                indexBlockCapacity,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                partitionMutates,
-                srcDataNewPartitionSize,
-                srcDataOldPartitionSize,
-                o3SplitPartitionSize,
-                tableWriter,
-                indexWriter,
-                partitionUpdateSinkAddr
-        );
+        try {
+            copy(
+                    columnCounter,
+                    partCounter,
+                    columnType,
+                    blockType,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcDataFixFd,
+                    srcDataFixAddr,
+                    srcDataFixOffset,
+                    srcDataFixSize,
+                    srcDataVarFd,
+                    srcDataVarAddr,
+                    srcDataVarOffset,
+                    srcDataVarSize,
+                    srcDataLo,
+                    srcDataHi,
+                    srcDataTop,
+                    srcDataMax,
+                    srcOooFixAddr,
+                    srcOooVarAddr,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    srcOooPartitionLo,
+                    srcOooPartitionHi,
+                    timestampMin,
+                    partitionTimestamp,
+                    dstFixFd,
+                    dstAuxAddr,
+                    dstFixOffset,
+                    dstFixFileOffset,
+                    dstFixSize,
+                    dstVarFd,
+                    dstVarAddr,
+                    dstVarOffset,
+                    dstVarAdjust,
+                    dstVarSize,
+                    dstKFd,
+                    dskVFd,
+                    dstIndexOffset,
+                    dstIndexAdjust,
+                    indexBlockCapacity,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    partitionMutates,
+                    srcDataNewPartitionSize,
+                    srcDataOldPartitionSize,
+                    o3SplitPartitionSize,
+                    tableWriter,
+                    indexWriter,
+                    partitionUpdateSinkAddr
+            );
+        } catch (Throwable th) {
+            LOG.error().$("o3 copy failed [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", columnType=").$(columnType)
+                    .$(", exception=").$(th)
+                    .I$();
+            throw th;
+        }
     }
 
-    public static void copyFixedSizeCol(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, long dstFd, int shl, boolean mixedIOFlag) {
+    public static void copyFixedSizeCol(
+            FilesFacade ff,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstFixAddr,
+            long dstFixFileOffset,
+            long dstFd,
+            int shl,
+            boolean mixedIOFlag
+    ) {
         final long len = (srcHi - srcLo + 1) << shl;
         O3Utils.copyFixedSizeCol(ff, src, srcLo, dstFixAddr, dstFixFileOffset, dstFd, mixedIOFlag, len, shl);
     }
@@ -425,45 +459,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     break;
                 default:
                     break;
-            }
-        }
-    }
-
-    public static void mergeSymbols(
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexCount,
-            long srcFixAddr,
-            long srcVarAddr,
-            long srcOooFixAddr,
-            MemoryR symbolMapOffsets,
-            MemoryR symbolMapValues,
-            MemoryCARWImpl dstFixMem,
-            MemoryCARWImpl dstVarMem
-    ) {
-        ColumnTypeDriver typeDriver = VarcharTypeDriver.INSTANCE;
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(8 * 1024)) {
-            Utf8SplitString utf8SplitView = new Utf8SplitString();
-            for (long i = 0; i < timestampMergeIndexCount; i++) {
-                //        const uint64_t row = merge_index[l].i;
-                //        const uint32_t bit = (row >> 63);
-                //        const uint64_t rr = row & ~(1ull << 63);
-                final long raw = Unsafe.getUnsafe().getLong(timestampMergeIndexAddr + i * 2 * Long.BYTES + Long.BYTES);
-                final boolean pickFromSymbolMap = (raw >> 63L) == 0;
-                final long row = raw & ~(1L << 63L);
-                if (pickFromSymbolMap) {
-                    final int key = Unsafe.getUnsafe().getInt(srcOooFixAddr + row * Integer.BYTES);
-                    final CharSequence str = symbolMapValues.getStrA(symbolMapOffsets.getLong(SymbolMapWriter.keyToOffset(key)));
-                    if (str != null) {
-                        sink.clear();
-                        sink.put(str);
-                        VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
-                    } else {
-                        typeDriver.appendNull(dstFixMem, dstVarMem);
-                    }
-                } else {
-                    final Utf8Sequence value = VarcharTypeDriver.getSplitValue(srcFixAddr, Long.MAX_VALUE, srcVarAddr, Long.MAX_VALUE, row, utf8SplitView);
-                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, value);
-                }
             }
         }
     }
@@ -627,10 +622,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcDataVarSize,
                         dstFixFd,
                         dstFixAddr,
-                        Math.abs(dstFixSize),
+                        // Do not use Math.abs(dstFixSize) here, pass negative values indicating that
+                        // the dstFix memory is not mapped and should not be released in case of exception
+                        dstFixSize,
                         dstVarFd,
                         dstVarAddr,
-                        Math.abs(dstVarSize),
+                        // Do not use Math.abs(dstVarSize) here, pass negative values indicating that
+                        // the dstVar memory is not mapped and should not be released in case of exception
+                        dstVarSize,
                         dstKFd,
                         dstVFd,
                         dstIndexOffset,
@@ -742,11 +741,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable e) {
             LOG.error()
-                    .$("sync error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$("sync error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(false);
-            copyIdleQuick(
+            unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
@@ -808,7 +807,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
             }
             try {
-                updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
+                updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {
                 if (closed) {
@@ -817,11 +816,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable e) {
             LOG.error()
-                    .$("index error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$("index error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(false);
-            copyIdleQuick(
+            unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
@@ -910,7 +909,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug()
-                .$("idle [table=").utf8(tableWriter.getTableToken().getTableName())
+                .$("idle [table=").$safe(tableWriter.getTableToken().getTableName())
                 .$(", columnsRemaining=").$(columnsRemaining)
                 .I$();
         if (columnsRemaining == 0) {
@@ -944,102 +943,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         } finally {
             tableWriter.o3ClockDownPartitionUpdateCount();
             tableWriter.o3CountDownDoneLatch();
-        }
-    }
-
-    static void copyIdle(
-            AtomicInteger columnCounter,
-            AtomicInteger partCounter,
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
-            long srcDataFixFd,
-            long srcDataFixAddr,
-            long srcDataFixSize,
-            long srcDataVarFd,
-            long srcDataVarAddr,
-            long srcDataVarSize,
-            long dstFixFd,
-            long dstFixAddr,
-            long dstFixSize,
-            long dstVarFd,
-            long dstVarAddr,
-            long dstVarSize,
-            long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            long dstKFd,
-            long dstVFd,
-            TableWriter tableWriter
-    ) {
-        if (partCounter == null || partCounter.decrementAndGet() == 0) {
-            // unmap memory
-            copyIdleQuick(
-                    columnCounter,
-                    timestampMergeIndexAddr,
-                    timestampMergeIndexSize,
-                    srcDataFixFd,
-                    srcDataFixAddr,
-                    srcDataFixSize,
-                    srcDataVarFd,
-                    srcDataVarAddr,
-                    srcDataVarSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    dstFixFd,
-                    dstFixAddr,
-                    dstFixSize,
-                    dstVarFd,
-                    dstVarAddr,
-                    dstVarSize,
-                    dstKFd,
-                    dstVFd,
-                    tableWriter
-            );
-        }
-    }
-
-    static void copyIdleQuick(
-            AtomicInteger columnCounter,
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
-            long srcDataFixFd,
-            long srcDataFixAddr,
-            long srcDataFixSize,
-            long srcDataVarFd,
-            long srcDataVarAddr,
-            long srcDataVarSize,
-            long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            long dstFixFd,
-            long dstFixAddr,
-            long dstFixSize,
-            long dstVarFd,
-            long dstVarAddr,
-            long dstVarSize,
-            long dstKFd,
-            long dstVFd,
-            TableWriter tableWriter
-    ) {
-        try {
-            final FilesFacade ff = tableWriter.getFilesFacade();
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-            O3Utils.close(ff, dstKFd);
-            O3Utils.close(ff, dstVFd);
-        } finally {
-            closeColumnIdle(
-                    columnCounter,
-                    timestampMergeIndexAddr,
-                    timestampMergeIndexSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    tableWriter
-            );
         }
     }
 
@@ -1126,9 +1029,110 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         tableWriter.o3ClockDownPartitionUpdateCount();
     }
 
+    static void unmapAndClose(
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            long dstKFd,
+            long dstVFd,
+            TableWriter tableWriter
+    ) {
+        if (partCounter == null || partCounter.decrementAndGet() == 0) {
+            // unmap memory
+            unmapAndCloseAllPartsComplete(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcDataFixFd,
+                    srcDataFixAddr,
+                    srcDataFixSize,
+                    srcDataVarFd,
+                    srcDataVarAddr,
+                    srcDataVarSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    dstFixFd,
+                    dstFixAddr,
+                    dstFixSize,
+                    dstVarFd,
+                    dstVarAddr,
+                    dstVarSize,
+                    dstKFd,
+                    dstVFd,
+                    tableWriter
+            );
+        }
+    }
+
+    // This method should only be called after check that partCounter is 0
+    static void unmapAndCloseAllPartsComplete(
+            AtomicInteger columnCounter,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            TableWriter tableWriter
+    ) {
+        try {
+            final FilesFacade ff = tableWriter.getFilesFacade();
+            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+            O3Utils.close(ff, dstKFd);
+            O3Utils.close(ff, dstVFd);
+        } finally {
+            closeColumnIdle(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+        }
+    }
+
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        copy(queue.get(cursor), cursor, subSeq);
+        try {
+            copy(queue.get(cursor), cursor, subSeq);
+        } catch (CairoException th) {
+            // Already logged, continue the job execution
+        }
         return true;
     }
 }

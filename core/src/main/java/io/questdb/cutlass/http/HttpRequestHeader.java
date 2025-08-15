@@ -26,7 +26,9 @@ package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 public interface HttpRequestHeader {
     DirectUtf8Sequence getBoundary();
@@ -51,9 +53,18 @@ public interface HttpRequestHeader {
 
     DirectUtf8Sequence getMethodLine();
 
+    @Nullable
+    DirectUtf8String getQuery();
+
     long getStatementTimeout();
 
-    Utf8Sequence getUrl();
+    DirectUtf8String getUrl();
 
     DirectUtf8Sequence getUrlParam(Utf8Sequence name);
+
+    boolean isGetRequest();
+
+    boolean isPostRequest();
+
+    boolean isPutRequest();
 }

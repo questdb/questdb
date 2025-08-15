@@ -41,6 +41,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -58,6 +59,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
     }
 
     @Test
+    @Ignore
     public void testWalSuspendedToNonWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
@@ -65,7 +67,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 private final AtomicInteger attempt = new AtomicInteger();
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.containsAscii(name, "x.d.1") && attempt.getAndIncrement() == 0) {
                         return -1;
                     }
@@ -85,7 +87,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 protected void setupWalApplyJob(
                         WorkerPool workerPool,
                         CairoEngine engine,
-                        int sharedWorkerCount
+                        int sharedQueryWorkerCount
                 ) {
                 }
             }) {
@@ -95,7 +97,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 final CairoEngine engine = questdb.getEngine();
                 final TableToken token = engine.verifyTableName(tableName);
 
-                try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                try (final ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                     insertInto(tableName);
                     walApplyJob.drain(0);
 

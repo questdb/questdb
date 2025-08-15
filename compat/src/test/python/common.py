@@ -56,13 +56,52 @@ def convert_and_append_parameters(value, type, resolved_parameters):
         resolved_parameters.append(int(value))
     elif type == 'float4' or type == 'float8':
         resolved_parameters.append(float(value))
+    elif type == 'array_float8':
+        # Handle floating point arrays like {-1, 2, 3, 4, 5.42}
+        if isinstance(value, str):
+             # Strip curly braces and split by comma
+            value = value.strip('{}')
+            # Convert each element to float, handling null values
+            float_array = []
+            for item in value.split(','):
+                item = item.strip()
+                if not item:
+                    continue
+                if item.lower() == 'null':
+                    float_array.append(None)
+                else:
+                    float_array.append(float(item))
+            resolved_parameters.append(float_array)
+        # If already a list, ensure all elements are floats or None
+        elif isinstance(value, list):
+            float_array = []
+            for item in value:
+                if item is None:
+                    float_array.append(None)
+                else:
+                    float_array.append(float(item))
+            resolved_parameters.append(float_array)
+        else:
+            raise ValueError(f"Invalid array_float8 value: {value}")
     elif type == 'boolean':
-        resolved_parameters.append(bool(value))
+        value = value.lower().strip()
+        if value == 'true':
+            resolved_parameters.append(True)
+        elif value == 'false':
+            resolved_parameters.append(False)
+        else:
+            raise ValueError(f"Invalid boolean value: {value}")
     elif type == 'varchar':
         resolved_parameters.append(str(value))
     elif type == 'timestamp':
         parsed_value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         resolved_parameters.append(parsed_value)
+    elif type == 'date':
+        parsed_value = datetime.date.fromisoformat(value)
+        resolved_parameters.append(parsed_value)
+    elif type == 'char':
+        str_val = str(value)
+        resolved_parameters.append(str_val)
     else:
         resolved_parameters.append(value)
 
@@ -77,13 +116,60 @@ def convert_query_result(result):
     else:
         result_converted = [list(record) for record in result]
 
-    # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
     for row in result_converted:
         for i, value in enumerate(row):
-            if isinstance(value, datetime.datetime):
-                row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            row[i] = convert_value(value)
 
     return result_converted
+
+
+def convert_value(value):
+    # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
+    if isinstance(value, datetime.datetime):
+        return value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+    # Convert bytes to char
+    elif isinstance(value, bytes):
+        return value.decode()
+
+    # Recursively handle lists
+    elif isinstance(value, list):
+        # Handle nested lists
+        if value and isinstance(value[0], list):
+            nested_items = [convert_value(item) for item in value]
+            # If nested_items are already in PostgreSQL array format (start with '{')
+            if all(isinstance(item, str) and item.startswith('{') for item in nested_items):
+                return '{' + ','.join(nested_items) + '}'
+            else:
+                # Otherwise, wrap each nested list in braces
+                return '{' + ''.join('{' + str(item)[1:-1] + '}' for item in nested_items) + '}'
+
+        # Process flat lists of numbers or None values for PostgreSQL array formatting
+        elif all(isinstance(item, (int, float, type(None))) for item in value):
+            float_strs = []
+            for item in value:
+                if item is None:
+                    float_strs.append("NULL")
+                else:
+                    float_val = float(item)
+                    # Check if it's an integer value and add .0 if needed
+                    if float_val.is_integer():
+                        float_strs.append(f"{float_val:.1f}")
+                    else:
+                        float_strs.append(str(float_val))
+            return '{' + ','.join(float_strs) + '}'
+
+        # For other types of lists, recursively convert each item
+        else:
+            return [convert_value(item) for item in value]
+
+    # Handle dictionaries by recursively converting their values
+    elif isinstance(value, dict):
+        return {k: convert_value(v) for k, v in value.items()}
+
+    # Return other types unchanged
+    else:
+        return value
 
 
 def assert_result(expect, actual):

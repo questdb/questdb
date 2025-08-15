@@ -34,10 +34,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 
 public class TelemetryTask implements AbstractTelemetryTask {
+    public static final String NAME = "TABLE TELEMETRY";
     public static final String TABLE_NAME = "telemetry";
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
-    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = configuration -> new Telemetry.TelemetryType<TelemetryTask>() {
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = configuration -> new Telemetry.TelemetryType<>() {
         private final TelemetryTask systemStatusTask = new TelemetryTask();
 
         @Override
@@ -46,11 +47,16 @@ public class TelemetryTask implements AbstractTelemetryTask {
                     .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(TABLE_NAME)
                     .$("\" (" +
-                            "created timestamp, " +
-                            "event short, " +
-                            "origin short" +
-                            ") timestamp(created)"
+                            "created TIMESTAMP, " +
+                            "event SHORT, " +
+                            "origin SHORT" +
+                            ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                     );
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override
@@ -78,6 +84,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
     };
     private short event;
     private short origin;
+    private long queueCursor;
 
     private TelemetryTask() {
     }
@@ -87,8 +94,17 @@ public class TelemetryTask implements AbstractTelemetryTask {
         if (task != null) {
             task.origin = origin;
             task.event = event;
-            telemetry.store();
+            telemetry.store(task);
         }
+    }
+
+    public long getQueueCursor() {
+        return queueCursor;
+    }
+
+    @Override
+    public void setQueueCursor(long cursor) {
+        this.queueCursor = cursor;
     }
 
     @Override
@@ -100,7 +116,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .$(']').$();
         }
     }

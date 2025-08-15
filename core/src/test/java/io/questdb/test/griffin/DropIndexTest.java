@@ -24,7 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -32,6 +40,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -80,7 +89,7 @@ public class DropIndexTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        path = new Path().put(configuration.getRoot()).concat(dirName);
+        path = new Path().put(configuration.getDbRoot()).concat(dirName);
         tablePathLen = path.size();
     }
 
@@ -96,9 +105,10 @@ public class DropIndexTest extends AbstractCairoTest {
         model.col("a", ColumnType.INT);
         model.timestamp("ts");
         createPopulateTable(model, 5, "2022-02-24", 2);
-        compile("alter table " + tableName + " add column sym symbol index");
-        compile("insert into " + tableName +
+        execute("alter table " + tableName + " add column sym symbol index");
+        execute("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
+        assertIndexFileExist(true);
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -120,7 +130,11 @@ public class DropIndexTest extends AbstractCairoTest {
                 "4\t2022-02-24T01:35:59.200000Z\t\n" +
                 "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
 
-        compile("alter table " + tableName + " alter column sym drop index");
+        if (Os.isWindows()) {
+            // Release readers so that we can drop index files
+            engine.releaseInactive();
+        }
+        execute("alter table " + tableName + " alter column sym drop index");
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -144,6 +158,8 @@ public class DropIndexTest extends AbstractCairoTest {
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T01:30:00.000000Z\tA\n" +
                 "2\t2022-02-24T01:46:40.000000Z\tA\n", "select * from " + tableName + " where sym = 'A'");
+
+        assertIndexFileExist(false);
     }
 
     @Test
@@ -152,7 +168,7 @@ public class DropIndexTest extends AbstractCairoTest {
         model.col("a", ColumnType.INT);
         model.timestamp("ts");
         createPopulateTable(model, 5, "2022-02-24", 2);
-        compile("alter table " + tableName + " add column sym symbol index");
+        execute("alter table " + tableName + " add column sym symbol index");
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -161,7 +177,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "4\t2022-02-24T01:35:59.200000Z\t\n" +
                 "5\t2022-02-24T01:59:59.000000Z\t\n", tableName);
 
-        compile("alter table " + tableName + " alter column sym drop index");
+        execute("alter table " + tableName + " alter column sym drop index");
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -201,7 +217,7 @@ public class DropIndexTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(noHardLinksFF, () -> {
-            ddl(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            execute(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
                     1,
@@ -211,7 +227,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     indexBlockValueSize
             );
             try {
-                ddl(dropIndexStatement(), sqlExecutionContext);
+                execute(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot remove index for [txn=1, table=sensors, column=sensor_id]");
@@ -244,7 +260,7 @@ public class DropIndexTest extends AbstractCairoTest {
     @Test
     public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE підрахунок AS (" +
                             "  select " +
                             "    rnd_symbol('K1', 'K2') колонка " +
@@ -289,7 +305,7 @@ public class DropIndexTest extends AbstractCairoTest {
     @Test
     public void testDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            ddl(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            execute(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
                     1,
@@ -302,11 +318,11 @@ public class DropIndexTest extends AbstractCairoTest {
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
             TableToken tableToken = engine.verifyTableName(tableName);
-            try (Path path2 = new Path().put(configuration.getRoot()).concat(tableToken)) {
+            try (Path path2 = new Path().put(configuration.getDbRoot()).concat(tableToken)) {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursorFactory factory = select(select)) {
                         try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                            // 1st reader sees the index as DROP INDEX has not happened yet
+                            // the 1st reader sees the index as DROP INDEX has not happened yet
                             // the readers that follow do not see the index, because it has been dropped
                             boolean isIndexed = i == 0;
                             path2.trimTo(tablePathLen);
@@ -323,7 +339,7 @@ public class DropIndexTest extends AbstractCairoTest {
                             Assert.assertEquals(5, countDFiles(isIndexed ? 0L : 1L));
                             Assert.assertEquals(isIndexed ? 10 : 0, countIndexFiles(isIndexed ? 0L : 1L));
                             if (isIndexed) {
-                                ddl(dropIndexStatement(), sqlExecutionContext);
+                                execute(dropIndexStatement(), sqlExecutionContext);
                             }
                         }
                     }
@@ -350,7 +366,7 @@ public class DropIndexTest extends AbstractCairoTest {
             Assert.assertEquals(0, countIndexFiles(1L));
 
             // clean after
-            ddl("VACUUM TABLE sensors", sqlExecutionContext);
+            execute("VACUUM TABLE sensors", sqlExecutionContext);
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
@@ -369,7 +385,7 @@ public class DropIndexTest extends AbstractCairoTest {
     @Test
     public void testDropIndexSimultaneously() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            ddl(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            execute(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.HOUR,
                     1,
@@ -389,7 +405,7 @@ public class DropIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    ddl(dropIndexDdl);
+                    execute(dropIndexDdl);
                 } catch (Throwable e) {
                     concurrentDropIndexFailure.set(e);
                 } finally {
@@ -402,7 +418,7 @@ public class DropIndexTest extends AbstractCairoTest {
             // drop the index concurrently
             startBarrier.await();
             try {
-                ddl(dropIndexDdl);
+                execute(dropIndexDdl);
                 endLatch.await();
                 // we didn't fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
@@ -447,7 +463,7 @@ public class DropIndexTest extends AbstractCairoTest {
     @Test
     public void testDropIndexStructureOfTableAndColumnIncrease() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            ddl(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
+            execute(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
             checkMetadataAndTxn(
                     PartitionBy.DAY,
                     1,
@@ -457,7 +473,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     indexBlockValueSize
             );
             assertSql(expected, tableName);
-            ddl(dropIndexStatement());
+            execute(dropIndexStatement());
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     PartitionBy.DAY,
@@ -479,7 +495,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
                 CREATE_TABLE_STMT,
                 43,
-                "'add', 'drop', 'cache' or 'nocache' expected found 'dope'"
+                "'add', 'drop', 'symbol', 'cache' or 'nocache' expected found 'dope'"
         );
     }
 
@@ -556,7 +572,7 @@ public class DropIndexTest extends AbstractCairoTest {
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
         TableToken tableToken = engine.verifyTableName(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 tableToken.getDirName()
         );
         try (Stream<?> stream = Files.find(
@@ -610,6 +626,21 @@ public class DropIndexTest extends AbstractCairoTest {
         return fn.endsWith(K) || fn.endsWith(V);
     }
 
+    private void assertIndexFileExist(boolean exists) {
+        TableToken token = engine.verifyTableName(DropIndexTest.tableName);
+        Path path;
+        try (TableReader rdr = engine.getReader(token)) {
+            path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
+            path.concat(token);
+            long lastPartition = rdr.getTxFile().getLastPartitionTimestamp();
+            long lastPartitionNameTxn = rdr.getTxFile().getPartitionNameTxnByPartitionTimestamp(lastPartition);
+            int partitionBy = rdr.getPartitionedBy();
+            TableUtils.setPathForNativePartition(path, partitionBy, lastPartition, lastPartitionNameTxn);
+        }
+        path.concat("sym").put(".k").put(".1");
+        Assert.assertEquals(exists, engine.getConfiguration().getFilesFacade().exists(path.$()));
+    }
+
     private long countDFiles(long txn) throws IOException {
         return countFiles(columnName, txn, DropIndexTest::isDataFile);
     }
@@ -637,7 +668,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 default:
                     Assert.fail("unsupported partitionBy type");
             }
-            ddl(createStatement, sqlExecutionContext);
+            execute(createStatement, sqlExecutionContext);
             checkMetadataAndTxn(
                     partitionedBy,
                     1,
@@ -647,7 +678,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     indexBlockValueSize
             );
 
-            ddl(dropIndexStatement(), sqlExecutionContext);
+            execute(dropIndexStatement(), sqlExecutionContext);
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     partitionedBy,
@@ -675,7 +706,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     true,
                     4
             );
-            // other indexed column remains intact
+            // another indexed column remains intact
             Assert.assertEquals(
                     expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)

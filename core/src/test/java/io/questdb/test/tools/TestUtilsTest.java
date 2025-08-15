@@ -37,18 +37,29 @@ import java.util.Map;
 public final class TestUtilsTest extends AbstractCairoTest {
 
     @Test
+    public void testAssertReverseLinesEqual() {
+        Assert.assertThrows(AssertionError.class, () -> {
+            TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "123\n456\n789\n");
+            TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n456\n123\n");
+        });
+        TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "789\n456\n123\n");
+        TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n56\n1234\n");
+        TestUtils.assertReverseLinesEqual(null, "1234\n", "1234\n");
+    }
+
+    @Test
     public void testOrderTolerantRecordComparison() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (x long, ts timestamp) timestamp(ts) partition by day");
-            compile("create table y (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("create table x (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("create table y (x long, ts timestamp) timestamp(ts) partition by day");
 
-            insert("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
-            insert("insert into x values (2, '2022-02-24T00:00:01.000000Z')");
-            insert("insert into x values (3, '2022-02-24T00:00:02.000000Z')");
+            execute("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into x values (2, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into x values (3, '2022-02-24T00:00:02.000000Z')");
 
-            insert("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
-            insert("insert into y values (1, '2022-02-24T00:00:01.000000Z')");
-            insert("insert into y values (3, '2022-02-24T00:00:02.000000Z')");
+            execute("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into y values (1, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into y values (3, '2022-02-24T00:00:02.000000Z')");
 
             HashMap<String, Integer> mapX = new HashMap<>();
             HashMap<String, Integer> mapY = new HashMap<>();
@@ -58,7 +69,7 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
             Assert.assertEquals(mapX, mapY);
 
-            insert("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into y values (2, '2022-02-24T00:00:01.000000Z')");
 
             // now the maps should be different since we've added an extra record
 

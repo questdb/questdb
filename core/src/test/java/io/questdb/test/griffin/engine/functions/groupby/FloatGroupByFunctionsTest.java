@@ -37,10 +37,12 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
     public void testRndFloatsWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setRandom(new Rnd());
-            ddl("create table tab as ( select rnd_float() ch from long_sequence(100) )");
+            execute("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 
-            assertSql("min\tmax\tfirst\tlast\tcount\n" +
-                    "0.0011\t0.9856\t0.6608\t0.7998\t100\n", "select min(ch), max(ch), first(ch), last(ch), count() from tab"
+            assertSql(
+                    "min\tmax\tfirst\tlast\tcount\n" +
+                            "0.0011075139\t0.9856291\t0.66077775\t0.7997733\t100\n",
+                    "select min(ch), max(ch), first(ch), last(ch), count() from tab"
             );
         });
     }
@@ -53,14 +55,18 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
             tm.timestamp("ts").col("ch", ColumnType.FLOAT);
             createPopulateTable(tm, 100, "2020-01-01", 2);
 
-            assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                    "2020-01-01T00:28:47.990000Z\t0.0010\t0.0510\t0.0010\t0.0510\t51\n" +
-                    "2020-01-02T00:28:47.990000Z\t0.0520\t0.1000\t0.0520\t0.1000\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation"
+            assertSql(
+                    "ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                            "2020-01-01T00:28:47.990000Z\t0.001\t0.051\t0.001\t0.051\t51\n" +
+                            "2020-01-02T00:28:47.990000Z\t0.052\t0.1\t0.052\t0.1\t49\n",
+                    "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation"
             );
 
-            assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                    "2020-01-01T00:00:00.000000Z\t0.0010\t0.0500\t0.0010\t0.0500\t50\n" +
-                    "2020-01-02T00:00:00.000000Z\t0.0510\t0.1000\t0.0510\t0.1000\t50\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
+            assertSql(
+                    "ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                            "2020-01-01T00:00:00.000000Z\t0.001\t0.05\t0.001\t0.05\t50\n" +
+                            "2020-01-02T00:00:00.000000Z\t0.051\t0.1\t0.051\t0.1\t50\n",
+                    "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
             );
         });
     }

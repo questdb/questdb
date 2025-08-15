@@ -24,13 +24,24 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -39,40 +50,65 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
+public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private final int commitMode;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
+    private final IntList readColumnOrder = new IntList();
     private final boolean readonly;
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
     private volatile boolean suspended;
     private int tableId;
     private TableToken tableToken;
-    private final IntList readColumnOrder = new IntList();
 
-    public SequencerMetadata(FilesFacade ff) {
-        this(ff, false);
+    public SequencerMetadata(FilesFacade ff, int commitMode) {
+        this(ff, commitMode, false);
     }
 
-    public SequencerMetadata(FilesFacade ff, boolean readonly) {
+    public SequencerMetadata(FilesFacade ff, int commitMode, boolean readonly) {
         this.ff = ff;
+        this.commitMode = commitMode;
         this.readonly = readonly;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARWInstance();
+            roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();
         }
     }
 
-    public void addColumn(CharSequence columnName, int columnType) {
-        addColumn0(columnName, columnType);
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isDedupKey
+    ) {
+        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
 
-    public void changeColumnType(CharSequence columnName, int newType) {
-        int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
+    public void changeColumnType(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                columnNameIndexMap, columnMetadata
+        );
         int readIndex = readColumnOrder.get(existingColumnIndex);
         readColumnOrder.add(readIndex);
         columnCount++;
@@ -100,6 +136,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+        if (writeInitialMetadata && tableStruct.isMatView()) {
+            assert tableStruct.getMatViewDefinition() != null;
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                MatViewDefinition.append(tableStruct.getMatViewDefinition(), writer);
+            }
+            path.trimTo(pathLen);
+        }
+
         switchTo(path, pathLen);
     }
 
@@ -112,17 +158,18 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
-    public void enableDeduplicationWithUpsertKeys() {
+    public boolean enableDeduplicationWithUpsertKeys() {
         structureVersion.incrementAndGet();
-    }
-
-    public IntList getReadColumnOrder() {
-        return readColumnOrder;
+        return false;
     }
 
     @Override
     public long getMetadataVersion() {
         return structureVersion.get();
+    }
+
+    public IntList getReadColumnOrder() {
+        return readColumnOrder;
     }
 
     public int getRealColumnCount() {
@@ -194,7 +241,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public void syncToDisk() {
+    public void sync() {
         metaMem.sync(false);
     }
 
@@ -203,7 +250,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         this.tableToken = newTableToken;
     }
 
-    private void addColumn0(CharSequence columnName, int columnType) {
+    private void addColumn0(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isDedupKey
+    ) {
         final String name = columnName.toString();
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
@@ -212,12 +267,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        false,
-                        0,
+                        isIndexed,
+                        indexValueBlockCapacity,
                         false,
                         null,
                         columnMetadata.size(),
-                        false
+                        isDedupKey,
+                        0,
+                        symbolCacheFlag,
+                        symbolCapacity
                 )
         );
         columnCount++;
@@ -231,9 +289,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         this.suspended = false;
 
         for (int i = 0, n = tableStruct.getColumnCount(); i < n; i++) {
-            final CharSequence name = tableStruct.getColumnName(i);
-            final int type = tableStruct.getColumnType(i);
-            addColumn0(name, type);
+            addColumn0(
+                    tableStruct.getColumnName(i),
+                    tableStruct.getColumnType(i),
+                    tableStruct.getSymbolCapacity(i),
+                    tableStruct.getSymbolCacheFlag(i),
+                    tableStruct.isIndexed(i),
+                    tableStruct.getIndexBlockCapacity(i),
+                    tableStruct.isDedupKey(i)
+            );
             readColumnOrder.add(i);
         }
 
@@ -278,7 +342,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
             // validate designated timestamp column
             if (timestampIndex != -1) {
-                final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
+                final int timestampType = columnMetadata.getQuick(timestampIndex).getColumnType();
                 if (!ColumnType.isTimestamp(timestampType)) {
                     throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }

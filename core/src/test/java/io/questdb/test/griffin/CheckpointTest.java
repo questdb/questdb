@@ -35,6 +35,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -68,19 +70,35 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
 import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
 
+@RunWith(Parameterized.class)
 public class CheckpointTest extends AbstractCairoTest {
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
+    static int SCOREBOARD_FORMAT = 1;
     private static Path path;
     private static Rnd rnd;
     private static Path triggerFilePath;
     private int rootLen;
 
+    public CheckpointTest(int scoreboardFormat) throws Exception {
+        if (scoreboardFormat != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = scoreboardFormat;
+            tearDownStatic();
+            setUpStatic();
+        }
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
@@ -94,6 +112,14 @@ public class CheckpointTest extends AbstractCairoTest {
         AbstractCairoTest.tearDownStatic();
     }
 
+    @Parameterized.Parameters(name = "V{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {1},
+                {2},
+        });
+    }
+
     @Before
     public void setUp() {
         // sync() system call is not available on Windows, so we skip the whole test suite there.
@@ -102,7 +128,7 @@ public class CheckpointTest extends AbstractCairoTest {
         super.setUp();
         ff = testFilesFacade;
         path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
-        triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
+        triggerFilePath.of(configuration.getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
         rootLen = path.size();
         testFilesFacade.reset();
 
@@ -135,15 +161,15 @@ public class CheckpointTest extends AbstractCairoTest {
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash());
         // reset inProgress for all tests
-        ddl("checkpoint release");
+        execute("checkpoint release");
     }
 
     @Test
     public void testCheckpointCompleteDeletesCheckpointDir() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
-            ddl("checkpoint create");
-            ddl("checkpoint release");
+            execute("create table test (ts timestamp, name symbol, val int)");
+            execute("checkpoint create");
+            execute("checkpoint release");
 
             path.trimTo(rootLen).slash$();
             Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
@@ -153,9 +179,9 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointCompleteWithoutPrepareIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             // Verify that checkpoint release doesn't return errors.
-            ddl("checkpoint release");
+            execute("checkpoint release");
         });
     }
 
@@ -163,11 +189,35 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'f'; i++) {
-                ddl("create table " + i + " (ts timestamp, name symbol, val int)");
+                execute("create table " + i + " (ts timestamp, name symbol, val int)");
             }
 
-            ddl("checkpoint create");
-            ddl("checkpoint release");
+            execute("checkpoint create");
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testCheckpointCreateEmptyFolder() throws Exception {
+        final String tableName = "test";
+        path.of(configuration.getDbRoot()).concat("empty_folder").slash$();
+        TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+
+        assertMemoryLeak(() -> {
+            testCheckpointCreateCheckTableMetadataFiles(
+                    "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                    null,
+                    tableName
+            );
+
+            // Assert snapshot folder exists
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
+                    path.of(configuration.getCheckpointRoot()).slash$()
+            ));
+            // But snapshot/db folder does not
+            Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
+                    path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
+            ));
         });
     }
 
@@ -175,15 +225,33 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'd'; i++) {
-                ddl("create table " + i + " (ts timestamp, name symbol, val int)");
+                execute("create table " + i + " (ts timestamp, name symbol, val int)");
             }
 
             for (char i = 'd'; i < 'f'; i++) {
-                ddl("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL");
+                execute("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL");
             }
 
-            ddl("checkpoint create");
-            ddl("checkpoint release");
+            execute("checkpoint create");
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testCheckpointPrepareCheckMatViewMetaFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            testCheckpointCreateCheckTableMetadataFiles(
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
+                    null,
+                    "base_price"
+            );
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            String sql = "create materialized view price_1h as (" + viewSql + ") partition by DAY";
+            testCheckpointCreateCheckTableMetadataFiles(
+                    sql,
+                    null,
+                    "price_1h"
+            );
         });
     }
 
@@ -205,7 +273,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol, b double, c long)",
                 null,
                 tableName
@@ -215,7 +283,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForNonWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_non_wal";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table '" + sysTableName + "' (a symbol, b double, c long);",
                 null,
                 sysTableName
@@ -225,7 +293,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table " + tableName + " as " +
                         " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
                 null,
@@ -236,7 +304,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 "alter table " + tableName + " drop column c",
                 tableName
@@ -246,7 +314,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 null,
                 tableName
@@ -256,7 +324,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_wal";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table '" + sysTableName + "' (ts timestamp, a symbol, b double, c long) timestamp(ts) partition by day wal;",
                 null,
                 sysTableName
@@ -266,7 +334,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table " + tableName +
                         " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
                 null,
@@ -301,37 +369,13 @@ public class CheckpointTest extends AbstractCairoTest {
             path.trimTo(rootLen).concat("test.txt").$();
             Assert.assertTrue(Files.touch(path.$()));
 
-            ddl("create table test (ts timestamp, name symbol, val int)");
-            ddl("checkpoint create", sqlExecutionContext);
+            execute("create table test (ts timestamp, name symbol, val int)");
+            execute("checkpoint create", sqlExecutionContext);
 
-            // The test file should be deleted by checkpoint create.
+            // The test file should be deleted by checkpoint-create.
             Assert.assertFalse(ff.exists(path.$()));
 
-            ddl("checkpoint release");
-        });
-    }
-
-    @Test
-    public void testCheckpointPrepareEmptyFolder() throws Exception {
-        final String tableName = "test";
-        path.of(configuration.getRoot()).concat("empty_folder").slash$();
-        TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
-
-        assertMemoryLeak(() -> {
-            testCheckpointPrepareCheckTableMetadataFiles(
-                    "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                    null,
-                    tableName
-            );
-
-            // Assert snapshot folder exists
-            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
-                    path.of(configuration.getCheckpointRoot()).slash$()
-            ));
-            // But snapshot/db folder does not
-            Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
-                    path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
-            ));
+            execute("checkpoint release");
         });
     }
 
@@ -339,7 +383,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointPrepareFailsOnCorruptedTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "t";
-            ddl("create table " + tableName + " (ts timestamp, name symbol, val int)");
+            execute("create table " + tableName + " (ts timestamp, name symbol, val int)");
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
@@ -356,13 +400,13 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointPrepareFailsOnLockedTableReader() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
 
             TableToken tableToken = engine.getTableTokenIfExists("test");
             engine.lockReadersByTableToken(tableToken);
 
             try {
-                ddl("checkpoint create");
+                execute("checkpoint create");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
@@ -375,23 +419,23 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareFailsOnSyncError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
 
             testFilesFacade.errorOnSync = true;
             assertException("checkpoint create", 0, "Could not sync");
 
             // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
             testFilesFacade.errorOnSync = false;
-            ddl("checkpoint create");
-            ddl("checkpoint release");
+            execute("checkpoint create");
+            execute("checkpoint release");
         });
     }
 
     @Test
     public void testCheckpointPrepareOnEmptyDatabase() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("checkpoint create");
-            ddl("checkpoint release");
+            execute("checkpoint create");
+            execute("checkpoint release");
         });
     }
 
@@ -409,7 +453,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.setWalPurgeJobRunLock(lock);
             Assert.assertFalse(lock.isLocked());
-            ddl("checkpoint create");
+            execute("checkpoint create");
             Assert.assertTrue(lock.isLocked());
             try {
                 assertExceptionNoLeakCheck("checkpoint create");
@@ -417,15 +461,15 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.assertTrue(lock.isLocked());
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
             }
-            ddl("checkpoint release");
+            execute("checkpoint release");
             Assert.assertFalse(lock.isLocked());
 
 
             //DB is empty
-            ddl("checkpoint release");
+            execute("checkpoint release");
             Assert.assertFalse(lock.isLocked());
             lock.lock();
-            ddl("checkpoint release");
+            execute("checkpoint release");
             Assert.assertFalse(lock.isLocked());
 
             engine.setWalPurgeJobRunLock(null);
@@ -435,7 +479,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareSubsequentCallFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
 
             SimpleWaitingLock lock = new SimpleWaitingLock();
 
@@ -449,16 +493,16 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.setWalPurgeJobRunLock(lock);
             try {
                 Assert.assertFalse(lock.isLocked());
-                ddl("checkpoint create");
+                execute("checkpoint create");
                 Assert.assertTrue(lock.isLocked());
-                ddl("checkpoint create");
+                execute("checkpoint create");
                 Assert.assertTrue(lock.isLocked());
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
             } finally {
                 Assert.assertTrue(lock.isLocked());
-                ddl("checkpoint release");
+                execute("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
 
                 engine.setWalPurgeJobRunLock(null);
@@ -469,62 +513,65 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
-            ddl("checkpoint create");
+            execute("create table test (ts timestamp, name symbol, val int)");
+            execute("checkpoint create");
             assertException(
                     "checkpoint create",
                     0,
                     "Waiting for CHECKPOINT RELEASE to be called"
             );
-            ddl("checkpoint release");
+            execute("checkpoint release");
         });
     }
 
     @Test
     public void testCheckpointPreventsNonWalTableDeletion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            ddl("checkpoint create;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("checkpoint create;");
 
             try {
-                drop("drop table test;");
+                execute("drop table test;");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='checkpointInProgress']");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test~' [reason='checkpointInProgress']");
             }
+            engine.checkpointRelease();
         });
     }
 
     @Test
     public void testCheckpointPreventsNonWalTableRenaming() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            ddl("checkpoint create;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("checkpoint create;");
 
             try {
-                ddl("rename table test to test2;");
+                execute("rename table test to test2;");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=checkpointInProgress]");
             }
+            engine.checkpointRelease();
         });
     }
 
     @Test
     public void testCheckpointPreventsNonWalTableTruncation() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            ddl("checkpoint create;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("checkpoint create;");
 
             try {
-                ddl("truncate table test;");
+                execute("truncate table test;");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "there is an active query against 'test'");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -535,13 +582,13 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
-            ddl("checkpoint create;");
+            execute("checkpoint create;");
 
-            drop("drop table test;");
+            execute("drop table test;");
             drainWalQueue();
 
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
@@ -552,6 +599,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
             engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
 
             drainWalQueue();
 
@@ -562,6 +610,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
                     "test;"
             );
+            engine.checkpointRelease();
         });
     }
 
@@ -572,13 +621,14 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
-            ddl("checkpoint create;");
+            execute("checkpoint create;");
 
-            ddl("rename table test to test2;");
+            execute("rename table test to test2;");
+
             drainWalQueue();
 
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
@@ -590,13 +640,15 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
             engine.reloadTableNames();
-
+            engine.getMetadataCache().onStartupAsyncHydrator();
 
             drainWalQueue();
 
             // Renamed table should be there under the original name.
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
+
+            engine.checkpointRelease();
         });
     }
 
@@ -607,13 +659,13 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            insert("insert into test values (now(), 'foobar', 42);");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values (now(), 'foobar', 42);");
             drainWalQueue();
 
-            ddl("checkpoint create;");
+            execute("checkpoint create;");
 
-            ddl("truncate table test;");
+            execute("truncate table test;");
             drainWalQueue();
 
             assertSql("count\n0\n", "select count() from test;");
@@ -627,6 +679,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Dropped rows should be there.
             assertSql("count\n1\n", "select count() from test;");
+            engine.checkpointRelease();
         });
     }
 
@@ -640,7 +693,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     "select * from checkpoint_status();"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
             assertSql(
                     "in_progress\tstarted_at\n" +
@@ -648,7 +701,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     "select * from checkpoint_status();"
             );
 
-            ddl("checkpoint release");
+            execute("checkpoint release");
 
             assertSql(
                     "in_progress\tstarted_at\n" +
@@ -661,7 +714,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             assertException(
                     "checkpoint commit",
                     11,
@@ -674,12 +727,12 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testFailFastWhenCannotCopyRegistryFile() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
             engine.clear();
             createTriggerFile();
@@ -692,6 +745,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } finally {
                 testFilesFacade.errorOnRegistryFileCopy = false;
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -699,12 +753,12 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testFailFastWhenCannotRemoveRegistryFile() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
             engine.clear();
             createTriggerFile();
@@ -717,6 +771,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } finally {
                 testFilesFacade.errorOnRegistryFileRemoval = false;
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -726,12 +781,12 @@ public class CheckpointTest extends AbstractCairoTest {
             testFilesFacade.errorOnTriggerFileRemoval = true;
 
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
             engine.clear();
             createTriggerFile();
@@ -741,6 +796,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -748,7 +804,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointDirectory() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
@@ -768,12 +824,12 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointMetadataFile() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
             FilesFacade ff = configuration.getFilesFacade();
@@ -787,6 +843,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
             }
+            engine.checkpointRelease();
         });
     }
 
@@ -872,14 +929,14 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
-            insert(
+            execute(
                     "insert into " + tableName +
                             " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
             );
@@ -895,6 +952,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             partitionCount + "\n",
                     "select count() from " + tableName
             );
+            engine.checkpointRelease();
         });
     }
 
@@ -906,12 +964,12 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
             final String expectedAllColumns = "a\tb\tc\n" +
                     "JW\tC\t1\n" +
@@ -919,7 +977,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     "PE\tB\t3\n";
             assertSql(expectedAllColumns, "select * from " + tableName);
 
-            ddl("alter table " + tableName + " drop column b");
+            execute("alter table " + tableName + " drop column b");
             assertSql(
                     "a\tc\n" +
                             "JW\t1\n" +
@@ -935,6 +993,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Dropped column should be there.
             assertSql(expectedAllColumns, "select * from " + tableName);
+            engine.checkpointRelease();
         });
     }
 
@@ -946,14 +1005,14 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
             final String tableName = "t";
-            ddl(
+            execute(
                     "create table " + tableName + " as " +
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
             );
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
 
-            insert(
+            execute(
                     "insert into " + tableName +
                             " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
             );
@@ -987,6 +1046,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             partitionCount + "\n",
                     "select count() from " + tableName
             );
+            engine.checkpointRelease();
         });
     }
 
@@ -994,7 +1054,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testRunWalPurgeJobLockTimeout() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             SimpleWaitingLock lock = new SimpleWaitingLock();
             SOCountDownLatch latch1 = new SOCountDownLatch(1);
             SOCountDownLatch latch2 = new SOCountDownLatch(1);
@@ -1019,11 +1079,82 @@ public class CheckpointTest extends AbstractCairoTest {
                 latch1.countDown();
                 t.join();
                 Assert.assertFalse(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted [fd=-1");
             } finally {
-                ddl("checkpoint release");
+                execute("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
                 engine.setWalPurgeJobRunLock(null);
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareSavesToSnapshotFolder() throws Exception {
+        final String tableName = "test";
+        path.of(configuration.getDbRoot()).concat("empty_folder").slash$();
+        TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path(); Path copyPath = new Path()) {
+                if (rnd.nextBoolean()) {
+                    // Create .checkpoint folder sometimes
+                    path.of(configuration.getCheckpointRoot()).slash$();
+                    TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+                    Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
+                            path.of(configuration.getCheckpointRoot()).slash$()
+                    ));
+                }
+
+
+                path.of(configuration.getDbRoot());
+                copyPath.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory());
+
+                execute("create table " + tableName + " (a symbol index capacity 128, b double, c long)");
+
+                execute("snapshot prepare");
+
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.concat(tableToken);
+                int tableNameLen = path.size();
+                copyPath.concat(tableToken);
+                int copyTableNameLen = copyPath.size();
+
+                // _meta
+                path.concat(TableUtils.META_FILE_NAME).$();
+                copyPath.concat(TableUtils.META_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                // _txn
+                path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                // _cv
+                path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+
+                // Assert snapshot folder exists
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
+                        path.of(configuration.getLegacyCheckpointRoot()).slash$()
+                ));
+                // Assert snapshot folder is not empty
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
+                        path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
+                ));
+                // Assert .checkpoint folder DOES NOT exist
+                Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
+                        path.of(configuration.getCheckpointRoot()).slash$()
+                ));
+
+                execute("checkpoint release");
+
+                // Assert snapshot folder exists
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
+                        path.of(configuration.getLegacyCheckpointRoot()).slash$()
+                ));
+                // Assert snapshot folder is EMPTY!
+                Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
+                        path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
+                ));
             }
         });
     }
@@ -1032,8 +1163,8 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testSuspendResumeWalPurgeJob() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
-            String tableName = testName.getMethodName();
-            ddl(
+            String tableName = getTestTableName();
+            execute(
                     "create table " + tableName + " as (" +
                             "select x, " +
                             " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1062,7 +1193,7 @@ public class CheckpointTest extends AbstractCairoTest {
             final WalPurgeJob job = new WalPurgeJob(engine);
             engine.setWalPurgeJobRunLock(job.getRunLock());
 
-            ddl("checkpoint create");
+            execute("checkpoint create");
             Thread controlThread1 = new Thread(() -> {
                 setCurrentMicros(interval);
                 job.drain(0);
@@ -1077,7 +1208,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.releaseInactive();
 
-            ddl("checkpoint release");
+            execute("checkpoint release");
             Thread controlThread2 = new Thread(() -> {
                 setCurrentMicros(2 * interval);
                 job.drain(0);
@@ -1101,8 +1232,8 @@ public class CheckpointTest extends AbstractCairoTest {
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-            String tableName = testName.getMethodName() + "_abc";
-            ddl(
+            String tableName = getTestTableName() + "_abc";
+            execute(
                     "create table " + tableName + " as (" +
                             "select x, " +
                             " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1112,10 +1243,10 @@ public class CheckpointTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            ddl("alter table " + tableName + " add column iii int");
-            insert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 41)");
-            ddl("alter table " + tableName + " add column jjj int");
-            insert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asd', 41, 42)");
+            execute("alter table " + tableName + " add column iii int");
+            execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 41)");
+            execute("alter table " + tableName + " add column jjj int");
+            execute("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asd', 41, 42)");
             update("UPDATE " + tableName + " SET iii = 0 where iii = null");
             update("UPDATE " + tableName + " SET jjj = 0 where iii = null");
 
@@ -1135,16 +1266,16 @@ public class CheckpointTest extends AbstractCairoTest {
             );
 
 
-            ddl("alter table " + tableName + " add column kkk int");
-            insert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
+            execute("alter table " + tableName + " add column kkk int");
+            execute("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
 
-            // updates above should apply to WAL, not table
-            ddl("checkpoint create");
+            // the updates above should apply to WAL, not table
+            execute("checkpoint create");
 
             // these updates are lost during the snapshotting
-            ddl("alter table " + tableName + " add column lll int");
-            insert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
-            insert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
+            execute("alter table " + tableName + " add column lll int");
+            execute("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
+            execute("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -1168,9 +1299,9 @@ public class CheckpointTest extends AbstractCairoTest {
             );
 
             // check for updates to the restored table
-            ddl("alter table " + tableName + " add column lll int");
-            insert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
-            insert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
+            execute("alter table " + tableName + " add column lll int");
+            execute("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
+            execute("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
             update("UPDATE " + tableName + " SET jjj = 0 where iii = 0");
 
             drainWalQueue();
@@ -1238,6 +1369,9 @@ public class CheckpointTest extends AbstractCairoTest {
                             "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tnull\n",
                     tableName
             );
+
+
+            engine.checkpointRelease();
         });
     }
 
@@ -1255,13 +1389,62 @@ public class CheckpointTest extends AbstractCairoTest {
         Files.touch(triggerFilePath.$());
     }
 
+    private String getTestTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
+    }
+
+    private void testCheckpointCreateCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
+        try (Path path = new Path(); Path copyPath = new Path()) {
+            path.of(configuration.getDbRoot());
+            copyPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+
+            execute(ddl);
+            if (ddl2 != null) {
+                execute(ddl2);
+            }
+
+            execute("checkpoint create");
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.concat(tableToken);
+            int tableNameLen = path.size();
+            copyPath.concat(tableToken);
+            int copyTableNameLen = copyPath.size();
+
+            // _meta
+            path.concat(TableUtils.META_FILE_NAME).$();
+            copyPath.concat(TableUtils.META_FILE_NAME).$();
+            TestUtils.assertFileContentsEquals(path, copyPath);
+            // _txn
+            path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+            copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+            TestUtils.assertFileContentsEquals(path, copyPath);
+            // _cv
+            path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            TestUtils.assertFileContentsEquals(path, copyPath);
+
+            if (tableToken.isMatView()) {
+                path.trimTo(tableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                path.trimTo(tableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                if (configuration.getFilesFacade().exists(path.$())) {
+                    copyPath.trimTo(copyTableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                    TestUtils.assertFileContentsEquals(path, copyPath);
+                }
+            }
+            execute("checkpoint release");
+        }
+    }
+
     private void testCheckpointPrepareCheckMetadataFile(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             try (Path path = new Path()) {
-                ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");
-                ddl("checkpoint create");
+                execute("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");
+                execute("checkpoint create");
 
                 path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
                 FilesFacade ff = configuration.getFilesFacade();
@@ -1273,7 +1456,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.equals(actualId, expectedId));
                 }
 
-                ddl("checkpoint release");
+                execute("checkpoint release");
             }
         });
     }
@@ -1284,24 +1467,24 @@ public class CheckpointTest extends AbstractCairoTest {
                 path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
 
                 String tableName = "t";
-                ddl("create table " + tableName + " (a STRING, b LONG)");
+                execute("create table " + tableName + " (a STRING, b LONG)");
 
                 // Bump truncate version by truncating non-empty table
-                insert("insert into " + tableName + " VALUES('abasd', 1L)");
-                ddl("truncate table " + tableName);
+                execute("insert into " + tableName + " VALUES('abasd', 1L)");
+                execute("truncate table " + tableName);
 
-                insert(
+                execute(
                         "insert into " + tableName +
                                 " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))"
                 );
                 if (generateColTops) {
-                    ddl("alter table " + tableName + " add column c int");
+                    execute("alter table " + tableName + " add column c int");
                 }
                 if (dropColumns) {
-                    ddl("alter table " + tableName + " drop column a");
+                    execute("alter table " + tableName + " drop column a");
                 }
 
-                ddl("checkpoint create");
+                execute("checkpoint create");
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
@@ -1325,10 +1508,10 @@ public class CheckpointTest extends AbstractCairoTest {
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
                                 TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
                                 TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
-                                Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
-                                Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
+                                Assert.assertEquals(columnMetadata0.getColumnName(), columnMetadata1.getColumnName());
+                                Assert.assertEquals(columnMetadata0.getColumnType(), columnMetadata1.getColumnType());
                                 Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
-                                Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
+                                Assert.assertEquals(columnMetadata0.isSymbolIndexFlag(), columnMetadata1.isSymbolIndexFlag());
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
                             }
 
@@ -1373,44 +1556,9 @@ public class CheckpointTest extends AbstractCairoTest {
                     }
                 }
 
-                ddl("checkpoint release");
+                execute("checkpoint release");
             }
         });
-    }
-
-    private void testCheckpointPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
-        try (Path path = new Path(); Path copyPath = new Path()) {
-            path.of(configuration.getRoot());
-            copyPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
-
-            compile(ddl);
-            if (ddl2 != null) {
-                compile(ddl2);
-            }
-
-            ddl("checkpoint create");
-
-            TableToken tableToken = engine.verifyTableName(tableName);
-            path.concat(tableToken);
-            int tableNameLen = path.size();
-            copyPath.concat(tableToken);
-            int copyTableNameLen = copyPath.size();
-
-            // _meta
-            path.concat(TableUtils.META_FILE_NAME).$();
-            copyPath.concat(TableUtils.META_FILE_NAME).$();
-            TestUtils.assertFileContentsEquals(path, copyPath);
-            // _txn
-            path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-            copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-            TestUtils.assertFileContentsEquals(path, copyPath);
-            // _cv
-            path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            TestUtils.assertFileContentsEquals(path, copyPath);
-
-            ddl("checkpoint release");
-        }
     }
 
     private void testRecoverCheckpoint(
@@ -1424,42 +1572,44 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
 
             final String nonPartitionedTable = "npt";
-            ddl(
+            execute(
                     "create table " + nonPartitionedTable + " as " +
                             "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
                     sqlExecutionContext
             );
             final String partitionedTable = "pt";
-            ddl(
+            execute(
                     "create table " + partitionedTable + " as " +
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour"
             );
 
             if (rnd.nextBoolean()) {
-                ddl("checkpoint create");
-            } else {
-                ddl("snapshot prepare");
+                execute("checkpoint create");
                 // also rename ".checkpoint" dir to the legacy "snapshot"
                 try (
                         Path p1 = new Path();
                         Path p2 = new Path()
                 ) {
-                    p1.of(configuration.getRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-                    p2.of(configuration.getRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
+                    p1.of(configuration.getDbRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+                    p2.of(configuration.getDbRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
                     Assert.assertEquals(0, ff.rename(p2.$(), p1.$()));
                     path.of(p1).concat(configuration.getDbDirectory());
                     rootLen = path.size();
                 }
+            } else {
+                execute("snapshot prepare");
+                path.of(configuration.getDbRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory());
+                rootLen = path.size();
             }
 
             path.trimTo(rootLen).slash$();
             Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path.$()));
 
-            insert(
+            execute(
                     "insert into " + nonPartitionedTable +
                             " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
             );
-            insert(
+            execute(
                     "insert into " + partitionedTable +
                             " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)"
             );
@@ -1498,6 +1648,8 @@ public class CheckpointTest extends AbstractCairoTest {
                     Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
                 }
             }
+
+            engine.checkpointRelease();
         });
     }
 

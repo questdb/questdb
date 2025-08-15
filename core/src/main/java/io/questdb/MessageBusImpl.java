@@ -28,10 +28,28 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
-import io.questdb.mp.*;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.tasks.*;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.ColumnPurgeTask;
+import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByMergeShardTask;
+import io.questdb.tasks.LatestByTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3PartitionPurgeTask;
+import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.TableWriterTask;
+import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -71,6 +89,7 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
+    private final ConcurrentQueue<QueryTrace> queryTraceQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -194,6 +213,8 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
+
+            this.queryTraceQueue = ConcurrentQueue.createConcurrentQueue(QueryTrace.ITEM_FACTORY);
         } catch (Throwable th) {
             close();
             throw th;
@@ -220,10 +241,14 @@ public class MessageBusImpl implements MessageBus {
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
         }
+        // Reset tasks with native backing memory to the original state.
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             for (int j = 0, n = pageFrameReduceQueue[i].getCycle(); j < n; j++) {
-                pageFrameReduceQueue[i].get(j).resetCapacities();
+                pageFrameReduceQueue[i].get(j).clear();
             }
+        }
+        for (int i = 0, n = latestByQueue.getCycle(); i < n; i++) {
+            latestByQueue.get(i).clear();
         }
     }
 
@@ -232,6 +257,7 @@ public class MessageBusImpl implements MessageBus {
         // We need to close only queues with native backing memory.
         Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
+        Misc.free(latestByQueue);
     }
 
     @Override
@@ -412,6 +438,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getQueryCacheEventSubSeq() {
         return queryCacheEventSubSeq;
+    }
+
+    @Override
+    public ConcurrentQueue<QueryTrace> getQueryTraceQueue() {
+        return queryTraceQueue;
     }
 
     @Override

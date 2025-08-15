@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UuidFunction;
@@ -43,11 +42,16 @@ public class RndUuidFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction();
+        return new RndFunction(sqlExecutionContext);
     }
 
     private static class RndFunction extends UuidFunction implements Function {
-        private Rnd rnd;
+        private final Rnd rnd;
+
+        private RndFunction(SqlExecutionContext sqlExecutionContext) {
+            // Initialize in advance, in preparation for possible calls by constant functions.
+            rnd = sqlExecutionContext.getRandom();
+        }
 
         @Override
         public long getLong128Hi(Record rec) {
@@ -73,8 +77,18 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            rnd = executionContext.getRandom();
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
+            return true;
         }
     }
 }

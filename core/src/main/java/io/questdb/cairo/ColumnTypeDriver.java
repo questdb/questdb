@@ -24,7 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
@@ -48,7 +54,7 @@ public interface ColumnTypeDriver {
      */
     long auxRowsToBytes(long rowCount);
 
-    void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
+    void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, int opts, int madviseOpts);
 
     void configureAuxMemMA(MemoryMA auxMem);
 
@@ -67,9 +73,11 @@ public interface ColumnTypeDriver {
      * @param memoryTag the memory tag to help identify sources of memory leaks
      * @param opts      mapping options
      */
-    void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+    void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts);
 
-    void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, long dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+    void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, long dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts);
+
+    long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 
     /**
      * Returns offset in bytes of the aux entry that describes the provided row number.
@@ -108,11 +116,39 @@ public interface ColumnTypeDriver {
      */
     long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi);
 
+    /**
+     * Get the size of the data vector from entries 0 to <code>row</code> inclusive.
+     */
     long getDataVectorSizeAt(long auxMemAddr, long row);
 
     long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row);
 
     long getMinAuxVectorSize();
+
+    /**
+     * Used to shuffle column data after calling Vect.radixSortManySegmentsIndexAsc()
+     *
+     * @param indexFormat          format of the index (e.g. segment byte count, reverse index bytes etc.) returned from radix sort procs
+     * @param primaryAddressList   list of memory pointers to primary addresses
+     * @param secondaryAddressList list of memory pointers to secondary addresses
+     * @param outPrimaryAddress    pointer to allocated out address for data
+     * @param outSecondaryAddress  pointer to allocated out address for aux data
+     * @param mergeIndex           merge index. Format is 2 longs per row. First long is timestamp and second long is row index + segment index.
+     *                             Segment index bytes is passed in mergeIndexEncodingSegmentBytes
+     * @param destDataOffset       offset in the destination data memory to shift all the records in aux column by
+     */
+    long mergeShuffleColumnFromManyAddresses(
+            long indexFormat,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long destDataOffset,
+            long destDataSize
+    );
+
+    boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount);
 
     void o3ColumnMerge(
             long timestampMergeIndexAddr,
@@ -173,8 +209,11 @@ public interface ColumnTypeDriver {
      * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
+     *
+     * @param rowCount the new row count that we'll want to write at.
+     * @return the write offset for <code>rowCount</code> in the data vector.
      */
-    long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
+    long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount);
 
     /**
      * Sets the append position in both the auxiliary and data vectors.
@@ -209,6 +248,4 @@ public interface ColumnTypeDriver {
     void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop);
 
     void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr, long dstAddrSize);
-
-    long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 }

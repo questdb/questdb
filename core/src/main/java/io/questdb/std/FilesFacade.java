@@ -36,7 +36,7 @@ public interface FilesFacade {
 
     boolean allowMixedIO(CharSequence root);
 
-    long append(long fd, long buf, int len);
+    long append(long fd, long buf, long len);
 
     boolean close(long fd);
 
@@ -134,7 +134,11 @@ public interface FilesFacade {
 
     long openRO(LPSZ name);
 
-    long openRW(LPSZ name, long opts);
+    long openRONoCache(LPSZ path);
+
+    long openRW(LPSZ name, int opts);
+
+    long openRWNoCache(LPSZ name, int opts);
 
     long read(long fd, long buf, long size, long offset);
 

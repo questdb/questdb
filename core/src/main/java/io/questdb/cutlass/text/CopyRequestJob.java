@@ -24,7 +24,14 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -76,7 +83,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
 
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            // Set sharedQueryWorkerCount as 0, no need to do parallel query execution in this job,
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 0);
             this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -96,8 +104,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                                 "errors long" + // 9
                                 ") timestamp(ts) partition by DAY BYPASS WAL"
                         )
-                        .compile(sqlExecutionContext)
-                        .getTableToken();
+                        .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWriter(statusTableToken, "QuestDB system");

@@ -410,7 +410,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToIPv4_1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
             assertSql(
                     "x\tip\tk\n" +
                             "1\t54.206.96.238\t54.206.96.238\n" +
@@ -434,7 +434,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToIPv4_2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
             assertSql(
                     "x\tip\tk\n" +
                             "1\t54.206.96.238\t192.168.1.1\n" +
@@ -456,7 +456,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastValueToLong256() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -486,7 +486,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tanc as (" +
                             "select rnd_int() % 1000 x," +
                             " rnd_int() a," +
@@ -518,7 +518,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertSql(
                     "x\tu\tk\n" +
                             "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
@@ -543,7 +543,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertSql(
                     "x\tu\tk\n" +
                             "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\n" +
@@ -566,7 +566,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertSql(
                     "x\tu\tk\n" +
                             "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\n" +
@@ -869,26 +869,26 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testFloat() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "322.0000\t315515118\t1548800833\t-727724771\t315515118\n" +
-                        "-830.0000\t-948263339\t1326447242\t592859671\t592859671\n" +
-                        "-591.0000\t-847531048\t-1191262516\t-2041844972\tnull\n" +
-                        "685.0000\t-1575378703\t806715481\t1545253512\t350\n" +
-                        "-551.0000\t1573662097\t-409854405\t339631474\tnull\n" +
-                        "251.0000\t1904508147\t-1532328444\t-1458132197\tnull\n" +
-                        "49.0000\t-1849627000\t-1432278050\t426455968\tnull\n" +
-                        "-926.0000\t-1792928964\t-1844391305\t-1520872171\tnull\n" +
-                        "-155.0000\t-1153445279\t1404198\t-1715058769\tnull\n" +
-                        "-380.0000\t1631244228\t-1975183723\t-1252906348\tnull\n" +
-                        "760.0000\t-761275053\t-2119387831\t-212807500\tnull\n" +
-                        "-342.0000\t1110979454\t1253890363\t-113506296\tnull\n" +
-                        "954.0000\t-938514914\t-547127752\t-1271909747\tnull\n" +
-                        "-684.0000\t-342047842\t-2132716300\t2006313928\tnull\n" +
-                        "-195.0000\t-27395319\t264240638\t2085282008\tnull\n" +
+                        "322.0\t315515118\t1548800833\t-727724771\t315515118\n" +
+                        "-830.0\t-948263339\t1326447242\t592859671\t592859671\n" +
+                        "-591.0\t-847531048\t-1191262516\t-2041844972\tnull\n" +
+                        "685.0\t-1575378703\t806715481\t1545253512\t350\n" +
+                        "-551.0\t1573662097\t-409854405\t339631474\tnull\n" +
+                        "251.0\t1904508147\t-1532328444\t-1458132197\tnull\n" +
+                        "49.0\t-1849627000\t-1432278050\t426455968\tnull\n" +
+                        "-926.0\t-1792928964\t-1844391305\t-1520872171\tnull\n" +
+                        "-155.0\t-1153445279\t1404198\t-1715058769\tnull\n" +
+                        "-380.0\t1631244228\t-1975183723\t-1252906348\tnull\n" +
+                        "760.0\t-761275053\t-2119387831\t-212807500\tnull\n" +
+                        "-342.0\t1110979454\t1253890363\t-113506296\tnull\n" +
+                        "954.0\t-938514914\t-547127752\t-1271909747\tnull\n" +
+                        "-684.0\t-342047842\t-2132716300\t2006313928\tnull\n" +
+                        "-195.0\t-27395319\t264240638\t2085282008\tnull\n" +
                         "null\t-483853667\t2137969456\t1890602616\t1\n" +
                         "null\t-1272693194\t68265578\t1036510002\t2\n" +
                         "null\t-2002373666\t44173540\t458818940\t3\n" +
-                        "0.0000\t410717394\t-2144581835\t1978144263\t4\n" +
-                        "-0.0000\t-1418341054\t-1162267908\t2031014705\t5\n",
+                        "0.0\t410717394\t-2144581835\t1978144263\t4\n" +
+                        "-0.0\t-1418341054\t-1162267908\t2031014705\t5\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
@@ -959,26 +959,26 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "322.0000\t315515118\t1548800833\t-727724771\t315515118\n" +
-                        "-830.0000\t-948263339\t1326447242\t592859671\t592859671\n" +
-                        "-591.0000\t-847531048\t-1191262516\t-2041844972\t-1191262516\n" +
-                        "685.0000\t-1575378703\t806715481\t1545253512\t350\n" +
-                        "-551.0000\t1573662097\t-409854405\t339631474\t-409854405\n" +
-                        "251.0000\t1904508147\t-1532328444\t-1458132197\t-1532328444\n" +
-                        "49.0000\t-1849627000\t-1432278050\t426455968\t-1432278050\n" +
-                        "-926.0000\t-1792928964\t-1844391305\t-1520872171\t-1844391305\n" +
-                        "-155.0000\t-1153445279\t1404198\t-1715058769\t1404198\n" +
-                        "-380.0000\t1631244228\t-1975183723\t-1252906348\t-1975183723\n" +
-                        "760.0000\t-761275053\t-2119387831\t-212807500\t-2119387831\n" +
-                        "-342.0000\t1110979454\t1253890363\t-113506296\t1253890363\n" +
-                        "954.0000\t-938514914\t-547127752\t-1271909747\t-547127752\n" +
-                        "-684.0000\t-342047842\t-2132716300\t2006313928\t-2132716300\n" +
-                        "-195.0000\t-27395319\t264240638\t2085282008\t264240638\n" +
+                        "322.0\t315515118\t1548800833\t-727724771\t315515118\n" +
+                        "-830.0\t-948263339\t1326447242\t592859671\t592859671\n" +
+                        "-591.0\t-847531048\t-1191262516\t-2041844972\t-1191262516\n" +
+                        "685.0\t-1575378703\t806715481\t1545253512\t350\n" +
+                        "-551.0\t1573662097\t-409854405\t339631474\t-409854405\n" +
+                        "251.0\t1904508147\t-1532328444\t-1458132197\t-1532328444\n" +
+                        "49.0\t-1849627000\t-1432278050\t426455968\t-1432278050\n" +
+                        "-926.0\t-1792928964\t-1844391305\t-1520872171\t-1844391305\n" +
+                        "-155.0\t-1153445279\t1404198\t-1715058769\t1404198\n" +
+                        "-380.0\t1631244228\t-1975183723\t-1252906348\t-1975183723\n" +
+                        "760.0\t-761275053\t-2119387831\t-212807500\t-2119387831\n" +
+                        "-342.0\t1110979454\t1253890363\t-113506296\t1253890363\n" +
+                        "954.0\t-938514914\t-547127752\t-1271909747\t-547127752\n" +
+                        "-684.0\t-342047842\t-2132716300\t2006313928\t-2132716300\n" +
+                        "-195.0\t-27395319\t264240638\t2085282008\t264240638\n" +
                         "null\t-483853667\t2137969456\t1890602616\t1\n" +
                         "null\t-1272693194\t68265578\t1036510002\t2\n" +
                         "null\t-2002373666\t44173540\t458818940\t3\n" +
-                        "0.0000\t410717394\t-2144581835\t1978144263\t4\n" +
-                        "-0.0000\t-1418341054\t-1162267908\t2031014705\t5\n",
+                        "0.0\t410717394\t-2144581835\t1978144263\t4\n" +
+                        "-0.0\t-1418341054\t-1162267908\t2031014705\t5\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +

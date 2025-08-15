@@ -97,7 +97,7 @@ public class WithClauseTest extends AbstractCairoTest {
                     "insert into balance values ( 1, 1.0 ), (2, 2.0);",
                     "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n",
                     false,
-                    true,
+                    false,
                     false
             );
         });
@@ -106,7 +106,7 @@ public class WithClauseTest extends AbstractCairoTest {
     @Test
     public void testWithLatestByFilterGroup() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table contact_events2 as (\n" +
+            execute("create table contact_events2 as (\n" +
                     "  select cast(x as SYMBOL) _id,\n" +
                     "    rnd_symbol('c1', 'c2', 'c3', 'c4') contactid, \n" +
                     "    CAST(x as Timestamp) timestamp, \n" +
@@ -134,4 +134,12 @@ public class WithClauseTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWithSelectTwoWheres() throws Exception {
+        assertException("with example as (select * from long_sequence(1))\n" +
+                        "select * from example where true where false;",
+                82,
+                "unexpected token [where]"
+        );
+    }
 }

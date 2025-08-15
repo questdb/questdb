@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.Files;
@@ -57,7 +57,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         microSecondTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        netMsgBufferSize.set(1024);
+        maxRecvBufferSize.set(1024);
         maxSendBytes = 1024;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -65,7 +65,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             @Override
             public int sendRaw(long fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
-                if (null != sentBytes) {
+                if (sentBytes != null) {
                     return 0;
                 }
 
@@ -351,27 +351,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     }
 
     @Test
-    public void testIncorrectConfig() throws Exception {
-        netMsgBufferSize.set(200);
-        try {
-            runInAuthContext(() -> {
-                recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO0();
-                Assert.assertFalse(disconnected);
-                waitForIOCompletion();
-                closeContext();
-                Assert.fail();
-            });
-        } catch (CairoException ex) {
-            TestUtils.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage());
-        }
-    }
-
-    @Test
     public void testInvalidKeyId() throws Exception {
         runInAuthContext(() -> {
             StringBuilder token = new StringBuilder("xxxxxxxx");
-            while (token.length() < netMsgBufferSize.get()) {
+            while (token.length() < maxRecvBufferSize.get()) {
                 token.append(token);
             }
             boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
@@ -392,6 +375,21 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             boolean authSequenceCompleted = authenticate(false, false, false, false, junkSignature);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testMinBufferSizeForAuth() throws Exception {
+        maxRecvBufferSize.set(PropServerConfiguration.MIN_TCP_ILP_BUF_SIZE);
+        runInAuthContext(() -> {
+            // this is a big-ass token (that looks like valid ILP line)
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO0();
+            Assert.assertFalse(disconnected);
+            // asserting there is no exception out of this method
+            waitForIOCompletion();
+            closeContext();
+            drainWalQueue();
         });
     }
 
@@ -449,12 +447,12 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     ) {
         send(authKeyId + "\n", fragmentKeyId);
         byte[] challengeBytes = readChallenge(fragmentChallenge);
-        if (null == challengeBytes) {
+        if (challengeBytes == null) {
             return false;
         }
         try {
             byte[] rawSignature;
-            if (null == junkSignature) {
+            if (junkSignature == null) {
                 Signature sig = useP1363Encoding ?
                         Signature.getInstance(AuthUtils.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
                 sig.initSign(authPrivateKey);
@@ -484,8 +482,8 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 maxSendBytes = rnd.nextInt(10) + 1;
             }
             handleContextIO0();
-            if (null != sentBytes) {
-                if (null == challengeBytes) {
+            if (sentBytes != null) {
+                if (challengeBytes == null) {
                     challengeBytes = sentBytes;
                 } else {
                     byte[] newChallengeBytes = new byte[challengeBytes.length + sentBytes.length];

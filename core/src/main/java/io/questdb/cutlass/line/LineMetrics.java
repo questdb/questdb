@@ -24,30 +24,61 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.metrics.AtomicLongGauge;
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
-public class LineMetrics {
+public class LineMetrics implements Mutable {
 
-    private final LongGauge connectionCountGauge;
-    private final LongGauge totalIlpTcpBytesGauge;
+    private final Counter aboveMaxConnectionCountCounter;
+    private final Counter belowMaxConnectionCountCounter;
+    private final AtomicLongGauge httpConnectionCountGauge;
+    private final LongGauge tcpConnectionCountGauge;
     private final LongGauge totalIlpHttpBytesGauge;
+    private final LongGauge totalIlpTcpBytesGauge;
 
     public LineMetrics(MetricsRegistry metricsRegistry) {
-        this.connectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
+        this.httpConnectionCountGauge = metricsRegistry.newAtomicLongGauge("line_http_connections");
+        this.tcpConnectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
         this.totalIlpTcpBytesGauge = metricsRegistry.newLongGauge("line_tcp_recv_bytes");
         this.totalIlpHttpBytesGauge = metricsRegistry.newLongGauge("line_http_recv_bytes");
+        this.aboveMaxConnectionCountCounter = metricsRegistry.newCounter("line_tcp_above_max_connection_count");
+        this.belowMaxConnectionCountCounter = metricsRegistry.newCounter("line_tcp_below_max_connection_count");
     }
 
-    public LongGauge connectionCountGauge() {
-        return connectionCountGauge;
+    public Counter aboveMaxConnectionCountCounter() {
+        return aboveMaxConnectionCountCounter;
     }
 
-    public LongGauge totalIlpTcpBytesGauge() {
-        return totalIlpTcpBytesGauge;
+    public Counter belowMaxConnectionCountCounter() {
+        return belowMaxConnectionCountCounter;
+    }
+
+    @Override
+    public void clear() {
+        httpConnectionCountGauge.setValue(0);
+        tcpConnectionCountGauge.setValue(0);
+        totalIlpTcpBytesGauge.setValue(0);
+        totalIlpHttpBytesGauge.setValue(0);
+        aboveMaxConnectionCountCounter.reset();
+        belowMaxConnectionCountCounter.reset();
+    }
+
+    public AtomicLongGauge httpConnectionCountGauge() {
+        return httpConnectionCountGauge;
+    }
+
+    public LongGauge tcpConnectionCountGauge() {
+        return tcpConnectionCountGauge;
     }
 
     public LongGauge totalIlpHttpBytesGauge() {
         return totalIlpHttpBytesGauge;
+    }
+
+    public LongGauge totalIlpTcpBytesGauge() {
+        return totalIlpTcpBytesGauge;
     }
 }

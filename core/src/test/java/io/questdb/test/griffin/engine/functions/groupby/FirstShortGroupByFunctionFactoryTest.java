@@ -37,7 +37,7 @@ public class FirstShortGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstShort() throws SqlException {
-        ddl("create table tab (f short)");
+        execute("create table tab (f short)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -60,7 +60,7 @@ public class FirstShortGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstZero() throws SqlException {
-        ddl("create table tab (f short)");
+        execute("create table tab (f short)");
 
         try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();

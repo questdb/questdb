@@ -35,7 +35,7 @@ public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
             assertQuery(
                     "name\n",
                     "select * from x where name !~ null",
@@ -48,7 +48,7 @@ public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
                 assertExceptionNoLeakCheck("select * from x where name !~ 'XJ**'");
             } catch (SqlException e) {
@@ -112,7 +112,7 @@ public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
                     "ROU\n" +
                     "OPY\n" +
                     "YPR\n";
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
             assertSql(
                     expected,
                     "select * from x where name !~ '[ABCDEFGHIJKLMN]'"

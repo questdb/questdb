@@ -35,7 +35,7 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
     @Test
     public void testImplicitIntegerToSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE balances as (select rnd_symbol('1','3') cust_id, timestamp_sequence(0, 1000) ts from long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY DAY;"
             );
@@ -54,7 +54,7 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
     @Test
     public void testImplicitNonConstSymbolExpressionToTimestampConversion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE balances as (" +
                             "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                             ");"

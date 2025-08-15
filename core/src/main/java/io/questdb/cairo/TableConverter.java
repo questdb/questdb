@@ -50,7 +50,8 @@ public class TableConverter {
     public static ObjList<TableToken> convertTables(
             CairoEngine engine,
             TableSequencerAPI tableSequencerAPI,
-            TableFlagResolver tableFlagResolver
+            TableFlagResolver tableFlagResolver,
+            TableNameRegistry tableNameRegistry
     ) {
         final CairoConfiguration configuration = engine.getConfiguration();
         final ObjList<TableToken> convertedTables = new ObjList<>();
@@ -63,7 +64,7 @@ public class TableConverter {
             return null;
         }
 
-        final Path path = Path.getThreadLocal(configuration.getRoot());
+        final Path path = Path.getThreadLocal(configuration.getDbRoot());
         final int rootLen = path.size();
         final Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -82,17 +83,19 @@ public class TableConverter {
                                 .I$();
 
                         path.trimTo(rootLen).concat(dirNameSink);
-                        try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
+                        try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
                             openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-                            if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
+                            final String dirName = dirNameSink.toString();
+                            TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
+
+                            if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled && existingToken != null && existingToken.isWal() == walEnabled) {
                                 LOG.info().$("skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
                                         .$(", walEnabled=").$(walEnabled)
                                         .I$();
                             } else {
-                                final String dirName = dirNameSink.toString();
                                 final String tableName;
                                 try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                    final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), rootLen, mem, ff);
+                                    final String name = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), rootLen, mem, ff);
                                     tableName = name != null ? name : dirName;
                                 }
 
@@ -100,7 +103,8 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected, isPublic);
+                                boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -109,7 +113,8 @@ public class TableConverter {
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {
-                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token, metaMem)) {
+                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
+                                        metadata.reload(metaMem);
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
@@ -118,7 +123,7 @@ public class TableConverter {
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {
-                                    if (tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                    if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
                                         removeWalPersistence(path, rootLen, ff, dirNameSink);
                                     } else {
                                         LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
@@ -164,6 +169,8 @@ public class TableConverter {
             final byte walType = ff.readNonNegativeByte(fd, 0);
             switch (walType) {
                 case TABLE_TYPE_WAL:
+                    // fall through
+                case TABLE_TYPE_MAT:
                     return true;
                 case TABLE_TYPE_NON_WAL:
                     return false;

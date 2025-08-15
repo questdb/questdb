@@ -49,11 +49,13 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
         if (bits < 1 || bits > ColumnType.GEOLONG_MAX_BITS) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
@@ -65,7 +67,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             case ColumnType.GEOSHORT:
                 return new RndShortFunction(type);
             case ColumnType.GEOINT:
-                return new RndIntFunction(type);
+                return new RndGeoIntFunction(type);
             default:
                 return new RndLongFunction(type);
         }
@@ -92,17 +94,27 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 
-    private static class RndIntFunction extends GeoIntFunction implements Function {
+    private static class RndGeoIntFunction extends GeoIntFunction implements Function {
 
         private final int bits;
         private Rnd rnd;
 
-        public RndIntFunction(int type) {
+        public RndGeoIntFunction(int type) {
             super(type);
             this.bits = ColumnType.getGeoHashBits(type);
         }
@@ -120,6 +132,16 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
         }
 
         @Override
@@ -154,6 +176,16 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
@@ -177,6 +209,16 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
         }
 
         @Override

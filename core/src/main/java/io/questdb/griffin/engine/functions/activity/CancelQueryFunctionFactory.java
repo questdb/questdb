@@ -29,13 +29,16 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CancelQueryFunctionFactory implements FunctionFactory {
-
     private static final String NAME = "cancel_query";
     private static final String SIGNATURE = NAME + "(L)";
 
@@ -45,16 +48,20 @@ public class CancelQueryFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         if (args.get(0).isConstant() && args.get(0).getLong(null) < 0) {
             throw SqlException.$(argPositions.getQuick(0), "non-negative integer literal expected as query id");
         }
-
         return new Func(sqlExecutionContext.getCairoEngine().getQueryRegistry(), args.getQuick(0), position);
     }
 
     private static class Func extends BooleanFunction {
-
         private final int position;
         private final Function queryIdFunc;
         private final QueryRegistry queryRegistry;

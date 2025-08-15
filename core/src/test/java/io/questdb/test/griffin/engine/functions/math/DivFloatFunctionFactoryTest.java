@@ -26,14 +26,14 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.DivFloatFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class DivFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testDivByZero() throws SqlException {
-        call(10f, 0f).andAssert(Float.POSITIVE_INFINITY, 0.000001);
+        call(10f, 0f).andAssert(Float.NaN, 0.000001);
     }
 
     @Test

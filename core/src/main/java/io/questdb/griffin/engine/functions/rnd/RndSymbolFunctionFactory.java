@@ -112,6 +112,16 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }

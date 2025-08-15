@@ -60,7 +60,9 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     @Override
     public void close() {
-        // intentionally left empty
+        // todo: temporary fix, until a proper lifecycle around CompiledQuery
+        // is implemented
+//        this.tableToken = null;
     }
 
     @Override
@@ -97,7 +99,8 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
-    public @Nullable TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
+        assert tableToken != null : "initialized operation";
         return tableToken;
     }
 
@@ -145,5 +148,9 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
+    }
+
+    public boolean isForceWalBypass() {
+        return false;
     }
 }

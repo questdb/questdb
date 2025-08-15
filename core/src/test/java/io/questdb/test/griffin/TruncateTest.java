@@ -47,7 +47,7 @@ public class TruncateTest extends AbstractCairoTest {
     @Test
     public void testAddColumnTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
                             " x " +
@@ -56,10 +56,10 @@ public class TruncateTest extends AbstractCairoTest {
             );
 
 
-            ddl("alter table y add column new_x int", sqlExecutionContext);
-            ddl("truncate table y");
+            execute("alter table y add column new_x int", sqlExecutionContext);
+            execute("truncate table y");
 
-            insert("insert into y values('2022-02-24', 1, 2)");
+            execute("insert into y values('2022-02-24', 1, 2)");
 
             assertSql("timestamp\tx\tnew_x\n" +
                     "2022-02-24T00:00:00.000000Z\t1\t2\n", "select * from y");
@@ -67,9 +67,45 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedFilterAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b') symbol " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+            String sql = "select * from tab where symbol != 'c' limit 6";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor("timestamp\tsymbol\n" +
+                                        "1970-01-01T00:00:00.000000Z\ta\n" +
+                                        "1970-01-01T00:16:40.000000Z\ta\n" +
+                                        "1970-01-01T00:33:20.000000Z\tb\n" +
+                                        "1970-01-01T00:50:00.000000Z\tb\n" +
+                                        "1970-01-01T01:06:40.000000Z\tb\n" +
+                                        "1970-01-01T01:23:20.000000Z\tb\n",
+                                true, true, true, cursor, factory.getMetadata(), false);
+                    }
+
+                    execute("truncate table tab");
+
+                    drainWalQueue();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor("timestamp\tsymbol\n", true, true, true, cursor, factory.getMetadata(), false);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDropColumnTruncatePartitionByNone() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
                             " rnd_symbol('a','b',null) symbol1 " +
@@ -77,14 +113,14 @@ public class TruncateTest extends AbstractCairoTest {
                             ") timestamp (timestamp)"
             );
 
-            ddl("alter table y drop column symbol1", sqlExecutionContext);
-            ddl("truncate table y");
+            execute("alter table y drop column symbol1", sqlExecutionContext);
+            execute("truncate table y");
             try (TableWriter w = getWriter("y")) {
                 TableWriter.Row row = w.newRow(123);
                 row.cancel();
             }
 
-            insert("insert into y values(223)");
+            execute("insert into y values(223)");
             assertSql(
                     "timestamp\n" +
                             "1970-01-01T00:00:00.000223Z\n",
@@ -96,7 +132,7 @@ public class TruncateTest extends AbstractCairoTest {
     @Test
     public void testDropColumnWithCachedPlanSelectFull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
                             " rnd_symbol('a','b',null) symbol1 " +
@@ -123,7 +159,7 @@ public class TruncateTest extends AbstractCairoTest {
                     );
                 }
 
-                ddl("alter table y drop column symbol1", sqlExecutionContext);
+                execute("alter table y drop column symbol1", sqlExecutionContext);
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
@@ -354,7 +390,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testHappyPathTableNameKeep() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl(
+                    execute(
                             "create table keep as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -602,6 +638,105 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateIfExistsExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsMultipleTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            createY();
+
+            assertQuery("count\n10\n", "select count() from x", null, false, true);
+            assertQuery("count\n20\n", "select count() from y", null, false, true);
+
+            // Truncate existing and non-existing tables
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x, nonexistent, y", sqlExecutionContext).getType());
+            }
+
+            assertQuery("count\n0\n", "select count() from x", null, false, true);
+            assertQuery("count\n0\n", "select count() from y", null, false, true);
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsNonExistentTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Should not throw an error for non-existent table when IF EXISTS is used
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists nonexistent", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsSyntaxError() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("truncate table if", sqlExecutionContext);
+                Assert.fail("Expected SqlException for incomplete IF EXISTS syntax");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "expected EXISTS table-name");
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsWithKeepSymbolMaps() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x keep symbol maps", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testTruncateOpenReader() throws Exception {
         assertMemoryLeak(() -> {
             createX(1_000_000);
@@ -626,14 +761,14 @@ public class TruncateTest extends AbstractCairoTest {
                 }
             }
 
-            ddl("truncate table 'x'");
+            execute("truncate table 'x'");
         });
     }
 
     @Test
     public void testTruncateSymbolIndexRestoresCapacity() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
                             " rnd_symbol('a','b',null) symbol1 " +
@@ -642,8 +777,8 @@ public class TruncateTest extends AbstractCairoTest {
             );
             TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
 
-            ddl("truncate table x");
-            insert("insert into x\n" +
+            execute("truncate table x");
+            execute("insert into x\n" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
                     " from long_sequence(10)");
@@ -655,7 +790,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testTruncateWithColumnTop() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compile(
+                    execute(
                             "create table testTruncateWithColumnTop as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -665,9 +800,9 @@ public class TruncateTest extends AbstractCairoTest {
                                     ") timestamp (k) partition by day"
                     );
 
-                    compile("alter table testTruncateWithColumnTop add column column_with_top int");
+                    execute("alter table testTruncateWithColumnTop add column column_with_top int");
 
-                    compile(
+                    execute(
                             "insert into testTruncateWithColumnTop " +
                                     "select" +
                                     " cast(x as int) i," +
@@ -690,7 +825,7 @@ public class TruncateTest extends AbstractCairoTest {
                         Assert.assertEquals(TRUNCATE, compiler.compile("truncate table testTruncateWithColumnTop", sqlExecutionContext).getType());
                     }
 
-                    compile(
+                    execute(
                             "insert into testTruncateWithColumnTop " +
                                     "select" +
                                     " cast(x as int) i," +
@@ -705,6 +840,18 @@ public class TruncateTest extends AbstractCairoTest {
                             "1000\n", "select column_with_top from testTruncateWithColumnTop limit -2");
                 }
         );
+    }
+
+    @Test
+    public void testTruncateWithoutIfExistsFailsForNonExistentTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("truncate table nonexistent", sqlExecutionContext);
+                Assert.fail("Expected SqlException for non-existent table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+        });
     }
 
     @Test
@@ -758,7 +905,7 @@ public class TruncateTest extends AbstractCairoTest {
     @Test
     public void testUpdateThenTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
                             " x " +
@@ -767,9 +914,9 @@ public class TruncateTest extends AbstractCairoTest {
             );
 
             update("update y set x = 10");
-            ddl("truncate table y");
+            execute("truncate table y");
 
-            insert("insert into y values('2022-02-24', 1)");
+            execute("insert into y values('2022-02-24', 1)");
 
             assertSql("timestamp\tx\n" +
                     "2022-02-24T00:00:00.000000Z\t1\n", "select * from y");
@@ -781,7 +928,7 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     private void createX(long count) throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -806,7 +953,7 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     private void createY() throws SqlException {
-        ddl(
+        execute(
                 "create table y as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -832,7 +979,7 @@ public class TruncateTest extends AbstractCairoTest {
 
     private void testDropTableWithCachedPlan(String query) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
                             " rnd_symbol('a','b',null) symbol1 " +
@@ -845,8 +992,8 @@ public class TruncateTest extends AbstractCairoTest {
                     println(factory, cursor);
                 }
 
-                drop("drop table y");
-                ddl(
+                execute("drop table y");
+                execute(
                         "create table y as ( " +
                                 " select " +
                                 " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +

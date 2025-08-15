@@ -67,6 +67,27 @@ public class BooleanFunctionTest {
         }
     };
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        functionA.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBin() {
+        functionA.getBin(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        functionA.getBinLen(null);
+    }
+
+    @Test
+    public void testGetByte() {
+        Assert.assertEquals(1, functionB.getByte(null));
+        Assert.assertEquals(0, functionA.getByte(null));
+    }
+
     @Test
     public void testGetChar() {
         Assert.assertEquals('F', functionA.getChar(null));
@@ -82,6 +103,24 @@ public class BooleanFunctionTest {
             }
         };
         Assert.assertEquals('T', function.getChar(null));
+    }
+
+    @Test
+    public void testGetDate() {
+        Assert.assertEquals(1, functionB.getDate(null));
+        Assert.assertEquals(0, functionA.getDate(null));
+    }
+
+    @Test
+    public void testGetDouble() {
+        Assert.assertEquals(1.0, functionB.getDouble(null), 0.000001);
+        Assert.assertEquals(0.0, functionA.getDouble(null), 0.000001);
+    }
+
+    @Test
+    public void testGetFloat() {
+        Assert.assertEquals(1.0, functionB.getFloat(null), 0.000001);
+        Assert.assertEquals(0.0, functionA.getFloat(null), 0.000001);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -105,37 +144,9 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetBin() {
-        functionA.getBin(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBinLen() {
-        functionA.getBinLen(null);
-    }
-
-    @Test
-    public void testGetByte() {
-        Assert.assertEquals(1, functionB.getByte(null));
-        Assert.assertEquals(0, functionA.getByte(null));
-    }
-
-    @Test
-    public void testGetDate() {
-        Assert.assertEquals(1, functionB.getDate(null));
-        Assert.assertEquals(0, functionA.getDate(null));
-    }
-
-    @Test
-    public void testGetDouble() {
-        Assert.assertEquals(1.0, functionB.getDouble(null), 0.000001);
-        Assert.assertEquals(0.0, functionA.getDouble(null), 0.000001);
-    }
-
-    @Test
-    public void testGetFloat() {
-        Assert.assertEquals(1.0, functionB.getFloat(null), 0.000001);
-        Assert.assertEquals(0.0, functionA.getFloat(null), 0.000001);
+    public void testGetIPv4() {
+        Assert.assertEquals(1, functionB.getIPv4(null));
+        Assert.assertEquals(0, functionA.getIPv4(null));
     }
 
     @Test
@@ -144,16 +155,35 @@ public class BooleanFunctionTest {
         Assert.assertEquals(0, functionA.getInt(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetIPv4() {
-        Assert.assertEquals(1, functionB.getIPv4(null));
-        Assert.assertEquals(0, functionA.getIPv4(null));
-    }
-
     @Test
     public void testGetLong() {
         Assert.assertEquals(1, functionB.getLong(null));
         Assert.assertEquals(0, functionA.getLong(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        functionA.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        functionA.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        functionA.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        functionA.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        functionA.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -195,31 +225,6 @@ public class BooleanFunctionTest {
     public void testGetTimestamp() {
         Assert.assertEquals(1, functionB.getTimestamp(null));
         Assert.assertEquals(0, functionA.getTimestamp(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Hi() {
-        functionA.getLong128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Lo() {
-        functionA.getLong128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256() {
-        functionA.getLong256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256A() {
-        functionA.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256B() {
-        functionA.getLong256B(null);
     }
 
     @Test

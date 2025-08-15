@@ -24,10 +24,15 @@
 
 package io.questdb.cutlass.line;
 
+
+import io.questdb.client.Sender;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -39,7 +44,7 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
+        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity, Integer.MAX_VALUE);
     }
 
     @Override
@@ -60,6 +65,52 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
+        throw new LineSenderException("current protocol version does not support double-array");
+    }
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
+        throw new LineSenderException("current protocol version does not support double-array");
+    }
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
+        throw new LineSenderException("current protocol version does not support double-array");
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, DoubleArray array) {
+        throw new LineSenderException("current protocol version does not support double-array");
+    }
+
+    @Override
+    public Sender doubleColumn(CharSequence name, double value) {
+        writeFieldName(name).put(value);
+        return this;
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[] values) {
+        throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[][] values) {
+        throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
+        throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, LongArray values) {
+        throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
     public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
         writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000);
         return this;
@@ -67,7 +118,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(value * unitToNanos(unit) / 1000);
+        writeFieldName(name).put(Timestamps.toMicros(value, unit));
         return this;
     }
 }

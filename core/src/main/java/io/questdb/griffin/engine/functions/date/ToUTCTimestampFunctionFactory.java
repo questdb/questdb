@@ -27,12 +27,19 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
@@ -40,9 +47,11 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class ToUTCTimestampFunctionFactory implements FunctionFactory {
+    public static final String NAME = "to_utc";
+
     @Override
     public String getSignature() {
-        return "to_utc(NS)";
+        return NAME + "(NS)";
     }
 
     @Override
@@ -53,77 +62,175 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function timestamp = args.getQuick(0);
-        Function timezone = args.getQuick(1);
+        final Function timestampFunc = args.getQuick(0);
+        final Function timezoneFunc = args.getQuick(1);
+        final int timezonePos = argPositions.getQuick(1);
 
-        if (timezone.isConstant()) {
-            return getTimestampFunction(argPositions, timestamp, timezone, -1);
+        if (timezoneFunc.isConstant()) {
+            return toUTCConstFunction(timestampFunc, timezoneFunc, timezonePos);
+        } else if (timezoneFunc.isRuntimeConstant()) {
+            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos);
         } else {
-            return new ToTimezoneFunctionVar(timestamp, timezone);
+            return new Func(timestampFunc, timezoneFunc);
         }
     }
 
     @NotNull
-    static TimestampFunction getTimestampFunction(IntList argPositions, Function timestamp, Function timezone, int multiplier) throws SqlException {
-        final CharSequence tz = timezone.getStrA(null);
+    private static TimestampFunction toUTCConstFunction(
+            Function timestampFunc,
+            Function timezoneFunc,
+            int timezonePos
+    ) throws SqlException {
+        final CharSequence tz = timezoneFunc.getStrA(null);
         if (tz != null) {
             final int hi = tz.length();
             final long l = Timestamps.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
                 try {
-                    return new OffsetTimestampFunctionFromRules(
-                            timestamp,
+                    return new ConstRulesFunc(
+                            timestampFunc,
                             TimestampFormatUtils.EN_LOCALE.getZoneRules(
                                     Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
-                            ),
-                            multiplier
+                            )
                     );
                 } catch (NumericException e) {
-                    Misc.free(timestamp);
-                    throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
+                    Misc.free(timestampFunc);
+                    throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                 }
             } else {
-                return new OffsetTimestampFunctionFromOffset(
-                        timestamp,
-                        multiplier * Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                return new OffsetTimestampFunction(
+                        timestampFunc,
+                        -Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
                 );
             }
         }
-        throw SqlException.$(argPositions.getQuick(1), "timezone must not be null");
+        throw SqlException.$(timezonePos, "timezone must not be null");
     }
 
-    private static class ToTimezoneFunctionVar extends TimestampFunction implements BinaryFunction {
-        private final Function timestamp;
-        private final Function timezone;
+    private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction {
+        private final Function timestampFunc;
+        private final TimeZoneRules tzRules;
 
-        public ToTimezoneFunctionVar(Function timestamp, Function timezone) {
-            this.timestamp = timestamp;
-            this.timezone = timezone;
+        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules) {
+            this.timestampFunc = timestampFunc;
+            this.tzRules = tzRules;
         }
 
         @Override
-        public Function getLeft() {
-            return timestamp;
+        public Function getArg() {
+            return timestampFunc;
         }
 
         @Override
         public String getName() {
-            return "to_utc";
-        }
-
-        @Override
-        public Function getRight() {
-            return timezone;
+            return NAME;
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            final long timestampValue = timestamp.getTimestamp(rec);
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            final long offset = tzRules.getLocalOffset(timestamp);
+            return timestamp - offset;
+        }
+    }
+
+    private static class Func extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
+        private final Function timezoneFunc;
+
+        public Func(Function timestampFunc, Function timezoneFunc) {
+            this.timestampFunc = timestampFunc;
+            this.timezoneFunc = timezoneFunc;
+        }
+
+        @Override
+        public Function getLeft() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public Function getRight() {
+            return timezoneFunc;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
-                final CharSequence tz = timezone.getStrA(rec);
+                final CharSequence tz = timezoneFunc.getStrA(rec);
                 return tz != null ? Timestamps.toUTC(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
+            }
+        }
+    }
+
+    private static class RuntimeConstFunc extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
+        private final Function timezoneFunc;
+        private final int timezonePos;
+        private long tzOffset;
+        private TimeZoneRules tzRules;
+
+        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos) {
+            this.timestampFunc = timestampFunc;
+            this.timezoneFunc = timezoneFunc;
+            this.timezonePos = timezonePos;
+        }
+
+        @Override
+        public Function getLeft() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public Function getRight() {
+            return timezoneFunc;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            if (tzRules != null) {
+                final long offset = tzRules.getLocalOffset(timestamp);
+                return timestamp - offset;
+            }
+            return timestamp - tzOffset;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            final CharSequence tz = timezoneFunc.getStrA(null);
+            if (tz == null) {
+                throw SqlException.$(timezonePos, "timezone must not be null");
+            }
+
+            final int hi = tz.length();
+            final long l = Timestamps.parseOffset(tz, 0, hi);
+            if (l == Long.MIN_VALUE) {
+                try {
+                    tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                    );
+                    tzOffset = 0;
+                } catch (NumericException e) {
+                    throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
+                }
+            } else {
+                tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                tzRules = null;
             }
         }
     }

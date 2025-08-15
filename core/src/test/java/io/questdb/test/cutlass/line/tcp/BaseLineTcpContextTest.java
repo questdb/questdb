@@ -26,22 +26,37 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.line.tcp.SymbolCache;
+import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
-import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.network.TlsSessionInitFailedException;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.Pool;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -62,7 +77,7 @@ import java.util.concurrent.locks.LockSupport;
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
-    protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+    protected final AtomicInteger maxRecvBufferSize = new AtomicInteger();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -89,7 +104,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         microSecondTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        netMsgBufferSize.set(512);
+        maxRecvBufferSize.set(512 * 1024);
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -100,8 +115,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         noNetworkIOJob = new NoNetworkIOJob(lineTcpConfiguration);
     }
 
-    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
+    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError, Metrics metrics) {
         return new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
             @Override
             public long getSleepTimeout() {
                 return 1;
@@ -116,7 +136,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
-        }, metrics);
+        });
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
@@ -146,6 +166,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         return createReceiverConfiguration(false, nf);
     }
 
+    @SuppressWarnings("resource")
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
@@ -159,7 +180,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return super.getLineAuthenticatorFactory();
             }
         };
-        return new DefaultLineTcpReceiverConfiguration() {
+        return new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public boolean getAutoCreateNewColumns() {
                 return autoCreateNewColumns;
@@ -196,6 +217,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public long getMaxRecvBufferSize() {
+                return maxRecvBufferSize.get();
+            }
+
+            @Override
             public MicrosecondClock getMicrosecondClock() {
                 return new MicrosecondClockImpl() {
                     @Override
@@ -209,13 +235,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getNetMsgBufferSize() {
-                return netMsgBufferSize.get();
+            public NetworkFacade getNetworkFacade() {
+                return nf;
             }
 
             @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
+            public int getRecvBufferSize() {
+                return Math.min(super.getRecvBufferSize(), (int) getMaxRecvBufferSize());
             }
 
             @Override
@@ -282,15 +308,15 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void setupContext(UnstableRunnable onCommitNewEvent) {
+    protected void setupContext(UnstableRunnable onCommitNewEvent) throws TlsSessionInitFailedException {
         disconnected = false;
         recvBuffer = null;
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
-                createWorkerPool(1, true),
+                createWorkerPool(1, true, lineTcpConfiguration.getMetrics()),
                 null,
-                workerPool = createWorkerPool(nWriterThreads, false)
+                workerPool = createWorkerPool(nWriterThreads, false, lineTcpConfiguration.getMetrics())
         ) {
 
             @Override
@@ -300,7 +326,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     LineTcpConnectionContext context,
                     LineTcpParser parser
             ) throws Exception {
-                if (null != onCommitNewEvent) {
+                if (onCommitNewEvent != null) {
                     onCommitNewEvent.run();
                 }
                 return super.scheduleEvent(securityContext, netIoJob, context, parser);
@@ -313,46 +339,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
         };
         noNetworkIOJob.setScheduler(scheduler);
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
-            @Override
-            public void close() {
-            }
-
-            @Override
-            public void disconnect(LineTcpConnectionContext context, int reason) {
-                disconnected = true;
-            }
-
-            @Override
-            public int getConnectionCount() {
-                return disconnected ? 0 : 1;
-            }
-
-            @Override
-            public int getPort() {
-                return 9009;
-            }
-
-            @Override
-            public boolean isListening() {
-                return true;
-            }
-
-            @Override
-            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
-                return false;
-            }
-
-            @Override
-            public void registerChannel(LineTcpConnectionContext context, int operation) {
-            }
-
-            @Override
-            public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                return false;
-            }
-        });
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
+        context.of(FD);
+        context.init();
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
         workerPool.start(LOG);
@@ -385,7 +374,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         private LineTcpMeasurementScheduler scheduler;
 
         NoNetworkIOJob(LineTcpReceiverConfiguration config) {
-            unusedSymbolCaches = new WeakClosableObjectPool<SymbolCache>(() -> new SymbolCache(config), 10, true);
+            unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(config), 10, true);
         }
 
         @Override

@@ -40,10 +40,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
+            execute("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
                     "sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp\n" +
-                            "44.0\t1.0\tnull\t1.0\t44.0\t44.0\t0.0\n", "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
+                            "44.0\t1.0\t1.0\t1.0\t44.0\t44.0\t0.0\n",
+                    "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
             );
         });
     }
@@ -51,7 +52,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAvgWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
+            execute("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
                     "avg\n1.0\n", "select avg(1/val) from test2"
             );
@@ -61,11 +62,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInterpolatedAvg() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table fill_options(ts timestamp, price int) timestamp(ts);");
-            insert("insert into fill_options values(to_timestamp('2020-01-01:10:00:00', 'yyyy-MM-dd:HH:mm:ss'), 1);");
-            insert("insert into fill_options values(to_timestamp('2020-01-01:11:00:00', 'yyyy-MM-dd:HH:mm:ss'), 2);");
-            insert("insert into fill_options values(to_timestamp('2020-01-01:12:00:00', 'yyyy-MM-dd:HH:mm:ss'), 3);");
-            insert("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
+            execute("create table fill_options(ts timestamp, price int) timestamp(ts);");
+            execute("insert into fill_options values(to_timestamp('2020-01-01:10:00:00', 'yyyy-MM-dd:HH:mm:ss'), 1);");
+            execute("insert into fill_options values(to_timestamp('2020-01-01:11:00:00', 'yyyy-MM-dd:HH:mm:ss'), 2);");
+            execute("insert into fill_options values(to_timestamp('2020-01-01:12:00:00', 'yyyy-MM-dd:HH:mm:ss'), 3);");
+            execute("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
 
             assertQuery("ts\tmin\tmax\tavg\tstddev_samp\n" +
                             "2020-01-01T10:00:00.000000Z\t1\t1\t1.0\tnull\n" +

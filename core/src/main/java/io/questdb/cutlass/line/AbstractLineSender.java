@@ -27,7 +27,12 @@ package io.questdb.cutlass.line;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -35,7 +40,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.security.*;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.Signature;
+import java.security.SignatureException;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
@@ -43,22 +52,25 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     protected final int capacity;
     private final long bufA;
     private final long bufB;
+    private final DirectByteSlice bufferView = new DirectByteSlice();
+    private final int maxNameLength;
+    protected long hi;
     protected LineChannel lineChannel;
+    protected long ptr;
     private boolean closed;
     private boolean enableValidation;
     private boolean hasColumns;
     private boolean hasSymbols;
     private boolean hasTable;
-    private long hi;
     private long lineStart;
     private long lo;
-    private long ptr;
     private boolean quoted = false;
 
-    public AbstractLineSender(LineChannel lineChannel, int capacity) {
+    public AbstractLineSender(LineChannel lineChannel, int capacity, int maxNameLength) {
         this.lineChannel = lineChannel;
         this.capacity = capacity;
         this.enableValidation = true;
+        this.maxNameLength = maxNameLength;
 
         bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_ILP_RSS);
         bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_ILP_RSS);
@@ -111,6 +123,10 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return field(name, value);
     }
 
+    public DirectByteSlice bufferView() {
+        return bufferView.of(lo, (int) (ptr - lo));
+    }
+
     @Override
     public void close() {
         if (closed) {
@@ -131,11 +147,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
      */
     public void disableValidation() {
         enableValidation = false;
-    }
-
-    @Override
-    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        return field(name, value);
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
@@ -350,6 +361,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return -1;
     }
 
+
     private byte[] receiveChallengeBytes() {
         int n = 0;
         for (; ; ) {
@@ -389,7 +401,14 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (!enableValidation) {
             return;
         }
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidColumnName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("column name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
                     ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }
@@ -399,7 +418,14 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (!enableValidation) {
             return;
         }
-        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
+        if (!TableUtils.isValidTableName(name, maxNameLength)) {
+            if (name.length() > maxNameLength) {
+                throw new LineSenderException("table name is too long: [name = ")
+                        .putAsPrintable(name)
+                        .put(", maxNameLength=")
+                        .put(maxNameLength)
+                        .put(']');
+            }
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
                     "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }
@@ -484,8 +510,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             } else {
                 putAsciiInternal(',');
             }
-            put(name);
-            return putAsciiInternal('=');
+            return put(name).putAsciiInternal('=');
         }
         throw new LineSenderException("table expected");
     }

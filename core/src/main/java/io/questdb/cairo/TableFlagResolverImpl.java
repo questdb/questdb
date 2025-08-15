@@ -1,7 +1,9 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
+import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
@@ -16,7 +18,8 @@ public class TableFlagResolverImpl implements TableFlagResolver {
         publicTables = new String[]{
                 systemTableNamePrefix + TelemetryWalTask.TABLE_NAME,
                 TelemetryTask.TABLE_NAME,
-                TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME
+                TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME,
+                systemTableNamePrefix + TelemetryMatViewTask.TABLE_NAME
         };
     }
 
@@ -35,6 +38,7 @@ public class TableFlagResolverImpl implements TableFlagResolver {
     public boolean isSystem(@NotNull CharSequence tableName) {
         return Chars.startsWith(tableName, systemTableNamePrefix)
                 || Chars.equalsIgnoreCase(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
-                || Chars.equalsIgnoreCase(tableName, TelemetryTask.TABLE_NAME);
+                || Chars.equalsIgnoreCase(tableName, TelemetryTask.TABLE_NAME)
+                || Chars.equalsIgnoreCase(tableName, QueryTracingJob.TABLE_NAME);
     }
 }

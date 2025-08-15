@@ -25,15 +25,21 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.MimeTypesCache;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -59,34 +65,12 @@ public class HttpServerConfigurationBuilder {
     private int tcpSndBufSize;
     private int workerCount;
 
-    public DefaultHttpServerConfiguration build() {
-        final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            @Override
-            public int getBindPort() {
-                return port != -1 ? port : super.getBindPort();
-            }
-
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public int getSndBufSize() {
-                return tcpSndBufSize == 0 ? super.getSndBufSize() : tcpSndBufSize;
-            }
-        };
-
-        return new DefaultHttpServerConfiguration() {
+    public DefaultHttpServerConfiguration build(CairoConfiguration cairoConfiguration) {
+        return new DefaultHttpServerConfiguration(cairoConfiguration) {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 @Override
                 public int getConnectionCheckFrequency() {
                     return 1_000_000;
-                }
-
-                @Override
-                public int getDoubleScale() {
-                    return Numbers.MAX_DOUBLE_SCALE;
                 }
 
                 @Override
@@ -97,11 +81,6 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return TestFilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public int getFloatScale() {
-                    return Numbers.MAX_FLOAT_SCALE;
                 }
 
                 @Override
@@ -131,11 +110,6 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public CharSequence getIndexFileName() {
-                    return null;
-                }
-
-                @Override
                 public String getKeepAliveHeader() {
                     return null;
                 }
@@ -157,8 +131,8 @@ public class HttpServerConfigurationBuilder {
             };
 
             @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
+            public int getBindPort() {
+                return port != -1 ? port : super.getBindPort();
             }
 
             @Override
@@ -206,16 +180,6 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
-                    public int getRecvBufferSize() {
-                        return receiveBufferSize;
-                    }
-
-                    @Override
-                    public int getSendBufferSize() {
-                        return sendBufferSize == 0 ? super.getSendBufferSize() : sendBufferSize;
-                    }
-
-                    @Override
                     public boolean getServerKeepAlive() {
                         return serverKeepAlive;
                     }
@@ -228,8 +192,28 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public int getNetSendBufferSize() {
+                return tcpSndBufSize == 0 ? super.getSendBufferSize() : tcpSndBufSize;
+            }
+
+            @Override
+            public NetworkFacade getNetworkFacade() {
+                return nf;
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return receiveBufferSize;
+            }
+
+            @Override
             public byte getRequiredAuthType() {
                 return httpHealthCheckAuthType;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return sendBufferSize == 0 ? super.getSendBufferSize() : sendBufferSize;
             }
 
             @Override

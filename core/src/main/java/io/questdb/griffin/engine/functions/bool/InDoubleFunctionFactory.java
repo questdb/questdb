@@ -23,7 +23,6 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.functions.bool;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
@@ -36,7 +35,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.*;
+import io.questdb.std.DoubleList;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 
 public class InDoubleFunctionFactory implements FunctionFactory {
     public static double tryParseDouble(CharSequence seq, int position) throws SqlException {
@@ -55,8 +60,8 @@ public class InDoubleFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -167,7 +172,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             double val = func.getDouble(rec);
-            return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(val, Vect.BIN_SEARCH_SCAN_UP) >= 0;
         }
 
         @Override
@@ -203,7 +208,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             double val = keyFunction.getDouble(rec);
-            return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(val, Vect.BIN_SEARCH_SCAN_UP) >= 0;
         }
 
         @Override

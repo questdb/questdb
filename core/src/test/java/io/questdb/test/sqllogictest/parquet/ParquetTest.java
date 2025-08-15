@@ -25,19 +25,28 @@
 package io.questdb.test.sqllogictest.parquet;
 
 import io.questdb.test.sqllogictest.AbstractSqllogicTestRunner;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.util.ArrayList;
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
+/**
+ * Tests read_parquet()/parquet_scan() SQL function.
+ */
 public class ParquetTest extends AbstractSqllogicTestRunner {
-    public ParquetTest(String testFile) {
-        super(testFile);
+
+    public ParquetTest(String testFile, boolean parallelReadParquet) {
+        super(testFile, parallelReadParquet);
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0} parallel={1}")
     public static Collection<Object[]> files() {
-        return files("parquet");
+        final Collection<Object[]> files = files("parquet");
+        final ArrayList<Object[]> params = new ArrayList<>();
+        for (Object[] objects : files) {
+            params.add(new Object[]{objects[0], true});
+            params.add(new Object[]{objects[0], false});
+        }
+        return params;
     }
 }

@@ -63,7 +63,8 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
                 false,
                 columnIndexes,
                 columnSizes,
-                supportsRandomAccess
+                supportsRandomAccess,
+                false
         );
         this.symbolFunc = symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;

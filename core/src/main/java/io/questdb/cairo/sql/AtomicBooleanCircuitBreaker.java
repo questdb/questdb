@@ -29,10 +29,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-// Circuit breaker that doesn't check network connection status or timeout and only allows cancelling statement via CANCEL QUERY command .
+/**
+ * Circuit breaker that doesn't check network connection status or timeout
+ * and only allows cancelling statement via CANCEL QUERY command.
+ */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     private final int throttle;
-    private AtomicBoolean cancelledFlag;
+    protected volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
     private int testCount = 0;
 
@@ -46,7 +49,11 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void cancel() {
-        cancelledFlag.set(true);
+        // This call can be concurrent with the call to setCancelledFlag
+        AtomicBoolean cf = cancelledFlag;
+        if (cf != null) {
+            cf.set(true);
+        }
     }
 
     @Override
@@ -62,6 +69,11 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public void clear() {
         fd = -1;
         testCount = 0;
+    }
+
+    @Override
+    public AtomicBoolean getCancelledFlag() {
+        return cancelledFlag;
     }
 
     @Override
@@ -90,12 +102,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-        fd = circuitBreaker.getFd();
-    }
-
-    @Override
-    public boolean isThreadsafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 
@@ -105,7 +112,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void reset() {
-        cancelledFlag.set(false);
+        if (cancelledFlag != null) {
+            cancelledFlag.set(false);
+        }
     }
 
     @Override
@@ -145,6 +154,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag.get();
+        return cancelledFlag == null || cancelledFlag.get();
     }
 }

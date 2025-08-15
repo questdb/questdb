@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -43,7 +42,7 @@ public class SignIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new Func(args.get(0));
     }
 
@@ -63,7 +62,7 @@ public class SignIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int val = arg.getInt(rec);
-            if (Numbers.INT_NULL == val) {
+            if (val == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
 

@@ -24,10 +24,15 @@
 
 package io.questdb.test.std;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -35,7 +40,6 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class DirectLongListTest {
-
     private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
 
     @Test
@@ -179,7 +183,8 @@ public class DirectLongListTest {
             for (long i = 0; i < list.size(); i++) {
                 Assert.assertEquals(i, list.get(i));
             }
-            list.clear(0);
+            list.zero();
+            list.clear();
             Assert.assertEquals(0, list.size());
             for (long i = 0; i < list.getCapacity(); i++) {
                 Assert.assertEquals(0, list.get(i));
@@ -213,7 +218,7 @@ public class DirectLongListTest {
                 list.add(i);
             }
             Assert.assertEquals(N / 2, list.scanSearch(N / 2, 0, list.size()));
-            Assert.assertEquals(N / 2, list.binarySearch(N / 2, BinarySearch.SCAN_UP));
+            Assert.assertEquals(N / 2, list.binarySearch(N / 2, Vect.BIN_SEARCH_SCAN_UP));
         }
     }
 
@@ -226,12 +231,12 @@ public class DirectLongListTest {
                 list.add(2 * (i / 3));
             }
             // existing
-            Assert.assertEquals(2, list.binarySearch(0, BinarySearch.SCAN_DOWN));
-            Assert.assertEquals(0, list.binarySearch(0, BinarySearch.SCAN_UP));
+            Assert.assertEquals(2, list.binarySearch(0, Vect.BIN_SEARCH_SCAN_DOWN));
+            Assert.assertEquals(0, list.binarySearch(0, Vect.BIN_SEARCH_SCAN_UP));
 
             // non-existing
-            Assert.assertEquals(3, -list.binarySearch(1, BinarySearch.SCAN_DOWN) - 1);
-            Assert.assertEquals(3, -list.binarySearch(1, BinarySearch.SCAN_UP) - 1);
+            Assert.assertEquals(3, -list.binarySearch(1, Vect.BIN_SEARCH_SCAN_DOWN) - 1);
+            Assert.assertEquals(3, -list.binarySearch(1, Vect.BIN_SEARCH_SCAN_UP) - 1);
         }
     }
 
@@ -324,7 +329,7 @@ public class DirectLongListTest {
             final long M = list.size();
 
             for (int i = 0; i < N; i++) {
-                long pos = list.binarySearch(i, BinarySearch.SCAN_UP);
+                long pos = list.binarySearch(i, Vect.BIN_SEARCH_SCAN_UP);
                 int skip = skipList.getQuick(i);
 
                 // the value was skipped
@@ -349,7 +354,7 @@ public class DirectLongListTest {
             }
 
             for (int i = 0; i < N; i++) {
-                long pos = list.binarySearch(i, BinarySearch.SCAN_DOWN);
+                long pos = list.binarySearch(i, Vect.BIN_SEARCH_SCAN_DOWN);
                 int skip = skipList.getQuick(i);
 
                 // the value was skipped
@@ -376,7 +381,7 @@ public class DirectLongListTest {
 
             // search max value (greater than anything in the list)
 
-            long pos = list.binarySearch(N, BinarySearch.SCAN_UP);
+            long pos = list.binarySearch(N, Vect.BIN_SEARCH_SCAN_UP);
             Assert.assertTrue(pos < 0);
 
             pos = -pos - 1;
@@ -384,7 +389,7 @@ public class DirectLongListTest {
 
             // search min value (less than anything in the list)
 
-            pos = list.binarySearch(-1, BinarySearch.SCAN_UP);
+            pos = list.binarySearch(-1, Vect.BIN_SEARCH_SCAN_UP);
             Assert.assertTrue(pos < 0);
 
             pos = -pos - 1;

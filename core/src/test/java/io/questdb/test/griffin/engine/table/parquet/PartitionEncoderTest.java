@@ -25,15 +25,16 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.griffin.engine.table.parquet.*;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 
@@ -43,7 +44,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testBadCompression() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
@@ -59,7 +60,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for CompressionCodec"));
+                    TestUtils.assertContains(e.getMessage(), "unsupported compression codec id: 42");
                 }
             }
         });
@@ -68,7 +69,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testBadVersion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
@@ -84,37 +85,17 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for Version"));
+                    TestUtils.assertContains(e.getMessage(), "unsupported parquet version 42");
                 }
             }
         });
     }
 
     @Test
-    @Ignore
-    public void testEncodeExternal() {
-        final String root2 = "/Users/alpel/temp/db";
-        final QuestDBTestNode node2 = newNode(2, root2);
-        nodes.remove(node2);
-
-        try (
-                Path path = new Path();
-                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                TableReader reader = node2.getEngine().getReader("request_logs")
-        ) {
-            path.of(root2).concat("x.parquet").$();
-            long start = System.nanoTime();
-            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-            PartitionEncoder.encode(partitionDescriptor, path);
-            LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
-        }
-    }
-
-    @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10000000;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " rnd_byte() a_byte," +
@@ -159,7 +140,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " cast('7c0bd97b-0593-47d2-be17-b8f3f89ca555' as uuid), " +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");

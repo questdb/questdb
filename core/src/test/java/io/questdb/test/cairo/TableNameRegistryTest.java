@@ -24,7 +24,16 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableFlagResolverImpl;
+import io.questdb.cairo.TableNameRegistry;
+import io.questdb.cairo.TableNameRegistryRO;
+import io.questdb.cairo.TableNameRegistryRW;
+import io.questdb.cairo.TableNameRegistryStore;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -34,7 +43,17 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -53,6 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.GrowOnlyTableNameRegistryStore.OPERATION_ADD;
+import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 
@@ -63,6 +83,86 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     private static final int FUZZ_DROP = 2;
     private static final int FUZZ_RENAME = 1;
     private static final int FUZZ_SWEEP = 4;
+
+    @Test
+    public void testConcurrentCreateDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            int iterations = 500;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            int dropThreads = 2;
+            CyclicBarrier barrier = new CyclicBarrier(1 + dropThreads);
+            ObjList<Thread> threads = new ObjList<>(1 + dropThreads);
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        for (int j = 0; j < iterations; j++) {
+                            try {
+                                execute(
+                                        "create table tab" + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                                + " WAL ",
+                                        executionContext
+                                );
+                            } catch (SqlException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "table already exists")) {
+                                    throw e;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    ref.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            threads.getLast().start();
+
+            AtomicBoolean done = new AtomicBoolean(false);
+
+            for (int i = 0; i < dropThreads; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                            while (!done.get()) {
+                                try {
+                                    execute("drop table tab", executionContext);
+                                } catch (TableReferenceOutOfDateException e) {
+                                    // this is fine, query will have to recompile
+                                } catch (SqlException | CairoException e) {
+                                    if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                        throw e;
+                                    }
+                                }
+                                Os.pause();
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.getLast().start();
+            }
+
+
+            threads.getQuick(0).join();
+            done.set(true);
+
+            for (int i = 1; i < threads.size(); i++) {
+                threads.getQuick(i).join();
+            }
+            Assert.assertTrue(engine.reloadTableNames());
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
 
     @Test
     public void testConcurrentCreateDropRemove() throws Exception {
@@ -80,7 +180,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    drop("drop table tab" + j, executionContext);
+                                    execute("drop table tab" + j, executionContext);
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
@@ -108,7 +208,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
                                 try {
-                                    ddl(
+                                    execute(
                                             "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
                                                     + (!isWal ? "BYPASS" : "")
                                                     + " WAL ",
@@ -120,7 +220,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 }
 
                                 try {
-                                    drop("drop table tab" + j, executionContext);
+                                    execute("drop table tab" + j, executionContext);
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
@@ -203,7 +303,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             drainWalQueue();
 
             engine.releaseInactive();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             drainWalQueue();
 
@@ -230,7 +330,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         try (TableNameRegistryRO ro = new TableNameRegistryRO(
-                                configuration,
+                                engine,
                                 new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
                         )) {
                             startBarrier.await();
@@ -252,14 +352,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.getLast().start();
             }
 
-            try (Path rmPath = new Path().of(configuration.getRoot())) {
+            try (Path rmPath = new Path().of(configuration.getDbRoot())) {
                 TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
                         .timestamp().col("c", ColumnType.TIMESTAMP);
                 // Add / remove tables
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 try (TableNameRegistryRW rw = new TableNameRegistryRW(
-                        configuration,
+                        engine,
                         new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
                 )) {
                     rw.reload();
@@ -267,16 +367,16 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     int iteration = 0;
                     IntHashSet addedTables = new IntHashSet();
                     FilesFacade ff = configuration.getFilesFacade();
-                    int rootLen = configuration.getRoot().length();
+                    int rootLen = configuration.getDbRoot().length();
                     while (addedTables.size() < tableCount) {
                         iteration++;
                         if (rnd.nextDouble() > 0.2) {
                             // Add table
                             String tableName = "tab" + iteration;
-                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
+                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, false, true);
+                            TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
-                            TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                         } else if (addedTables.size() > 0) {
                             // Remove table
                             int tableId = addedTables.getLast();
@@ -321,6 +421,82 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentRenameDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            int iterations = 500;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(2);
+
+            ObjList<Thread> threads = new ObjList<>(2);
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        for (int j = 0; j < iterations; j++) {
+                            try {
+                                execute(
+                                        "create table tab" + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                                + " WAL ",
+                                        executionContext
+                                );
+                            } catch (SqlException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "table already exists")) {
+                                    throw e;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    ref.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            threads.get(0).start();
+
+            AtomicBoolean done = new AtomicBoolean(false);
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        int counter = 0;
+                        while (!done.get()) {
+                            try {
+                                execute("rename table tab to tab" + (++counter), executionContext);
+                                execute("drop table tab" + counter, executionContext);
+                            } catch (TableReferenceOutOfDateException e) {
+                                // this is fine, query will have to recompile
+                            } catch (SqlException | CairoException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
+                                        && !Chars.contains(e.getFlyweightMessage(), "could not lock")
+                                        && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                    throw e;
+                                }
+                            }
+                            Os.pause();
+                        }
+                    }
+                } catch (Throwable e) {
+                    ref.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            threads.get(1).start();
+
+            threads.getQuick(0).join();
+            done.set(true);
+            threads.getQuick(1).join();
+
+            Assert.assertTrue(engine.reloadTableNames());
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentWALTableRename() throws Exception {
         assertMemoryLeak(() -> {
             int threadCount = 2;
@@ -335,7 +511,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     if (j % 2 == 0) {
                         tableName = "Tab" + j;
                     }
-                    ddl("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL", executionContext);
+                    execute("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL", executionContext);
                 }
             }
 
@@ -347,7 +523,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    ddl("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
+                                    execute("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
                                         throw e;
@@ -389,6 +565,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("table named tab" + i + " tokens: " + names, 1, names.size());
             }
+
+            Assert.assertTrue(engine.reloadTableNames());
         });
     }
 
@@ -399,14 +577,17 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
-            ddl("alter table tab1 set type bypass wal");
-            drop("drop table tab1");
+            execute("alter table tab1 set type bypass wal");
+            execute("drop table tab1");
+
+            // We need this API to check by dir name for WAL tables
+            Assert.assertTrue(engine.isWalTableDropped(tt1.getDirName()));
             createTableWal("tab1");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            execute("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -421,14 +602,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
-            ddl("alter table tab1 set type bypass wal");
-            drop("drop table tab1");
+            execute("alter table tab1 set type bypass wal");
+            execute("drop table tab1");
             createTableNonWal("tab1");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            execute("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -448,24 +629,26 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
         };
 
-        assertMemoryLeak(ff, () -> {
-            TableToken tt1;
-            tt1 = createTableWal("tab1");
-            Assert.assertTrue(engine.isWalTable(tt1));
+        assertMemoryLeak(
+                ff, () -> {
+                    TableToken tt1;
+                    tt1 = createTableWal("tab1");
+                    Assert.assertTrue(engine.isWalTable(tt1));
 
-            ddl("alter table tab1 set type bypass wal");
-            drop("drop table tab1");
-            createTableNonWal("tab1");
+                    execute("alter table tab1 set type bypass wal");
+                    execute("drop table tab1");
+                    createTableNonWal("tab1");
 
-            simulateEngineRestart();
-            engine.reconcileTableNameRegistryState();
+                    simulateEngineRestart();
+                    engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
-            createTableWal("tab1");
+                    execute("drop table tab1");
+                    createTableWal("tab1");
 
-            simulateEngineRestart();
-            engine.reconcileTableNameRegistryState();
-        });
+                    simulateEngineRestart();
+                    engine.reconcileTableNameRegistryState();
+                }
+        );
     }
 
     @Test
@@ -475,14 +658,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
-            ddl("alter table tab1 set type bypass wal");
-            drop("drop table tab1");
+            execute("alter table tab1 set type bypass wal");
+            execute("drop table tab1");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             createTableWal("tab1");
 
@@ -495,19 +678,78 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     public void testConvertRestartDropRecreate() throws Exception {
         assertMemoryLeak(() -> {
             createTableNonWal("tab1");
-            ddl("alter table tab1 set type wal");
+            execute("alter table tab1 set type wal");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            drop("drop table tab1");
+            execute("drop table tab1");
             createTableWal("tab1");
 
-            compile("drop table tab1");
+            execute("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
+        });
+    }
+
+    @Test
+    public void testConvertRestarted() throws Exception {
+        AtomicBoolean failFinishConversion = new AtomicBoolean(true);
+        AtomicBoolean failReloadNameRegistry = new AtomicBoolean(false);
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failReloadNameRegistry.get() && Utf8s.endsWithAscii(name, "tables.d.0")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (failFinishConversion.get() && Utf8s.endsWithAscii(name, CONVERT_FILE_NAME)) {
+                    failReloadNameRegistry.set(true);
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            TableToken tt1;
+            tt1 = createTableWal("tab1");
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            execute("alter table tab1 set type bypass wal");
+            Assert.assertTrue(engine.verifyTableName("tab1").isWal());
+
+            // Simulate engine restart in the middle of conversion
+            engine.releaseInactive();
+            engine.closeNameRegistry();
+            engine.reloadTableNames(null);
+
+            try {
+                engine.load();
+                Assert.fail("expected conversion failure");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
+            }
+
+            // Do full restart
+            failFinishConversion.set(false);
+            failReloadNameRegistry.set(false);
+            simulateEngineRestart();
+
+            // Write a line into the table
+            execute("insert into tab1(a, b, timestamp) values(0, 1, '2022-02-24')");
+
+            assertSql("a\tb\ttimestamp\n" +
+                    "0\t1\t2022-02-24T00:00:00.000000Z\n", "tab1");
+
+            Assert.assertFalse(engine.verifyTableName("tab1").isWal());
         });
     }
 
@@ -534,7 +776,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.reconcileTableNameRegistryState();
 
             TableToken tt2;
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 tt2 = engine.rename(
                         securityContext,
                         Path.getThreadLocal(""),
@@ -567,24 +809,24 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     public void testDropNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
             createTableNonWal("tab1");
-            drop("drop table tab1");
+            execute("drop table tab1");
             createTableNonWal("tab2");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
             try {
-                drop("drop table tab1");
+                execute("drop table tab1");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
             }
-            drop("drop table tab2");
+            execute("drop table tab2");
 
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
             try {
-                drop("drop table tab2");
+                execute("drop table tab2");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
             }
@@ -641,8 +883,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt1 = createTableWal("tab1");
             Assert.assertTrue(engine.isWalTable(tt1));
 
-            ddl("alter table tab1 set type bypass wal");
-            drop("drop table tab1");
+            execute("alter table tab1 set type bypass wal");
+            execute("drop table tab1");
             createTableWal("tab1");
 
             engine.closeNameRegistry();
@@ -658,7 +900,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            execute("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -693,7 +935,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.isWalTable(tt1));
 
             TableToken tt2;
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 tt2 = engine.rename(
                         securityContext,
                         Path.getThreadLocal(""),
@@ -740,7 +982,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt3 = createTable(model);
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 tt2 = engine.rename(
                         securityContext,
                         Path.getThreadLocal(""),
@@ -775,7 +1017,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     private static void createTableNonWal(String tableName) throws SqlException {
-        ddl("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY BYPASS WAL");
+        execute("create table " + tableName + " (x int, ts timestamp) timestamp(ts) Partition by DAY BYPASS WAL");
     }
 
     @NotNull
@@ -798,14 +1040,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         engine.releaseInactive();
         engine.closeNameRegistry();
         engine.reloadTableNames(null);
-
-        final ObjList<TableToken> convertedTables = TableConverter.convertTables(
-                engine,
-                engine.getTableSequencerAPI(),
-                engine.getTableFlagResolver()
-        );
-        engine.closeNameRegistry();
-        engine.reloadTableNames(convertedTables);
+        engine.load();
     }
 
     private static void testConvertedTableListPassedToRegistryOnLoad0(boolean releaseInactiveBeforeConversion) throws Exception {
@@ -825,18 +1060,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             tt3 = createTable(model);
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            ddl("alter table " + tt2.getTableName() + " set type bypass wal");
-            ddl("alter table " + tt3.getTableName() + " set type wal");
+            execute("alter table " + tt2.getTableName() + " set type bypass wal");
+            execute("alter table " + tt3.getTableName() + " set type wal");
             if (releaseInactiveBeforeConversion) {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
-
-            if (!releaseInactiveBeforeConversion) {
-                engine.releaseInactive();
-            }
-            engine.reloadTableNames(convertedTables);
+            engine.load();
 
             engine.reconcileTableNameRegistryState();
             Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
@@ -962,13 +1192,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         switch (step) {
                             case FUZZ_CREATE:
-                                compile("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
+                                execute("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
                                 break;
                             case FUZZ_RENAME:
-                                compile("rename table " + oldTableName + " to " + tableName);
+                                execute("rename table " + oldTableName + " to " + tableName);
                                 break;
                             case FUZZ_DROP:
-                                drop("drop table " + tableName);
+                                execute("drop table " + tableName);
                                 break;
                             case FUZZ_APPLY:
                                 drainWalQueue();

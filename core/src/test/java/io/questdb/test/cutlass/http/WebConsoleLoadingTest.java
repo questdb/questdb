@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -32,15 +36,18 @@ import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.net.HttpURLConnection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_IF_NONE_MATCH;
+import static java.net.HttpURLConnection.*;
 
 public class WebConsoleLoadingTest extends AbstractBootstrapTest {
     private static final String TEST_PAYLOAD = "<html><body><p>Dummy Web Console</p></body></html>";
@@ -58,13 +65,31 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testHttpContextPathExecEndpoint() throws Exception {
+        testHttpContextPathExecEndpoint("");
+        testHttpContextPathExecEndpoint("/");
+        testHttpContextPathExecEndpoint("/context");
+    }
+
+    @Test
     public void testWebConsoleLoadsWhenPgDisabled() throws Exception {
-        testWebConsoleLoads(false);
+        testWebConsoleLoads("", false);
+        testWebConsoleLoads("/", false);
+        testWebConsoleLoads("/context", false);
     }
 
     @Test
     public void testWebConsoleLoadsWhenPgEnabled() throws Exception {
-        testWebConsoleLoads(true);
+        testWebConsoleLoads("", true);
+        testWebConsoleLoads("/", true);
+        testWebConsoleLoads("/context", true);
+    }
+
+    @Test
+    public void testWebConsoleRootRedirects() throws Exception {
+        testWebConsoleRootRedirects("");
+        testWebConsoleRootRedirects("/");
+        testWebConsoleRootRedirects("/context");
     }
 
     private void assertRequest(HttpClient.Request request, int responseCode, String expectedResponse) {
@@ -86,22 +111,50 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         }
     }
 
-    private void assertRequest(HttpClient httpClient, boolean cachedResponse) {
+    private void assertRequest(
+            HttpClient httpClient,
+            String contextPath,
+            String resource,
+            boolean cachedResponse,
+            int expectedResponseCode,
+            String expectedResponse
+    ) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/");
+        request.GET().url(contextPath + resource);
         if (cachedResponse) {
             request.header(HEADER_IF_NONE_MATCH.toString(), "\"" + indexFileLastModified + "\"");
         }
-        assertRequest(request, cachedResponse ? 304 : 200, cachedResponse ? "" : WebConsoleLoadingTest.TEST_PAYLOAD);
+        assertRequest(request, expectedResponseCode, expectedResponse);
     }
 
-    private void testWebConsoleLoads(boolean pgEnabled) throws Exception {
+    private void testHttpContextPathExecEndpoint(String contextPathWebConsole) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPathWebConsole
+            )) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.GET().url(contextPathWebConsole + "/exec").query("query", "select 1");
+                    assertRequest(
+                            request,
+                            HttpURLConnection.HTTP_OK,
+                            "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
+                    );
+                }
+            }
+        });
+    }
+
+    private void testWebConsoleLoads(String contextPath, boolean pgEnabled) throws Exception {
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
                     public Map<String, String> getEnv() {
                         final Map<String, String> env = new HashMap<>(super.getEnv());
                         env.put(PropertyKey.PG_ENABLED.getEnvVarName(), Boolean.toString(pgEnabled));
+                        env.put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
                         return Collections.unmodifiableMap(env);
                     }
 
@@ -118,8 +171,38 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertRequest(httpClient, true);
-                    assertRequest(httpClient, false);
+                    assertRequest(httpClient, contextPath, "/index.html", true, HTTP_NOT_MODIFIED, "");
+                    assertRequest(httpClient, contextPath, "/index.html", false, HTTP_OK, TEST_PAYLOAD);
+                }
+            }
+        });
+    }
+
+    private void testWebConsoleRootRedirects(String contextPath) throws Exception {
+        final Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        final Map<String, String> env = new HashMap<>(super.getEnv());
+                        env.put(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getEnvVarName(), contextPath);
+                        return Collections.unmodifiableMap(env);
+                    }
+
+                    @Override
+                    public boolean useSite() {
+                        return false;
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertRequest(httpClient, contextPath, "", true, HTTP_MOVED_PERM, "");
+                    assertRequest(httpClient, contextPath, "", false, HTTP_MOVED_PERM, "");
                 }
             }
         });

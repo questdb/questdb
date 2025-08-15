@@ -45,7 +45,7 @@ public class IndexBuilder extends RebuildColumnBase {
 
     public IndexBuilder(CairoConfiguration configuration) {
         super(configuration);
-        ddlMem = Vm.getMARInstance(configuration.getCommitMode());
+        ddlMem = Vm.getPMARInstance(configuration);
         indexer = new SymbolColumnIndexer(configuration);
         unsupportedColumnMessage = "Column is not indexed";
     }
@@ -77,13 +77,14 @@ public class IndexBuilder extends RebuildColumnBase {
                 // lets not leave half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
+                        .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
-                        .$(']').$();
+                        .I$();
                 if (!ff.removeQuiet(lpsz)) {
                     LOG.error()
                             .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
-                            .$(']').$();
+                            .I$();
                 }
                 throw e;
             } finally {
@@ -91,7 +92,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 ddlMem.close();
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
-                LOG.error().$("could not create index [name=").$(path).$(']').$();
+                LOG.error().$("could not create index [name=").$(path).I$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
             LOG.info().$("writing ").$(path).$();
@@ -131,7 +132,7 @@ public class IndexBuilder extends RebuildColumnBase {
             int indexValueBlockCapacity
     ) {
         final int trimTo = path.size();
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
             final int plen = path.size();
 
@@ -142,7 +143,6 @@ public class IndexBuilder extends RebuildColumnBase {
 
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
                 if (columnTop > -1L) {
-
                     if (partitionSize > columnTop) {
                         LOG.info().$("indexing [path=").$(path).I$();
                         createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);

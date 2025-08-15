@@ -24,11 +24,16 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -121,11 +126,13 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
      *
      * @param offset position from 0 in virtual memory.
      */
+    @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
     }
 
+    @Override
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
         putLong256(hexString, start, end, long256Acceptor);
     }
@@ -167,29 +174,55 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         extend0(address - pageAddress);
     }
 
-    private void extend0(long size) {
-        if (size == 0 && pageAddress == 0) {
+    private void extend0(final long requiredSize) {
+        if (requiredSize == 0 && pageAddress == 0) {
             return;
         }
 
-        long nPages = size > 0 ? ((size - 1) >>> sizeMsb) + 1 : 1;
-        size = nPages << sizeMsb;
         final long oldSize = size();
+        long newPageCount = getNewPageCount(requiredSize, oldSize);
+        long newSize = newPageCount << sizeMsb;
 
         // sometimes the resize request ends up being the same
         // as existing memory size
-        if (size == oldSize) {
+        if (newSize <= oldSize && requiredSize > 0) {
             return;
         }
 
-        if (nPages > maxPages) {
+        if (newPageCount > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        final long newBaseAddress = reallocateMemory(pageAddress, size(), size);
-        if (oldSize > 0) {
-            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
+
+        long newBaseAddress;
+        try {
+            newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
+                // allocate exact number of pages, without doubling
+                newPageCount = getNewPageCount(requiredSize, 0);
+                newSize = newPageCount << sizeMsb;
+                newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
+            } else {
+                throw e;
+            }
+
         }
-        handleMemoryReallocation(newBaseAddress, size);
+        if (oldSize > 0) {
+            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
+        }
+        handleMemoryReallocation(newBaseAddress, newSize);
+    }
+
+    private long getNewPageCount(long requiredSize, long oldSize) {
+        final long minPageCount = requiredSize > 0 ? ((requiredSize - 1) >>> sizeMsb) + 1 : 1;
+        final long oldPageCount = oldSize > 0 ? ((oldSize - 1) >>> sizeMsb) + 1 : 0;
+
+        // double the page count on each resize to avoid frequent resizes, unless this is
+        // a request to downsize the memory or aggressive resize will throw us over the limit
+        if (minPageCount > oldPageCount) {
+            return Math.max(Math.min(oldPageCount * 2, maxPages / 2), minPageCount);
+        }
+        return minPageCount;
     }
 
     protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
@@ -213,7 +246,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
-            return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+            if (currentSize != newSize) {
+                return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+            } else {
+                return currentBaseAddress;
+            }
         }
         return Unsafe.malloc(newSize, memoryTag);
     }

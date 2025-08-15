@@ -78,7 +78,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertDoubleAsFloat_ReturnsApproximateValue() throws Exception {
-        testInsert("double", "12345.6789", "float", "12345.6784");
+        testInsert("double", "12345.6789", "float", "12345.679");
     }
 
     @Test
@@ -370,7 +370,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertNonZeroDoubleAsFloat_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double", "2.34567", "float", "2.3457");//formatting issue, number is stored properly
+        testInsert("double", "2.34567", "float", "2.34567");//formatting issue, number is stored properly
     }
 
     @Test
@@ -395,7 +395,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertZeroDoubleAsFloat_ReturnsExactValue() throws Exception {
-        testInsert("double", "0.0", "float", "0.0000");
+        testInsert("double", "0.0", "float", "0.0");
     }
 
     //double->int
@@ -524,8 +524,8 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     private void testInsert(String valueType, String value, String targetColumnType, String expectedValue) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(x " + targetColumnType + " );");
-            insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+            execute("create table tab(x " + targetColumnType + " );");
+            execute("insert into tab values (cast(" + value + " as " + valueType + " ));");
 
             String expected = "x\n" + expectedValue + "\n";
 
@@ -540,8 +540,8 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
     private void testInsertCausesException(String valueType, String value, String targetColumnType) throws Exception {
         assertMemoryLeak(() -> {
             try {
-                ddl("create table tab(x " + targetColumnType + " );");
-                insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+                execute("create table tab(x " + targetColumnType + " );");
+                execute("insert into tab values (cast(" + value + " as " + valueType + " ));");
                 Assert.fail("SqlException should be thrown!");
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");

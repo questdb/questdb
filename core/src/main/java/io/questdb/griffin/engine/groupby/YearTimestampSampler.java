@@ -29,9 +29,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampSampler implements TimestampSampler {
-
-    private final int bucket;
-    private long start;
+    private final int stepYears;
     private int startDay;
     private int startHour;
     private int startMicros;
@@ -40,30 +38,36 @@ public class YearTimestampSampler implements TimestampSampler {
     private int startMonth;
     private int startSec;
 
-    public YearTimestampSampler(int bucket) {
-        this.bucket = bucket;
+    public YearTimestampSampler(int stepYears) {
+        this.stepYears = stepYears;
     }
 
     @Override
-    public int bucketIndex(long timestamp) {
-        return (int) (Timestamps.getYearsBetween(round(timestamp), round(start)) / bucket);
+    public long getApproxBucketSize() {
+        return Timestamps.YEAR_MICROS_NONLEAP * stepYears;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addYears(timestamp, bucket);
+        return addYears(timestamp, stepYears);
+    }
+
+    @Override
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return addYears(timestamp, numSteps * stepYears);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return addYears(timestamp, -bucket);
+        return addYears(timestamp, -stepYears);
     }
 
     @Override
     public long round(long value) {
-        final int y = Timestamps.getYear(value);
+        int y = Timestamps.getYear(value);
+        y = y - y % stepYears;
         return Timestamps.toMicros(
-                y - y % bucket,
+                y,
                 Timestamps.isLeapYear(y),
                 startDay,
                 startMonth,
@@ -86,7 +90,6 @@ public class YearTimestampSampler implements TimestampSampler {
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
         this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
-        this.start = timestamp;
     }
 
     @Override
@@ -94,14 +97,14 @@ public class YearTimestampSampler implements TimestampSampler {
         sink.putAscii("YearTsSampler");
     }
 
-    private long addYears(long timestamp, int bucket) {
-        if (bucket == 0) {
+    private long addYears(long timestamp, int numYears) {
+        if (numYears == 0) {
             return timestamp;
         }
         final int y = Timestamps.getYear(timestamp);
-        final boolean leap = Timestamps.isLeapYear(y + bucket);
+        final boolean leap = Timestamps.isLeapYear(y + numYears);
         final int maxDay = Math.min(startDay, Timestamps.getDaysPerMonth(startMonth, leap)) - 1;
-        return Timestamps.yearMicros(y + bucket, leap)
+        return Timestamps.yearMicros(y + numYears, leap)
                 + Timestamps.monthOfYearMicros(startMonth, leap)
                 + maxDay * Timestamps.DAY_MICROS
                 + startHour * Timestamps.HOUR_MICROS

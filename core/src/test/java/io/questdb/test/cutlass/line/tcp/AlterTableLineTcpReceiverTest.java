@@ -133,7 +133,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
                 LOG.info().$("ABOUT TO DROP PARTITIONS").$();
                 try {
-                    engine.ddl("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext, scSequence);
+                    engine.execute("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext, scSequence);
                 } catch (SqlException e) {
                     partitionDropperProblem.set(e);
                 } finally {

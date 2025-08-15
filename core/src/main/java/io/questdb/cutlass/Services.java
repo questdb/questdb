@@ -29,10 +29,16 @@ import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.LineHttpProcessor;
+import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -40,11 +46,14 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -58,10 +67,9 @@ public class Services {
     public HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
-        HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
@@ -72,9 +80,8 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(httpServerConfiguration, metrics, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedWorkerCount(),
-                metrics
+                workerPoolManager.getSharedNetworkPool(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedQueryWorkerCount()
         );
     }
 
@@ -82,11 +89,10 @@ public class Services {
     public HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            int sharedWorkerCount,
-            Metrics metrics
+            WorkerPool networkSharedPool,
+            int sharedQueryWorkerCount
     ) {
-        final HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
@@ -95,23 +101,21 @@ public class Services {
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
-                metrics,
-                workerPool,
+                networkSharedPool,
                 serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 cookieHandler,
                 headerParserFactory
         );
-        HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
 
-        HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessor(
+        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
-                httpServerConfiguration.getHttpContextConfiguration().getRecvBufferSize(),
-                httpServerConfiguration.getHttpContextConfiguration().getSendBufferSize(),
+                httpServerConfiguration.getRecvBufferSize(),
+                httpServerConfiguration.getSendBufferSize(),
                 httpServerConfiguration.getLineHttpProcessorConfiguration()
         );
 
@@ -119,8 +123,7 @@ public class Services {
                 server,
                 serverConfiguration,
                 cairoEngine,
-                workerPool,
-                sharedWorkerCount,
+                sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
         );
@@ -131,8 +134,7 @@ public class Services {
     public LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!config.isEnabled()) {
             return null;
@@ -149,17 +151,15 @@ public class Services {
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool ioPool = workerPoolManager.getInstance(
-                config.getIOWorkerPoolConfiguration(),
-                metrics,
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+                config.getNetworkWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
-        final WorkerPool writerPool = workerPoolManager.getInstance(
+        final WorkerPool writerPool = workerPoolManager.getInstanceWrite(
                 config.getWriterWorkerPoolConfiguration(),
-                metrics,
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
+        return new LineTcpReceiver(config, cairoEngine, networkSharedPool, writerPool);
     }
 
     @Nullable
@@ -174,16 +174,15 @@ public class Services {
 
         // The pool is always the SHARED pool
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
     }
 
     @Nullable
     public HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            HttpServerConfiguration configuration,
+            WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -192,58 +191,62 @@ public class Services {
         // The pool is:
         // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
         // - DEDICATED (1 worker) otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
                 configuration,
-                metrics,
                 Requester.HTTP_MIN_SERVER
         );
-        return createMinHttpServer(configuration, workerPool, metrics);
+        return createMinHttpServer(configuration, networkSharedPool);
     }
 
     @Nullable
-    public HttpServer createMinHttpServer(HttpMinServerConfiguration configuration, WorkerPool workerPool, Metrics metrics) {
+    public HttpServer createMinHttpServer(HttpServerConfiguration configuration, WorkerPool workerPool) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
-        server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return metrics.isEnabled() ? "/status" : "*";
-            }
+        final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
+        server.bind(
+                new HttpRequestHandlerFactory() {
+                    @Override
+                    public ObjList<String> getUrls() {
+                        return configuration.getContextPathStatus();
+                    }
 
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor(configuration);
-            }
-        }, true);
+                    @Override
+                    public HttpRequestHandler newInstance() {
+                        return new HealthCheckProcessor(configuration);
+                    }
+                },
+                true
+        );
+
         if (metrics.isEnabled()) {
             final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
                     configuration.getWorkerCount()
             );
             server.registerClosable(pool);
-            server.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public String getUrl() {
-                    return "/metrics";
-                }
+            server.bind(
+                    new HttpRequestHandlerFactory() {
+                        @Override
+                        public ObjList<String> getUrls() {
+                            return configuration.getContextPathMetrics();
+                        }
 
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics, configuration, pool);
-                }
-            });
+                        @Override
+                        public HttpRequestHandler newInstance() {
+                            return new PrometheusMetricsProcessor(metrics, configuration, pool);
+                        }
+                    }
+            );
         }
         return server;
     }
 
-    @Nullable
-    public PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+    public PGServer createPGWireServer(
+            PGConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -252,24 +255,22 @@ public class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
                 configuration,
-                metrics,
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        PGCircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? PGHexTestsCircuitBreakRegistry.INSTANCE :
+                new DefaultPGCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return new PGWireServer(
+        return new PGServer(
                 configuration,
                 cairoEngine,
-                workerPool,
+                networkSharedPool,
                 registry,
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
-                        workerPool.getWorkerCount(),
-                        workerPoolManager.getSharedWorkerCount()
-                )
-        );
+                        workerPoolManager.getSharedQueryWorkerCount()
+                ));
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -106,8 +107,8 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                     true
             );
 
-            insert("insert into x values(cast(null as STRING), '2021-05-21')");
-            insert("insert into x values(cast(null as STRING), '1970-01-01')");
+            execute("insert into x values(cast(null as STRING), '2021-05-21')");
+            execute("insert into x values(cast(null as STRING), '1970-01-01')");
             assertSql(expected, "select max(s) from x");
         });
     }
@@ -146,7 +147,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            execute("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
             try (
                     final RecordCursorFactory factory = select("select ts, avg(i), max(s) from x sample by 1s fill(linear)");
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -154,7 +155,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MaxStrGroupByFunction", e.getMessage());
+                TestUtils.assertContains(e.getMessage(), "support for LINEAR fill is not yet implemented");
             }
         });
     }

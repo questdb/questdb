@@ -70,7 +70,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public void close(long fd, Log logger) {
         if (close(fd) != 0) {
-            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
+            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).I$();
         }
     }
 
@@ -97,6 +97,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public int connect(long fd, long pSockaddr) {
         return Net.connect(fd, pSockaddr);
+    }
+
+    @Override
+    public int connectAddrInfo(long fd, long pAddrInfo) {
+        return Net.connectAddrInfo(fd, pAddrInfo);
     }
 
     @Override
@@ -140,11 +145,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int connectAddrInfo(long fd, long pAddrInfo) {
-        return Net.connectAddrInfo(fd, pAddrInfo);
-    }
-
-    @Override
     public long getPeerIP(long fd) {
         return Net.getPeerIP(fd);
     }
@@ -165,6 +165,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public void listen(long serverFd, int backlog) {
+        Net.listen(serverFd, backlog);
+    }
+
+    @Override
     public long msgHeaders(int msgBufferSize, int msgCount) {
         return Net.msgHeaders(msgBufferSize, msgCount);
     }
@@ -172,11 +177,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public int parseIPv4(CharSequence ipv4Address) {
         return Net.parseIPv4(ipv4Address);
-    }
-
-    @Override
-    public void listen(long serverFd, int backlog) {
-        Net.listen(serverFd, backlog);
     }
 
     @Override
@@ -250,6 +250,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int shutdown(long fd, int how) {
+        return Net.shutdown(fd, how);
+    }
+
+    @Override
     public long sockaddr(int address, int port) {
         return Net.sockaddr(address, port);
     }
@@ -257,11 +262,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public long sockaddr(CharSequence address, int port) {
         return Net.sockaddr(address, port);
-    }
-
-    @Override
-    public int shutdown(long fd, int how) {
-        return Net.shutdown(fd, how);
     }
 
     @Override

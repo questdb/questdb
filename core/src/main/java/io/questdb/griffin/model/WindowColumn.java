@@ -24,6 +24,13 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadLagWindowFunctionFactoryHelper;
+import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -54,18 +61,18 @@ public final class WindowColumn extends QueryColumn {
     private int exclusionKind = EXCLUDE_NO_OTHERS;
     private int exclusionKindPos;
     private int framingMode = FRAMING_RANGE;//default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+    private boolean ignoreNulls = false;
+    private int nullsDescPos = 0;
     private long rowsHi = Long.MAX_VALUE;
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
     private long rowsHiExprTimeUnit;
-    private int rowsHiExprTimeUnitPos;
     private int rowsHiKind = CURRENT;
     private int rowsHiKindPos = 0;
     private long rowsLo = Long.MIN_VALUE;
     private ExpressionNode rowsLoExpr;
     private int rowsLoExprPos;
     private long rowsLoExprTimeUnit;
-    private int rowsLoExprTimeUnitPos;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
 
@@ -86,11 +93,9 @@ public final class WindowColumn extends QueryColumn {
         rowsLoExpr = null;
         rowsLoExprPos = 0;
         rowsLoExprTimeUnit = 1;
-        rowsLoExprTimeUnitPos = 0;
         rowsHiExpr = null;
         rowsHiExprPos = 0;
         rowsHiExprTimeUnit = 1;
-        rowsHiExprTimeUnitPos = 0;
         rowsLoKind = PRECEDING;
         rowsLoKindPos = 0;
         rowsHiKind = CURRENT;
@@ -100,6 +105,8 @@ public final class WindowColumn extends QueryColumn {
         rowsHi = Long.MAX_VALUE;
         exclusionKind = EXCLUDE_NO_OTHERS;
         exclusionKindPos = 0;
+        ignoreNulls = false;
+        nullsDescPos = 0;
     }
 
     public int getExclusionKind() {
@@ -112,6 +119,10 @@ public final class WindowColumn extends QueryColumn {
 
     public int getFramingMode() {
         return framingMode;
+    }
+
+    public int getNullsDescPos() {
+        return nullsDescPos;
     }
 
     public ObjList<ExpressionNode> getOrderBy() {
@@ -142,10 +153,6 @@ public final class WindowColumn extends QueryColumn {
         return rowsHiExprTimeUnit;
     }
 
-    public int getRowsHiExprTimeUnitPos() {
-        return rowsHiExprTimeUnitPos;
-    }
-
     public int getRowsHiKind() {
         return rowsHiKind;
     }
@@ -170,16 +177,16 @@ public final class WindowColumn extends QueryColumn {
         return rowsLoExprTimeUnit;
     }
 
-    public int getRowsLoExprTimeUnitPos() {
-        return rowsLoExprTimeUnitPos;
-    }
-
     public int getRowsLoKind() {
         return rowsLoKind;
     }
 
     public int getRowsLoKindPos() {
         return rowsLoKindPos;
+    }
+
+    public boolean isIgnoreNulls() {
+        return ignoreNulls;
     }
 
     public boolean isNonDefaultFrame() {
@@ -212,6 +219,14 @@ public final class WindowColumn extends QueryColumn {
         this.framingMode = framingMode;
     }
 
+    public void setIgnoreNulls(boolean ignoreNulls) {
+        this.ignoreNulls = ignoreNulls;
+    }
+
+    public void setNullsDescPos(int nullsDescPos) {
+        this.nullsDescPos = nullsDescPos;
+    }
+
     public void setRowsHi(long rowsHi) {
         this.rowsHi = rowsHi;
     }
@@ -221,17 +236,8 @@ public final class WindowColumn extends QueryColumn {
         this.rowsHiExprPos = rowsHiExprPos;
     }
 
-    public void setRowsHiExprTimeUnit(long unit) {
-        this.rowsHiExprTimeUnit = unit;
-    }
-
-    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit, int rowsHiExprTimeUnitPos) {
+    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit) {
         this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
-        this.rowsHiExprTimeUnitPos = rowsHiExprTimeUnitPos;
-    }
-
-    public void setRowsHiExprTimeUnitPos(int rowsHiExprTimeUnitPos) {
-        this.rowsHiExprTimeUnitPos = rowsHiExprTimeUnitPos;
     }
 
     public void setRowsHiKind(int rowsHiKind, int rowsHiKindPos) {
@@ -248,17 +254,53 @@ public final class WindowColumn extends QueryColumn {
         this.rowsLoExprPos = rowsLoExprPos;
     }
 
-    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit, int rowsLoExprTimeUnitPos) {
+    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit) {
         this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
-        this.rowsLoExprTimeUnitPos = rowsLoExprTimeUnitPos;
-    }
-
-    public void setRowsLoExprTimeUnitPos(int rowsLoExprTimeUnitPos) {
-        this.rowsLoExprTimeUnitPos = rowsLoExprTimeUnitPos;
     }
 
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
+        CharSequence token = getAst().token;
+
+        // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
+        if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) ||
+                Chars.equalsIgnoreCase(token, LastValueDoubleWindowFunctionFactory.NAME)) &&
+                orderBy.size() == 0 && modelOrder.size() == 0) {
+            return true;
+        }
+
+        // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
+        boolean stopOrderBy = framingMode == FRAMING_RANGE && isRangeFrameDependOnSubqueryOrderBy(getAst().token) &&
+                orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
+
+        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
+        if (stopOrderBy) {
+            boolean sameOrder = true;
+            if (modelOrder.size() < orderBy.size()) {
+                sameOrder = false;
+            } else {
+                for (int i = 0, max = orderBy.size(); i < max; i++) {
+                    if (!Chars.equalsIgnoreCase(modelOrder.getQuick(i).token, orderBy.getQuick(i).token) ||
+                            modelOrderDirection.getQuick(i) != orderByDirection.getQuick(i)) {
+                        sameOrder = false;
+                        break;
+                    }
+                }
+            }
+            stopOrderBy = !sameOrder;
+        }
+        return stopOrderBy;
+    }
+
+    private static boolean isRangeFrameDependOnSubqueryOrderBy(CharSequence funName) {
+        return !Chars.equalsIgnoreCase(funName, RowNumberFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, RankFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, DenseRankFunctionFactory.NAME)
+                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LEAD_NAME)
+                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LAG_NAME);
     }
 }

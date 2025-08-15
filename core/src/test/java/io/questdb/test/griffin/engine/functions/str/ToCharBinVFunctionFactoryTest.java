@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class ToCharBinVFunctionFactoryTest extends AbstractFunctionFactoryTest {

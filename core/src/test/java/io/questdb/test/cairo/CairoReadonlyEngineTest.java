@@ -24,7 +24,12 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -108,7 +113,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
                 roEngine.reloadTableNames();
                 try {
-                    roEngine.drop(
+                    roEngine.dropTableOrMatView(
                             Path.getThreadLocal(root),
                             token
                     );
@@ -128,7 +133,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
 
                 roEngine.reloadTableNames();
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     roEngine.rename(
                             AllowAllSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
@@ -195,6 +200,6 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
         table1.timestamp("ts")
                 .col("x", ColumnType.INT)
                 .col("y", ColumnType.STRING);
-        return TestUtils.create(table1, cairoEngine);
+        return TestUtils.createTable(cairoEngine, table1);
     }
 }

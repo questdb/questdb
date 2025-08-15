@@ -25,8 +25,12 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -50,6 +54,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final int initialCapacity;
     private final LPSZ lpsz = new PathLPSZ();
     private final int memoryTag;
     private boolean ascii;
@@ -68,6 +73,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public Path(int capacity, int memoryTag) {
         assert capacity > 0;
         this.capacity = capacity;
+        this.initialCapacity = capacity;
         this.memoryTag = memoryTag;
         headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
         if (PARANOIA_MODE) {
@@ -376,6 +382,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         return this;
     }
 
+    public void resetCapacity() {
+        if (headPtr != 0L) {
+            headPtr = Unsafe.realloc(headPtr, capacity + 1, initialCapacity + 1, MemoryTag.NATIVE_PATH);
+            tailPtr = headPtr;
+            capacity = initialCapacity;
+        }
+    }
+
     public Path seekZ() {
         int count = 0;
         while (count < capacity) {
@@ -464,6 +478,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     protected final void ensureSeparator() {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
+            //noinspection resource
             putByte0((byte) Files.SEPARATOR);
         }
     }

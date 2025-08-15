@@ -24,21 +24,17 @@
 
 package io.questdb.std;
 
-// @formatter:off
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -49,6 +45,7 @@ public final class Numbers {
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
+    public static final long JULIAN_EPOCH_OFFSET_MILLIS = 946684800000L;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NULL = Long.MIN_VALUE;
     public static final int MAX_DOUBLE_SCALE = 19;
@@ -341,11 +338,7 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSink<?> sink, final long value, boolean pad) {
-        if (value == Integer.MIN_VALUE) {
-            sink.putAscii("NaN");
-            return;
-        }
+    public static void appendHex(CharSink<?> sink, long value, boolean pad) {
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
@@ -474,27 +467,42 @@ public final class Numbers {
         }
     }
 
+    public static void appendLong256(Long256 long256, CharSink<?> sink) {
+        appendLong256(
+                long256.getLong0(),
+                long256.getLong1(),
+                long256.getLong2(),
+                long256.getLong3(),
+                sink
+        );
+    }
+
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
         if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;
         }
         sink.putAscii("0x");
-        if (d != 0L) {
+        if (d != 0) {
             appendLong256Four(a, b, c, d, sink);
             return;
         }
-
-        if (c != 0L) {
+        if (c != 0) {
             appendLong256Three(a, b, c, sink);
             return;
         }
-
-        if (b != 0L) {
+        if (b != 0) {
             appendLong256Two(a, b, sink);
             return;
         }
-
         appendHex(sink, a, false);
+    }
+
+    public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
+        final long a = Unsafe.getUnsafe().getLong(address);
+        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
+        appendLong256(a, b, c, d, sink);
     }
 
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {
@@ -576,7 +584,7 @@ public final class Numbers {
     }
 
     public static int compare(float a, float b) {
-        if (equals(a,b)) {
+        if (equals(a, b)) {
             return 0;
         }
 
@@ -709,6 +717,40 @@ public final class Numbers {
         return 32 - Integer.numberOfTrailingZeros(netmask);
     }
 
+    public static int hexDigitNumber(long value) {
+        int mag = 64 - Long.numberOfLeadingZeros(value | 1);
+        int v = (mag + 3) / 4;
+        return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
+    }
+
+    public static int hexDigitsLong256(Long256 long256) {
+        return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
+    }
+
+    public static int hexDigitsLong256(long a, long b, long c, long d) {
+        if (a == LONG_NULL && b == LONG_NULL && c == LONG_NULL && d == LONG_NULL) {
+            return 0;
+        }
+        int digits = 2; // 0x
+        if (d != 0) {
+            digits += hexDigitNumber(d);
+            digits += 48; // a, b, c are padded
+            return digits;
+        }
+        if (c != 0) {
+            digits += hexDigitNumber(c);
+            digits += 32; // a, b are padded
+            return digits;
+        }
+        if (b != 0) {
+            digits += hexDigitNumber(b);
+            digits += 16; // a is padded
+            return digits;
+        }
+        digits += hexDigitNumber(a);
+        return digits;
+    }
+
     public static int hexToDecimal(int c) throws NumericException {
         if (c > 127) {
             throw NumericException.INSTANCE;
@@ -761,6 +803,17 @@ public final class Numbers {
         return value & (-1L >>> 32);
     }
 
+    public static boolean isDecimal(CharSequence value, int start) {
+        int len = value.length();
+        for (int i = start; i < len; i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return len > start;
+    }
+
     public static boolean isFinite(double d) {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
     }
@@ -771,16 +824,17 @@ public final class Numbers {
      * the return value of {@link #isFinite(double)}
      *
      * @param value to check
-     * @return true is value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
+     * @return true if value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
      * infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {
-        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK)==EXP_BIT_MASK;
+        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK) == EXP_BIT_MASK;
     }
 
     public static boolean isNull(float value) {
         return Float.isNaN(value) || Float.isInfinite(value);
     }
+
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
     }
@@ -825,8 +879,23 @@ public final class Numbers {
         return b < '0' || b > '9';
     }
 
+    public static byte parseByte(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        short n = parseShort0(sequence.asAsciiCharSequence(), p, lim);
+        if (n < Byte.MIN_VALUE || n > Byte.MAX_VALUE) {
+            throw NumericException.INSTANCE;
+        }
+        return (byte) n;
+    }
+
     public static double parseDouble(CharSequence sequence) throws NumericException {
         return FastDoubleParser.parseDouble(sequence, true);
+    }
+
+    public static double parseDouble(CharSequence sequence, int offset, int length) throws NumericException {
+        return FastDoubleParser.parseDouble(sequence, offset, length, true);
     }
 
     public static double parseDouble(long str, int len) throws NumericException {
@@ -971,7 +1040,7 @@ public final class Numbers {
             if (sign == '.') {
                 do {
                     lo++;
-                }while(sequence.charAt(lo) == '.');
+                } while (sequence.charAt(lo) == '.');
             } else {
                 throw NumericException.INSTANCE;
             }
@@ -1043,7 +1112,6 @@ public final class Numbers {
     }
 
     public static long parseInt000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -1101,7 +1169,6 @@ public final class Numbers {
     }
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -1373,12 +1440,12 @@ public final class Numbers {
 
     public static long parseLongQuiet(CharSequence sequence) {
         if (sequence == null) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
         try {
             return parseLong0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
     }
 
@@ -1451,11 +1518,323 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static long parseMicros(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        int digitCount = 0;
+        char c;
+        OUT:
+        for (; i < lim; i++) {
+            c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (digitCount == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
+                            // 'ms' at the end of the string
+                            val *= Timestamps.MILLI_MICROS;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Timestamps.MINUTE_MICROS;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.SECOND_MICROS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val /= 1000;
+                    break OUT;
+                case 'h':
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.HOUR_MICROS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 127:
+                    if (digitCount == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCount = 0;
+                    // ignore
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCount++;
+                    break;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseMillis(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        int digitCount = 0;
+        char c;
+        OUT:
+        for (; i < lim; i++) {
+            c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (digitCount == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32) != 's' || i + 2 != lim) {
+                            throw NumericException.INSTANCE;
+                        }
+                        // 'ms' at the end of the string
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Dates.MINUTE_MILLIS;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Dates.SECOND_MILLIS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val /= 1000;
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val /= 1000_000;
+                    break OUT;
+                case 'h':
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Dates.HOUR_MILLIS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 127:
+                    if (digitCount == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCount = 0;
+                    // ignore
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCount++;
+                    break;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseNanos(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        int digitCount = 0;
+        char c;
+        OUT:
+        for (; i < lim; i++) {
+            c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (digitCount == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
+                            // 'ms' at the end of the string
+                            val *= Timestamps.MILLI_MICROS * 1000;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Timestamps.MINUTE_MICROS * 1000;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.SECOND_MICROS * 1000;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val *= 1000;
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'h':
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.HOUR_MICROS * 1000;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 127:
+                    if (digitCount == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCount = 0;
+                    // ignore
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCount++;
+                    break;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
     public static short parseShort(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
         }
         return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static short parseShort(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence.asAsciiCharSequence(), p, lim);
     }
 
     public static short parseShort(CharSequence sequence) throws NumericException {
@@ -1554,6 +1933,10 @@ public final class Numbers {
         ipv4 = ipv4 & checker;
 
         return ipv4;
+    }
+
+    public static int reverseBits(int i) {
+        return i << 24 | i >> 8 & 0xff00 | i << 8 & 0xff0000 | i >>> 24;
     }
 
     public static double roundDown(double value, int scale) throws NumericException {
@@ -1674,6 +2057,42 @@ public final class Numbers {
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
     }
 
+    public static boolean sameSign(long a, long b) {
+        return (a ^ b) >= 0;
+    }
+
+    public static int sinkSizeIPv4(int value) {
+        // NULL handling should be done outside
+        int sz = sinkSizeInt((value >> 24) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt((value >> 16) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt((value >> 8) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt(value & 0xff);
+        return sz;
+    }
+
+    public static int sinkSizeInt(int value) {
+        if (value == Numbers.INT_NULL) {
+            return 4; // "null"
+        }
+
+        int sz = (value < 0) ? 1 : 0;
+        value = Math.abs(value);
+
+        if (value < 10) return sz + 1;
+        if (value < 100) return sz + 2;
+        if (value < 1000) return sz + 3;
+        if (value < 10000) return sz + 4;
+        if (value < 100000) return sz + 5;
+        if (value < 1000000) return sz + 6;
+        if (value < 10000000) return sz + 7;
+        if (value < 100000000) return sz + 8;
+        if (value < 1000000000) return sz + 9;
+        return sz + 10;
+    }
+
     public static long spreadBits(long v) {
         v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
         v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
@@ -1785,8 +2204,6 @@ public final class Numbers {
             decExp = binExp2 + 1;
             firstDigitIndex = digitIndex;
             nDigits = digits.length - digitIndex;
-
-            //
         } else {
             int estDecExp = estimateDecExpDouble(fractionBits, binExp);
             int B5 = Math.max(0, -estDecExp);
@@ -2593,7 +3010,6 @@ public final class Numbers {
     }
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -2609,24 +3025,32 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
+        int digitCounter = 0;
         int val = 0;
         for (; i < lim; i++) {
             char c = sequence.charAt(i);
-            if (c < '0' || c > '9') {
+            if (c == '_') {
+                if (digitCounter == 0) {
+                    throw NumericException.INSTANCE;
+                }
+                digitCounter = 0;
+            } else if (c < '0' || c > '9') {
                 throw NumericException.INSTANCE;
+            } else {
+                // val * 10 + (c - '0')
+                if (val < (Integer.MIN_VALUE / 10)) {
+                    throw NumericException.INSTANCE;
+                }
+                int r = (val << 3) + (val << 1) - (c - '0');
+                if (r > val) {
+                    throw NumericException.INSTANCE;
+                }
+                val = r;
+                digitCounter++;
             }
-            // val * 10 + (c - '0')
-            if (val < (Integer.MIN_VALUE / 10)) {
-                throw NumericException.INSTANCE;
-            }
-            int r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
         }
 
-        if (val == Integer.MIN_VALUE && !negative) {
+        if ((val == Integer.MIN_VALUE && !negative) || digitCounter == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -2648,27 +3072,37 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
+        int digitCounter = 0;
         long val = 0;
         for (; i < lim; i++) {
             int c = sequence.charAt(i);
-            if (c == 'L' || c == 'l') {
-                if (i == 0 || i + 1 < lim) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
+            switch (c | 32) {
+                case 'l':
+                    if (i == 0 || i + 1 < lim) {
+                        throw NumericException.INSTANCE;
+                    }
+                    break;
+                case 127: // '_'
+                    if (digitCounter == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCounter = 0;
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCounter++;
             }
-            if (c < '0' || c > '9') {
-                throw NumericException.INSTANCE;
-            }
-            // val * 10 + (c - '0')
-            long r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
         }
 
-        if (val == Long.MIN_VALUE && !negative) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCounter == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -2823,12 +3257,10 @@ public final class Numbers {
         void append(CharSink<?> sink, long value);
     }
 
-    //#if jdk.version!=8
     static {
         Module currentModule = Numbers.class.getModule();
         Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
     }
-    //#endif
 
     static {
         pow10 = new long[20];

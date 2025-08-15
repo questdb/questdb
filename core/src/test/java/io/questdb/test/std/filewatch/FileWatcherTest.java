@@ -60,10 +60,9 @@ public class FileWatcherTest extends AbstractTest {
             try (
                     final FileWatcher fw = FileWatcherFactory.getFileWatcher(
                             new Utf8String(targetFile.getAbsolutePath()),
-                            new FileChangedCallback(threadLatch)
+                            new TestFileEventCallback(threadLatch)
                     )
             ) {
-
                 fw.start();
                 Os.sleep(500);
                 try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath())) {
@@ -72,7 +71,6 @@ public class FileWatcherTest extends AbstractTest {
                 threadLatch.await();
             }
         });
-
     }
 
     @Test
@@ -81,10 +79,12 @@ public class FileWatcherTest extends AbstractTest {
             final File targetFile = temp.newFile();
             SOCountDownLatch threadLatch = new SOCountDownLatch(1);
 
-            try (final FileWatcher fw = FileWatcherFactory.getFileWatcher(
-                    new Utf8String(targetFile.getAbsolutePath()),
-                    new FileChangedCallback(threadLatch))) {
-
+            try (
+                    final FileWatcher fw = FileWatcherFactory.getFileWatcher(
+                            new Utf8String(targetFile.getAbsolutePath()),
+                            new TestFileEventCallback(threadLatch)
+                    )
+            ) {
                 fw.start();
                 Os.sleep(1000);
                 Assert.assertTrue(targetFile.delete());
@@ -94,7 +94,6 @@ public class FileWatcherTest extends AbstractTest {
                 threadLatch.await();
             }
         });
-
     }
 
     @Test
@@ -108,17 +107,16 @@ public class FileWatcherTest extends AbstractTest {
         ));
     }
 
-    static class FileChangedCallback implements FileEventCallback {
-
+    private static class TestFileEventCallback implements FileEventCallback {
         SOCountDownLatch latch;
 
-        public FileChangedCallback(SOCountDownLatch latch) {
+        public TestFileEventCallback(SOCountDownLatch latch) {
             this.latch = latch;
         }
 
         @Override
         public void onFileEvent() {
-            this.latch.countDown();
+            latch.countDown();
         }
     }
 

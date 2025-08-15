@@ -25,14 +25,22 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
@@ -56,10 +64,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
@@ -85,11 +90,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
-
+        prepareRowCursorFactory();
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
@@ -139,6 +140,11 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(areCursorsPrepared);
+    }
+
+    @Override
     public long size() {
         return entityCursor ? frameCursor.size() : -1;
     }
@@ -149,10 +155,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
@@ -162,18 +165,18 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        long skipToPosition = rowCount.get();
+        long skipTarget = rowCount.get();
         PageFrame pageFrame;
-        while ((pageFrame = frameCursor.next()) != null) {
+        while ((pageFrame = frameCursor.next(skipTarget)) != null) {
             frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
-            if (frameSize > skipToPosition) {
-                rowCount.dec(skipToPosition);
+            if (frameSize > skipTarget) {
+                rowCount.dec(skipTarget);
                 break;
             }
             rowCount.dec(frameSize);
-            skipToPosition -= frameSize;
+            skipTarget -= frameSize;
         }
 
         final int frameIndex = frameCount - 1;
@@ -185,7 +188,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
-            rowCursor.jumpTo(skipToPosition);
+            rowCursor.jumpTo(skipTarget);
         }
     }
 
@@ -199,9 +202,15 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
         super.toTop();
+    }
+
+    private void prepareRowCursorFactory() {
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(frameCursor);
+            areCursorsPrepared = true;
+        }
     }
 }

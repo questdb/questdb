@@ -44,6 +44,6 @@ public class LastBooleanGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastBooleanGroupByFunction(position, args.getQuick(0));
+        return new LastBooleanGroupByFunction(args.getQuick(0));
     }
 }

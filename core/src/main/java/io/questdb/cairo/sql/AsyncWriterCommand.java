@@ -27,7 +27,6 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.tasks.TableWriterTask;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -45,7 +44,6 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     int getTableNamePosition();
 
-    @Nullable
     TableToken getTableToken();
 
     long getTableVersion();

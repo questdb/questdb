@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.groupby;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -37,30 +38,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampSamplerFactoryTest {
-    private static final long[] micros = {1, Timestamps.SECOND_MICROS, Timestamps.MINUTE_MICROS, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS};
     private static final char[] units = {'U', 's', 'm', 'h', 'd'};
-
-    @Test
-    public void testBucketIndex() throws SqlException {
-        final Rnd rand = new Rnd();
-        final StringSink sink = new StringSink();
-        for (int i = 0; i < 1000; i++) {
-            sink.clear();
-            final int unitIndex = rand.nextInt(units.length);
-            final char unit = units[unitIndex];
-            final int amount = rand.nextInt(1000) + 1;
-            sink.put(amount);
-            sink.put(unit);
-            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 0);
-            long startTimestamp = 0;
-            long currentTimestamp = startTimestamp;
-            sampler.setStart(startTimestamp);
-            for (int j = 0; j < 100; j++) {
-                currentTimestamp = sampler.nextTimestamp(currentTimestamp);
-                Assert.assertEquals(j + 1, sampler.bucketIndex(currentTimestamp));
-            }
-        }
-    }
 
     @Test
     public void testFindIntervalEndIndex() throws SqlException {
@@ -70,7 +48,7 @@ public class TimestampSamplerFactoryTest {
         assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
         assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
 
-        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11));
+        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11, "sample"));
     }
 
     @Test
@@ -98,8 +76,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -118,8 +97,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -138,8 +118,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -163,17 +144,17 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testParseInterval() throws SqlException {
-        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0));
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
 
         try {
-            TimestampSamplerFactory.parseInterval("0m", 1, 0);
+            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
         }
 
         try {
-            TimestampSamplerFactory.parseInterval("fm", 1, 0);
+            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
@@ -192,8 +173,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -217,7 +199,7 @@ public class TimestampSamplerFactoryTest {
 
     private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
         try {
-            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position);
+            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position, "sample");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());

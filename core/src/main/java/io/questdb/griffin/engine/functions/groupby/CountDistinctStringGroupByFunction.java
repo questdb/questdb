@@ -38,12 +38,12 @@ import io.questdb.std.ObjList;
 
 public class CountDistinctStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final boolean earlyExit;
     private final int setInitialCapacity;
     private final double setLoadFactor;
     private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
     private int setIndex = 0;
     private int valueIndex;
-    private final boolean earlyExit;
 
     public CountDistinctStringGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
@@ -79,16 +79,6 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public boolean earlyExit(MapValue mapValue) {
-        return earlyExit;
-    }
-
-    @Override
-    public boolean isEarlyExitSupported() {
-        return earlyExit;
-    }
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final CharSequence val = arg.getStrA(record);
@@ -100,6 +90,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
             set.addAt(index, val);
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public boolean earlyExit(MapValue mapValue) {
+        return earlyExit;
     }
 
     @Override
@@ -115,6 +110,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public String getName() {
         return "count_distinct";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override
@@ -137,6 +137,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isEarlyExitSupported() {
+        return earlyExit;
     }
 
     @Override

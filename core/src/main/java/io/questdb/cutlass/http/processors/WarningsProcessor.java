@@ -30,6 +30,8 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -46,7 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.ErrorTag.*;
 
-public class WarningsProcessor implements HttpRequestProcessor {
+public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandler {
     private static final long RECOMMENDED_FILE_LIMIT = 1048576;
     private static final long RECOMMENDED_MAP_COUNT_LIMIT = 1048576;
     private static final String TAG = "tag";
@@ -60,7 +62,7 @@ public class WarningsProcessor implements HttpRequestProcessor {
             sink.putAscii('[');
 
             final FilesFacade ff = configuration.getFilesFacade();
-            final String rootDir = configuration.getRoot();
+            final String rootDir = configuration.getDbRoot();
             try (Path path = new Path()) {
                 final long fsStatus = ff.getFileSystemStatus(path.of(rootDir).$());
                 if (fsStatus >= 0 && !(fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
@@ -130,6 +132,11 @@ public class WarningsProcessor implements HttpRequestProcessor {
             }
             sinkRef.set(sink);
         }
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

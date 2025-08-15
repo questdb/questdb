@@ -31,12 +31,24 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.OperatorExpression;
+import io.questdb.griffin.OperatorRegistry;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -158,7 +170,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         if (argTypeFromSig) {
             final char typeChar = signature.charAt(signatureTypeOffset + i + 1);
             constantArg = Character.isLowerCase(typeChar);
-            argType = FunctionFactoryDescriptor.getArgType(typeChar);
+            argType = FunctionFactoryDescriptor.getArgTypeTag(typeChar);
         } else {
             constantArg = constVarArg;
             argType = getArgType(arg);
@@ -230,7 +242,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 }
                 break;
             case ColumnType.FLOAT:
-                sink.put((Float) value, 5).put("f");
+                sink.put((Float) value).put("f");
                 break;
             case ColumnType.LONG:
                 sink.put((Long) value);

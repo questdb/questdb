@@ -24,7 +24,15 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -32,7 +40,13 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -59,10 +73,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final LongList columnValues = new LongList();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
     private final CairoConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final short defaultFloatColumnType;
     private final short defaultIntegerColumnType;
-    private final boolean useLegacyStringDefault;
     private final CairoEngine engine;
     private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -70,6 +83,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final LineTimestampAdapter timestampAdapter;
     private final LineUdpReceiverConfiguration udpConfiguration;
+    private final boolean useLegacyStringDefault;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     // state
     // cache entry index is always a negative value
@@ -234,7 +248,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
-            LOG.info().$("cached writer [name=").$(tableName).$(']').$();
+            LOG.info().$("cached writer [name=").$safe(tableName).$(']').$();
         } catch (CairoException ex) {
             LOG.error().$((Sinkable) ex).$();
             switchModeToSkipLine();
@@ -256,7 +270,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             try {
                 return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));
             } catch (NumericException e) {
-                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
+                LOG.error().$("invalid timestamp: ").$safe(cache.get(columnValues.getQuick(valueCount - 1))).$();
                 return null;
             }
         }
@@ -287,6 +301,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
+                        if (tableToken != null && tableToken.isMatView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify materialized view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
+                        }
                         entry.state = 1;
                         cacheWriter(entry, token, tableToken);
                         break;
@@ -337,7 +357,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void parseFieldNameNewTable(CachedCharSequence token) {
         if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
-            LOG.error().$("invalid column name [columnName=").$(token).I$();
+            LOG.error().$("invalid column name [columnName=").$safe(token).I$();
             switchModeToSkipLine();
             return;
         }
@@ -437,8 +457,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
-                LOG.error().$("mismatched column and value types [table=").utf8(writer.getTableToken().getTableName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                LOG.error().$("mismatched column and value types [table=").$safe(writer.getTableToken().getTableName())
+                        .$(", column=").$safe(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();
@@ -459,8 +479,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         .put(", columnName=").put(colNameAsChars)
                         .put(']');
             } else {
-                LOG.error().$("invalid column name [table=").utf8(writer.getTableToken().getTableName())
-                        .$(", columnName=").$(colNameAsChars)
+                LOG.error().$("invalid column name [table=").$safe(writer.getTableToken().getTableName())
+                        .$(", columnName=").$safe(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
             }
@@ -627,11 +647,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         @Override
         public boolean isIndexed(int columnIndex) {
-            return false;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
             return false;
         }
 

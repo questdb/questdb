@@ -40,12 +40,35 @@ import org.junit.Assert;
 import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
-    private final HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+    private final HttpClient httpClient;
     private final Utf8StringSink sink = new Utf8StringSink();
     private boolean keepConnection;
 
+    public TestHttpClient() {
+        httpClient = HttpClientFactory.newPlainTextInstance();
+    }
+
+    public TestHttpClient(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
+
     public void assertGet(CharSequence expectedResponse, CharSequence sql) {
-        assertGet(expectedResponse, sql, null, null);
+        assertGet(expectedResponse, sql, "localhost", 9001, null, null);
+    }
+
+    public void assertGet(CharSequence expectedResponse, CharSequence sql, String host, int port) {
+        assertGet(expectedResponse, sql, host, port, null, null);
+    }
+
+    public void assertGet(String host, int port, CharSequence expectedResponse, CharSequence sql, CharSequenceObjHashMap<String> queryParams) {
+        try {
+            toSink0(host, port, "/query", sql, sink, null, null, null, queryParams, null);
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
     }
 
     public void assertGet(CharSequence expectedResponse, CharSequence sql, CharSequenceObjHashMap<String> queryParams) {
@@ -62,10 +85,12 @@ public class TestHttpClient implements QuietCloseable {
     public void assertGet(
             CharSequence expectedResponse,
             CharSequence sql,
+            String host,
+            int port,
             @Nullable CharSequence username,
             @Nullable CharSequence password
     ) {
-        assertGet("/query", expectedResponse, sql, username, password);
+        assertGet("/query", expectedResponse, sql, host, port, username, password, null);
     }
 
     public void assertGet(
@@ -135,6 +160,46 @@ public class TestHttpClient implements QuietCloseable {
         try {
             toSink0(url, sql, sink, username, password, token, null, null);
             TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            String host,
+            int port,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            toSink0(host, port, url, sql, sink, username, password, token, null, null);
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            String host,
+            int port,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            toSink0(host, port, url, sql, sink, username, password, token, null, null);
+            TestUtils.assertContains(sink.asAsciiCharSequence(), expectedResponse);
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -220,7 +285,7 @@ public class TestHttpClient implements QuietCloseable {
             } else if (token != null) {
                 req.authToken(username, token);
             } else {
-                throw new RuntimeException("username specified without pwd or tooken");
+                throw new RuntimeException("username specified without pwd or token");
             }
         }
 
@@ -250,9 +315,34 @@ public class TestHttpClient implements QuietCloseable {
             CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
-        HttpClient.Request req = httpClient.newRequest("localhost", 9001);
-        req.GET().url(url).query("query", sql);
+        toSink0(
+                "localhost",
+                9001,
+                url,
+                sql,
+                sink,
+                username,
+                password,
+                token,
+                queryParams,
+                expectedStatus
+        );
+    }
 
+    private void toSink0(
+            String host,
+            int port,
+            CharSequence url,
+            CharSequence sql,
+            Utf8StringSink sink,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token,
+            CharSequenceObjHashMap<String> queryParams,
+            CharSequence expectedStatus
+    ) {
+        HttpClient.Request req = httpClient.newRequest(host, port);
+        req.GET().url(url).query("query", sql);
         reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
     }
 }

@@ -21,9 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::allocator::QdbAllocator;
+use crate::parquet::error::{ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, Partition};
-use anyhow::Context;
 use parquet2::compression::CompressionOptions;
 use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::read::read_metadata_with_size;
@@ -33,6 +34,7 @@ use std::fs::File;
 
 #[repr(C)]
 pub struct ParquetUpdater {
+    allocator: QdbAllocator,
     parquet_file: ParquetFile<File>,
     compression_options: CompressionOptions,
     row_group_size: Option<usize>,
@@ -40,7 +42,9 @@ pub struct ParquetUpdater {
 }
 
 impl ParquetUpdater {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        allocator: QdbAllocator,
         mut reader: File,
         file_size: u64,
         sorting_columns: Option<Vec<SortingColumn>>,
@@ -48,7 +52,7 @@ impl ParquetUpdater {
         compression_options: CompressionOptions,
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
-    ) -> anyhow::Result<Self> {
+    ) -> ParquetResult<Self> {
         fn from(value: i32) -> Version {
             match value {
                 1 => Version::V1,
@@ -73,6 +77,7 @@ impl ParquetUpdater {
         );
 
         Ok(ParquetUpdater {
+            allocator,
             parquet_file,
             compression_options,
             row_group_size,
@@ -84,7 +89,7 @@ impl ParquetUpdater {
         &mut self,
         partition: &Partition,
         row_group_id: i16,
-    ) -> anyhow::Result<()> {
+    ) -> ParquetResult<()> {
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -98,10 +103,10 @@ impl ParquetUpdater {
 
         self.parquet_file
             .replace(row_group, Some(row_group_id))
-            .context(format!("Failed to replace row group {}", row_group_id))
+            .with_context(|_| format!("Failed to replace row group {}", row_group_id))
     }
 
-    pub fn append_row_group(&mut self, partition: &Partition) -> anyhow::Result<()> {
+    pub fn append_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -118,10 +123,13 @@ impl ParquetUpdater {
             .context("Failed to append row group")
     }
 
-    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> anyhow::Result<u64> {
-        self.parquet_file
-            .end(key_value_metadata)
-            .context("Failed to update parquet file")
+    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
+        self.parquet_file.end(key_value_metadata).map_err(|s| {
+            ParquetError::with_descr(
+                ParquetErrorReason::Parquet2(s),
+                "could not update parquet file",
+            )
+        })
     }
 
     fn row_group_options(&self) -> WriteOptions {
@@ -137,6 +145,7 @@ impl ParquetUpdater {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::tests::ColumnTypeTagExt;
     use bytes::Bytes;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
@@ -149,14 +158,13 @@ mod tests {
     use std::ptr::null;
 
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
-    use crate::parquet_write::schema::{
-        to_encodings, to_parquet_schema, Column, ColumnType, Partition,
-    };
+    use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
     use parquet2::read::read_metadata_with_size;
     use parquet2::write;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {
@@ -170,7 +178,7 @@ mod tests {
         Column::from_raw_data(
             0,
             name,
-            col_type as i32,
+            col_type.code(),
             0,
             values.len(),
             values.as_ptr() as *const u8,
@@ -191,8 +199,8 @@ mod tests {
         let col2 = [0.5f32, 0.001, f32::nan(), 3.15];
         let _expected2 = [Some(0.5f32), Some(0.001), None, Some(3.15)];
 
-        let col1_w = make_column("col1", ColumnType::Int, &col1);
-        let col2_w = make_column("col2", ColumnType::Float, &col2);
+        let col1_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1);
+        let col2_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2);
 
         let partition = Partition {
             table: "test_table".to_string(),
@@ -208,8 +216,8 @@ mod tests {
         let col2_extra = [f32::nan(), 3.13, std::f32::consts::PI];
         let extra_expected2 = [None, Some(3.13), Some(std::f32::consts::PI)];
 
-        let col1_extra_w = make_column("col1", ColumnType::Int, &col1_extra);
-        let col2_extra_w = make_column("col2", ColumnType::Float, &col2_extra);
+        let col1_extra_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_extra);
+        let col2_extra_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_extra);
 
         let new_partition = Partition {
             table: "test_table".to_string(),

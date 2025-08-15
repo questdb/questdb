@@ -28,17 +28,19 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropColumnOperation implements FuzzTransactionOperation {
     private final String columnName;
 
-    public FuzzDropColumnOperation(String columnName) {
-        this.columnName = columnName;
+    public FuzzDropColumnOperation(Rnd rnd, String columnName) {
+        this.columnName = TestUtils.randomiseCase(rnd, columnName);
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
         AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
                 0,
                 wApi.getTableToken(),

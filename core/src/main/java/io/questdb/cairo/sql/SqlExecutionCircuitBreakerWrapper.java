@@ -31,7 +31,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // This wrapper itself does not provide thread-safety, and that is ok because worker threads own the
@@ -62,9 +61,14 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;
+    }
+
+    @Override
+    public AtomicBoolean getCancelledFlag() {
+        return delegate.getCancelledFlag();
     }
 
     @Override
@@ -101,20 +105,21 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         init(wrapper.delegate);
     }
 
-    @Override
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadsafe()) {
+        if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
-            networkSqlExecutionCircuitBreaker.init(executionContextCircuitBreaker);
+            networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
+            networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
             networkSqlExecutionCircuitBreaker.resetTimer();
+            networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
             delegate = networkSqlExecutionCircuitBreaker;
         }
     }
 
     @Override
-    public boolean isThreadsafe() {
-        return delegate.isThreadsafe();
+    public boolean isThreadSafe() {
+        return delegate.isThreadSafe();
     }
 
     @Override

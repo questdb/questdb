@@ -33,12 +33,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 // paged mapped appendable readable 
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
-    private final int commitMode;
+    private final CairoConfiguration configuration;
     private long fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
@@ -46,13 +47,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private long pageAddress = 0;
 
     @TestOnly
-    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
-        this(CommitMode.NOSYNC);
+    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, int opts) {
+        this(null);
         of(ff, name, pageSize, 0, memoryTag, opts, -1);
     }
 
-    public MemoryPMARImpl(int commitMode) {
-        this.commitMode = commitMode;
+    public MemoryPMARImpl(@Nullable CairoConfiguration configuration) {
+        this.configuration = configuration;
     }
 
     public final void close(boolean truncate, byte truncateMode) {
@@ -107,17 +108,17 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, 0, memoryTag, opts, -1);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, memoryTag, opts);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         close();
         this.memoryTag = memoryTag;
         this.madviseOpts = madviseOpts;
@@ -138,11 +139,12 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public void sync(boolean async) {
-        if (pageAddress != 0 && commitMode != CommitMode.NOSYNC) {
-            ff.msync(pageAddress, getPageSize(), commitMode == CommitMode.ASYNC);
+        if (pageAddress != 0) {
+            ff.msync(pageAddress, getPageSize(), async);
         }
     }
 
+    @Override
     public void truncate() {
         if (fd == -1) {
             // are we closed ?
@@ -169,6 +171,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
+        int commitMode = configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC;
         if (commitMode != CommitMode.NOSYNC) {
             ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
         }

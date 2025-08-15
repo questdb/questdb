@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.PartitionBy;
@@ -86,8 +87,8 @@ public class AggregateTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -249,7 +250,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
@@ -265,13 +266,13 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithIndexedSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE records (\n" +
+            execute("CREATE TABLE records (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  account_uuid SYMBOL INDEX,\n" +
                     "  requests LONG\n" +
                     ") timestamp (ts)");
 
-            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
+            execute("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
 
             String query = "select account_uuid, sum(requests) request_count " +
                     "from records " +
@@ -311,13 +312,13 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithSymbolKey1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE records (\n" +
+            execute("CREATE TABLE records (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  account_uuid SYMBOL,\n" +
                     "  requests LONG\n" +
                     ") timestamp (ts)");
 
-            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
+            execute("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
 
             String query = "select account_uuid, sum(requests) request_count " +
                     "from records " +
@@ -358,14 +359,14 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithSymbolKey2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE records (\n" +
+            execute("CREATE TABLE records (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  org_uuid SYMBOL,\n" +
                     "  account_uuid SYMBOL,\n" +
                     "  price DOUBLE\n" +
                     ") timestamp (ts)");
 
-            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 'o' || x/100, 's' || x/100, x/100 from long_sequence(399)");
+            execute("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 'o' || x/100, 's' || x/100, x/100 from long_sequence(399)");
 
             String query = "select org_uuid, account_uuid, sum(price) total_price " +
                     "from records " +
@@ -449,9 +450,9 @@ public class AggregateTest extends AbstractCairoTest {
             final String expected = "hour\tcount\n" +
                     "0\t122\n";
 
-            ddl("create table x as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(100))");
-            ddl("create table y as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(200))");
-            ddl("create table z as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(300))");
+            execute("create table x as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(100))");
+            execute("create table y as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(200))");
+            execute("create table z as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(300))");
 
             assertQuery(
                     expected,
@@ -467,7 +468,8 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testHourFilteredUnion() throws Exception {
-        assertQuery("hour\tcount\n" +
+        assertQuery(
+                "hour\tcount\n" +
                         "0\t7\n" +
                         "1\t2\n" +
                         "2\t4\n" +
@@ -579,10 +581,10 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddBothMidTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column s2 symbol");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select null, rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column s2 symbol");
+            execute("alter table tab add column val double");
+            execute("insert into tab select null, rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             assertSql(
                     "s2\tsum\n" +
@@ -598,9 +600,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddKeyMidTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val from long_sequence(1000000))");
-            ddl("alter table tab add column s2 symbol cache");
-            ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val from long_sequence(1000000))");
+            execute("alter table tab add column s2 symbol cache");
+            execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             try (RecordCursorFactory factory = select("select s2, sum(val) from tab order by s2")) {
                 Record[] expected = new Record[]{
@@ -657,9 +659,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableAvgDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val double");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             String expected = "s1\tavg\n" +
                     "\t0.5004990367891637\n" +
@@ -676,9 +678,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableAvgInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val int");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(0, 100000, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val int");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(0, 100000, 2) from long_sequence(1000000)");
             String expected = "s1\tavg\n" +
                     "\t49985.893055775494\n" +
                     "a1\t50088.55552935175\n" +
@@ -695,9 +697,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableAvgLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val long");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val long");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
 
             String expected = "s1\tavg\n" +
                     "\t49882.75926752372\n" +
@@ -714,9 +716,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableCount() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val long");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val long");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
             String expected = "s1\tcount\n" +
                     "\t500194\n" +
                     "a1\t248976\n" +
@@ -733,9 +735,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableKSumDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val double");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tksum\n" +
                     "\t104084.0\n" +
                     "a1\t103983.0\n" +
@@ -752,9 +754,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMaxDate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val date");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val date");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
                     "\t1970-01-01T00:14:49.988Z\n" +
@@ -771,9 +773,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMaxDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val double");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tmax\n" +
                     "\t0.9999983440839832\n" +
                     "a1\t0.9999894690287568\n" +
@@ -790,9 +792,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMaxInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val int");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val int");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
                     "\t889990\n" +
@@ -810,9 +812,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMaxLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val long");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val long");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
                     "\t889988\n" +
@@ -830,9 +832,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMaxTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val timestamp");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val timestamp");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmax\n" +
                     "\t1970-01-01T00:00:00.889988Z\n" +
@@ -849,9 +851,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMinDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val double");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             String expected = "s1\tmin\n" +
                     "\t3.2007200990724627E-6\n" +
@@ -869,9 +871,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMinInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val int");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val int");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(33, 889992, 2) from long_sequence(1000000)");
             String expected = "s1\tmin\n" +
                     "\t33\n" +
                     "a1\t33\n" +
@@ -888,9 +890,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableMinLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val long");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val long");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)");
 
             String expected = "s1\tmin\n" +
                     "\t36\n" +
@@ -908,9 +910,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableNSumDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val double");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tnsum\n" +
                     "\t104083.77969067496\n" +
                     "a1\t103982.62399952546\n" +
@@ -928,9 +930,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableSumDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val double");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val double");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
 
             String expected = "s1\tsum\n" +
                     "\t104083.77969067449\n" +
@@ -947,9 +949,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableSumInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val int");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(-100, 100, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val int");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_int(-100, 100, 2) from long_sequence(1000000)");
 
             String expected = "s1\tsum\n" +
                     "\t-2472\n" +
@@ -967,9 +969,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolAddValueMidTableSumLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val long");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(0, 100000, 2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
+            execute("alter table tab add column val long");
+            execute("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(0, 100000, 2) from long_sequence(1000000)");
 
             assertSql(
                     "s1\tsum\n" +
@@ -1006,9 +1008,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolSumAddKeyPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            ddl("alter table tab add column s2 symbol cache");
-            ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
+            execute("alter table tab add column s2 symbol cache");
+            execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             String expected = "s2\tsum\n" +
                     "\t520447.6629969\n" +
@@ -1024,9 +1026,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolSumAddKeyTimeRange() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            ddl("alter table tab add column s2 symbol cache");
-            ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
+            execute("alter table tab add column s2 symbol cache");
+            execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             // test with key falling within null columns
             try (RecordCursorFactory factory = select("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2")) {
@@ -1102,9 +1104,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolSumAddValueTimeRange() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            ddl("alter table tab add column val double ");
-            ddl("insert into tab select rnd_symbol('s1','s2','s3', null), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_double(2) from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
+            execute("alter table tab add column val double ");
+            execute("insert into tab select rnd_symbol('s1','s2','s3', null), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_double(2) from long_sequence(1000000)");
 
             // test with key falling within null columns
             assertSql(
@@ -1130,9 +1132,9 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolSumTimeRange() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
-            ddl("alter table tab add column s2 symbol cache");
-            ddl("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY");
+            execute("alter table tab add column s2 symbol cache");
+            execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             // test with key falling within null columns
             try (RecordCursorFactory factory = select("select s2, sum(val) from tab order by s2")) {
@@ -1200,7 +1202,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
@@ -1224,7 +1226,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
@@ -1243,7 +1245,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
@@ -1278,11 +1280,13 @@ public class AggregateTest extends AbstractCairoTest {
             }
         };
 
-        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            engine.ddl("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(100000))", sqlExecutionContext);
-            String query = "select i, sum(d) from tab group by i";
-            assertRostiMemory(engine, query, sqlExecutionContext);
-        });
+        executeWithPool(
+                4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    engine.execute("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(100000))", sqlExecutionContext);
+                    String query = "select i, sum(d) from tab group by i";
+                    assertRostiMemory(engine, query, sqlExecutionContext);
+                }
+        );
     }
 
     @Test
@@ -1300,25 +1304,28 @@ public class AggregateTest extends AbstractCairoTest {
             }
         };
 
-        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
-            long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
-            try {
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "",
-                        "select i, sum(d) from tab group by i",
-                        null,
-                        true,
-                        sqlExecutionContext,
-                        true
-                );
-                Assert.fail();
-            } catch (OutOfMemoryError oome) {
-                long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
-                Assert.assertEquals(memBefore, memAfter);
-            }
-        });
+        executeWithPool(
+                4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    engine.execute("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
+                    long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+                    try {
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                "",
+                                "select i, sum(d) from tab group by i",
+                                null,
+                                true,
+                                sqlExecutionContext,
+                                true
+                        );
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+                        Assert.assertEquals(memBefore, memAfter);
+                    }
+                }
+        );
     }
 
     // Test triggers OOM during merge.
@@ -1375,12 +1382,14 @@ public class AggregateTest extends AbstractCairoTest {
             }
         };
 
-        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            engine.ddl("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(2000))", sqlExecutionContext);
-            String query = "select i, sum(l) from tab group by i";
+        executeWithPool(
+                WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    engine.execute("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(2000))", sqlExecutionContext);
+                    String query = "select i, sum(l) from tab group by i";
 
-            assertRostiMemory(engine, query, sqlExecutionContext);
-        });
+                    assertRostiMemory(engine, query, sqlExecutionContext);
+                }
+        );
     }
 
     // triggers OOM in wrapUp() with multiple workers
@@ -1412,44 +1421,45 @@ public class AggregateTest extends AbstractCairoTest {
             }
         };
 
-        executeWithPool(WORKER_COUNT, 64, raf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            engine.ddl(
-                    "create table tab as " +
-                            "(select rnd_double() d, x, " +
-                            "rnd_int() i, " +
-                            "rnd_long() l, " +
-                            "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
-                            "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp " +
-                            "from long_sequence(100))",
-                    sqlExecutionContext
-            );
-            engine.ddl("alter table tab add column s symbol cache", sqlExecutionContext);
-            engine.insert(
-                    "insert into tab select rnd_double(), " +
-                            "x + 1000,   " +
-                            "rnd_int() i, " +
-                            "rnd_long() l, " +
-                            "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
-                            "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp, " +
-                            "cast('s' || x as symbol)  from long_sequence(896)",
-                    sqlExecutionContext
-            );
+        executeWithPool(
+                WORKER_COUNT, 64, raf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    engine.execute(
+                            "create table tab as " +
+                                    "(select rnd_double() d, x, " +
+                                    "rnd_int() i, " +
+                                    "rnd_long() l, " +
+                                    "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
+                                    "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp " +
+                                    "from long_sequence(100))",
+                            sqlExecutionContext
+                    );
+                    engine.execute("alter table tab add column s symbol cache", sqlExecutionContext);
+                    engine.execute(
+                            "insert into tab select rnd_double(), " +
+                                    "x + 1000,   " +
+                                    "rnd_int() i, " +
+                                    "rnd_long() l, " +
+                                    "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
+                                    "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp, " +
+                                    "cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext
+                    );
 
-            final String[] functions = {
-                    "sum(d)", "min(d)", "max(d)", "avg(d)", "nsum(d)", "ksum(d)",
-                    "min(tstmp)", "max(tstmp)",
-                    "sum(l)", "min(l)", "max(l)", "avg(l)",
-                    "sum(i)", "min(i)", "min(i)", "avg(i)",
-                    "min(dat)", "max(dat)"
-            };
+                    final String[] functions = {
+                            "sum(d)", "min(d)", "max(d)", "avg(d)", "nsum(d)", "ksum(d)",
+                            "min(tstmp)", "max(tstmp)",
+                            "sum(l)", "min(l)", "max(l)", "avg(l)",
+                            "sum(i)", "min(i)", "min(i)", "avg(i)",
+                            "min(dat)", "max(dat)"
+                    };
 
-            for (String function : functions) {
-                String query = "select s, " + function + " from tab group by s";
-                LOG.infoW().$(function).$();
-                assertRostiMemory(engine, query, sqlExecutionContext);
-                sizeCounter.set(0);
-            }
-        });
+                    for (String function : functions) {
+                        String query = "select s, " + function + " from tab group by s";
+                        LOG.infoW().$(function).$();
+                        assertRostiMemory(engine, query, sqlExecutionContext);
+                        sizeCounter.set(0);
+                    }
+                }
+        );
     }
 
     @Test
@@ -1475,12 +1485,14 @@ public class AggregateTest extends AbstractCairoTest {
             }
         };
 
-        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            engine.ddl("create table tab as (select rnd_double() d, x from long_sequence(100))", sqlExecutionContext);
-            engine.ddl("alter table tab add column s symbol cache", sqlExecutionContext);
-            engine.insert("insert into tab select rnd_double(), x + 1000, cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
-            assertRostiMemory(engine, "select s, sum(d) from tab group by s", sqlExecutionContext);
-        });
+        executeWithPool(
+                WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    engine.execute("create table tab as (select rnd_double() d, x from long_sequence(100))", sqlExecutionContext);
+                    engine.execute("alter table tab add column s symbol cache", sqlExecutionContext);
+                    engine.execute("insert into tab select rnd_double(), x + 1000, cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
+                    assertRostiMemory(engine, "select s, sum(d) from tab group by s", sqlExecutionContext);
+                }
+        );
     }
 
     @Test
@@ -1502,7 +1514,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "count\tcount1\n1\t1\n",
                     sql,
                     ddl,
-                    null, true, false
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -1611,7 +1625,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.SHORT, "0:LONG", "1:LONG"),
                 new TypeVal(ColumnType.INT, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.LONG256, ":LONG256", "0x01000000000000000100000000000000010000000000000001:LONG256")
         };
@@ -1625,7 +1639,7 @@ public class AggregateTest extends AbstractCairoTest {
         long count = 1000000L;
         long increment = count / 10;
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY");
+            execute("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY");
 
             for (long ts = 0; ts < count; ts += increment) {
                 String value = String.valueOf((ts - 1) * 0.5);
@@ -1644,10 +1658,10 @@ public class AggregateTest extends AbstractCairoTest {
         final long increment = count / 10;
         assertMemoryLeak(() -> {
             String createSql = "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY";
-            ddl(createSql);
-            ddl("alter table tab add val2 DOUBLE");
+            execute(createSql);
+            execute("alter table tab add val2 DOUBLE");
             String insetSql = "insert into tab select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(" + count * step + ", " + step + ") t, 1 val2 from long_sequence(" + count + ")";
-            insert(insetSql);
+            execute(insetSql);
 
             // Move upper timestamp boundary
             // [step, ts * step)
@@ -1681,13 +1695,12 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runCountTestWithColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
-        ddl(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        insert(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
-        ddl(compiler, "alter table x add column k int", sqlExecutionContext);
-        insert(compiler, "insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
-        ddl(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
-        insert(
-                compiler,
+        engine.execute("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        engine.execute("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        engine.execute("alter table x add column k int", sqlExecutionContext);
+        engine.execute("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        engine.execute(
                 "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
                         " ((2+3*3600L*1000000)::timestamp,2, 8,8, 8.0, cast(8 as date), 8::timestamp)," +
                         " ((1+4*3600L*1000000)::timestamp,3, null,null, null, null, null)," +
@@ -1759,12 +1772,12 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
-        ddl(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        insert(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
-        ddl(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
-        insert(compiler, "insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
-        ddl(compiler, "alter table x add column k int", sqlExecutionContext);
-        insert(compiler, "insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
+        engine.execute("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        engine.execute("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        engine.execute("insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
+        engine.execute("alter table x add column k int", sqlExecutionContext);
+        engine.execute("insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
 
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile(
@@ -1785,7 +1798,8 @@ public class AggregateTest extends AbstractCairoTest {
                     true,
                     true,
                     false,
-                    sqlExecutionContext);
+                    sqlExecutionContext
+            );
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1823,7 +1837,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile(
+        engine.execute(
                 "create table tab as " +
                         "( select cast(x as int) i, " +
                         "x as l, " +
@@ -1862,7 +1876,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
+        engine.execute("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
 
@@ -1881,7 +1895,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile(
+        engine.execute(
                 "create table tab as " +
                         "( select cast(x as int) i, " +
                         "x as l, " +
@@ -1963,7 +1977,8 @@ public class AggregateTest extends AbstractCairoTest {
                     cursor.hasNext();
                 }
                 Assert.fail("Cursor should throw OOM for " + query + " !");
-            } catch (OutOfMemoryError oome) {
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
                 long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
                 // rostis are minimized on OOM
                 Assert.assertTrue(memAfter < memBefore + 10 * 1024);
@@ -1982,18 +1997,6 @@ public class AggregateTest extends AbstractCairoTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public long getSleepTimeout() {
-                        return 1;
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount - 1;
-                    }
-                });
-
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public @NotNull RostiAllocFacade getRostiAllocFacade() {
@@ -2011,6 +2014,18 @@ public class AggregateTest extends AbstractCairoTest {
                     }
                 };
 
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public long getSleepTimeout() {
+                        return 1;
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount - 1;
+                    }
+                });
+
                 execute(pool, runnable, configuration1);
             } else {
                 final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root);
@@ -2022,7 +2037,8 @@ public class AggregateTest extends AbstractCairoTest {
     private void executeWithPool(
             int workerCount,
             int queueSize,
-            CustomisableRunnable runnable) throws Exception {
+            CustomisableRunnable runnable
+    ) throws Exception {
         executeWithPool(workerCount, queueSize, RostiAllocFacadeImpl.INSTANCE, runnable);
     }
 

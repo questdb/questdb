@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -43,21 +42,21 @@ public class CreateTableTestUtils {
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy);
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy);
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp();
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }
@@ -87,8 +86,7 @@ public class CreateTableTestUtils {
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID)
                     .col("n", ColumnType.VARCHAR);
-            TestUtils.create(model, engine);
-
+            TestUtils.createTable(engine, model);
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
                 try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
@@ -97,10 +95,6 @@ public class CreateTableTestUtils {
             } else {
                 throw e;
             }
-        }
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable("x");
         }
 
         Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -228,10 +222,14 @@ public class CreateTableTestUtils {
                 .col("ipv4", ColumnType.IPv4)
                 .col("varchar", ColumnType.VARCHAR)
                 .timestamp();
-
     }
 
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        return new TableModel(configuration, "allgeo", partitionBy).col("hb", ColumnType.getGeoHashTypeWithBits(6)).col("hs", ColumnType.getGeoHashTypeWithBits(12)).col("hi", ColumnType.getGeoHashTypeWithBits(27)).col("hl", ColumnType.getGeoHashTypeWithBits(44)).timestamp();
+        return new TableModel(configuration, "allgeo", partitionBy)
+                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
+                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
+                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
+                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
+                .timestamp();
     }
 }

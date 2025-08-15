@@ -32,10 +32,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateOnJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE taba ( ax int, aid int );");
-            insert("INSERT INTO taba values (1,1), (2,2)");
-            compile("CREATE TABLE tabb ( bx int, bid int );");
-            insert("INSERT INTO tabb values (3,1), (4,2)");
+            execute("CREATE TABLE taba ( ax int, aid int );");
+            execute("INSERT INTO taba values (1,1), (2,2)");
+            execute("CREATE TABLE tabb ( bx int, bid int );");
+            execute("INSERT INTO tabb values (3,1), (4,2)");
 
             assertQueryNoLeakCheck("sum\tsum1\tsum2\tsum3\n" +
                             "3\t7\t23\t27\n",
@@ -48,8 +48,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateOnJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE taba ( x int, aid int );");
-            compile("CREATE TABLE tabb ( x int, bid int );");
+            execute("CREATE TABLE taba ( x int, aid int );");
+            execute("CREATE TABLE tabb ( x int, bid int );");
         });
 
         assertException("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
@@ -60,8 +60,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateOnJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE taba ( x int, aid int );");
-            compile("CREATE TABLE tabb ( x int, bid int );");
+            execute("CREATE TABLE taba ( x int, aid int );");
+            execute("CREATE TABLE tabb ( x int, bid int );");
             assertException("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
                     "join tabb on aid = bid", 11, "Invalid column: taba.k");
@@ -71,8 +71,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateOnJoinFailsOnAmbiguousColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE taba ( x int, aid int );");
-            compile("  CREATE TABLE tabb ( x int, bid int );");
+            execute("  CREATE TABLE taba ( x int, aid int );");
+            execute("  CREATE TABLE tabb ( x int, bid int );");
             assertException("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
                     "join tabb on aid = bid", 11, "Ambiguous column [name=x]");
@@ -82,7 +82,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE telemetry (created timestamp)");
+            execute("CREATE TABLE telemetry (created timestamp)");
             assertExceptionNoLeakCheck(
                     "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);",
                     49,

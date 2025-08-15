@@ -25,10 +25,17 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -78,12 +85,24 @@ public class ShardedMapCursor implements MapRecordCursor {
         return false;
     }
 
+    @Override
+    public void longTopK(DirectLongLongSortedList list, Function recordFunction) {
+        for (int i = 0, n = shardCursors.size(); i < n; i++) {
+            shardCursors.getQuick(i).longTopK(list, recordFunction);
+        }
+    }
+
     public void of(ObjList<Map> shards) {
         shardCursors.clear();
         for (int i = 0, n = shards.size(); i < n; i++) {
             shardCursors.add(shards.getQuick(i).getCursor());
         }
         toTop();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
@@ -141,6 +160,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public void copyValue(MapValue destValue) {
             baseRecord.copyValue(destValue);
+        }
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            return baseRecord.getArray(col, columnType);
         }
 
         @Override

@@ -24,18 +24,24 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataService {
+
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
      * size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     *
+     * <p>
      * <b>Failures</b>
      * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
@@ -44,43 +50,56 @@ public interface MetadataService {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     *
+     * <p>
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param name                    of column either ASCII or UTF8 encoded.
+     * @param columnName              of column either ASCII or UTF8 encoded.
      * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param type                    {@link ColumnType}
+     * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
+     * @param isDedupKey              when set to true, column will be used as deduplication key
      */
     void addColumn(
-            CharSequence name,
-            int type,
+            CharSequence columnName,
+            int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isSequential,
+            boolean isDedupKey,
             SecurityContext securityContext
     );
 
     default void addColumn(
-            CharSequence name,
-            int type,
+            CharSequence columnName,
+            int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            boolean isDedupKey
     ) {
-        addColumn(name, type, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, null);
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                null
+        );
     }
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
@@ -89,17 +108,45 @@ public interface MetadataService {
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 
+    void changeColumnType(
+            CharSequence columnName,
+            int newType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            SecurityContext securityContext
+    );
+
+    void changeSymbolCapacity(
+            CharSequence columnName,
+            int symbolCapacity,
+            SecurityContext securityContext
+    );
+
+    boolean convertPartitionNativeToParquet(long partitionTimestamp);
+
+    boolean convertPartitionParquetToNative(long partitionTimestamp);
+
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void disableDeduplication();
 
     void dropIndex(@NotNull CharSequence columnName);
 
-    void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+    /**
+     * Enables deduplication with the given upsert keys.
+     *
+     * @return returns true when dedup was already enabled on the table and the new upsert keys
+     * are a subset of the previous upsert keys. Implementations that don't have access
+     * to the table metadata always return false.
+     */
+    boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+
+    void forceRemovePartitions(LongList partitionTimestamps);
 
     int getMetaMaxUncommittedRows();
-
-    long getMetaO3MaxLag();
 
     TableRecordMetadata getMetadata();
 
@@ -113,8 +160,6 @@ public interface MetadataService {
 
     boolean removePartition(long partitionTimestamp);
 
-    boolean convertPartition(long partitionTimestamp);
-
     default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
         renameColumn(columnName, newName, null);
     }
@@ -123,23 +168,47 @@ public interface MetadataService {
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 
+    /**
+     * Sets refresh type and settings for materialized view.
+     */
+    void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    );
+
+    /**
+     * Sets the incremental refresh limit for materialized view:
+     * if positive, it's in hours;
+     * if negative, it's in months (and the actual value is positive);
+     * zero means "no refresh limit".
+     */
+    void setMatViewRefreshLimit(int limitHoursOrMonths);
+
+    /**
+     * Sets incremental refresh timer values for materialized view.
+     */
+    void setMatViewRefreshTimer(long start, int interval, char unit);
+
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
 
+    /**
+     * Sets the time-to-live (TTL) of the data in this table:
+     * if positive, it's in hours;
+     * if negative, it's in months (and the actual value is positive);
+     * zero means "no TTL".
+     */
+    void setMetaTtl(int ttlHoursOrMonths);
+
     void squashPartitions();
 
     void tick();
-
-    void changeColumnType(
-            CharSequence columnName,
-            int newType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential,
-            SecurityContext securityContext
-    );
-
 }

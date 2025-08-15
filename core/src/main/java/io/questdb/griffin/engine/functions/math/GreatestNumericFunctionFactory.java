@@ -28,24 +28,29 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
-import io.questdb.griffin.engine.functions.cast.*;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToFloatFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToByteFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToIntFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
 public class GreatestNumericFunctionFactory implements FunctionFactory {
-    private final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL]);
+    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL + 1]);
 
     @Override
     public String getSignature() {
@@ -55,96 +60,96 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final int[] counters = tlCounters.get();
+        Arrays.fill(counters, 0);
 
-        for (int i = 0; i < args.size(); i++) {
+        final int argCount;
+        if (args == null || (argCount = args.size()) == 0) {
+            throw SqlException.$(position, "at least one argument is required by GREATEST(V)");
+        }
+
+        for (int i = 0; i < argCount; i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
 
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
                 case ColumnType.LONG:
                 case ColumnType.INT:
                 case ColumnType.SHORT:
                 case ColumnType.BYTE:
+                case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
+                case ColumnType.NULL:
                     counters[type]++;
                     continue;
                 default:
-                    if (arg.isNullConstant()) {
-                        return NullConstant.NULL;
-                    }
-                    tlCounters.remove();
-                    throw SqlException.position(argPositions.getQuick(i)).put("unsupported type");
+                    throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
         }
 
-        final Function retVal = getGreatestFunction(args, argPositions, counters);
+        if (counters[ColumnType.NULL] == argCount) {
+            return NullConstant.NULL;
+        }
 
-        // clear array so we don't need to reconstruct it
-        clearCounters(counters);
-
+        // have to copy, args is mutable
+        final Function retVal = getGreatestFunction(new ObjList<>(args), counters);
         if (retVal != null) {
             return retVal;
         }
-
-        assert false;
-
-        // unreachable
-        return null;
+        throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");
     }
 
-    private static void clearCounters(int[] counters) {
-        Arrays.fill(counters, 0);
-    }
-
-    private static @Nullable Function getGreatestFunction(ObjList<Function> args, IntList argPositions, int[] counters) {
-        Function retVal = null;
-
+    private static @Nullable Function getGreatestFunction(ObjList<Function> args, int[] counters) {
         if (counters[ColumnType.DOUBLE] > 0) {
-            retVal = new GreatestDoubleRecordFunction(args, argPositions);
+            return new GreatestDoubleRecordFunction(args);
         }
 
-        if (counters[ColumnType.FLOAT] > 0 && retVal == null) {
-            retVal = new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new GreatestDoubleRecordFunction(args, argPositions));
+        if (counters[ColumnType.FLOAT] > 0) {
+            return new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new GreatestDoubleRecordFunction(args));
         }
 
-        if (counters[ColumnType.LONG] > 0 && retVal == null) {
-            retVal = new GreatestLongRecordFunction(args, argPositions);
+        if (counters[ColumnType.LONG] > 0) {
+            return new GreatestLongRecordFunction(args);
         }
 
-        if (counters[ColumnType.TIMESTAMP] > 0 && retVal == null) {
-            retVal = new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new GreatestLongRecordFunction(args, argPositions));
+        if (counters[ColumnType.DATE] > 0) {
+            return new CastLongToDateFunctionFactory.CastLongToDateFunction(new GreatestLongRecordFunction(args));
         }
 
-        if (counters[ColumnType.INT] > 0 && retVal == null) {
-            retVal = new CastLongToIntFunctionFactory.CastLongToIntFunction(new GreatestLongRecordFunction(args, argPositions));
+        if (counters[ColumnType.TIMESTAMP] > 0) {
+            return new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new GreatestLongRecordFunction(args));
         }
 
-        if (counters[ColumnType.SHORT] > 0 && retVal == null) {
-            retVal = new CastLongToShortFunctionFactory.CastLongToShortFunction(new GreatestLongRecordFunction(args, argPositions));
+        if (counters[ColumnType.INT] > 0) {
+            return new CastLongToIntFunctionFactory.CastLongToIntFunction(new GreatestLongRecordFunction(args));
         }
 
-        if (counters[ColumnType.BYTE] > 0 && retVal == null) {
-            retVal = new CastLongToByteFunctionFactory.CastLongToByteFunction(new GreatestLongRecordFunction(args, argPositions));
+        if (counters[ColumnType.SHORT] > 0) {
+            return new CastLongToShortFunctionFactory.CastLongToShortFunction(new GreatestLongRecordFunction(args));
         }
-        return retVal;
+
+        if (counters[ColumnType.BYTE] > 0) {
+            return new CastLongToByteFunctionFactory.CastLongToByteFunction(new GreatestLongRecordFunction(args));
+        }
+
+        return null;
     }
 
 
     private static class GreatestDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
-        final IntList argPositions;
-        final ObjList<Function> args;
+        private final ObjList<Function> args;
+        private final int n;
 
-        public GreatestDoubleRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public GreatestDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
-            this.argPositions = argPositions;
+            this.n = args.size();
         }
 
         @Override
@@ -154,13 +159,12 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = Double.MIN_VALUE;
-            for (int i = 0, n = args.size(); i < n; i++) {
+            double value = Double.NEGATIVE_INFINITY;
+            for (int i = 0; i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
-                if (Numbers.isNull(v)) {
-                    return Double.NaN;
+                if (!Numbers.isNull(v)) {
+                    value = Math.max(value, v);
                 }
-                value = Math.max(value, v);
             }
             return value;
         }
@@ -169,20 +173,15 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public String getName() {
             return "greatest[DOUBLE]";
         }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
-        }
     }
 
     private static class GreatestLongRecordFunction extends LongFunction implements MultiArgFunction {
-        final IntList argPositions;
-        final ObjList<Function> args;
+        private final ObjList<Function> args;
+        private final int n;
 
-        public GreatestLongRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public GreatestLongRecordFunction(ObjList<Function> args) {
             this.args = args;
-            this.argPositions = argPositions;
+            this.n = args.size();
         }
 
         @Override
@@ -192,13 +191,9 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            long value = Long.MIN_VALUE;
-            for (int i = 0, n = args.size(); i < n; i++) {
-                final long v = args.getQuick(i).getLong(rec);
-                if (v == Long.MIN_VALUE) {
-                    return Long.MIN_VALUE;
-                }
-                value = Math.max(value, v);
+            long value = args.getQuick(0).getLong(rec);
+            for (int i = 1; i < n; i++) {
+                value = Math.max(value, args.getQuick(i).getLong(rec));
             }
             return value;
         }
@@ -207,12 +202,5 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public String getName() {
             return "greatest[LONG]";
         }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
-        }
     }
 }
-
-

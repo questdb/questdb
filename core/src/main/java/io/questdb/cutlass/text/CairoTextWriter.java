@@ -24,15 +24,38 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.*;
+import io.questdb.cutlass.text.types.BadDateAdapter;
+import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
+import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
@@ -45,12 +68,13 @@ public class CairoTextWriter implements Closeable, Mutable {
     private static final String WRITER_LOCK_REASON = "textWriter";
     private final LongList columnErrorCounts = new LongList();
     private final CairoConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final CairoEngine engine;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private final IntList remapIndex = new IntList();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private int atomicity;
+    private boolean create = true;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
     private CharSequence importedTimestampColumnName;
@@ -58,7 +82,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     private RecordMetadata metadata;
     private long o3MaxLag = -1;
     private boolean overwrite;
-    private boolean create = true;
     private int partitionBy;
     private CharSequence tableName;
     private TimestampAdapter timestampAdapter;
@@ -115,6 +138,10 @@ public class CairoTextWriter implements Closeable, Mutable {
         return columnErrorCounts;
     }
 
+    public boolean getCreate() {
+        return create;
+    }
+
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -129,10 +156,6 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public boolean getCreate() {
-        return create;
     }
 
     public CharSequence getTableName() {
@@ -206,16 +229,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
+    public void setCreate(boolean create) {
+        this.create = create;
+    }
+
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
-    }
-
-    public void setCreate(boolean create) {
-        this.create = create;
     }
 
     private void checkUncommittedRowCount() {
@@ -317,7 +340,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void logTypeError(int i) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").$safe(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();
@@ -331,6 +354,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             logError(line, i, dus);
             switch (atomicity) {
                 case Atomicity.SKIP_ALL:
+                    w.cancel();
                     writer.rollback();
                     throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
                 case Atomicity.SKIP_ROW:
@@ -374,9 +398,15 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
+                if (tableToken != null && tableToken.isMatView()) {
+                    throw CairoException.nonCritical()
+                            .put("cannot modify materialized view [view=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
-                    engine.drop(path, tableToken);
+                    engine.dropTableOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
@@ -409,11 +439,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             // to use table's maxUncommittedRows and o3MaxLag if they're not set.
             if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
                 o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
-                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").$safe(tableName).$();
             }
             if (maxUncommittedRows == -1) {
                 maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
-                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").$safe(tableName).$();
             }
         }
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
@@ -494,11 +524,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public boolean isIndexed(int columnIndex) {
             return types.getQuick(columnIndex).isIndexed();
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
         }
 
         @Override

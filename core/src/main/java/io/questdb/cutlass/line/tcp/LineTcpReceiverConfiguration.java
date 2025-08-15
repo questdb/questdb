@@ -25,6 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -33,13 +35,15 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public interface LineTcpReceiverConfiguration {
+public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
 
     String getAuthDB();
 
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
+
+    CairoConfiguration getCairoConfiguration();
 
     long getCommitInterval();
 
@@ -57,13 +61,11 @@ public interface LineTcpReceiverConfiguration {
 
     boolean getDisconnectOnError();
 
-    IODispatcherConfiguration getDispatcherConfiguration();
-
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
 
-    WorkerPoolConfiguration getIOWorkerPoolConfiguration();
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -77,15 +79,17 @@ public interface LineTcpReceiverConfiguration {
 
     int getMaxMeasurementSize();
 
+    long getMaxRecvBufferSize();
+
+    Metrics getMetrics();
+
     MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
 
-    int getNetMsgBufferSize();
-
     NetworkFacade getNetworkFacade();
 
-    long getSymbolCacheWaitUsBeforeReload();
+    long getSymbolCacheWaitBeforeReload();
 
     LineTcpTimestampAdapter getTimestampAdapter();
 
@@ -100,4 +104,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isUseLegacyStringDefault();
+
+    boolean logMessageOnError();
 }

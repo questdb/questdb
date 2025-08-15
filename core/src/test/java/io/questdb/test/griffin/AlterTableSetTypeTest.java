@@ -62,7 +62,7 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
             createTable(tableName, "BYPASS WAL");
             for (int i = 0; i < 30; i++) {
                 final boolean walEnabled = sqlExecutionContext.getRandom().nextBoolean();
-                ddl("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"));
+                execute("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"));
                 final Path convertFilePath1 = assertConvertFileExists(tableName);
                 assertConvertFileContent(convertFilePath1, walEnabled ? WAL : NON_WAL);
             }
@@ -74,7 +74,7 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
         final String tableName = "table_wal";
         assertMemoryLeak(() -> {
             createTable(tableName, "WAL");
-            ddl("alter table " + tableName + " set type bypass wal");
+            execute("alter table " + tableName + " set type bypass wal");
             drainWalQueue();
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, NON_WAL);
@@ -86,7 +86,7 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
         final String tableName = "table_non_wal";
         assertMemoryLeak(() -> {
             createTable(tableName, "BYPASS WAL");
-            ddl("alter table " + tableName + " set type wal");
+            execute("alter table " + tableName + " set type wal");
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, WAL);
         });
@@ -100,16 +100,16 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
 
     private Path assertConvertFileExists(String tableName) {
         final TableToken token = engine.verifyTableName(tableName);
-        final Path path = Path.PATH.get().of(configuration.getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+        final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
         return path;
     }
 
     private void createNonPartitionedTable() throws SqlException {
-        compile("create table table_non_partitioned (ts TIMESTAMP, x long)");
+        execute("create table table_non_partitioned (ts TIMESTAMP, x long)");
     }
 
     private void createTable(String tableName, String walMode) throws SqlException {
-        compile("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY " + walMode);
+        execute("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY " + walMode);
     }
 }

@@ -27,8 +27,26 @@ package io.questdb.test.std.str;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.MutableUtf8Sink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -121,6 +139,53 @@ public class Utf8sTest {
         Assert.assertTrue(copyToSinkWithTextUtil(query, text, true));
 
         Assert.assertEquals(text.replace("\"\"", "\""), query.toString());
+    }
+
+    @Test
+    public void testEncodeUtf16WithLimit() {
+        Utf8StringSink sink = new Utf8StringSink();
+        // one byte
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "foobar", 0));
+        TestUtils.assertEquals("", sink);
+
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "foobar", 42));
+        TestUtils.assertEquals("foobar", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "foobar", 3));
+        TestUtils.assertEquals("foo", sink);
+
+        // two bytes
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "фубар", 10));
+        TestUtils.assertEquals("фубар", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "фубар", 4));
+        TestUtils.assertEquals("фу", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "фубар", 3));
+        TestUtils.assertEquals("ф", sink);
+
+        // three bytes
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "∆", 3));
+        TestUtils.assertEquals("∆", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "∆", 2));
+        TestUtils.assertEquals("", sink);
+
+        // four bytes
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "\uD83D\uDE00", 4));
+        TestUtils.assertEquals("\uD83D\uDE00", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "\uD83D\uDE00", 3));
+        TestUtils.assertEquals("", sink);
     }
 
     @Test
@@ -332,6 +397,11 @@ public class Utf8sTest {
             Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
             sink.clear();
             sink.put("12345678ы87654321");
+            Assert.assertTrue(Utf8s.isAscii(sink.longAt(0)));
+            for (int i = 1; i < 10; i++) {
+                Assert.assertFalse(Utf8s.isAscii(sink.longAt(i)));
+            }
+            Assert.assertTrue(Utf8s.isAscii(sink.longAt(10)));
             Assert.assertFalse(Utf8s.isAscii(sink));
             Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
         }
@@ -359,6 +429,118 @@ public class Utf8sTest {
             if (i > 0) {
                 Assert.assertEquals(Chars.hashCode(charSink, 0, i - 1), Utf8s.lowerCaseAsciiHashCode(utf8Sink, 0, i - 1));
             }
+        }
+    }
+
+    @Test
+    public void testPutSafeInvalid() {
+        final Utf8StringSink source = new Utf8StringSink();
+        final Utf8StringSink sink = new Utf8StringSink();
+        final byte[][] testBufs = {
+                {b(0b1101_0101)},
+                {b(0b1101_0101), b(0b0011_1100)},
+                {b(0b1100_0100), b(0b1100_1101)},
+
+                {b(0b1110_0100), b(0b1011_1101)},
+                {b(0b1110_0100), b(0b1011_1101), b(0b1110_0000)},
+                {b(0b1110_0100), b(0b1011_1101), b(0b0110_0000)},
+                {b(0b1110_0100), b(0b0110_0000), b(0b1011_1101)},
+
+                {b(0b1111_0000)},
+                {b(0b1111_0000), b(0b1001_1111)},
+                {b(0b1111_0000), b(0b1001_1111), b(0b1001_0010)},
+
+                {b(0b1111_0000), b(0b0101_1111), b(0b1001_0010), b(0b1010_1001)},
+                {b(0b1111_0000), b(0b1001_1111), b(0b0101_0010), b(0b1010_1001)},
+                {b(0b1111_0000), b(0b1001_1111), b(0b1001_0010), b(0b0110_1001)},
+
+                {b(0b1111_1000)},
+                {b(0b1111_1000), b(0b1000_0000)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001), b(0b1000_0010)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001), b(0b1000_0010), b(0b1000_0011)},
+                {b(0b1111_1110), b(0b1100_0000)},
+                {b(0b1111_1000), b(0b1100_0000)},
+                {b(0b1111_1000), b(0b1111_0000)},
+                {b(0b1111_1000), b(0b1111_1111)},
+        };
+        final String[] expectedStrs = {
+                "\\xD5",
+                "\\xD5<",
+                "\\xC4\\xCD",
+
+                "\\xE4\\xBD",
+                "\\xE4\\xBD\\xE0",
+                "\\xE4\\xBD`",
+                "\\xE4`\\xBD",
+
+                "\\xF0",
+                "\\xF0\\x9F",
+                "\\xF0\\x9F\\x92",
+
+                "\\xF0_\\x92\\xA9",
+                "\\xF0\\x9FR\\xA9",
+                "\\xF0\\x9F\\x92i",
+
+                "\\xF8",
+                "\\xF8\\x80",
+                "\\xF8\\x80\\x81",
+                "\\xF8\\x80\\x81\\x82",
+                "\\xF8\\x80\\x81\\x82\\x83",
+                "\\xFE\\xC0",
+                "\\xF8\\xC0",
+                "\\xF8\\xF0",
+                "\\xF8\\xFF",
+        };
+        final long buf = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int n = testBufs.length, i = 0; i < n; i++) {
+                byte[] bytes = testBufs[i];
+
+                long hi = copyBytes(buf, bytes);
+                sink.clear();
+                Utf8s.putSafe(buf, hi, sink);
+                Assert.assertEquals(expectedStrs[i], sink.toString());
+
+                source.clear();
+                for (byte b : bytes) {
+                    source.putAny(b);
+                }
+                sink.clear();
+                Utf8s.putSafe(source, sink);
+                Assert.assertEquals(expectedStrs[i], sink.toString());
+            }
+        } finally {
+            Unsafe.free(buf, 128, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testPutSafeValid() {
+        final Utf8StringSink sink = new Utf8StringSink();
+        final String[] testStrs = {
+                "abc",
+                "čćžšđ",
+                "ČĆŽŠĐ",
+                "фубар",
+                "ФУБАР",
+                "你好世界",
+        };
+        final long buf = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (String testStr : testStrs) {
+                byte[] bytes = testStr.getBytes(StandardCharsets.UTF_8);
+                long hi = copyBytes(buf, bytes);
+                sink.clear();
+                Utf8s.putSafe(buf, hi, sink);
+                String actual = sink.toString();
+                for (long ptr = buf; ptr < hi; ptr++) {
+                    int b = Unsafe.getUnsafe().getByte(ptr) & 0xFF;
+                }
+                Assert.assertEquals(testStr, actual);
+            }
+        } finally {
+            Unsafe.free(buf, 128, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -434,13 +616,13 @@ public class Utf8sTest {
             LongList expectedOffsets = new LongList(n);
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();
-                utf8Sink.repeat("a", len);
+                utf8Sink.repeat('a', len);
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
 
             utf8Sink.clear();
-            utf8Sink.repeat("a", len);
+            utf8Sink.repeat('a', len);
             String expectedStr = utf8Sink.toString();
             for (int i = 0; i < n; i++) {
                 Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(auxMem, dataMem, i, 1);
@@ -929,6 +1111,17 @@ public class Utf8sTest {
         Assert.assertEquals(inputString, Utf8s.stringFromUtf8Bytes(utf8Sink.lo(), utf8Sink.hi()));
 
         Assert.assertEquals(inputString, utf8Sink.toString());
+    }
+
+    private static byte b(int n) {
+        return (byte) n;
+    }
+
+    private static long copyBytes(long buf, byte[] bytes) {
+        for (int n = bytes.length, i = 0; i < n; i++) {
+            Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
+        }
+        return buf + bytes.length;
     }
 
     private static void testUtf8Char(String x, MutableUtf8Sink sink, boolean failExpected) {

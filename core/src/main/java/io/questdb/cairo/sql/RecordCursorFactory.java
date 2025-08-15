@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -99,11 +100,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * that key read from symbol column map to symbol values unambiguously.
      * In that if you read key 1 at row 10, it might map to 'AAA' and if you read
      * key 1 at row 100 it might map to 'BBB'.
-     * Such factories cannot be used in multi-threaded execution and cannot be tested
+     * Such factories cannot be used in multithreaded execution and cannot be tested
      * via `testSymbolAPI()` call.
      *
      * @return true if the factory uses fragmented symbol tables and can't be used
-     * in multi-threaded execution
+     * in multithreaded execution
      */
     default boolean fragmentedSymbolTables() {
         return false;
@@ -126,6 +127,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     // to be used in combination with compiled filter
     @Nullable
     default MemoryCARW getBindVarMemory() {
+        return null;
+    }
+
+    default IntList getColumnCrossIndex() {
         return null;
     }
 
@@ -197,7 +202,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Closes everything but base factory and filter.
      */
     default void halfClose() {
-
     }
 
     /**
@@ -206,6 +210,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * by re-applying limit logic).
      */
     default boolean implementsLimit() {
+        return false;
+    }
+
+    /**
+     * Returns true if the factory stands for nothing more but a projection, so that
+     * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
+     * <p>
+     * Projection consist of cross-indexes and metadata columns.
+     * <p>
+     *
+     * @return true if the factory stands for nothing more but a projection
+     * @see #getColumnCrossIndex()
+     * @see #getBaseColumnName(int)
+     */
+    default boolean isProjection() {
+        return false;
+    }
+
+    /**
+     * Returns true when factory's record cursor supports optimized top K (ORDER BY + LIMIT N) loop.
+     */
+    default boolean recordCursorSupportsLongTopK() {
         return false;
     }
 

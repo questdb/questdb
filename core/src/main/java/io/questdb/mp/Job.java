@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import org.jetbrains.annotations.NotNull;
 
+@FunctionalInterface
 public interface Job {
     RunStatus RUNNING_STATUS = () -> false;
     RunStatus TERMINATING_STATUS = () -> true;

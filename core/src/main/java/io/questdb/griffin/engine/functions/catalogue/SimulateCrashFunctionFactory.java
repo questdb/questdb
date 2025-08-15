@@ -56,16 +56,26 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         if (configuration.isDevModeEnabled()) {
-            final char killType = args.getQuick(0).getChar(null);
-            switch (killType) {
-                case '0':
+            final char crashType = args.getQuick(0).getChar(null);
+            switch (crashType) {
+                case 'C':
                     return SimulateCrashFunction.INSTANCE;
                 case 'M':
                     return OutOfMemoryFunction.INSTANCE;
-                case 'C':
+                case 'E':
                     return CairoErrorFunction.INSTANCE;
-                case 'D':
-                    return CairoExceptionFunction.INSTANCE;
+                case '0':
+                    return CairoExceptionFunction.INSTANCE_0;
+                case '1':
+                    return CairoExceptionFunction.INSTANCE_1;
+                case '2':
+                    return CairoExceptionFunction.INSTANCE_2;
+                case 'P':
+                    return CairoExceptionFunction.INSTANCE_P;
+                case 'A':
+                    return CairoExceptionFunction.INSTANCE_A;
+                default:
+                    throw new UnsupportedOperationException("Unsupported crash type: " + crashType);
             }
         }
         return BooleanConstant.FALSE;
@@ -81,8 +91,8 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override
@@ -97,17 +107,35 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     }
 
     private static class CairoExceptionFunction extends BooleanFunction {
-        private static final CairoExceptionFunction INSTANCE = new CairoExceptionFunction();
+        private static final CairoExceptionFunction INSTANCE_0 = new CairoExceptionFunction(0, false);
+        private static final CairoExceptionFunction INSTANCE_1 = new CairoExceptionFunction(1, false);
+        private static final CairoExceptionFunction INSTANCE_2 = new CairoExceptionFunction(2, false);
+        private static final CairoExceptionFunction INSTANCE_A = new CairoExceptionFunction(0, true);
+        private static final CairoExceptionFunction INSTANCE_P = new CairoExceptionFunction(1100, false);
+        private final boolean authorizationException;
+        private final int numOfRecordsBeforeException;
+        private int current;
+
+        public CairoExceptionFunction(int numOfRecordsBeforeException, boolean authorizationException) {
+            this.authorizationException = authorizationException;
+            this.numOfRecordsBeforeException = numOfRecordsBeforeException;
+        }
 
         @Override
         public boolean getBool(Record rec) {
-            throw CairoException.critical(1).put("simulated cairo exception");
+            if (current < numOfRecordsBeforeException) {
+                return current++ % 2 == 0;
+            }
+            if (authorizationException) {
+                throw CairoException.authorization().put("simulated authorization exception");
+            }
+            throw CairoException.critical(1).position(222).put("simulated cairo exception");
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override
@@ -131,8 +159,8 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override
@@ -152,13 +180,13 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("simulate_crash(dummy)");
+            sink.val("simulate_crash(crash)");
         }
     }
 }

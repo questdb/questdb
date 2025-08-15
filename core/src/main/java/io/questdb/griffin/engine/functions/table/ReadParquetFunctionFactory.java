@@ -27,16 +27,26 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.std.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(ReadParquetFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -48,8 +58,14 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
-        CharSequence filePath;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPos,
+            CairoConfiguration configuration,
+            SqlExecutionContext context
+    ) throws SqlException {
+        final CharSequence filePath;
         try {
             filePath = args.getQuick(0).getStrA(null);
         } catch (CairoException e) {
@@ -57,18 +73,32 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         try {
-            Path path = Path.getThreadLocal2("");
-            checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
-            try (PartitionDecoder file = new PartitionDecoder(config.getFilesFacade())) {
-                file.of(path.$());
-                GenericRecordMetadata metadata = new GenericRecordMetadata();
-                file.getMetadata().copyTo(metadata);
-                return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
+            final Path path = Path.getThreadLocal2("");
+            checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), configuration);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            long addr = 0;
+            long fileSize = 0;
+            try (PartitionDecoder decoder = new PartitionDecoder()) {
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                // `read_parquet` function will request symbols to be converted to varchar
+                decoder.metadata().copyTo(metadata, true);
+                if (context.isParallelReadParquetEnabled()) {
+                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(configuration, path, metadata));
+                } else {
+                    return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, ff));
+                }
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
         } catch (Throwable e) {
-            throw SqlException.$(argPos.getQuick(0), "filed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
+            throw SqlException.$(argPos.getQuick(0), "failed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
         }
     }
 
@@ -85,14 +115,18 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         // Absolute path allowed
-        if (filePath.length() > sqlCopyInputRoot.length() &&
-                (Chars.startsWith(filePath, sqlCopyInputRoot)
+        if (
+                filePath.length() > sqlCopyInputRoot.length()
+                        && (Chars.startsWith(filePath, sqlCopyInputRoot)
                         // Path is not case-sensitive on Windows and OSX
-                        || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(filePath, sqlCopyInputRoot)))) {
-
-            if (sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR
-                    // On Windows, it's acceptable to use / as a separator
-                    || (Os.isWindows() && filePath.charAt(sqlCopyInputRoot.length()) == '/')) {
+                        || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(filePath, sqlCopyInputRoot)))
+        ) {
+            if (
+                    sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR
+                            || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR
+                            // On Windows, it's acceptable to use / as a separator
+                            || (Os.isWindows() && filePath.charAt(sqlCopyInputRoot.length()) == '/')
+            ) {
                 path.of(filePath);
                 return;
             }

@@ -27,9 +27,9 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -96,7 +96,7 @@ public class LPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testABProtocol() throws SqlException {
-        ddl("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
+        execute("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
         assertSql(
                 "count\n" +
                         "100\n",

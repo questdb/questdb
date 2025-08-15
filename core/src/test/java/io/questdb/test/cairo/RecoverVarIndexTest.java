@@ -24,7 +24,12 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecoverVarIndex;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -116,7 +121,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     RecoverVarIndex::rebuildAll);
 
             engine.releaseAllWriters();
-            insert("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
+            execute("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
             int sym1D = countByFullScanWhereValueD();
             Assert.assertEquals(1, sym1D);
         });
@@ -294,8 +299,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             AtomicInteger count = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 14) {
+                public long openRW(LPSZ name, int opts) {
+                    if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 2) {
                         return -1;
                     }
                     return super.openRW(name, opts);
@@ -339,15 +344,15 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     private void checkRecoverVarIndex(String createTableSql, Action<String> changeTable, Action<RecoverVarIndex> rebuildIndexAction) throws Exception {
         assertMemoryLeak(ff, () -> {
             for (String sql : createTableSql.split(";")) {
-                ddl(sql);
+                execute(sql);
             }
-            ddl("create table copytbl as (select * from xxx)", sqlExecutionContext);
+            execute("create table copytbl as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
             TableToken xxx = engine.verifyTableName("xxx");
-            String tablePath = configuration.getRoot() + Files.SEPARATOR + xxx.getDirName();
+            String tablePath = configuration.getDbRoot() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();
@@ -374,7 +379,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
-            TableUtils.setPathForPartition(path, partitionBy, partitionTs, partitionNameTxn);
+            TableUtils.setPathForNativePartition(path, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));

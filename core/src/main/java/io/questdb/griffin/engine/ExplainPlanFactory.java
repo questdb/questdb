@@ -31,9 +31,12 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.JsonPlanSink;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.ExplainModel;
-import io.questdb.std.Misc;
 
 /**
  * Simple stub for returning query execution plan text as result set with one column and one row .
@@ -50,7 +53,6 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         super(METADATA);
         this.base = base;
         this.cursor = new ExplainPlanRecordCursor(format);
-        this.isBaseClosed = false;
     }
 
     @Override
@@ -135,19 +137,17 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
-            //we can't use getCursor() because that could take a lot of time and execute e.g. table hashing
-            //on the other hand until we run it factories may be incomplete
-            if (!isBaseClosed) {
-                // open the cursor to ensure bind variable types are initialized
-                try (RecordCursor ignored = base.getCursor(executionContext)) {
-                    planSink.of(base, executionContext);
-                } finally {
-                    Misc.free(base);
-                }
-                isBaseClosed = true;
+            // open the cursor to ensure bind variable types are initialized
+            try (RecordCursor ignored = base.getCursor(executionContext)) {
+                planSink.of(base, executionContext);
             }
             rowCount = planSink.getLineCount();
             toTop();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

@@ -71,6 +71,11 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
         throw SqlException.$(strFuncPosition, "STRING constant expected");
     }
 
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
+    }
+
     private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final int constIPv4;

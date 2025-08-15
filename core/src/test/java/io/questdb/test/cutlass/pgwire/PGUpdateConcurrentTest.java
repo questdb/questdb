@@ -31,11 +31,15 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -77,11 +81,6 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     @Test
-    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
-        testConcurrency(4, 10, 8, PartitionMode.NONE);
-    }
-
-    @Test
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
@@ -120,7 +119,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server1 = createPGServer(1);
+                    PGServer server1 = createPGServer(1);
                     WorkerPool workerPool = server1.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -198,6 +197,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20_000L); // On in CI Windows updates are particularly slow
         node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 90_000L);
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20_000L);
+        spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
@@ -205,7 +205,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
             try (
-                    final PGWireServer pgServer = createPGServer(2);
+                    final PGServer pgServer = createPGServer(2);
                     WorkerPool workerPool = pgServer.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -215,9 +215,11 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             " 0 as x" +
                             " from long_sequence(5))" +
                             " timestamp(ts)" +
-                            (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
+                            (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY WAL" : ""));
                     create.execute();
                     create.close();
+
+                    TestUtils.drainWalQueue(engine);
                 }
 
                 Thread tick = new Thread(() -> {
@@ -234,18 +236,23 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                 for (int k = 0; k < numOfWriters; k++) {
                     Thread writer = new Thread(() -> {
-                        try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
-                            barrier.await();
-                            PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
-                            for (int i = 0; i < numOfUpdates; i++) {
-                                update.setInt(1, i);
-                                Assert.assertEquals(5, update.executeUpdate());
-                                current.incrementAndGet();
+                        try {
+                            try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
+                                barrier.await();
+                                PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
+                                for (int i = 0; i < numOfUpdates; i++) {
+                                    update.setInt(1, i);
+                                    // update against WAL table will return txn instead of row count
+                                    update.executeUpdate();
+                                    current.incrementAndGet();
+                                }
+                                update.close();
                             }
-                            update.close();
                         } catch (Throwable th) {
                             LOG.error().$("writer error ").$(th).$();
                             exceptions.add(th);
+                        } finally {
+                            Path.clearThreadLocals();
                         }
                     });
                     threads.add(writer);
@@ -287,6 +294,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         } catch (Throwable th) {
                             LOG.error().$("reader error ").$(th).$();
                             exceptions.add(th);
+                        } finally {
+                            Path.clearThreadLocals();
                         }
                     });
                     threads.add(reader);

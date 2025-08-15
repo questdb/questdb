@@ -33,13 +33,17 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class ReadOnlySecurityContext implements SecurityContext {
-    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false);
+    public static final ReadOnlySecurityContext SETTINGS_READ_ONLY = new ReadOnlySecurityContext(true);
+
+    private final boolean settingsReadOnly;
 
     protected ReadOnlySecurityContext() {
+        this(false);
     }
 
-    @Override
-    public void authorizeAdminAction() {
+    private ReadOnlySecurityContext(boolean settingsReadOnly) {
+        this.settingsReadOnly = settingsReadOnly;
     }
 
     @Override
@@ -108,11 +112,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCancelQuery() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -136,6 +135,21 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeMatViewCreate() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeMatViewDrop(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeMatViewRefresh(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizePGWire() {
     }
 
@@ -150,6 +164,21 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSettings() {
+        if (settingsReadOnly) {
+            throw CairoException.authorization().put("The /settings endpoint is read-only").setCacheable(true);
+        }
+    }
+
+    @Override
+    public void authorizeSqlEngineAdmin() {
+    }
+
+    @Override
+    public void authorizeSystemAdmin() {
     }
 
     @Override
@@ -199,5 +228,15 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public CharSequence getPrincipal() {
         return Constants.USER_NAME;
+    }
+
+    @Override
+    public boolean isQueryCancellationAllowed() {
+        return false;
+    }
+
+    @Override
+    public boolean isSystemAdmin() {
+        return true;
     }
 }

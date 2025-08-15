@@ -26,7 +26,11 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,7 +48,6 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
 
 /**
@@ -90,7 +93,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getWorkerPoolConfiguration().getWorkerCount());
+                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getNetworkWorkerPoolConfiguration().getWorkerCount());
                     Assert.assertEquals(PG_WIRE_POOL_SIZE, qdb.getConfiguration().getPGWireConfiguration().getWorkerCount());
 
                     TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName);
@@ -115,7 +118,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getWorkerPoolConfiguration().getWorkerCount());
+                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getNetworkWorkerPoolConfiguration().getWorkerCount());
                     Assert.assertEquals(PG_WIRE_POOL_SIZE, qdb.getConfiguration().getPGWireConfiguration().getWorkerCount());
 
                     TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName);
@@ -153,9 +156,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         sink.put(" s SYMBOL,");
         sink.put(" ts TIMESTAMP");
         sink.put(") TIMESTAMP(ts) PARTITION BY DAY");
-        try (OperationFuture op = compiler.compile(sink.toString(), context).execute(null)) {
-            op.await();
-        }
+        engine.execute(sink, context);
         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                 .col("l", ColumnType.LONG)
                 .col("s", ColumnType.SYMBOL)

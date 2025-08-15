@@ -59,15 +59,20 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
             // it turns out it is possible to have null "infos"
             if (threadInfo != null) {
                 final LogRecord record = LOG.advisory();
-                final Thread.State state = threadInfo.getThreadState();
-                record.$('\n');
-                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-                for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                    record.$("\n\t\tat ").$(stackTraceElement);
+                try {
+                    final Thread.State state = threadInfo.getThreadState();
+                    record.$('\n');
+                    record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+                    final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+                    for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                        record.$("\n\t\tat ").$(stackTraceElement);
+                    }
+                    record.$("\n\n");
+                } catch (Throwable th) {
+                    record.$("error dumping threads: ").$(th);
+                } finally {
+                    record.$();
                 }
-                record.$("\n\n");
-                record.$();
             }
         }
     }
@@ -97,8 +102,8 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override

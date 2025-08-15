@@ -35,7 +35,6 @@ import java.io.Closeable;
 import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectLongList implements Mutable, Closeable, Reopenable {
-
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
     private final long initialCapacity;
     private final int memoryTag;
@@ -82,11 +81,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         pos = address;
     }
 
-    public void clear(long zeroValue) {
-        zero(zeroValue);
-        pos = address;
-    }
-
     @Override
     public void close() {
         if (address != 0) {
@@ -95,6 +89,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
             pos = 0;
             capacity = 0;
         }
+    }
+
+    public void fill(int v) {
+        Vect.memset(address, capacity, v);
     }
 
     public long get(long p) {
@@ -184,6 +182,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         return sb.toString();
     }
 
+    public void zero() {
+        fill(0);
+    }
+
     public void zero(long v) {
         Vect.memsetChecked(address, pos - address, (int) v);
     }
@@ -196,17 +198,12 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            try {
-                long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-                this.capacity = capacity;
-                this.address = address;
-                this.limit = address + capacity;
-                this.pos = Math.min(this.limit, address + oldSize);
-                LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
+            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            this.capacity = capacity;
+            this.address = address;
+            this.limit = address + capacity;
+            this.pos = Math.min(this.limit, address + oldSize);
+            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
         }
     }
 

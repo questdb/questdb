@@ -26,10 +26,12 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
@@ -49,8 +51,18 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean convertPartition(long partitionTimestamp) {
-        throw CairoException.critical(0).put("convert partition to parquet does not update sequencer metadata");
+    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
+    }
+
+    @Override
+    default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+        throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
+    }
+
+    @Override
+    default boolean convertPartitionParquetToNative(long partitionTimestamp) {
+        throw CairoException.critical(0).put("convert parquet partition to native does not update sequencer metadata");
     }
 
     @Override
@@ -68,16 +80,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    default boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        return false;
+    }
+
+    default void forceRemovePartitions(LongList partitionTimestamps) {
+        throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }
 
     @Override
     default int getMetaMaxUncommittedRows() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getMetaO3MaxLag() {
         throw new UnsupportedOperationException();
     }
 
@@ -97,13 +109,43 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        throw CairoException.critical(0).put("change of materialized view refresh settings does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMatViewRefreshLimit(int limitHoursOrMonths) {
+        throw CairoException.critical(0).put("change of materialized view refresh limit does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMatViewRefreshTimer(long start, int interval, char unit) {
+        throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
+    }
+
+    @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
+        throw CairoException.critical(0).put("change of max uncommitted does not update sequencer metadata");
     }
 
     @Override
     default void setMetaO3MaxLag(long o3MaxLagUs) {
         throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMetaTtl(int ttlHoursOrMonths) {
+        throw CairoException.critical(0).put("change of TTL does not update sequencer metadata");
     }
 
     @Override
@@ -116,4 +158,3 @@ public interface MetadataServiceStub extends MetadataService {
         // no-op
     }
 }
-

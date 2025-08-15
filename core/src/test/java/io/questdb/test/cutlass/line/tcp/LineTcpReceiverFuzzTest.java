@@ -26,7 +26,8 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -118,7 +119,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         Assume.assumeTrue(walEnabled);
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     for (int i = 0; i < 300; i++) {
                         lineTcpSender
                                 .metric("table")
@@ -136,7 +137,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
             // Assert all data went into WAL1 and WAL2 does not exist
             TableToken token = engine.verifyTableName("table");
-            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
+            Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
             Assert.assertFalse(engine.getConfiguration().getFilesFacade().exists(path.slash$()));
         });
     }

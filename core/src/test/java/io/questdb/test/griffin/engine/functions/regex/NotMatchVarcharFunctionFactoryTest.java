@@ -35,7 +35,7 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(2000))");
             assertQuery(
                     "name\n",
                     "select * from x where name !~ null",
@@ -48,7 +48,7 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(2000))");
             try {
                 assertExceptionNoLeakCheck("select * from x where name !~ 'XJ**'");
             } catch (SqlException e) {
@@ -73,7 +73,7 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
                     "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\n" +
                     "91g>\n" +
                     "h볱9\n";
-            ddl("create table x as (select rnd_varchar() name from long_sequence(20))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(20))");
             assertSql(
                     expected,
                     "select * from x where name !~ '[ABCDEFGHIJKLMN]'"

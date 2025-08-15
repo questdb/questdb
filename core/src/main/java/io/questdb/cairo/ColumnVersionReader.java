@@ -30,9 +30,18 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -171,7 +180,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public long getMaxPartitionVersion(long partitionTimestamp) {
         long maxVersion = -1;
-        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1) {
             final int sz = cachedColumnVersionList.size();
             for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
@@ -187,7 +196,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
-        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1) {
             final int sz = cachedColumnVersionList.size();
             for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
@@ -232,6 +241,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
         version = -1;
     }
 
+    /**
+     * Copies column versions from the given reader.
+     */
+    public void readFrom(ColumnVersionReader columnVersionReader) {
+        this.version = columnVersionReader.version;
+        cachedColumnVersionList.clear();
+        cachedColumnVersionList.addAll(columnVersionReader.cachedColumnVersionList);
+    }
+
     public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
@@ -267,7 +285,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             }
 
             if (microsecondClock.getTicks() - tick > spinLockTimeout) {
-                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
+                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).$("ms]").$();
                 throw CairoException.critical(0).put("Column Version read timeout");
             }
             Os.pause();
@@ -284,6 +302,39 @@ public class ColumnVersionReader implements Closeable, Mutable {
         mem.resize(offset + size);
         readUnsafe(offset, size, cachedColumnVersionList, mem);
         return version;
+    }
+
+    @Override
+    public String toString() {
+        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
+        StringSink sink = new StringSink();
+        sink.put("{[");
+        for (int i = 0; i < cachedColumnVersionList.size(); i += BLOCK_SIZE) {
+            long timestamp = cachedColumnVersionList.getQuick(i);
+            int columnIndex = (int) cachedColumnVersionList.getQuick(i + COLUMN_INDEX_OFFSET);
+            long columnNameTxn = cachedColumnVersionList.getQuick(i + COLUMN_NAME_TXN_OFFSET);
+            long columnTop = cachedColumnVersionList.getQuick(i + COLUMN_TOP_OFFSET);
+
+            if (i > 0) {
+                sink.put(",");
+            }
+            sink.put("\n{columnIndex: ").put(columnIndex).put(", ");
+            boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
+            if (isDefaultPartition) {
+                sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
+                sink.put("addedPartition: '");
+                TimestampFormatUtils.appendDateTime(sink, columnTop);
+                sink.put("'}");
+            } else {
+                sink.put("nameTxn: ").put(columnNameTxn).put(", ");
+                sink.put("partition: '");
+                TimestampFormatUtils.appendDateTime(sink, timestamp);
+                sink.put("', ");
+                sink.put("columnTop: ").put(columnTop).put("}");
+            }
+        }
+        sink.put("\n]}");
+        return sink.toString();
     }
 
     private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {

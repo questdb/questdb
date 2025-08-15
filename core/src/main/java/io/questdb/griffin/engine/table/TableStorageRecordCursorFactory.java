@@ -24,19 +24,29 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int DISK_SIZE = 5;
@@ -46,31 +56,26 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private static final int ROW_COUNT = 4;
     private static final int TABLE_NAME = 0;
     private static final int WAL_ENABLED = 1;
+    private final CairoConfiguration configuration;
     private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
-    private final Path path = new Path();
-    private CairoConfiguration configuration;
-    private SqlExecutionContext executionContext;
-    private TxReader reader;
+    private final CairoEngine engine;
+    private final TxReader txReader;
 
-
-    public TableStorageRecordCursorFactory() {
+    public TableStorageRecordCursorFactory(CairoEngine engine) {
         super(METADATA);
+        this.configuration = engine.getConfiguration();
+        this.engine = engine;
+        this.txReader = new TxReader(configuration.getFilesFacade());
     }
 
     @Override
     public void _close() {
-        cursor.close();
-        executionContext = null;
-        configuration = null;
-        path.close();
-        reader.close();
+        Misc.free(cursor);
+        Misc.free(txReader);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.executionContext = executionContext;
-        this.configuration = executionContext.getCairoEngine().getConfiguration();
-        reader = new TxReader(configuration.getFilesFacade());
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return cursor.initialize();
     }
 
@@ -92,7 +97,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public void close() {
             tableBucket.clear();
-            record.close();
+            txReader.clear();
         }
 
         @Override
@@ -101,7 +106,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             ++tableIndex;
             int n = tableBucket.size();
 
@@ -123,7 +128,12 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public long size() {
             return tableBucket.size();
         }
 
@@ -133,23 +143,18 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private TableStorageRecordCursor initialize() {
-            executionContext.getCairoEngine().getTableTokens(tableBucket, false);
+            engine.getTableTokens(tableBucket, false);
             toTop();
             return this;
         }
 
-        private class TableStorageRecord implements Record, Closeable {
+        private class TableStorageRecord implements Record {
             private long diskSize;
             private int partitionBy;
             private long partitionCount;
             private long rowCount;
             private CharSequence tableName;
             private boolean walEnabled;
-
-            @Override
-            public void close() {
-
-            }
 
             @Override
             public boolean getBool(int col) {
@@ -187,44 +192,30 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public @Nullable CharSequence getStrB(int col) {
-                switch (col) {
-                    case TABLE_NAME:
-                        return tableName;
-                    case PARTITION_BY:
-                        return PartitionBy.toString(partitionBy);
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return getStrA(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             private void getTableStats(@NotNull TableToken token) {
-                reset();
                 walEnabled = token.isWal();
                 tableName = token.getTableName();
+                try (TableMetadata tm = engine.getTableMetadata(token)) {
+                    partitionBy = tm.getPartitionBy();
+                }
 
-                // Metadata
-                TableMetadata tm = executionContext.getMetadataForRead(token);
-                partitionBy = tm.getPartitionBy();
-                tm.close();
-
-                // Path
-                TableUtils.setPathTable(path, configuration, token);
+                final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName());
                 diskSize = Files.getDirSize(path);
 
                 // TxReader
-                TableUtils.setTxReaderPath(reader, path, partitionBy); // modifies path
-                rowCount = reader.unsafeLoadRowCount();
-                partitionCount = reader.getPartitionCount();
-                reader.close();
+                TableUtils.setTxReaderPath(txReader, path, partitionBy); // modifies path
+                rowCount = txReader.unsafeLoadRowCount();
+                partitionCount = txReader.getPartitionCount();
             }
 
-            private void reset() {
-                rowCount = -1;
-                partitionCount = -1;
-                diskSize = -1;
-                path.close();
-                reader.close();
-            }
         }
     }
 
@@ -238,6 +229,4 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         metadata.add(new TableColumnMetadata("diskSize", ColumnType.LONG));
         METADATA = metadata;
     }
-
 }
-

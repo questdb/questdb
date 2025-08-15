@@ -120,16 +120,16 @@ public class HistogramLogReader implements Closeable {
         @Override
         public boolean onHistogram(String tag, double timestamp, double length,
                                    HistogramLogScanner.EncodableHistogramSupplier lazyReader) {
-            final double logTimeStampInSec = timestamp; // Timestamp is expected to be in seconds
+            // Timestamp is expected to be in seconds
 
             if (!observedStartTime) {
                 // No explicit start time noted. Use 1st observed time:
-                startTimeSec = logTimeStampInSec;
+                startTimeSec = timestamp;
                 observedStartTime = true;
             }
             if (!observedBaseTime) {
                 // No explicit base time noted. Deduce from 1st observed time (compared to start time):
-                if (logTimeStampInSec < startTimeSec - (365 * 24 * 3600.0)) {
+                if (timestamp < startTimeSec - (365 * 24 * 3600.0)) {
                     // Criteria Note: if log timestamp is more than a year in the past (compared to
                     // StartTime), we assume that timestamps in the log are not absolute
                     baseTimeSec = startTimeSec;
@@ -140,11 +140,11 @@ public class HistogramLogReader implements Closeable {
                 observedBaseTime = true;
             }
 
-            final double absoluteStartTimeStampSec = logTimeStampInSec + baseTimeSec;
+            final double absoluteStartTimeStampSec = timestamp + baseTimeSec;
             final double offsetStartTimeStampSec = absoluteStartTimeStampSec - startTimeSec;
 
-            final double intervalLengthSec = length; // Timestamp length is expect to be in seconds
-            final double absoluteEndTimeStampSec = absoluteStartTimeStampSec + intervalLengthSec;
+            // Timestamp length is expect to be in seconds
+            final double absoluteEndTimeStampSec = absoluteStartTimeStampSec + length;
 
             final double startTimeStampToCheckRangeOn = absolute ? absoluteStartTimeStampSec : offsetStartTimeStampSec;
 

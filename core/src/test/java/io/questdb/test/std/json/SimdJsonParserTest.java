@@ -25,7 +25,11 @@
 package io.questdb.test.std.json;
 
 import io.questdb.log.LogFactory;
-import io.questdb.std.json.*;
+import io.questdb.std.json.SimdJsonError;
+import io.questdb.std.json.SimdJsonNumberType;
+import io.questdb.std.json.SimdJsonParser;
+import io.questdb.std.json.SimdJsonResult;
+import io.questdb.std.json.SimdJsonType;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
@@ -52,43 +56,43 @@ public class SimdJsonParserTest {
     private static final Scenario[] SCENARIOS = new Scenario[]{
             new Scenario(
                     "null",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
                             Long.MIN_VALUE
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
                             Double.NaN
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
                             ""
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NULL,
                             SimdJsonNumberType.UNSET,
@@ -98,43 +102,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(
                     "true",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             true
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             (short) 1
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             1
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             1L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             1.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             "true"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
@@ -144,43 +148,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(
                     "false",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             0
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             0L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             0.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
                             "false"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.BOOLEAN,
                             SimdJsonNumberType.UNSET,
@@ -190,43 +194,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(
                     "1",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             (short) 1
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             1
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             1L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             1.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             "1"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
@@ -236,43 +240,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(
                     "0",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             0
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             0L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             0.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             "0"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
@@ -282,43 +286,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(
                     "-1",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             (short) -1
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             -1
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             -1L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             -1.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             "-1"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
@@ -328,43 +332,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(
                     "\"  abc  \"",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
                             Long.MIN_VALUE
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
                             Double.NaN
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
                             "  abc  "
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.STRING,
                             SimdJsonNumberType.UNSET,
@@ -374,43 +378,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // N.B.: We report success even when rounding numbers.
                     "1.25",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             (short) 1
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             1
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             1L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             1.25
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             "1.25"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
@@ -420,43 +424,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // One past the max value for `short`.
                     "32768",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             32768
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             32768L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             32768.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             "32768"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
@@ -466,43 +470,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // One past the numeric range of `int`
                     "2147483648",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             2147483648L
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             2147483648.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             "2147483648"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
@@ -512,43 +516,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // Two past last the range of long
                     "9223372036854775809",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.SIGNED_INTEGER,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.UNSIGNED_INTEGER,
                             Long.MIN_VALUE
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             9223372036854775809.0
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.UNSIGNED_INTEGER,
                             "9223372036854775809"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.UNSIGNED_INTEGER,
@@ -558,43 +562,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // Outside the u64 range, completely.
                     "10000000000000000000000000000000000000000",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
                             Long.MIN_VALUE
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
                             1.0E40
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
                             "10000000000000000000000000000000000000000"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.BIG_INTEGER,
@@ -604,43 +608,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // A floating point number that is too large for anything else.
                     "1e308",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.NUMBER_OUT_OF_RANGE,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             Long.MIN_VALUE
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             1e308
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
                             "1e308"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.NUMBER,
                             SimdJsonNumberType.FLOATING_POINT_NUMBER,
@@ -650,43 +654,43 @@ public class SimdJsonParserTest {
             ),
             new Scenario(  // An object
                     "{\"a\": 1}",
-                    new Value<Boolean>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
                             false
                     ),
-                    new Value<Short>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
                             (short) 0
                     ),
-                    new Value<Integer>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
                             Integer.MIN_VALUE
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
                             Long.MIN_VALUE
                     ),
-                    new Value<Double>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
                             Double.NaN
                     ),
-                    new Value<String>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
                             "{\"a\": 1}"
                     ),
-                    new Value<Long>(
+                    new Value<>(
                             SimdJsonError.SUCCESS,
                             SimdJsonType.OBJECT,
                             SimdJsonNumberType.UNSET,
@@ -739,7 +743,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nonexistent"), result);
             Assert.assertFalse(res);
-            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
+            Assert.assertEquals(SimdJsonType.UNSET, result.getType());
         });
     }
 
@@ -748,8 +752,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result);
             Assert.assertFalse(res);
-            Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
+            Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+            Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
     }
 
@@ -797,7 +801,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nonexistent"), result);
             Assert.assertTrue(Double.isNaN(res));
-            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
+            Assert.assertEquals(SimdJsonType.UNSET, result.getType());
         });
     }
 
@@ -806,7 +810,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nothing"), result);
             Assert.assertTrue(Double.isNaN(res));
-            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
+            Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
     }
 
@@ -815,8 +819,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerUtf8(json, path2Pointer("£$£%£%invalid path!!"), result, dest, 100);
-                Assert.assertEquals(result.getError(), SimdJsonError.INVALID_JSON_POINTER);
-                Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
+                Assert.assertEquals(SimdJsonError.INVALID_JSON_POINTER, result.getError());
+                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
             }
         });
     }
@@ -826,7 +830,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nonexistent"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
+            Assert.assertEquals(SimdJsonType.UNSET, result.getType());
         });
     }
 
@@ -835,7 +839,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nothing"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
+            Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
     }
 
@@ -844,7 +848,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertFalse(parser.queryPointerBoolean(json, path2Pointer(".hasChildren"), result));
             Assert.assertTrue(parser.queryPointerBoolean(json, path2Pointer(".pets[1].scratches"), result));
-            Assert.assertEquals(result.getType(), SimdJsonType.BOOLEAN);
+            Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
         });
     }
 
@@ -852,7 +856,7 @@ public class SimdJsonParserTest {
     public void testQueryPathDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertEquals(5.6, parser.queryPointerDouble(json, path2Pointer(".height"), result), 0.0001);
-            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -860,7 +864,7 @@ public class SimdJsonParserTest {
     public void testQueryPathLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertEquals(30, parser.queryPointerLong(json, path2Pointer(".age"), result));
-            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -869,8 +873,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".bignum"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getError(), SimdJsonError.NUMBER_OUT_OF_RANGE);
-            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
+            Assert.assertEquals(SimdJsonError.NUMBER_OUT_OF_RANGE, result.getError());
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -879,8 +883,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".u64_val"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getError(), SimdJsonError.NUMBER_OUT_OF_RANGE);
-            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
+            Assert.assertEquals(SimdJsonError.NUMBER_OUT_OF_RANGE, result.getError());
+            Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
         });
     }
 
@@ -904,7 +908,7 @@ public class SimdJsonParserTest {
                 dest.clear();
                 parser.queryPointerUtf8(json, descriptionPath, result, dest, 272);
                 // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
-                Assert.assertEquals(dest.size(), 270);
+                Assert.assertEquals(270, dest.size());
                 Assert.assertFalse(dest.isAscii());
 
                 // This ends up decoding just fine as UTF-8 and is shorter than the maxLen.
@@ -925,69 +929,69 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(cap)) {
                 final long ret1 = parser.queryPointerValue(json, path2Pointer(".name"), result, dest, cap);
                 Assert.assertEquals(0, ret1);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.STRING);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.STRING, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals("John", dest.toString());
 
                 dest.clear();
 
                 final long ret2 = parser.queryPointerValue(json, path2Pointer(".age"), result, dest, cap);
                 Assert.assertEquals(30, ret2);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.SIGNED_INTEGER);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.SIGNED_INTEGER, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret3 = parser.queryPointerValue(json, path2Pointer(".height"), result, dest, cap);
                 final double ret3Double = Double.longBitsToDouble(ret3);
                 Assert.assertEquals(5.6, ret3Double, 0.000001);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.FLOATING_POINT_NUMBER);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.FLOATING_POINT_NUMBER, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret4 = parser.queryPointerValue(json, path2Pointer(".hasChildren"), result, dest, cap);
                 Assert.assertEquals(0, ret4);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.BOOLEAN);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret5 = parser.queryPointerValue(json, path2Pointer(".hasPets"), result, dest, cap);
                 Assert.assertEquals(1, ret5);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.BOOLEAN);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.BOOLEAN, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret6 = parser.queryPointerValue(json, path2Pointer(".nothing"), result, dest, cap);
                 Assert.assertEquals(0, ret6);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.NULL);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NULL, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret7 = parser.queryPointerValue(json, path2Pointer(".u64_val"), result, dest, cap);
                 Assert.assertEquals(-2L, ret7);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSIGNED_INTEGER);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSIGNED_INTEGER, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
 
                 final long ret8 = parser.queryPointerValue(json, path2Pointer(".bignum"), result, dest, cap);
                 Assert.assertEquals(0, ret8);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.BIG_INTEGER);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.NUMBER, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.BIG_INTEGER, result.getNumberType());
                 Assert.assertEquals("12345678901234567890123456789012345678901234567890", dest.toString());
                 dest.clear();
 
                 final long ret9 = parser.queryPointerValue(json, path2Pointer(".pets"), result, dest, cap);
                 Assert.assertEquals(0, ret9);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.ARRAY);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.ARRAY, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals("[\n" +
                         "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
                         "    {\"name\": \"Whiskers\", \"species\": \"Cat\", \"scratches\": true}\n" +
@@ -996,17 +1000,17 @@ public class SimdJsonParserTest {
 
                 final long ret10 = parser.queryPointerValue(json, path2Pointer(".pets[0]"), result, dest, cap);
                 Assert.assertEquals(0, ret10);
-                Assert.assertEquals(result.getError(), SimdJsonError.SUCCESS);
-                Assert.assertEquals(result.getType(), SimdJsonType.OBJECT);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.SUCCESS, result.getError());
+                Assert.assertEquals(SimdJsonType.OBJECT, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals("{\"name\": \"Max\", \"species\": \"Dog\"}", dest.toString());
                 dest.clear();
 
                 final long ret11 = parser.queryPointerValue(json, path2Pointer(".nonexistent"), result, dest, cap);
                 Assert.assertEquals(0, ret11);
-                Assert.assertEquals(result.getError(), SimdJsonError.NO_SUCH_FIELD);
-                Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
-                Assert.assertEquals(result.getNumberType(), SimdJsonNumberType.UNSET);
+                Assert.assertEquals(SimdJsonError.NO_SUCH_FIELD, result.getError());
+                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
+                Assert.assertEquals(SimdJsonNumberType.UNSET, result.getNumberType());
                 Assert.assertEquals(0, dest.size());
             }
         });
@@ -1117,7 +1121,7 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerUtf8(json, path2Pointer(".nonexistent"), result, dest, 100);
                 Assert.assertEquals("", dest.toString());
-                Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
+                Assert.assertEquals(SimdJsonType.UNSET, result.getType());
             }
         });
     }
@@ -1128,7 +1132,7 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerUtf8(json, path2Pointer(".nothing"), result, dest, 100);
                 Assert.assertEquals("", dest.toString());
-                Assert.assertEquals(result.getType(), SimdJsonType.NULL);
+                Assert.assertEquals(SimdJsonType.NULL, result.getType());
             }
         });
     }
@@ -1150,7 +1154,7 @@ public class SimdJsonParserTest {
             Scenario scenario,
             DirectUtf8Sink json,
             DirectUtf8Sink dest
-    ) throws Exception {
+    ) {
         json.clear();
         json.put('[');
         json.put(scenario.json);
@@ -1172,7 +1176,7 @@ public class SimdJsonParserTest {
             Scenario scenario,
             DirectUtf8Sink json,
             DirectUtf8Sink dest
-    ) throws Exception {
+    ) {
         json.clear();
         json.put(scenario.json);
         dest.clear();
@@ -1206,7 +1210,7 @@ public class SimdJsonParserTest {
                 DirectUtf8Sink dest,
                 Scenario scenario,
                 DirectUtf8Sequence path
-        ) throws Exception;
+        );
     }
 
     private static class Scenario {

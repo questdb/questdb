@@ -144,16 +144,19 @@ public class Worker extends Thread {
                 long ticker = 0L;
                 while (lifecycle.get() == Lifecycle.RUNNING) {
                     boolean runAsap = false;
+                    // measure latency of all jobs tick
+                    jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
                     for (int i = 0, n = jobs.size(); i < n; i++) {
-                        jobStartMicros.set(CLOCK_MICROS.getTicks());
                         Unsafe.getUnsafe().loadFence();
                         try {
                             runAsap |= jobs.get(i).run(workerId, runStatus);
                         } catch (Throwable e) {
-                            try {
-                                metrics.health().incrementUnhandledErrors();
-                            } catch (Throwable t) {
-                                stdErrCritical(t);
+                            if (metrics.isEnabled()) {
+                                try {
+                                    metrics.healthMetrics().incrementUnhandledErrors();
+                                } catch (Throwable t) {
+                                    stdErrCritical(t);
+                                }
                             }
                             if (log != null) {
                                 log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
@@ -169,11 +172,11 @@ public class Worker extends Thread {
                     }
 
                     if (runAsap) {
-                        ticker = 0L;
+                        ticker = 0;
                         continue;
                     }
-                    if (++ticker < 0L) {
-                        ticker = sleepThreshold + 1L; // overflow
+                    if (++ticker < 0) {
+                        ticker = sleepThreshold + 1; // overflow
                     }
                     if (ticker > sleepThreshold) {
                         Os.sleep(sleepMs);
@@ -207,7 +210,7 @@ public class Worker extends Thread {
 
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
-        e.printStackTrace();
+        e.printStackTrace(System.err);
     }
 
     long getJobStartMicros() {

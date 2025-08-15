@@ -24,11 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Transient;
@@ -67,7 +67,9 @@ public interface CompiledQuery {
     short ALTER_USER = CREATE_USER + 1; // 29
     short CANCEL_QUERY = ALTER_USER + 1; // 30
     short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
-    short EMPTY = TABLE_SUSPEND + 1;
+    short CREATE_MAT_VIEW = TABLE_SUSPEND + 1; // 32
+    short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
+    short EMPTY = REFRESH_MAT_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
     /**
@@ -86,6 +88,8 @@ public interface CompiledQuery {
     @Transient
     OperationFuture execute(SqlExecutionContext context, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException;
 
+    boolean executedAtParseTime();
+
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      *
@@ -96,11 +100,11 @@ public interface CompiledQuery {
     @Transient
     AlterOperation getAlterOperation();
 
-    InsertOperation getInsertOperation();
+    Operation getOperation();
 
     RecordCursorFactory getRecordCursorFactory();
 
-    String getSqlStatement();
+    String getSqlText();
 
     /**
      * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
@@ -109,13 +113,20 @@ public interface CompiledQuery {
      */
     CharSequence getStatementName();
 
-    TableToken getTableToken();
-
     short getType();
 
     UpdateOperation getUpdateOperation();
 
+    /**
+     * Returns and move ownership of the current insertion operation.
+     * After invocation, the lifecycle management becomes the caller's responsibility.
+     * The internal reference will be cleared to prevent double free.
+     *
+     * @return InsertOperation
+     */
+    InsertOperation popInsertOperation();
+
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    void withSqlStatement(String sqlStatement);
+    void withSqlText(String sqlText);
 }

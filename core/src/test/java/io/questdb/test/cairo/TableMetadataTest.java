@@ -26,15 +26,26 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(Parameterized.class)
 public class TableMetadataTest extends AbstractCairoTest {
@@ -52,10 +63,44 @@ public class TableMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzIsMetaFormatUpToDate() throws Exception {
+        Assume.assumeFalse(walEnabled); // The test doesn't deal with tables
+
+        assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            try (MemoryCARW metaMem = Vm.getCARWInstance(128, 1, MemoryTag.NATIVE_DEFAULT)) {
+                int falseNegativeCount = 0;
+                for (int i = 0; i < 65_536; i++) {
+                    int columnCount = rnd.nextInt(1000);
+                    long metadataVersion = rnd.nextLong(100);
+                    int metaFormatMinorVersion = TableUtils.calculateMetaFormatMinorVersionField(metadataVersion, columnCount);
+                    int garbageMetaFormatMinorVersion = rnd.nextInt();
+
+                    metaMem.putInt(TableUtils.META_OFFSET_COUNT, columnCount);
+                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, metadataVersion);
+
+                    metaMem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, metaFormatMinorVersion);
+                    assertTrue(TableUtils.isMetaFormatUpToDate(metaMem));
+
+                    metaMem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, 0);
+                    assertFalse(TableUtils.isMetaFormatUpToDate(metaMem));
+
+                    metaMem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, garbageMetaFormatMinorVersion);
+                    if (TableUtils.isMetaFormatUpToDate(metaMem)) {
+                        falseNegativeCount++;
+                    }
+                }
+                Assert.assertTrue("Detected more than 5 false negatives on checksum field validation",
+                        falseNegativeCount <= 5);
+            }
+        });
+    }
+
+    @Test
     public void testTableReaderMetadataPool() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
-            ddl("create table x (a int, b long, c double, d symbol capacity 10, e string, ts timestamp) timestamp (ts) partition by WEEK " + (walEnabled ? "WAL" : ""));
+            execute("create table x (a int, b long, c double, d symbol capacity 10, e string, ts timestamp) timestamp (ts) partition by WEEK " + (walEnabled ? "WAL" : ""));
             TableToken tt = engine.verifyTableName(tableName);
             int maxUncommitted = 1234;
 
@@ -64,8 +109,8 @@ public class TableMetadataTest extends AbstractCairoTest {
                 Assert.assertEquals(configuration.getO3MaxLag(), m1.getO3MaxLag());
                 Assert.assertEquals(PartitionBy.WEEK, m1.getPartitionBy());
 
-                compile("alter table x set param maxUncommittedRows = " + maxUncommitted);
-                compile("alter table x set param o3MaxLag = 50s");
+                execute("alter table x set param maxUncommittedRows = " + maxUncommitted);
+                execute("alter table x set param o3MaxLag = 50s");
 
                 if (walEnabled) {
                     try (TableMetadata m2 = engine.getTableMetadata(tt)) {
@@ -106,8 +151,8 @@ public class TableMetadataTest extends AbstractCairoTest {
                 }
             }
 
-            compile("alter table x add column f int");
-            try (TableMetadata m1 = engine.getLegacyMetadata(tt)) {
+            execute("alter table x add column f int");
+            try (TableRecordMetadata m1 = engine.getLegacyMetadata(tt)) {
                 // No delay in meta changes for WAL tables
                 Assert.assertEquals(m1.getColumnCount() - 1, m1.getColumnIndex("f"));
             }

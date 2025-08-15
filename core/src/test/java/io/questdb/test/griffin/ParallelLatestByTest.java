@@ -45,9 +45,28 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class ParallelLatestByTest extends AbstractTest {
-    private static final StringSink sink = new StringSink();
+    private final boolean convertToParquet;
+    private final StringSink sink = new StringSink();
+
+    public ParallelLatestByTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Before
     public void setUp() {
@@ -57,103 +76,83 @@ public class ParallelLatestByTest extends AbstractTest {
 
     @Test
     public void testLatestByAllParallel1() throws Exception {
-        executeWithPool(4, 8, ParallelLatestByTest::testLatestByAll);
+        executeWithPool(4, 8, this::testLatestByAll);
     }
 
     @Test
     public void testLatestByAllParallel2() throws Exception {
-        executeWithPool(8, 4, ParallelLatestByTest::testLatestByAll);
+        executeWithPool(8, 4, this::testLatestByAll);
     }
 
     @Test
     public void testLatestByAllParallel3() throws Exception {
-        executeWithPool(4, 0, ParallelLatestByTest::testLatestByAll);
+        executeWithPool(4, 0, this::testLatestByAll);
     }
 
     @Test
     public void testLatestByAllVanilla() throws Exception {
-        executeVanilla(ParallelLatestByTest::testLatestByAll);
+        executeVanilla(this::testLatestByAll);
     }
 
     @Test
     public void testLatestByFilteredParallel1() throws Exception {
-        executeWithPool(4, 8, ParallelLatestByTest::testLatestByFiltered);
+        executeWithPool(4, 8, this::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByFilteredParallel2() throws Exception {
-        executeWithPool(8, 4, ParallelLatestByTest::testLatestByFiltered);
+        executeWithPool(8, 4, this::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByFilteredParallel3() throws Exception {
-        executeWithPool(4, 0, ParallelLatestByTest::testLatestByFiltered);
+        executeWithPool(4, 0, this::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByFilteredVanilla() throws Exception {
-        executeVanilla(ParallelLatestByTest::testLatestByFiltered);
+        executeVanilla(this::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByTimestampParallel1() throws Exception {
-        executeWithPool(4, 8, ParallelLatestByTest::testLatestByTimestamp);
+        executeWithPool(4, 8, this::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByTimestampParallel2() throws Exception {
-        executeWithPool(8, 4, ParallelLatestByTest::testLatestByTimestamp);
+        executeWithPool(8, 4, this::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByTimestampParallel3() throws Exception {
-        executeWithPool(4, 0, ParallelLatestByTest::testLatestByTimestamp);
+        executeWithPool(4, 0, this::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByTimestampVanilla() throws Exception {
-        executeVanilla(ParallelLatestByTest::testLatestByTimestamp);
+        executeVanilla(this::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByWithinParallel1() throws Exception {
-        executeWithPool(4, 8, ParallelLatestByTest::testLatestByWithin);
+
+        executeWithPool(4, 8, this::testLatestByWithin);
     }
 
     @Test
     public void testLatestByWithinParallel2() throws Exception {
-        executeWithPool(8, 8, ParallelLatestByTest::testLatestByWithin);
+        executeWithPool(8, 8, this::testLatestByWithin);
     }
 
     @Test
     public void testLatestByWithinParallel3() throws Exception {
-        executeWithPool(8, 0, ParallelLatestByTest::testLatestByWithin);
+        executeWithPool(8, 0, this::testLatestByWithin);
     }
 
     @Test
     public void testLatestByWithinVanilla() throws Exception {
-        executeVanilla(ParallelLatestByTest::testLatestByWithin);
-    }
-
-    private static void assertQuery(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String expected,
-            String ddl,
-            String query
-    ) throws SqlException {
-        compiler.compile(ddl, sqlExecutionContext);
-
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        RecordCursorFactory factory = cc.getRecordCursorFactory();
-
-        try {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
-            }
-        } finally {
-            Misc.free(factory);
-        }
+        executeVanilla(this::testLatestByWithin);
     }
 
     private static void execute(
@@ -197,12 +196,10 @@ public class ParallelLatestByTest extends AbstractTest {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 };
 
+                WorkerPool pool = new WorkerPool(() -> workerCount);
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
@@ -212,13 +209,43 @@ public class ParallelLatestByTest extends AbstractTest {
                     public int getLatestByQueueCapacity() {
                         return queueCapacity;
                     }
+
+                    @Override
+                    public boolean useWithinLatestByOptimisation() {
+                        return true;
+                    }
                 };
                 execute(null, runnable, configuration);
             }
         });
     }
 
-    private static void testLatestByAll(
+    private void assertQuery(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expected,
+            String ddl,
+            String ddl2,
+            String query
+    ) throws SqlException {
+        CairoEngine.execute(compiler, ddl, sqlExecutionContext, null);
+        if (ddl2 != null) {
+            CairoEngine.execute(compiler, ddl2, sqlExecutionContext, null);
+        }
+
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
+
+        try {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+            }
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
+    private void testLatestByAll(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -239,13 +266,14 @@ public class ParallelLatestByTest extends AbstractTest {
                 " from" +
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
+        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
 
         final String query = "select * from x latest on k partition by b";
 
-        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+        assertQuery(compiler, sqlExecutionContext, expected, ddl, ddl2, query);
     }
 
-    private static void testLatestByFiltered(
+    private void testLatestByFiltered(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -267,18 +295,18 @@ public class ParallelLatestByTest extends AbstractTest {
                 " rnd_symbol(5,4,4,1) b" +
                 " from long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
+        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
 
         final String query = "select * from (select a,k,b from x latest on k partition by b) where a > 40";
 
-        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+        assertQuery(compiler, sqlExecutionContext, expected, ddl, ddl2, query);
     }
 
-    private static void testLatestByTimestamp(
+    private void testLatestByTimestamp(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         final String expected = "a\tb\tk\n" +
                 "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
@@ -294,11 +322,12 @@ public class ParallelLatestByTest extends AbstractTest {
                 "), index(b) timestamp(k) partition by DAY";
 
         final String query = "select * from x where k < '1970-01-03' latest on k partition by b";
+        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
 
-        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+        assertQuery(compiler, sqlExecutionContext, expected, ddl, ddl2, query);
     }
 
-    private static void testLatestByWithin(
+    private void testLatestByWithin(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -317,10 +346,11 @@ public class ParallelLatestByTest extends AbstractTest {
                 " rnd_geohash(30) geo" +
                 " from long_sequence(10000)" +
                 "), index(sym) timestamp(ts) partition by DAY";
+        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where ts >= 0" : null;
 
         final String query = "select * from x where geo within(#gk1gj8, #mbx5c0) latest on ts partition by sym";
 
-        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+        assertQuery(compiler, sqlExecutionContext, expected, ddl, ddl2, query);
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {

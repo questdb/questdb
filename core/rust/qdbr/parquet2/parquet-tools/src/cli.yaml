@@ -1,0 +1,38 @@
+name: parquet-tools
+version: "1.0"
+author: Fernando Herrera
+about: Tools to extract information from Parquet file
+args:
+    - file:
+        help: Parquet file to read
+        required: true
+        index: 1
+subcommands:
+    - rowcount:
+        about: number of rows from file
+    - meta:
+        about: meta information about the file
+        args:
+            - extra:
+                short: e
+                long: extra
+                help: shows extra information from the file
+            - stats:
+                short: s
+                long: stats
+                help: shows column stats
+    - dump:
+        about: dumps data from column
+        args:
+            - size:
+                short: s
+                long: size
+                help: sample size to be printed from page (default 5)
+                takes_value: true
+            - columns:
+                short: c
+                long: columns
+                multiple: true
+                help: columns to be printed
+                takes_value: true
+

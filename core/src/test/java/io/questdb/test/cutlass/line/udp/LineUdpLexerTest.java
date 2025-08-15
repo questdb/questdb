@@ -31,13 +31,14 @@ import io.questdb.cutlass.line.udp.LineUdpLexer;
 import io.questdb.cutlass.line.udp.LineUdpParser;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.util.HashMap;
 import java.util.Map;
 
-public class LineUdpLexerTest {
+public class LineUdpLexerTest extends AbstractCairoTest {
 
     private static LineUdpLexer lexer;
     protected final StringSink sink = new StringSink();
@@ -49,7 +50,7 @@ public class LineUdpLexerTest {
     }
 
     @AfterClass
-    public static void tearDown() {
+    public static void tearDownStatic() {
         Misc.free(lexer);
         AllocationsTracker.dumpNewAllocationsStacktraces(null);
     }

@@ -69,16 +69,40 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-x86-64:
     runs-on: ubuntu-latest
-    # this is very bare container, we use it to restrict GLIBC to 2.28
-    # everything has to be installed on it manually
+    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
+    # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
-      image: debian:buster
+      image:
+        quay.io/pypa/manylinux2014_x86_64
+      volumes:
+        - /node20217:/node20217
+        - /node20217:/__e/node20
     steps:
-      - name: Install tools (CXX/NASM/Rust)
+      - name: Install tools, most are needed to build nasm
         run: |
           ldd --version
-          apt-get update -y
-          apt install git nasm python3 wget ca-certificates build-essential zstd -y
+          yum update -y
+          yum install 'perl(Env)' perl-Font-TTF perl-Sort-Versions gcc wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
+      - name: Build nasm
+        # we need nasm 2.14+ due to this bug https://bugzilla.nasm.us/show_bug.cgi?id=3392205
+        # manylinux2014 distribution includes nasm 2.10
+        # the nasm project itself provides RPMs, but they built against a newer glibc and other dependencies too
+        # thus we take src.rpm from nasm project and rebuild it in the manylinux2014 container
+        # this way we get a nasm binary that is compatible with the manylinux2014 environment
+        run: |
+          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/linux/nasm-2.16.03-0.fc39.src.rpm
+          rpmbuild --rebuild ./nasm-2.16.03-0.fc39.src.rpm
+          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-0.el7.x86_64.rpm
+      - name: Install Node.js 20 glibc2.17
+        # A hack to override default nodejs 20 to a build compatible with older glibc.
+        # Inspired by https://github.com/pytorch/test-infra/pull/5959 If it's good for pytorch, it's good for us too! :)
+        # Q: Why do we need this hack at all? A: Because many github actions, include action/checkout@v4, depend on nodejs 20.
+        # GitHub Actions runner provides a build of nodejs 20 that requires a newer glibc than manylinux2014 has.
+        # Thus we download a build of nodejs 20 that is compatible with manylinux2014 and override the default one.
+        run: |
+          curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
+          tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
+          ldd /__e/node20/bin/node
       - uses: actions/checkout@v4
         with:
           submodules: true
@@ -113,24 +137,26 @@ jobs:
             core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
+    container:
+      image: quay.io/pypa/manylinux_2_28_aarch64
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Increase file count and install tooling
+      - name: Install tooling
         run: |
-          sudo sysctl -w fs.file-max=500000
-          sudo apt-get update -y
-          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu
-      - name: Generate Makefiles
+          yum update -y
+          yum install wget nasm zstd -y
+      - name: Install JDK17 (for jni.h)
         run: |
-          cd ./core
-          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          wget -v --timeout=180 https://api.adoptium.net/v3/binary/version/jdk-17.0.11+9/linux/aarch64/jdk/hotspot/normal/eclipse
+          tar xfvz eclipse
+          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
       - name: CMAKE linux-aarch64
         run: |
           cd ./core
-          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64 -S.
       - name: Build linux-aarch64 CXX Library
         run: |
           cd core
@@ -141,6 +167,7 @@ jobs:
           cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-aarch64/
       - name: Check git status
         run: |
+          git config --global --add safe.directory /__w/questdb/questdb
           git status
       - name: Save linux-aarch64 Libraries to Cache
         uses: actions/cache/save@v3
@@ -255,6 +282,17 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
+          
+          echo "Removing exec permissions in Git index..."
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+          
+          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc.so
+          git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc.so
+          git update-index --chmod=-x core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          git update-index --chmod=-x core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after

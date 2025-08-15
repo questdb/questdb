@@ -71,7 +71,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
                     "example2.com\n" +
                     "\n" +
                     "example2.com\n";
-            ddl("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
+            execute("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
             assertSql(
                     expected,
                     "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"

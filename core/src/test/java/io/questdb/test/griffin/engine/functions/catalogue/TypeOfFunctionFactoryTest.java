@@ -39,7 +39,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
         assertException(
                 "select typeOf($1) from test",
                 "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                7,
+                14,
                 "bind variables are not supported"
         );
     }
@@ -84,6 +84,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                     || i == ColumnType.REGPROCEDURE
                     || i == ColumnType.ARRAY_STRING
                     || i == ColumnType.PARAMETER
+                    || i == ColumnType.ARRAY
             ) {
                 continue;
             }

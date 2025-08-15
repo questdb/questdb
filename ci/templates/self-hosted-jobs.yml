@@ -1,9 +1,8 @@
 jobs:
-  - job: linux_arm64
+  - job: linux_arm64_jdk17
     displayName: "on linux-arm64"
     pool:
       name: "arm64"
-      vmImage:
       demands:
         - Agent.Name -equals arm64-$(System.StageName)$(Build.BuildId)
     dependsOn:
@@ -19,16 +18,17 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.11"
+      jdk: "1.17"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
       os: Linux
     steps:
       - template: steps.yml
 
-  - job: linux_x64_zfs
+  - job: linux_x64_zfs_jdk17
     displayName: "on linux-x64-zfs"
     pool:
       name: "amd64-zfs"
-      vmImage:
       demands:
         - Agent.Name -equals amd64-zfs-$(System.StageName)$(Build.BuildId)
     dependsOn:
@@ -44,7 +44,9 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.11"
+      jdk: "1.17"
       os: Linux
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
     steps:
       - template: steps.yml

@@ -27,7 +27,6 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.std.str.Utf16Sink;
@@ -39,7 +38,7 @@ import io.questdb.std.str.Utf16Sink;
  * <p>
  * Types are defined in {@link io.questdb.cairo.ColumnType}
  */
-public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor {
+public interface RecordMetadata extends ColumnTypes, Plannable {
 
     int COLUMN_NOT_FOUND = -1;
 

@@ -47,7 +47,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testDifferentPrecisionsDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+            execute("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
 
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
@@ -91,7 +91,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testDifferentPrecisionsSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            execute("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
 
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
@@ -142,7 +142,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testGroupKeyedDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            execute("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
                     ") timestamp(ts))");
             assertQueryNoLeakCheck(
@@ -177,7 +177,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testGroupKeyedSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            execute("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
                     ") timestamp(ts))");
             assertQueryNoLeakCheck(
@@ -212,7 +212,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testGroupNotKeyedDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+            execute("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
                             "631858\n",
@@ -235,7 +235,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testGroupNotKeyedSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            execute("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
                             "6\n",
@@ -258,7 +258,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testGroupNotKeyedWithNullsDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            execute("create table x as (" +
                     "select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
                     ") timestamp(ts) PARTITION BY YEAR");
             String expectedExact = "count_distinct\n" +
@@ -269,8 +269,8 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
             assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
             assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
 
-            insert("insert into x values(cast(null as LONG), '2021-05-21')");
-            insert("insert into x values(cast(null as LONG), '1970-01-01')");
+            execute("insert into x values(cast(null as LONG), '2021-05-21')");
+            execute("insert into x values(cast(null as LONG), '1970-01-01')");
             assertSql(expectedExact, "select count_distinct(s) from x");
             assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
         });
@@ -279,7 +279,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            execute("create table x as (" +
                     "select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
                     ") timestamp(ts) PARTITION BY YEAR");
             String expectedExact = "count_distinct\n" +
@@ -290,8 +290,8 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
             assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
             assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
 
-            insert("insert into x values(cast(null as LONG), '2021-05-21')");
-            insert("insert into x values(cast(null as LONG), '1970-01-01')");
+            execute("insert into x values(cast(null as LONG), '2021-05-21')");
+            execute("insert into x values(cast(null as LONG), '1970-01-01')");
             assertSql(expectedExact, "select count_distinct(s) from x");
             assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
         });
@@ -307,7 +307,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                 "create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
-                false
+                true
         );
     }
 

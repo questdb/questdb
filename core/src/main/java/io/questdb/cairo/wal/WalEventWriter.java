@@ -25,16 +25,29 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.AtomicIntList;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -42,12 +55,13 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
     private final CairoConfiguration configuration;
-    private final MemoryMARW eventMem = Vm.getMARWInstance();
+    private final MemoryMARW eventIndexMem = Vm.getCMARWInstance();
+    private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
-    private long indexFd;
     private AtomicIntList initialSymbolCounts;
-    private long longBuffer;
+    // used to test older mat view format
+    private boolean legacyMatViewFormat;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
@@ -65,10 +79,12 @@ class WalEventWriter implements Closeable {
 
     public void close(boolean truncate, byte truncateMode) {
         eventMem.close(truncate, truncateMode);
-        Unsafe.free(longBuffer, Long.BYTES, MemoryTag.NATIVE_TABLE_WAL_WRITER);
-        longBuffer = 0L;
-        ff.close(indexFd);
-        indexFd = -1;
+        eventIndexMem.close(truncate, truncateMode);
+    }
+
+    @TestOnly
+    public void setLegacyMatViewFormat(boolean legacyMatViewFormat) {
+        this.legacyMatViewFormat = legacyMatViewFormat;
     }
 
     /**
@@ -164,19 +180,21 @@ class WalEventWriter implements Closeable {
             case ColumnType.UUID:
                 eventMem.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 break;
+            case ColumnType.ARRAY:
+                eventMem.putArray(function.getArray(null));
+                break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
     }
 
     private void appendIndex(long value) {
-        Unsafe.putLong(longBuffer, value);
-        ff.append(indexFd, longBuffer, Long.BYTES);
+        eventIndexMem.putLong(value);
     }
 
     private void init() {
         eventMem.putInt(0);
-        eventMem.putInt(WAL_FORMAT_VERSION);
+        eventMem.putInt(WALE_FORMAT_VERSION);
         eventMem.putInt(-1);
 
         appendIndex(WALE_HEADER_SIZE);
@@ -185,13 +203,13 @@ class WalEventWriter implements Closeable {
 
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
-        for (int i = 0; i < columns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+        for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
+                final int initialCount = initialSymbolCounts.get(columnIndex);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
-                    eventMem.putInt(i);
-                    eventMem.putBool(symbolMapNullFlags.get(i));
+                    eventMem.putInt(columnIndex);
+                    eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
@@ -207,7 +225,7 @@ class WalEventWriter implements Closeable {
                         if (value >= initialCount) {
                             eventMem.putInt(value);
                             eventMem.putStr(symbol);
-                            symbolCount += 1;
+                            symbolCount++;
                         }
                     }
                     // Update the size with the exact symbolCount
@@ -222,22 +240,125 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    /**
+     * Append data to the WAL. This method is used for both regular and materialized view data.
+     * The method takes various parameters to specify the data range, timestamps, and other options.
+     *
+     * @param startRowID           the starting row ID of the data in the segment.
+     * @param endRowID             the ending row ID of the data  in the segment.
+     * @param minTimestamp         the minimum timestamp of the data, inclusive
+     * @param maxTimestamp         the maximum timestamp of the data, inclusive
+     * @param outOfOrder           indicates if the data is out of order
+     * @param lastRefreshBaseTxn   seqTxn of base transaction ID when refresh is performed
+     * @param lastRefreshTimestamp wall clock mat view refresh timestamp
+     * @param lastPeriodHi         the high timestamp for the last mat view period refresh
+     * @param replaceRangeLowTs    the low timestamp for the range to be replaced, inclusive
+     * @param replaceRangeHiTs     the high timestamp for the range to be replaced, exclusive
+     * @param dedupMode            deduplication mode, can be DEFAULT, NO_DEDUP, UPSERT_NEW or REPLACE_RANGE.
+     */
+    int appendData(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        assert txnType == WalTxnType.MAT_VIEW_DATA || txnType == WalTxnType.DATA : "unexpected txn type: " + txnType;
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.DATA);
+        eventMem.putByte(txnType);
         eventMem.putLong(startRowID);
         eventMem.putLong(endRowID);
         eventMem.putLong(minTimestamp);
         eventMem.putLong(maxTimestamp);
         eventMem.putBool(outOfOrder);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+            eventMem.putLong(lastRefreshBaseTxn);
+            eventMem.putLong(lastRefreshTimestamp);
+        }
+
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (replaceRangeLowTs >= replaceRangeHiTs) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than replace range high timestamp.");
+            }
+            if (replaceRangeLowTs > minTimestamp) {
+                throw CairoException.nonCritical().put("Replace range low timestamp must be less than or equal to the minimum timestamp.");
+            }
+            if (replaceRangeHiTs <= maxTimestamp) {
+                throw CairoException.nonCritical().put("Replace range high timestamp must be greater than the maximum timestamp.");
+            }
+        }
+
         writeSymbolMapDiffs();
+
+        // To test backwards compatibility and ensure that we still can read WALs
+        // written by the old QuestDB version, make the dedup mode
+        // and replace range value optional. It will then not be written for the most transactions,
+        // and it will test the reading WAL-E code to read the old format.
+        if (dedupMode != WAL_DEDUP_MODE_DEFAULT) {
+            // Always write extra 8 bytes, even for normal tables, to simplify reading the extra footer.
+            if (txnType == WalTxnType.MAT_VIEW_DATA) {
+                eventMem.putLong(lastPeriodHi);
+            } else {
+                eventMem.putLong(Numbers.LONG_NULL);
+            }
+            eventMem.putLong(replaceRangeLowTs);
+            eventMem.putLong(replaceRangeHiTs);
+            eventMem.putByte(dedupMode);
+        }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        }
+        return txn++;
+    }
+
+    int appendMatViewInvalidate(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
+    ) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.MAT_VIEW_INVALIDATE);
+        eventMem.putLong(lastRefreshBaseTxn);
+        eventMem.putLong(lastRefreshTimestamp);
+        eventMem.putBool(invalid);
+        eventMem.putStr(invalidationReason);
+        if (!legacyMatViewFormat) {
+            eventMem.putLong(lastPeriodHi);
+            eventMem.putLong(refreshIntervalsBaseTxn);
+            if (refreshIntervals != null) {
+                eventMem.putInt(refreshIntervals.size());
+                for (int i = 0, n = refreshIntervals.size(); i < n; i++) {
+                    eventMem.putLong(refreshIntervals.getQuick(i));
+                }
+            } else {
+                eventMem.putInt(-1);
+            }
+        }
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
 
@@ -271,17 +392,27 @@ class WalEventWriter implements Closeable {
         if (eventMem.getFd() > -1) {
             close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
+        final long appendPageSize = systemTable
+                ? configuration.getSystemWalEventAppendPageSize()
+                : configuration.getWalEventAppendPageSize();
         eventMem.of(
                 ff,
                 path.trimTo(pathLen).concat(EVENT_FILE_NAME).$(),
-                systemTable ? configuration.getSystemWalEventAppendPageSize() : configuration.getWalEventAppendPageSize(),
+                appendPageSize,
                 -1,
                 MemoryTag.NATIVE_TABLE_WAL_WRITER,
                 CairoConfiguration.O_NONE,
                 Files.POSIX_MADV_RANDOM
         );
-        indexFd = ff.openRW(path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), CairoConfiguration.O_NONE);
-        longBuffer = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_WAL_WRITER);
+        eventIndexMem.of(
+                ff,
+                path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(),
+                Math.max(ff.getPageSize(), appendPageSize / 4),
+                -1,
+                MemoryTag.NATIVE_TABLE_WAL_WRITER,
+                CairoConfiguration.O_NONE,
+                Files.POSIX_MADV_SEQUENTIAL
+        );
         init();
     }
 
@@ -294,8 +425,11 @@ class WalEventWriter implements Closeable {
     }
 
     void sync() {
-        eventMem.sync(false);
-        ff.fsync(indexFd);
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            eventMem.sync(commitMode == CommitMode.ASYNC);
+            eventIndexMem.sync(commitMode == CommitMode.ASYNC);
+        }
     }
 
     int truncate() {

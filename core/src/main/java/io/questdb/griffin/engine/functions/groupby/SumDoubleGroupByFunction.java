@@ -39,6 +39,11 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     private final Function arg;
     private int valueIndex;
 
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
     public SumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }

@@ -24,9 +24,23 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.*;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -174,18 +188,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      *
      * @param dataMem memory with header and UTF8 bytes
      * @param offset  in the memory
-     * @param ab      1 for A memory
      */
-    public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset, int ab) {
+    public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset) {
         long address = dataMem.addressOf(offset);
         int header = Unsafe.getUnsafe().getInt(address);
         assert header != 0;
-        if (isNull(header)) {
-            return null;
-        }
-        return (ab == 1)
-                ? dataMem.getDirectVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
-                : dataMem.getDirectVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
+        return isNull(header)
+                ? null
+                : dataMem.getDirectVarchar(offset + Integer.BYTES, size(header), isAscii(header));
     }
 
     /**
@@ -361,7 +371,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
+    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, int opts, int madviseOpts) {
         auxMem.of(
                 ff,
                 fileName,
@@ -379,10 +389,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
+                false,
                 fileName,
                 VARCHAR_AUX_WIDTH_BYTES * rowLo,
                 VARCHAR_AUX_WIDTH_BYTES * rowHi,
@@ -401,18 +412,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long rowLo,
             long rowHi,
             int memoryTag,
-            long opts
+            int opts
     ) {
-        long lo;
-        if (rowLo > 0) {
-            lo = getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo);
-        } else {
-            lo = 0;
-        }
-        long hi = getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1));
+        long lo = rowLo > 0 ? getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo) : 0;
+        long hi = rowHi > 0 ? getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1)) : 0;
         dataMem.ofOffset(
                 ff,
                 dataFd,
+                false,
                 fileName,
                 lo,
                 hi,
@@ -489,6 +496,43 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        long lastSizeInDataVector = 0;
+        for (int row = 0; row < rowCount; row++) {
+            long offset = getDataVectorOffset(auxMemAddr, row);
+            if (offset != lastSizeInDataVector) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+            lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
+        }
+        return false;
+    }
+
+    @Override
+    public long mergeShuffleColumnFromManyAddresses(
+            long indexFormat,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long destDataOffset,
+            long destDataSize
+    ) {
+        return Vect.mergeShuffleVarcharColumnFromManyAddresses(
+                indexFormat,
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                destDataOffset,
+                destDataSize
+        );
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,
@@ -551,7 +595,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
+    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         if (rowCount > 0) {
             auxMem.jumpTo(VARCHAR_AUX_WIDTH_BYTES * (rowCount - HEADER_FLAG_INLINED));
             final long dataMemOffset = getDataVectorSize(auxMem.getAppendAddress());
@@ -607,13 +651,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         // +1 since srcHi is inclusive
         assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
-        O3Utils.shiftCopyVarcharColumnAux(
-                shift,
-                srcAddr,
-                srcLo,
-                srcHi,
-                dstAddr
-        );
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     private static long getDataOffset(long auxEntry) {

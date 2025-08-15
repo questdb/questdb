@@ -32,8 +32,8 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     @Test
     public void testSymEqChar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            insert(
+            execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            execute(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -56,8 +56,8 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     @Test
     public void testSymEqCharFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            insert(
+            execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            execute(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -80,8 +80,8 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     @Test
     public void testSymEqCharFunctionConst() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            insert("insert into tanc2 \n" +
+            execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            execute("insert into tanc2 \n" +
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
@@ -102,8 +102,8 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     @Test
     public void testSymEqCharNotFound() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            insert(
+            execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+            execute(
                     "insert into tanc2 \n" +
                             "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                             "1571270400000 + (x-1) * 100 timestamp,\n" +

@@ -24,11 +24,39 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 
 public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testBufferLimitCompliance() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("create table break as (select rnd_str(25,25,0) a from long_sequence(100000));", sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory fact = compiler.compile("select string_agg(a, ',') from break", sqlExecutionContext).getRecordCursorFactory()) {
+                    // execute factory a couple of times to make sure nothing breaks
+                    testBufferLimitCompliance0(fact);
+                    testBufferLimitCompliance0(fact);
+
+                    engine.execute("truncate table break", sqlExecutionContext);
+                    engine.execute("insert into break select rnd_str(25,25,0) a from long_sequence(10)", sqlExecutionContext);
+                    // execute factory few times to make sure nothing accumulates
+                    testBufferLimitCompliance1(fact);
+                    testBufferLimitCompliance1(fact);
+                    testBufferLimitCompliance1(fact);
+                }
+            }
+        });
+    }
 
     @Test
     public void testConstantNull() throws Exception {
@@ -202,5 +230,30 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    private static void testBufferLimitCompliance0(RecordCursorFactory fact) throws SqlException {
+        try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
+            try {
+                TestUtils.assertCursor(null, cursor, fact.getMetadata(), true, sink);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "string_agg() result exceeds max size of");
+                Assert.assertEquals(18, e.getPosition());
+            }
+        }
+    }
+
+    private static void testBufferLimitCompliance1(RecordCursorFactory fact) throws SqlException {
+        try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
+            TestUtils.assertCursor(
+                    "string_agg\n" +
+                            "FGSLQDYOCTKSCTOHWMRHGLXBI,HWIIOHDDLYDZEUTOQEZOODZRO,NSTFHKVDEKTQJGFGVRMVZVRCO,HRFVCWZYHGIEIEJEIDVRHYFXF,LEZBTJQRMHTRYZEUDDOTUHDOC,IMSSDLJUVTBCCPKOOEYICCHMH,NSBDCJLEPQPOVFLEJCELDSOWJ,TIMPLKXPJEVHPWLCKDUTWKOSZ,HBJLFGZSKNBUVJNXJUUKCSJHM,GDKSKLTEBHKVQXNELZCHSPSYD\n",
+                    cursor,
+                    fact.getMetadata(),
+                    true,
+                    sink
+            );
+        }
     }
 }

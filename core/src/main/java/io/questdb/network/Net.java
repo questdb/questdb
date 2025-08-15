@@ -26,7 +26,12 @@ package io.questdb.network;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -185,8 +190,8 @@ public final class Net {
     }
 
     public static long getAddrInfo(CharSequence host, int port) {
-        try (Path p = new Path().of(host)) {
-            return getAddrInfo(p.$(), port);
+        try (Path p = new Path()) {
+            return getAddrInfo(p.of(host).$(), port);
         }
     }
 

@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.TestOnly;
+
 public final class Zip {
     public static final int Z_BUF_ERROR = -5;
     // return codes from zlib version 1.2.8
@@ -62,8 +64,9 @@ public final class Zip {
 
     public static native int inflateReset(long z_streamp);
 
+    @TestOnly
     public static void init() {
-        // Method used for testing to force invocation of static class methods and hence memory initialisation
+        // Method used to force memory initialisation in tests before the memory leak check starts
     }
 
     public static native void setInput(long z_streamp, long address, int available);

@@ -83,7 +83,7 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     ) throws SqlException {
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
+            Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             Misc.free(baseCursor);
             throw th;

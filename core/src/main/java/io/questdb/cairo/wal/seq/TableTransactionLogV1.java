@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
@@ -32,11 +34,14 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
@@ -45,7 +50,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
 /**
  * This class is used to read/write transactions to the disk.
- * This is V1 implementation of the sequencer transaction log storage and it will be used
+ * This is V1 implementation of the sequencer transaction log storage, and it will be used
  * in parallel with the new V2 for backward compatibility.
  * <p>
  * All transactions are stored in the single file table_dir\\txn_seq\\_txnlog, the file structure is
@@ -53,18 +58,20 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * Header: 76 bytes
  * Transaction record: 28 bytes
  * <p>
- * See the format of the header and transaction record in @link TableTransactionLogFile
+ * See the format of the header and transaction record in {@link TableTransactionLogFile}
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
-    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
 
-    public TableTransactionLogV1(FilesFacade ff) {
-        this.ff = ff;
+    public TableTransactionLogV1(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
     }
 
     public static long readMaxStructureVersion(long logFileFd, FilesFacade ff) {
@@ -77,7 +84,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
-    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+    public long addEntry(
+            long structureVersion,
+            int walId,
+            int segmentId,
+            int segmentTxn,
+            long timestamp,
+            long txnMinTimestamp,
+            long txnMaxTimestamp,
+            long txnRowCount
+    ) {
         txnMem.putLong(structureVersion);
         txnMem.putInt(walId);
         txnMem.putInt(segmentId);
@@ -87,7 +103,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
-        txnMem.sync(false);
+        sync0();
         // Transactions are 1 based here
         return maxTxn;
     }
@@ -122,8 +138,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
-        txnMem.sync(false);
-
+        sync0();
         txnMem.jumpTo(HEADER_SIZE);
     }
 
@@ -133,6 +148,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         long nextTxn = maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
         return nextTxn;
+    }
+
+    @Override
+    public void fullSync() {
+        txnMem.sync(false);
     }
 
     @Override
@@ -155,7 +175,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
-            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+            return WalUtils.DROP_TABLE_WAL_ID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
         }
         return false;
     }
@@ -180,9 +200,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return maxStructureVersion;
     }
 
-    @Override
-    public void sync() {
-        txnMem.sync(false);
+    private void sync0() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            txnMem.sync(commitMode == CommitMode.ASYNC);
+        }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
@@ -207,6 +229,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         public void close() {
             if (fd > 0) {
                 ff.close(fd);
+                fd = 0;
             }
             if (txnCount > -1 && address > 0) {
                 ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
@@ -235,7 +258,12 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public long getMaxTxn() {
-            return txnCount - 1;
+            return txnCount;
+        }
+
+        @Override
+        public int getPartitionSize() {
+            return 0;
         }
 
         @Override
@@ -309,11 +337,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
-        public int getPartitionSize() {
-            return 0;
-        }
-
-        @Override
         public void toTop() {
             if (txnCount > -1L) {
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
@@ -321,8 +344,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
         }
 
-        private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-            return TableUtils.openRO(ff, path, fileName, LOG);
+        private static long openFileRO(final FilesFacade ff, final Path path) {
+            return TableUtils.openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
         }
 
         private long getMappedLen() {
@@ -341,7 +364,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         @NotNull
         private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
-            this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+            close();
+            this.fd = openFileRO(ff, path);
             long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;

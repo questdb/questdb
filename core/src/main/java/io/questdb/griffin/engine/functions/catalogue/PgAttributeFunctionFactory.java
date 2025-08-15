@@ -84,9 +84,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(
-                new AttributeCatalogueCursorFactory()
-        ) {
+        return new CursorFunction(new AttributeCatalogueCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -124,7 +122,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.type(SIGNATURE);
         }
-
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
@@ -135,7 +132,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         private CairoTable table;
         private int tableId;
 
-
         public AttributeClassCatalogueCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
             super();
             this.tableCache = tableCache;
@@ -143,14 +139,12 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-
         }
 
         @Override
         public Record getRecord() {
             return record;
         }
-
 
         @Override
         public boolean hasNext() {
@@ -179,8 +173,9 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             record.intValues[N_ATTTYPID_COL] = type;
             record.name = column.getName();
             record.shortValues[N_ATTNUM_COL] = (short) (columnIdx + 1);
-            record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+            record.shortValues[N_ATTLEN_COL] = PG_TYPE_TO_SIZE_MAP.get(type);
             record.intValues[N_ATTRELID_COL] = tableId;
+            record.intValues[N_ATTTYPMOD_COL] = PGOids.getAttTypMod(type);
 
             return true;
         }
@@ -193,6 +188,11 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             } else return false;
 
             return true;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

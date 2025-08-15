@@ -25,8 +25,8 @@
 package io.questdb.test.griffin.engine.functions.rnd;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class RndByteCCFunctionFactoryTest extends AbstractFunctionFactoryTest {

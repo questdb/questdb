@@ -24,15 +24,31 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.DelegatingRecord;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
@@ -104,9 +120,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                new PgClassCursorFactory(METADATA)
-        ) {
+        return new CursorFunction(new PgClassCursorFactory(METADATA)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -227,6 +241,11 @@ public class PgClassFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }
@@ -292,20 +311,12 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return tableName;
-                }
-                return null;
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return tableName.length();
-                }
-                return -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         }
 
@@ -367,11 +378,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
             @Override
             public int getStrLen(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return relNames[fixedRelPos].length();
-                }
-                return -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         }
     }

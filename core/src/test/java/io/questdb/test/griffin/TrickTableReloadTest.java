@@ -34,13 +34,13 @@ public class TrickTableReloadTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolAddAndReaderReload() throws SqlException {
-        ddl("create table x (a int, b int, ts timestamp) timestamp(ts) partition by DAY");
+        execute("create table x (a int, b int, ts timestamp) timestamp(ts) partition by DAY");
 
         getWriter("x").close();
         engine.releaseAllWriters();
 
         try (TableReader reader = getReader("x")) {
-            ddl("alter table x add column y symbol", sqlExecutionContext);
+            execute("alter table x add column y symbol", sqlExecutionContext);
             Assert.assertTrue(reader.reload());
         }
     }

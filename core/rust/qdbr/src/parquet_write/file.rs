@@ -12,21 +12,17 @@ use parquet2::write::{
 };
 use parquet2::FallibleStreamingIterator;
 
-use crate::parquet_write::schema::{
-    to_encodings, to_parquet_schema, Column, ColumnType, Partition,
-};
-use crate::parquet_write::{
-    binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar, ParquetError,
-    ParquetResult,
-};
+use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
+use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
+use qdb_core::col_type::ColumnTypeTag;
 
+use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::POOL;
 use rayon::prelude::*;
 
-use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
-
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
-const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
+const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteOptions {
@@ -219,7 +215,7 @@ impl<W: Write> ChunkedWriter<W> {
 
     /// Write the footer of the parquet file. Returns the total size of the file.
     pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetResult<u64> {
-        let size = self.writer.end(additional_meta)?;
+        let size = self.writer.end(Some(additional_meta))?;
         Ok(size)
     }
 }
@@ -315,11 +311,8 @@ pub fn create_row_group(
                 *encoding,
             )
             .expect("encoded_column");
-            Ok(DynStreamingIterator::new(Compressor::new(
-                encoded_column,
-                options.compression,
-                vec![],
-            )))
+            let compression_iter = Compressor::new(encoded_column, options.compression, vec![]);
+            Ok(DynStreamingIterator::new(compression_iter))
         };
 
         partition
@@ -347,7 +340,7 @@ fn column_chunk_to_pages(
         _ => unreachable!("GroupType is not supported"),
     };
 
-    if matches!(column.data_type, ColumnType::Symbol) {
+    if matches!(column.data_type.tag(), ColumnTypeTag::Symbol) {
         let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
 
         let offsets = column.symbol_offsets;
@@ -430,8 +423,8 @@ fn chunk_to_page(
         offset + length - orig_column_top
     };
 
-    match column.data_type {
-        ColumnType::Boolean => {
+    match column.data_type.tag() {
+        ColumnTypeTag::Boolean => {
             let column = column.primary_data;
             boolean::slice_to_page(
                 &column[lower_bound..upper_bound],
@@ -440,7 +433,7 @@ fn chunk_to_page(
                 primitive_type,
             )
         }
-        ColumnType::Byte => {
+        ColumnTypeTag::Byte => {
             let column: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i8, i32>(
                 &column[lower_bound..upper_bound],
@@ -450,7 +443,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Char => {
+        ColumnTypeTag::Char => {
             let column: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<u16, i32>(
                 &column[lower_bound..upper_bound],
@@ -460,7 +453,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Short => {
+        ColumnTypeTag::Short => {
             let column: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i16, i32>(
                 &column[lower_bound..upper_bound],
@@ -470,7 +463,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Int => {
+        ColumnTypeTag::Int => {
             let column: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<i32, i32>(
                 &column[lower_bound..upper_bound],
@@ -480,7 +473,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::IPv4 => {
+        ColumnTypeTag::IPv4 => {
             let column: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<IPv4, i32>(
                 &column[lower_bound..upper_bound],
@@ -490,7 +483,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Long | ColumnType::Date | ColumnType::Timestamp => {
+        ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp => {
             let column: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<i64, i64>(
                 &column[lower_bound..upper_bound],
@@ -500,7 +493,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::GeoByte => {
+        ColumnTypeTag::GeoByte => {
             let column: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoByte, i32>(
                 &column[lower_bound..upper_bound],
@@ -510,7 +503,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::GeoShort => {
+        ColumnTypeTag::GeoShort => {
             let column: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoShort, i32>(
                 &column[lower_bound..upper_bound],
@@ -520,7 +513,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::GeoInt => {
+        ColumnTypeTag::GeoInt => {
             let column: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoInt, i32>(
                 &column[lower_bound..upper_bound],
@@ -530,7 +523,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::GeoLong => {
+        ColumnTypeTag::GeoLong => {
             let column: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoLong, i64>(
                 &column[lower_bound..upper_bound],
@@ -540,7 +533,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Float => {
+        ColumnTypeTag::Float => {
             let column: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f32, f32>(
                 &column[lower_bound..upper_bound],
@@ -549,7 +542,7 @@ fn chunk_to_page(
                 primitive_type,
             )
         }
-        ColumnType::Double => {
+        ColumnTypeTag::Double => {
             let column: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f64, f64>(
                 &column[lower_bound..upper_bound],
@@ -558,7 +551,7 @@ fn chunk_to_page(
                 primitive_type,
             )
         }
-        ColumnType::Binary => {
+        ColumnTypeTag::Binary => {
             let data = column.primary_data;
             let offsets: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             binary::binary_to_page(
@@ -570,7 +563,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::String => {
+        ColumnTypeTag::String => {
             let data = column.primary_data;
             let offsets: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             string::string_to_page(
@@ -582,7 +575,7 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Varchar => {
+        ColumnTypeTag::Varchar => {
             let data = column.primary_data;
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             varchar::varchar_to_page(
@@ -594,8 +587,8 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Long128 | ColumnType::Uuid => {
-            let reversed = column.data_type == ColumnType::Uuid;
+        ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
+            let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
             let column: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
@@ -605,7 +598,7 @@ fn chunk_to_page(
                 primitive_type,
             )
         }
-        ColumnType::Long256 => {
+        ColumnTypeTag::Long256 => {
             let column: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
@@ -615,9 +608,13 @@ fn chunk_to_page(
                 primitive_type,
             )
         }
-        ColumnType::Symbol => {
+        ColumnTypeTag::Symbol => {
             panic!("Symbol type is encoded in column_chunk_to_pages()")
         }
+        ColumnTypeTag::Array => Err(fmt_err!(
+            InvalidType,
+            "tables with array columns cannot be converted to Parquet partitions yet"
+        )),
     }
 }
 

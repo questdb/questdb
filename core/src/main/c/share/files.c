@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <dirent.h>
+#include <string.h>
 #include <sys/errno.h>
 #include <sys/time.h>
 #include <sys/mount.h>
@@ -39,7 +40,6 @@
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len, jlong offset) {
-
     off_t writeOffset = offset;
     ssize_t written;
 
@@ -171,19 +171,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    umask(0);
+    umask(2);
     return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
-    umask(0);
+        (JNIEnv *e, jclass cl, jlong lpszName, jint opts) {
+    umask(2);
     return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    umask(0);
+    umask(2);
     return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
 }
 
@@ -374,25 +374,34 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         (JNIEnv *e, jclass cl, jlong lpszName, jlong size) {
-
     jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
-
     if (fd < 0) {
         // error opening / creating file
-        return fd;
+        return -1;
     }
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
     if (fileSize > 0) {
-        if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
+        ssize_t res;
+        RESTARTABLE(flock((int) fd, LOCK_EX | LOCK_NB), res);
+        if (res == 0) {
             // truncate file to 0 byte
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
                 if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
-                    // downgrade to shared lock
-                    if (flock((int) fd, LOCK_SH) == 0) {
-                        // success
-                        return fd;
+                    // Zero the file and msync, so that we have no unpleasant side effects like non-zero bytes read on ZFS.
+                    // See https://github.com/questdb/questdb/issues/4756
+                    void *addr = mmap(NULL, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
+                    if (addr != MAP_FAILED) {
+                        memset(addr, 0, size);
+                        if (msync(addr, size, MS_SYNC) == 0) {
+                            munmap(addr, (size_t) size);
+                            // finally, downgrade to shared lock
+                            if (flock((int) fd, LOCK_SH) == 0) {
+                                // success
+                                return fd;
+                            }
+                        }
                     }
                 }
             }

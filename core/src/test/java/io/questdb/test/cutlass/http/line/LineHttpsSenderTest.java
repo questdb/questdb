@@ -44,6 +44,7 @@ import org.junit.Test;
 
 import java.util.UUID;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -53,6 +54,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -84,13 +86,11 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 }
                 long expectedSum = (count / 2) * (count + 1);
                 double expectedAvg = expectedSum / (double) count;
-                TestUtils.assertEventually(() -> {
-                    serverMain.assertSql(
-                            "select sum(value), max(value), min(value), avg(value) from " + tableName,
-                            "sum\tmax\tmin\tavg\n"
-                                    + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
-                    );
-                });
+                TestUtils.assertEventually(() -> serverMain.assertSql(
+                        "select sum(value), max(value), min(value), avg(value) from " + tableName,
+                        "sum\tmax\tmin\tavg\n"
+                                + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
+                ));
             }
         });
     }
@@ -104,9 +104,9 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
-                String adress = "localhost:" + port;
+                String address = "localhost:" + port;
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address(adress)
+                        .address(address)
                         .enableTls()
                         .advancedTls()
                         .disableCertificateValidation()
@@ -141,13 +141,11 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 }
                 long expectedSum = (count / 2) * (count + 1);
                 double expectedAvg = expectedSum / (double) count;
-                TestUtils.assertEventually(() -> {
-                    serverMain.assertSql(
-                            "select sum(value), max(value), min(value), avg(value) from " + tableName,
-                            "sum\tmax\tmin\tavg\n"
-                                    + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
-                    );
-                });
+                TestUtils.assertEventually(() -> serverMain.assertSql(
+                        "select sum(value), max(value), min(value), avg(value) from " + tableName,
+                        "sum\tmax\tmin\tavg\n"
+                                + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
+                ));
             }
         });
     }
@@ -266,6 +264,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .address(address)
                         .enableTls()
                         .retryTimeoutMillis(1000)
+                        .protocolVersion(PROTOCOL_VERSION_V1)
                         .build()
                 ) {
                     try {
@@ -280,13 +279,36 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testServerNotTrustedAutoDetection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String address = "localhost:" + port;
+                try {
+                    Sender ignore = Sender.builder(Sender.Transport.HTTP)
+                            .address(address)
+                            .enableTls()
+                            .retryTimeoutMillis(1000)
+                            .build();
+                    fail("should fail, the server is not trusted");
+                } catch (LineSenderException ex) {
+                    TestUtils.assertContains(ex.getMessage(), "Failed to detect server line protocol version");
+                }
+            }
+        });
+    }
+
     private static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
             assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
         }
     }
 
-    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
+    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 

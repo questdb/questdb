@@ -24,17 +24,39 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Pool;
+import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -146,7 +168,7 @@ public class TableUpdateDetails implements Closeable {
                     .$("network IO thread using table [workerId=").$(workerId)
                     .$(", tableName=").$(tableToken)
                     .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                    .$(']').$();
+                    .I$();
         }
     }
 
@@ -259,7 +281,7 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public boolean isWal() {
-        return writerThreadId == -1;
+        return tableToken.isWal();
     }
 
     public boolean isWriterInError() {
@@ -361,7 +383,7 @@ public class TableUpdateDetails implements Closeable {
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
-                    .$(", message=").$(th.getMessage())
+                    .$(", message=").$safe(th.getMessage())
                     .$(th)
                     .I$();
             writerAPI.rollback();
@@ -413,6 +435,7 @@ public class TableUpdateDetails implements Closeable {
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final Utf8StringIntHashMap columnIndexByNameUtf8 = new Utf8StringIntHashMap();
+        private final IntList columnIndices = new IntList();
         // maps column names to their types
         // will be populated for dynamically added columns only
         private final Utf8StringIntHashMap columnTypeByNameUtf8 = new Utf8StringIntHashMap();
@@ -477,7 +500,7 @@ public class TableUpdateDetails implements Closeable {
                     return NOT_FOUND_LOOKUP;
                 }
                 final CairoConfiguration cairoConfiguration = engine.getConfiguration();
-                path.of(cairoConfiguration.getRoot()).concat(tableToken);
+                path.of(cairoConfiguration.getDbRoot()).concat(tableToken);
                 SymbolCache symCache = symbolCachePool.pop();
 
                 if (this.clean) {
@@ -606,7 +629,8 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void addColumnType(int columnWriterIndex, int colType) {
-            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) columnWriterIndex));
+            columnIndices.add(columnWriterIndex);
+            columnTypes.add(colType);
         }
 
         void clear() {
@@ -614,13 +638,14 @@ public class TableUpdateDetails implements Closeable {
             columnTypeByNameUtf8.clear();
             for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
-                if (null != symCache) {
+                if (symCache != null) {
                     symCache.close();
                     symbolCachePool.push(symCache);
                 }
             }
             symbolCacheByColumnIndex.clear();
             columnTypes.clear();
+            columnIndices.clear();
             columnTypeMeta.clear();
             columnTypeMeta.add(0);
             if (txReader != null) {
@@ -631,6 +656,7 @@ public class TableUpdateDetails implements Closeable {
 
         void clearColumnTypes() {
             columnTypes.clear();
+            columnIndices.clear();
         }
 
         void clearProcessedColumns() {
@@ -650,14 +676,21 @@ public class TableUpdateDetails implements Closeable {
             return colNameUtf8;
         }
 
+        int getColumnIndex(int colIndex) {
+            return columnIndices.getQuick(colIndex);
+        }
+
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
         }
 
-        int getColumnType(Utf8String colName, byte entityType) {
+        int getColumnType(Utf8String colName, LineTcpParser.ProtoEntity entity) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
-                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
+                if (colType == ColumnType.ARRAY) {
+                    colType = entity.getArray().getType();
+                }
                 columnTypeByNameUtf8.put(colName, colType);
             }
             return colType;
@@ -766,7 +799,7 @@ public class TableUpdateDetails implements Closeable {
                         latestKnownMetadata = deepCopyOfDense(writerAPI.getMetadata());
                         latestKnownMetadataVersion = writerAPI.getMetadataVersion();
                     } else {
-                        try (TableMetadata meta = engine.getLegacyMetadata(tableToken)) {
+                        try (TableRecordMetadata meta = engine.getLegacyMetadata(tableToken)) {
                             latestKnownMetadata = deepCopyOfDense(meta);
                             latestKnownMetadataVersion = meta.getMetadataVersion();
                         }

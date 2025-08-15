@@ -28,14 +28,25 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecord;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
@@ -46,8 +57,18 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
 
-import java.io.*;
-import java.net.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Writer;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.URL;
 import java.nio.file.Paths;
 import java.util.Enumeration;
 import java.util.Properties;
@@ -69,7 +90,6 @@ public class Bootstrap {
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
-    private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
 
@@ -178,31 +198,30 @@ public class Bootstrap {
                             buildInformation,
                             ffOverride,
                             MicrosecondClockImpl.INSTANCE,
-                            new FactoryProviderFactory() {
-                                @Override
-                                public @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
-                                    return DefaultFactoryProvider.INSTANCE;
-                                }
-                            },
+                            (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
                             true
                     );
                 }
             } else {
                 config = configuration;
             }
+
+            Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
             LogLevel.init(config.getCairoConfiguration());
+            if (LogLevel.TIMESTAMP_TIMEZONE != null) {
+                log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();
+            }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (BootstrapException e) {
             throw e;
+        } catch (ServerConfigurationException e) {
+            throw new BootstrapException(e);
         } catch (Throwable e) {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-        if (config.getMetricsConfiguration().isEnabled()) {
-            metrics = Metrics.enabled();
-        } else {
-            metrics = Metrics.disabled();
+        if (!config.getMetricsConfiguration().isEnabled()) {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
@@ -244,14 +263,14 @@ public class Bootstrap {
     }
 
     public static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
-        final CharSequence dbRoot = cairoConfiguration.getRoot();
+        final CharSequence dbRoot = cairoConfiguration.getDbRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         DirectUtf8StringZ name = new DirectUtf8StringZ();
-        try (
-                Path path = new Path().of(dbRoot).slash();
-                Path other = new Path().of(dbRoot).slash()
-        ) {
+        try (Path path = new Path(); Path other = new Path()) {
+            path.of(dbRoot).slash();
+            other.of(dbRoot).slash();
+
             int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {
@@ -341,10 +360,6 @@ public class Bootstrap {
         return log;
     }
 
-    public Metrics getMetrics() {
-        return metrics;
-    }
-
     public MicrosecondClock getMicrosecondClock() {
         return microsecondClock;
     }
@@ -371,7 +386,7 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
+        return new CairoEngine(getConfiguration().getCairoConfiguration());
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
@@ -450,7 +465,7 @@ public class Bootstrap {
 
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
+        path.of(cairoConfiguration.getDbRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
         long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
@@ -535,40 +550,44 @@ public class Bootstrap {
 
         log.advisoryW().$("Config:").$();
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
-        log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
+        boolean enabled = config.getLineTcpReceiverConfiguration().isEnabled();
+        log.advisoryW().$(" - tcp.enabled  : ").$(enabled).$();
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
-        log.advisoryW().$(" - attach partition suffix: ").$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();
-        log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
-        if (cairoConfig.isReadOnlyInstance()) {
-            log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
-        }
-        try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
-            verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
-            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
-            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
-            verifyFileOpts(path, cairoConfig);
-            cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true));
-        }
-        if (JitUtil.isJitSupported()) {
-            final int jitMode = cairoConfig.getSqlJitMode();
-            switch (jitMode) {
-                case SqlJitMode.JIT_MODE_ENABLED:
-                    log.advisoryW().$(" - SQL JIT compiler mode: on").$();
-                    break;
-                case SqlJitMode.JIT_MODE_FORCE_SCALAR:
-                    log.advisoryW().$(" - SQL JIT compiler mode: scalar").$();
-                    break;
-                case SqlJitMode.JIT_MODE_DISABLED:
-                    log.advisoryW().$(" - SQL JIT compiler mode: off").$();
-                    break;
-                default:
-                    log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
-                    break;
+        if (cairoConfig != null) {
+            log.advisoryW().$(" - attach partition suffix: ").$(cairoConfig.getAttachPartitionSuffix()).$();
+            log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
+            if (cairoConfig.isReadOnlyInstance()) {
+                log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
+            }
+            try (Path path = new Path()) {
+                verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true);
+                verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", false, false);
+                verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false);
+                verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
+                verifyFileOpts(path, cairoConfig);
+                cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
+            }
+            if (JitUtil.isJitSupported()) {
+                final int jitMode = cairoConfig.getSqlJitMode();
+                switch (jitMode) {
+                    case SqlJitMode.JIT_MODE_ENABLED:
+                        log.advisoryW().$(" - SQL JIT compiler mode: on").$();
+                        break;
+                    case SqlJitMode.JIT_MODE_FORCE_SCALAR:
+                        log.advisoryW().$(" - SQL JIT compiler mode: scalar").$();
+                        break;
+                    case SqlJitMode.JIT_MODE_DISABLED:
+                        log.advisoryW().$(" - SQL JIT compiler mode: off").$();
+                        break;
+                    default:
+                        log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
+                        break;
+                }
             }
         }
+
         MemoryConfiguration ramConfig = config.getMemoryConfiguration();
         long ramUsageLimitBytes = ramConfig.getRamUsageLimitBytes();
         long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();
@@ -617,27 +636,38 @@ public class Bootstrap {
         }
     }
 
-    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean failOnNfs) {
+    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean failOnNfs, boolean logUnstable) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
             return;
         }
         path.of(rootDir);
+
         // path will contain file system name
-        long fsStatus = Files.getFileSystemStatus(path.$());
-        path.seekZ();
-        LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
-        if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
-            rec.$hex(-fsStatus).$(", fs=").$(path).$("] -> SUPPORTED").$();
+        if (Files.exists(path.$())) {
+            final long fsStatus = Files.getFileSystemStatus(path.$());
+            path.seekZ();
+            LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
+            if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
+                rec.$hex(-fsStatus).$(", fs=").$(path).$("] -> SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(", fs=").$(path);
+                if (logUnstable) {
+                    rec.$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
+                } else {
+                    rec.$("] -> UNSUPPORTED").$();
+                }
+            }
+
+            if (failOnNfs && fsStatus == Files.NFS_MAGIC) {
+                throw new BootstrapException("Error: Unsupported Filesystem Detected. " + Misc.EOL
+                        + "QuestDB cannot start because the '" + rootDirectory + "' is located on an NFS filesystem, "
+                        + "which is not supported. Please relocate your '" + kind + " root' to a supported filesystem to continue. " + Misc.EOL
+                        + "For a list of supported filesystems and further guidance, please visit: https://questdb.io/docs/deployment/capacity-planning/#supported-filesystems "
+                        + "[path=" + rootDir + ", kind=" + kind + ", fs=NFS]", true);
+            }
         } else {
-            rec.$hex(fsStatus).$(", fs=").$(path).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
-        }
-        if (failOnNfs && fsStatus == Files.NFS_MAGIC) {
-            throw new BootstrapException("Error: Unsupported Filesystem Detected. " + Misc.EOL
-                    + "QuestDB cannot start because the '" + rootDirectory + "' is located on an NFS filesystem, "
-                    + "which is not supported. Please relocate your '" + kind + " root' to a supported filesystem to continue. " + Misc.EOL
-                    + "For a list of supported filesystems and further guidance, please visit: https://questdb.io/docs/deployment/capacity-planning/#supported-filesystems "
-                    + "[path=" + rootDir + ", kind=" + kind + ", fs=NFS]", true);
+            log.info().$(" - ").$(kind).$(" root: [path=").$(rootDir).$("] -> NOT FOUND").$();
         }
     }
 
@@ -655,16 +685,17 @@ public class Bootstrap {
                 sb.append("ILP Client Connection String");
             }
             sb.append("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
+            final HttpFullFatServerConfiguration httpConf = config.getHttpServerConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
+            final String contextPathWebConsole = httpConf.getContextPathWebConsole();
             if (bindIP == 0) {
                 try {
                     for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort;
+                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort + contextPathWebConsole;
                                 sb.append(indent).append(leftCol);
                                 if (ilpEnabled) {
                                     padToNextCol(sb, leftCol.length());

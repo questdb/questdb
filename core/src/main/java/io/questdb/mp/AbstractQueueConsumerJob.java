@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractQueueConsumerJob<T> implements Job {
@@ -40,8 +41,16 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
         if (!canRun()) {
             return false;
         }
-        final long cursor = subSeq.next();
-        return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
+        while (true) {
+            final long cursor = subSeq.next();
+            if (cursor == -1) {
+                return false;
+            }
+            if (cursor > -1) {
+                return doRun(workerId, cursor, runStatus);
+            }
+            Os.pause();
+        }
     }
 
     protected boolean canRun() {

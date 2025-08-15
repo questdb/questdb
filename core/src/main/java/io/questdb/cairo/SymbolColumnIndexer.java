@@ -25,15 +25,19 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
-    private long buffer;
     private final int bufferSize;
     private final BitmapIndexWriter writer;
+    private long buffer;
     private long columnTop;
     private volatile boolean distressed = false;
     private long fd = -1;
@@ -62,10 +66,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         }
     }
 
-    public void releaseIndexWriter() {
-        Misc.free(writer);
-    }
-
     @Override
     public void configureFollowerAndWriter(
             Path path,
@@ -90,7 +90,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     public void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn);
+            writer.of(path, name, columnNameTxn);
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -127,7 +127,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
         for (int i = 0; i < bufferCount; i++) {
             long fileOffset = (lo - columnTop) * 4;
-            long bytesToRead = Math.min(bufferSize, (hiRow - loRow) * 4);
+            long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
             long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
             if (read == -1) {
                 throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
@@ -151,6 +151,10 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void refreshSourceAndIndex(long loRow, long hiRow) {
         index(ff, fd, loRow, hiRow);
+    }
+
+    public void releaseIndexWriter() {
+        Misc.free(writer);
     }
 
     @Override

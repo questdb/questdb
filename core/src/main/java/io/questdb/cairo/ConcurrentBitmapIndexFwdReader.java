@@ -51,9 +51,10 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             Path path,
             CharSequence name,
             long columnNameTxn,
-            long unIndexedNullCount
+            long partitionTxn,
+            long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, unIndexedNullCount);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
     }
 
     @Override
@@ -77,12 +78,12 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             assert cursor.owner() == this;
         }
 
-        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
             // we need to return some nulls and the whole set of actual index values
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, minValue, maxValue, keyCount, minValue, unindexedNullCount);
+            cursor.of(key, minValue, maxValue, keyCount, minValue, columnTop);
             return cursor;
         }
 
@@ -195,7 +196,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
                     }
 
                     if (clock.getTicks() > deadline) {
-                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).utf8("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
                         throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }
                 }

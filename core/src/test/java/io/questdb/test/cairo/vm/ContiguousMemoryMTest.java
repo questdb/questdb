@@ -340,7 +340,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp1")) {
             ff.touch(path.$());
             final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
-            try (MemoryMARW mem = Vm.getMARWInstance()) {
+            try (MemoryMARW mem = Vm.getCMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
                 mem.extend(ff.getMapPageSize() * 2);
@@ -406,7 +406,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp3")) {
             ff.touch(path.$());
             try {
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     mem.of(ff, TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts()), null, -1, MemoryTag.MMAP_DEFAULT);
 
                     mem.extend(ff.getMapPageSize() * 2);
@@ -417,7 +417,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     mem.jumpTo(1024);
                 }
 
-                Assert.assertEquals(ff.length(path.$()), Files.PAGE_SIZE);
+                Assert.assertEquals(Files.PAGE_SIZE, ff.length(path.$()));
             } finally {
                 Assert.assertTrue(ff.removeQuiet(path.$()));
             }
@@ -624,7 +624,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (final Path path = Path.getThreadLocal(root).concat("t.d")) {
                 rnd.reset();
-                MemoryMARW rwMem = Vm.getMARWInstance(
+                MemoryMARW rwMem = Vm.getCMARWInstance(
                         ff,
                         path.$(),
                         ff.getMapPageSize(),
@@ -693,7 +693,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp1")) {
             ff.touch(path.$());
             try {
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     mem.of(ff, path.$(), FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
@@ -739,7 +739,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp4")) {
             ff.touch(path.$());
             try {
-                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     mem.of(ff, path.$(), FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {

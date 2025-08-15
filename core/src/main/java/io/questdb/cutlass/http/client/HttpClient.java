@@ -26,16 +26,34 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpKeywords;
+import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.network.TlsSessionInitFailedException;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.net.HttpURLConnection;
 
@@ -51,6 +69,7 @@ public abstract class HttpClient implements QuietCloseable {
     private final HttpClientCookieHandler cookieHandler;
     private final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
     private final int defaultTimeout;
+    private final boolean fixBrokenConnection;
     private final int maxBufferSize;
     private final Request request = new Request();
     private final ResponseHeaders responseHeaders;
@@ -71,6 +90,7 @@ public abstract class HttpClient implements QuietCloseable {
         this.bufferSize = configuration.getInitialRequestBufferSize();
         this.maxBufferSize = configuration.getMaximumRequestBufferSize();
         this.responseParserBufSize = configuration.getResponseBufferSize();
+        this.fixBrokenConnection = configuration.fixBrokenConnection();
         this.bufLo = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         this.responseParserBufLo = Unsafe.malloc(responseParserBufSize, MemoryTag.NATIVE_DEFAULT);
         this.responseHeaders = new ResponseHeaders(responseParserBufLo, responseParserBufSize, defaultTimeout, 4096, csPool);
@@ -91,6 +111,11 @@ public abstract class HttpClient implements QuietCloseable {
 
     public void disconnect() {
         Misc.free(socket);
+    }
+
+    @TestOnly
+    public ResponseHeaders getResponseHeaders() {
+        return responseHeaders;
     }
 
     public Request newRequest(CharSequence host, int port) {
@@ -134,7 +159,12 @@ public abstract class HttpClient implements QuietCloseable {
 
     private void growBuffer(long requiredSize) {
         if (requiredSize > maxBufferSize) {
-            throw new HttpClientException("maximum buffer size exceeded [maxBufferSize=").put(maxBufferSize).put(", requiredSize=").put(requiredSize).put(']');
+            throw new HttpClientException("transaction is too large, either flush more frequently or " +
+                    "increase buffer size \"max_buf_size\" [maxBufferSize=")
+                    .putSize(maxBufferSize)
+                    .put(", transactionSize=")
+                    .putSize(requiredSize)
+                    .put(']');
         }
         long newBufferSize = Math.min(Numbers.ceilPow2((int) requiredSize), maxBufferSize);
         long newBufLo = Unsafe.realloc(bufLo, bufferSize, newBufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -240,7 +270,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class Request implements Utf8Sink {
+    public class Request implements Utf8Sink, ArrayBufferAppender {
         private static final int STATE_CONTENT = 5;
         private static final int STATE_HEADER = 4;
         private static final int STATE_QUERY = 3;
@@ -255,25 +285,25 @@ public abstract class HttpClient implements QuietCloseable {
         public Request DELETE() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("DELETE ");
+            return putAscii("DELETE ");
         }
 
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("GET ");
+            return putAscii("GET ");
         }
 
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("POST ");
+            return putAscii("POST ");
         }
 
         public Request PUT() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("PUT ");
+            return putAscii("PUT ");
         }
 
         public Request authBasic(CharSequence username, CharSequence password) {
@@ -309,6 +339,14 @@ public abstract class HttpClient implements QuietCloseable {
             } else {
                 return 0;
             }
+        }
+
+        public long getContentStart() {
+            return contentStart;
+        }
+
+        public long getPtr() {
+            return ptr;
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -371,6 +409,39 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
+        public void putBlockOfBytes(long from, long len) {
+            checkCapacity(len);
+            Vect.memcpy(ptr, from, len);
+            ptr += len;
+        }
+
+        @Override
+        public void putByte(byte value) {
+            put(value);
+        }
+
+        @Override
+        public void putDouble(double value) {
+            checkCapacity(Double.BYTES);
+            Unsafe.getUnsafe().putDouble(ptr, value);
+            ptr += Double.BYTES;
+        }
+
+        @Override
+        public void putInt(int value) {
+            checkCapacity(Integer.BYTES);
+            Unsafe.getUnsafe().putInt(ptr, value);
+            ptr += Integer.BYTES;
+        }
+
+        @Override
+        public void putLong(long value) {
+            checkCapacity(Long.BYTES);
+            Unsafe.getUnsafe().putLong(ptr, value);
+            ptr += Long.BYTES;
+        }
+
+        @Override
         public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
             checkCapacity(size);
@@ -410,7 +481,7 @@ public abstract class HttpClient implements QuietCloseable {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
-            } else if (nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
+            } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
                 socket.close();
                 connect(host, port);
             }
@@ -452,8 +523,21 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @Override
+        public String toString() {
+            StringSink ss = new StringSink();
+            DirectUtf8String s = new DirectUtf8String();
+            s.of(bufLo, ptr);
+            ss.put(s);
+            return ss.toString();
+        }
+
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
+        }
+
+        public void truncate() {
+            throw new UnsupportedOperationException();
         }
 
         public Request url(CharSequence url) {
@@ -508,6 +592,10 @@ public abstract class HttpClient implements QuietCloseable {
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }
+            if (nf.setTcpNoDelay(fd, true) < 0) {
+                LOG.info().$("could not turn off Nagle's algorithm [fd=").$(fd)
+                        .$(", errno=").$(nf.errno()).I$();
+            }
             socket.of(fd);
 
             nf.configureKeepAlive(fd);
@@ -532,10 +620,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             if (socket.supportsTls()) {
-                if (socket.startTlsSession(host) < 0) {
+                try {
+                    socket.startTlsSession(host);
+                } catch (TlsSessionInitFailedException e) {
                     int errno = nf.errno();
                     disconnect();
-                    throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
+                    throw new HttpClientException("could not start TLS session [fd=").put(fd)
+                            .put(", error=").put(e.getFlyweightMessage())
+                            .put(", errno=").put(errno)
+                            .put(']');
                 }
             }
             setupIoWait();
@@ -673,6 +766,15 @@ public abstract class HttpClient implements QuietCloseable {
                 case '}':
                     putAsciiInternal("%7D");
                     break;
+                case '\n':
+                    putAsciiInternal("%0A");
+                    break;
+                case '\r':
+                    putAsciiInternal("%0D");
+                    break;
+                case '\t':
+                    putAsciiInternal("%09");
+                    break;
                 default:
                     // there are symbols to escape, but those we do not tend to use at all
                     // https://www.w3schools.com/tags/ref_urlencode.ASP
@@ -779,7 +881,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+            return HttpKeywords.isChunked(getHeader(HEADER_TRANSFER_ENCODING));
         }
 
         private void free() {

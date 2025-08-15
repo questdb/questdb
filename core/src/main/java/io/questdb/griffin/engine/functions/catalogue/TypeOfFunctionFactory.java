@@ -65,6 +65,11 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         throw SqlException.$(position, "exactly one argument expected");
     }
 
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "bind variables are not supported");
+    }
+
     static {
         TYPE_NAMES.put(BOOLEAN, new StrConstant(nameOf(BOOLEAN)));
         TYPE_NAMES.put(BYTE, new StrConstant(nameOf(BYTE)));

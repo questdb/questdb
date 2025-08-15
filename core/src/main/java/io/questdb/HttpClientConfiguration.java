@@ -25,9 +25,20 @@
 package io.questdb;
 
 import io.questdb.cutlass.http.client.HttpClientCookieHandlerFactory;
-import io.questdb.network.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.KqueueFacade;
+import io.questdb.network.KqueueFacadeImpl;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
 
 public interface HttpClientConfiguration {
+    default boolean fixBrokenConnection() {
+        return true;
+    }
+
     HttpClientCookieHandlerFactory getCookieHandlerFactory();
 
     default EpollFacade getEpollFacade() {
@@ -56,6 +67,10 @@ public interface HttpClientConfiguration {
 
     default SelectFacade getSelectFacade() {
         return SelectFacadeImpl.INSTANCE;
+    }
+
+    default String getSettingsPath() {
+        return "/settings";
     }
 
     default int getTimeout() {

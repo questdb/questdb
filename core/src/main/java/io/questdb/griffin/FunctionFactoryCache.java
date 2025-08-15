@@ -25,12 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
-import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -61,7 +65,7 @@ public class FunctionFactoryCache {
                             case "=":
                                 addFactoryToList(factories, createNegatingFactory("!=", factory));
                                 addFactoryToList(factories, createNegatingFactory("<>", factory));
-                                if (descriptor.getArgTypeMask(0) != descriptor.getArgTypeMask(1)) {
+                                if (descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) {
                                     FunctionFactory swappingFactory = createSwappingFactory("=", factory);
                                     addFactoryToList(factories, swappingFactory);
                                     addFactoryToList(factories, createNegatingFactory("!=", swappingFactory));
@@ -77,6 +81,15 @@ public class FunctionFactoryCache {
                                 // `b > a` == !(`b <= a`)
                                 addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
                                 break;
+                            case ">":
+                                // `a > b` == `a <= b`
+                                addFactoryToList(factories, createNegatingFactory("<=", factory));
+                                FunctionFactory lessThan = createSwappingFactory("<", factory);
+                                // `a > b` == `b < a`
+                                addFactoryToList(factories, lessThan);
+                                // `b < a` == !(`b >= a`)
+                                addFactoryToList(factories, createNegatingFactory(">=", lessThan));
+                                break;
                         }
                     } else if (factory.isGroupBy()) {
                         groupByFunctionNames.add(name);
@@ -86,11 +99,16 @@ public class FunctionFactoryCache {
                         cursorFunctionNames.add(name);
                     } else if (factory.isRuntimeConstant()) {
                         runtimeConstantFunctionNames.add(name);
+                    } else if (factory.shouldSwapArgs() && descriptor.getSigArgCount() == 2 &&
+                            descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)
+                    ) {
+                        FunctionFactory swappingFactory = createSwappingFactory(name, factory);
+                        addFactoryToList(factories, swappingFactory);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)
-                            .$(" [signature=").$(factory.getSignature())
-                            .$(", class=").$(factory.getClass().getName())
+                            .$(" [signature=").$safe(factory.getSignature())
+                            .$(", class=").$safe(factory.getClass().getName())
                             .I$();
                 }
             }
@@ -164,6 +182,6 @@ public class FunctionFactoryCache {
     }
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new SwappingArgsFunctionFactory(name, factory);
+        return new ArgSwappingFunctionFactory(name, factory);
     }
 }

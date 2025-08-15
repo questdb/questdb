@@ -24,18 +24,23 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openRO;
@@ -56,7 +61,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * To calculate the partition one can use the following formula:
  * {@code (txn - 1) / partTransactionCount}
  * <p>
- * Header and record is described in @link TableTransactionLogFile
+ * Header and record is described in {@link TableTransactionLogFile}
  * <p>
  * Transaction record: 60 bytes
  */
@@ -68,19 +73,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
-    private final int mkDirMode;
     private final Path rootPath;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
     private long partId = -1;
     private int partTransactionCount;
 
-    public TableTransactionLogV2(FilesFacade ff, int seqPartTransactionCount, int mkDirMode) {
-        this.ff = ff;
+    public TableTransactionLogV2(CairoConfiguration configuration, int seqPartTransactionCount) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
         this.partTransactionCount = seqPartTransactionCount;
-        this.mkDirMode = mkDirMode;
         rootPath = new Path();
     }
 
@@ -89,7 +94,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (lastTxn < 0) {
             return -1;
         }
-        int partTransactionCount = ff.readNonNegativeInt(logFileFd, SEQ_PART_SIZE_32);
+        int partTransactionCount = ff.readNonNegativeInt(logFileFd, HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             return -1;
         }
@@ -132,7 +137,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
-        txnMem.sync(false);
+        sync0();
         // Transactions are 1 based here
         return maxTxn;
     }
@@ -168,7 +173,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     @Override
     public void create(Path path, long tableCreateTimestamp) {
         createTxnFile(path, tableCreateTimestamp);
-        createPartsDir(mkDirMode);
+        createPartsDir(configuration.getMkDirMode());
     }
 
     @Override
@@ -177,6 +182,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         long nextTxn = maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
         return nextTxn;
+    }
+
+    @Override
+    public void fullSync() {
+        txnMem.sync(false);
     }
 
     @Override
@@ -202,7 +212,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long prevTxn = lastTxn - 1;
             openTxnPart(prevTxn);
             long lastPartTxn = (prevTxn) % partTransactionCount;
-            return WalUtils.DROP_TABLE_WALID == txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+            return WalUtils.DROP_TABLE_WAL_ID == txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
         }
         return false;
     }
@@ -221,7 +231,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
-        partTransactionCount = txnMem.getInt(SEQ_PART_SIZE_32);
+        partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }
@@ -237,11 +247,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
         return maxStructureVersion;
-    }
-
-    @Override
-    public void sync() {
-        txnMem.sync(false);
     }
 
     private void createPartsDir(int mkDirMode) {
@@ -264,7 +269,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(partTransactionCount);
-        txnMem.sync(false);
+        sync0();
     }
 
     private void openTxnMem(Path path) {
@@ -301,6 +306,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     private void setAppendPosition() {
         txnPartMem.jumpTo((this.maxTxn.get() % partTransactionCount) * RECORD_SIZE);
+    }
+
+    private void sync0() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            txnMem.sync(commitMode == CommitMode.ASYNC);
+        }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
@@ -359,7 +371,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public long getMaxTxn() {
-            return txnCount - 1;
+            return txnCount;
         }
 
         @Override

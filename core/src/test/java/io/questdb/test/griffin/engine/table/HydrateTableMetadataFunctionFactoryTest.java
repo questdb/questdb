@@ -32,8 +32,8 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testHappyPath() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
-            ddl("CREATE TABLE 'b' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'b' ( ts timestamp) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
             assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                     "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n", "table_columns('a')");
@@ -42,15 +42,13 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNoArgsGiven() throws Exception {
-        assertMemoryLeak(() -> {
-            assertException("select hydrate_table_metadata()", 7, "no arguments provided");
-        });
+        assertMemoryLeak(() -> assertException("select hydrate_table_metadata()", 7, "no arguments provided"));
     }
 
     @Test
     public void testNoValidArgsGiven() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
             assertException("select hydrate_table_metadata('foo')", 7, "no valid table names provided");
         });
     }
@@ -58,15 +56,13 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotAllTablesAreValid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
         });
     }
 
     @Test
     public void testWildcardMustBeSolo() throws Exception {
-        assertMemoryLeak(() -> {
-            assertException("select hydrate_table_metadata('foo', '*')", 7, "cannot use wildcard alongside other table names");
-        });
+        assertMemoryLeak(() -> assertException("select hydrate_table_metadata('foo', '*')", 7, "cannot use wildcard alongside other table names"));
     }
 }

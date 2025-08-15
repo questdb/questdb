@@ -65,6 +65,10 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         Arrays.fill(keys, noEntryValue);
     }
 
+    public boolean excludes(K key) {
+        return keyIndex(key) > -1;
+    }
+
     public V get(K key) {
         return valueAt(keyIndex(key));
     }
@@ -112,6 +116,15 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         return false;
     }
 
+    public int remove(K key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            removeAt(index);
+            return -index - 1;
+        }
+        return -1;
+    }
+
     public int size() {
         return capacity - free;
     }
@@ -144,7 +157,6 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-
         free = capacity = this.capacity * 2;
         V[] oldValues = values;
         K[] oldKeys = keys;
@@ -158,6 +170,54 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
                 put(oldKeys[i], oldValues[i]);
             }
         }
+    }
+
+    private void removeAt(int index) {
+        if (index < 0) {
+            int from = -index - 1;
+            erase(from);
+            free++;
+
+            // after we have freed up a slot
+            // consider non-empty keys directly below
+            // they may have been a direct hit but because
+            // directly hit slot wasn't empty these keys would
+            // have moved.
+            //
+            // After slot if freed these keys require re-hash
+            from = (from + 1) & mask;
+            for (
+                    K key = keys[from];
+                    key != noEntryValue;
+                    from = (from + 1) & mask, key = keys[from]
+            ) {
+                int idealHit = Hash.spread(key.hashCode()) & mask;
+                if (idealHit != from) {
+                    int to;
+                    if (keys[idealHit] != noEntryValue) {
+                        to = probe(key, idealHit);
+                    } else {
+                        to = idealHit;
+                    }
+
+                    if (to > -1) {
+                        move(from, to);
+                    }
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    protected void erase(int index) {
+        keys[index] = (K) noEntryValue;
+        ((Object[]) values)[index] = null;
+    }
+
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     public static class Entry<K, V> {
@@ -178,8 +238,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         @Override
         public Entry<K, V> next() {
             entry.key = keys[index];
-            int index1 = index++;
-            entry.value = values[index1];
+            entry.value = values[index++];
             return entry;
         }
 

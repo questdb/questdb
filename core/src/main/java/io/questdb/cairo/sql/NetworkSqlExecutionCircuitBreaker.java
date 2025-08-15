@@ -43,7 +43,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
-    private AtomicBoolean cancelledFlag;
+    private volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -72,8 +72,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void cancel() {
         powerUpTime = Long.MIN_VALUE;
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
+        // This call can be concurrent with the call to setCancelledFlag
+        AtomicBoolean cf = cancelledFlag;
+        if (cf != null) {
+            cf.set(true);
         }
     }
 
@@ -105,6 +107,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public void close() {
         buffer = Unsafe.free(buffer, bufferSize, memoryTag);
         fd = -1;
+    }
+
+    @Override
+    public AtomicBoolean getCancelledFlag() {
+        return cancelledFlag;
     }
 
     @Override
@@ -146,13 +153,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-        fd = circuitBreaker.getFd();
-        timeout = circuitBreaker.getTimeout();
-    }
-
-    @Override
-    public boolean isThreadsafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 
@@ -241,11 +242,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testTimeout() {
-        if (clock.getTicks() - timeout > powerUpTime) {
+        long runtime = clock.getTicks() - powerUpTime;
+        if (runtime > timeout) {
             if (isCancelled()) {
                 throw CairoException.queryCancelled(fd);
             } else {
-                throw CairoException.queryTimedOut(fd);
+                throw CairoException.queryTimedOut(fd, runtime, timeout);
             }
         }
     }

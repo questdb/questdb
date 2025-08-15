@@ -26,13 +26,18 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -41,9 +46,15 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
 public class EqTimestampCursorFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "=(NC)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
@@ -54,7 +65,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        RecordCursorFactory factory = args.getQuick(1).getRecordCursorFactory();
+        final RecordCursorFactory factory = args.getQuick(1).getRecordCursorFactory();
 
         // verify that the factory has metadata we can support:
         // 1. the factory must provide only one field
@@ -63,7 +74,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         //    b. string - will be parsing this
         //    c. varchar - will be parsing this
 
-        RecordMetadata metadata = factory.getMetadata();
+        final RecordMetadata metadata = factory.getMetadata();
         if (metadata.getColumnCount() != 1) {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
@@ -71,55 +82,61 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         switch (metadata.getColumnType(0)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
-                return new EqTimestampTimestampFromCursorFunction(factory, args.getQuick(0), args.getQuick(1));
+                return new TimestampCursorFunc(factory, args.getQuick(0), args.getQuick(1));
             case ColumnType.STRING:
-                return new EqTimestampStringFromCursorFunction(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+                return new StrCursorFunc(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
             case ColumnType.VARCHAR:
-                return new EqTimestampVarcharFromCursorFunction(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+                return new VarcharCursorFunc(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
         }
     }
 
-    public static class EqTimestampStringFromCursorFunction extends BooleanFunction implements BinaryFunction {
+    private static class StrCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
         private final RecordCursorFactory factory;
-        private final Function leftFn;
-        private final Function rightFn;
-        private final int rightFnPos;
+        private final Function leftFunc;
+        private final Function rightFunc;
+        private final int rightPos;
         private long epoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
-        public EqTimestampStringFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn, int rightFnPos) {
+        public StrCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int rightPos) {
             this.factory = factory;
-            this.leftFn = leftFn;
-            this.rightFn = rightFn;
-            this.rightFnPos = rightFnPos;
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
+            this.rightPos = rightPos;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return leftFn.getTimestamp(rec) == epoch;
+            return negated != (leftFunc.getTimestamp(rec) == epoch);
         }
 
         @Override
         public Function getLeft() {
-            return leftFn;
+            return leftFunc;
         }
 
         @Override
         public Function getRight() {
-            return rightFn;
+            return rightFunc;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
                         epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
                     } catch (NumericException e) {
-                        throw SqlException.$(rightFnPos, "the cursor selected invalid timestamp value: ").put(value);
+                        throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                 } else {
                     epoch = Numbers.LONG_NULL;
@@ -129,51 +146,68 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof StrCursorFunc) {
+                StrCursorFunc thatF = (StrCursorFunc) that;
+                thatF.epoch = epoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=').val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 
-    public static class EqTimestampTimestampFromCursorFunction extends BooleanFunction implements BinaryFunction {
+    private static class TimestampCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
         private final RecordCursorFactory factory;
-        private final Function leftFn;
-        private final Function rightFn;
+        private final Function leftFunc;
+        private final Function rightFunc;
         private long epoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
-        public EqTimestampTimestampFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn) {
+        public TimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc) {
             this.factory = factory;
-            this.leftFn = leftFn;
-            this.rightFn = rightFn;
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return leftFn.getTimestamp(rec) == epoch;
+            return negated != (leftFunc.getTimestamp(rec) == epoch);
         }
 
         @Override
         public Function getLeft() {
-            return leftFn;
+            return leftFunc;
         }
 
         @Override
         public Function getRight() {
-            return rightFn;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return rightFunc;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     epoch = cursor.getRecord().getTimestamp(0);
@@ -182,47 +216,80 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 }
             }
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof TimestampCursorFunc) {
+                TimestampCursorFunc thatF = (TimestampCursorFunc) that;
+                thatF.epoch = epoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=').val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
+        }
     }
 
-    public static class EqTimestampVarcharFromCursorFunction extends BooleanFunction implements BinaryFunction {
+    private static class VarcharCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
         private final RecordCursorFactory factory;
-        private final Function leftFn;
-        private final Function rightFn;
-        private final int rightFnPos;
+        private final Function leftFunc;
+        private final Function rightFunc;
+        private final int rightPos;
         private long epoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
-        public EqTimestampVarcharFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn, int rightFnPos) {
+        public VarcharCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int rightPos) {
             this.factory = factory;
-            this.leftFn = leftFn;
-            this.rightFn = rightFn;
-            this.rightFnPos = rightFnPos;
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
+            this.rightPos = rightPos;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return leftFn.getTimestamp(rec) == epoch;
+            return negated != (leftFunc.getTimestamp(rec) == epoch);
         }
 
         @Override
         public Function getLeft() {
-            return leftFn;
+            return leftFunc;
         }
 
         @Override
         public Function getRight() {
-            return rightFn;
+            return rightFunc;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
                         epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
                     } catch (NumericException e) {
-                        throw SqlException.$(rightFnPos, "the cursor selected invalid timestamp value: ").put(value);
+                        throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                 } else {
                     epoch = Numbers.LONG_NULL;
@@ -232,10 +299,29 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof VarcharCursorFunc) {
+                VarcharCursorFunc thatF = (VarcharCursorFunc) that;
+                thatF.epoch = epoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=').val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 }

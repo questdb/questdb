@@ -35,6 +35,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Paths;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
@@ -259,6 +260,25 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
+    private static boolean tryLoadFromDistribution(String cxxLibName, String rustLibName) {
+        // the property name must be sync-ed with questdb.sh
+        String libsDir = System.getProperty("questdb.libs.dir");
+        if (libsDir == null) {
+            return false;
+        }
+
+        try {
+            // we are in a binary distribution, let's load libraries from the libs dir
+            System.load(Paths.get(libsDir, cxxLibName).toAbsolutePath().toString());
+            System.load(Paths.get(libsDir, rustLibName).toAbsolutePath().toString());
+        } catch (Throwable e) {
+            // if we fail to load distribution libraries, we will try to load them from the jar
+            System.err.println("Failed to load libraries from " + libsDir + ": " + e.getMessage());
+            return false;
+        }
+        return true;
+    }
+
     static {
         if ("aarch64".equals(System.getProperty("os.arch"))) {
             arch = ARCH_AARCH64;
@@ -297,18 +317,7 @@ public final class Os {
             String cxxLibName = "libquestdb" + outputLibExt;
             String devCXXLib = devCXXLibRoot + cxxLibName;
 
-            // try dev CXX lib first
-            InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
-            if (libCXXStream == null) {
-                loadLib(prdLibRoot + cxxLibName);
-            } else {
-                System.err.println("Loading DEV CXX library: " + devCXXLib);
-                loadLib(devCXXLib, libCXXStream);
-            }
-
-            // Rust library is loaded conditionally to allow for convenience
-            // of the development environments that target Rust source code
-            // The library file is missing "lib" prefix on Windows
+            // The Rust library file is missing "lib" prefix on Windows
             String devRustLibRoot = "/io/questdb/rust/";
             final String rustLibName;
             if (type == WINDOWS) {
@@ -317,13 +326,27 @@ public final class Os {
                 rustLibName = "libquestdbr" + outputLibExt;
             }
 
-            final String devRustLib = devRustLibRoot + rustLibName;
+            // questdb distribution can override libs dir
+            boolean loaded = tryLoadFromDistribution(cxxLibName, rustLibName);
+            if (!loaded) {
+                // not a binary distribution, let's try to load libraries from the jar
+                // try dev CXX lib first
+                InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
+                if (libCXXStream == null) {
+                    loadLib(prdLibRoot + cxxLibName);
+                } else {
+                    System.err.println("Loading DEV CXX library: " + devCXXLib);
+                    loadLib(devCXXLib, libCXXStream);
+                }
 
-            InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
-            if (libRustStream == null) {
-                loadLib(prdLibRoot + rustLibName);
-            } else {
-                loadLib(devRustLib, libRustStream);
+
+                final String devRustLib = devRustLibRoot + rustLibName;
+                InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
+                if (libRustStream == null) {
+                    loadLib(prdLibRoot + rustLibName);
+                } else {
+                    loadLib(devRustLib, libRustStream);
+                }
             }
             initRust();
         } else {

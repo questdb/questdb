@@ -1,12 +1,9 @@
 steps:
-  - checkout: self
-    fetchDepth: 1
-    lfs: false
-    submodules: false
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
+    continueOnError: true
     inputs:
       key: '"questdb_compat" | "$(Agent.OS)" | "$(jdk)" | "maven"'
       restoreKeys: |
@@ -14,6 +11,7 @@ steps:
       path: $(MAVEN_CACHE_FOLDER)
 
   - task: Cache@2
+    continueOnError: true
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
       restoreKeys: mykey | "$(MAVEN_VERSION)"

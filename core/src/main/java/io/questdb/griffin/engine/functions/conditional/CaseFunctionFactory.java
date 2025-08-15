@@ -36,6 +36,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class CaseFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "case(V)";
@@ -115,5 +116,10 @@ public class CaseFunctionFactory implements FunctionFactory {
         };
 
         return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+    }
+
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
     }
 }

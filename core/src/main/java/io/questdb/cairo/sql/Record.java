@@ -25,9 +25,11 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
@@ -60,6 +62,9 @@ public interface Record {
         return sink;
     };
 
+    default ArrayView getArray(int col, int columnType) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Gets the value of a binary column by index
@@ -120,7 +125,6 @@ public interface Record {
     default long getDate(int col) {
         return getLong(col);
     }
-
 
     /**
      * Gets the value of a double column by index
@@ -189,7 +193,6 @@ public interface Record {
      * @param col numeric index of the column
      * @return 32-bit integer
      */
-
     default int getIPv4(int col) {
         throw new UnsupportedOperationException();
     }
@@ -237,8 +240,11 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a long256 column by index
-     * getLong256A used for A/B comparison with getLong256B to compare references
+     * Gets the value of a long256 column by index.
+     * getLong256A used for A/B comparison with getLong256B to compare references.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return unsigned 256-bit integer
@@ -248,8 +254,11 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a long256 column by index
-     * getLong256B used for A/B comparison with getLong256A to compare references
+     * Gets the value of a long256 column by index.
+     * getLong256B used for A/B comparison with getLong256A to compare references.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return unsigned 256-bit integer
@@ -267,7 +276,7 @@ public interface Record {
      */
     @SuppressWarnings("unused")
     default long getLongIPv4(int col) {
-        throw new UnsupportedOperationException();
+        return Numbers.ipv4ToLong(getIPv4(col));
     }
 
     /**
@@ -306,6 +315,9 @@ public interface Record {
      * multiple fields of the same record. Functions, such as "=" must
      * always compare getStrA(col) = getStrB(col) to make sure CharSequence
      * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column, 0-based
      * @return lightweight container that avoids creating copies of strings in
@@ -323,6 +335,9 @@ public interface Record {
      * multiple fields of the same record. Functions, such as "=" must
      * always compare getStrA(col) = getStrB(col) to make sure CharSequence
      * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column, 0-based
      * @return lightweight container that avoids creating copies of strings in
@@ -343,7 +358,10 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a symbol column by index
+     * Gets the value of a symbol column by index.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return symbol value as string
@@ -353,8 +371,11 @@ public interface Record {
     }
 
     /**
-     * Gets the string-based value of a symbol column by index
-     * getSymB used for A/B comparison with getSym to compare references
+     * Gets the string-based value of a symbol column by index.
+     * getSymB used for A/B comparison with getSym to compare references.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return symbol value as string
@@ -399,9 +420,10 @@ public interface Record {
      * system, which utilizes A and B objects to represent values of
      * multiple fields of the same record. Functions, such as "=" must
      * always compare getVarcharA(col) = getVarcharB(col) to make sure Utf8Sequence
-     * containers are not being spuriously reused. Also keep in mind that
-     * implementations are allowed to only have two utf8 containers, so methods such
-     * as getVarcharA() and getStrAsVarcharA() may use the same container.
+     * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column, 0-based
      * @return lightweight container that avoids creating copies of strings in
@@ -418,9 +440,10 @@ public interface Record {
      * system, which utilizes A and B objects to represent values of
      * multiple fields of the same record. Functions, such as "=" must
      * always compare getVarcharA(col) = getVarcharB(col) to make sure Utf8Sequence
-     * containers are not being spuriously reused. Also keep in mind that
-     * implementations are allowed to only have two utf8 containers, so methods such
-     * as getVarcharB() and getStrAsVarcharB() may use the same container.
+     * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column, 0-based
      * @return lightweight container that avoids creating copies of strings in

@@ -24,12 +24,18 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
@@ -40,7 +46,6 @@ import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class CursorPrinter {
     private static final char COLUMN_DELIMITER = '\t';
-    public static int FLOAT_SCALE = 4;
 
     public static void printColumn(Record r, RecordMetadata m, int columnIndex, CharSink<?> sink, boolean printTypes) {
         printColumn(r, m, columnIndex, sink, false, printTypes);
@@ -70,7 +75,7 @@ public class CursorPrinter {
             case ColumnType.FLOAT:
                 float f = record.getFloat(columnIndex);
                 if (Numbers.isFinite(f)) {
-                    sink.put(f, FLOAT_SCALE);
+                    sink.put(f);
                 } else {
                     sink.put("null");
                 }
@@ -164,6 +169,15 @@ public class CursorPrinter {
                     interval.toSink(sink);
                 }
                 break;
+            case ColumnType.ARRAY:
+                ArrayTypeDriver.arrayToJson(
+                        record.getArray(columnIndex, columnType),
+                        sink,
+                        NoopArrayWriteState.INSTANCE
+                );
+                break;
+            case ColumnType.ARRAY_STRING:
+                sink.put(record.getStrA(columnIndex));
             default:
                 break;
         }

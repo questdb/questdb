@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.bool;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
@@ -39,7 +38,12 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
@@ -89,31 +93,38 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
         }
 
+        boolean intervalSearch = isIntervalSearch(args);
         if (allConst) {
+            if (intervalSearch) {
+                Function rightFn = args.getQuick(1);
+                CharSequence right = rightFn.getStrA(null);
+                return new EqTimestampStrConstantFunction(args.getQuick(0), right, argPositions.getQuick(1));
+            }
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(args, argPositions));
         }
 
-        if (args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()))) {
-            // special case - one argument and it a string
-            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
-        }
-
         if (allRuntimeConst) {
-            if (args.size() == 2 && args.get(1).getType() == ColumnType.UNDEFINED) {
-                // this is an odd case, we have something like this
-                //
-                // where ts in ?
-                //
-                // Type of the runtime constant may not be known upfront.
-                // When user passes string as the value we perform the interval lookup,
-                // otherwise it is discrete value
+            if (intervalSearch) {
                 return new InTimestampRuntimeConstIntervalFunction(args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
 
             }
             return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
         }
+
+        if (intervalSearch) {
+            return new EqTimestampStrFunction(args.get(0), args.get(1));
+        }
+
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args));
+    }
+
+    private static boolean isIntervalSearch(ObjList<Function> args) {
+        if (args.size() != 2) {
+            return false;
+        }
+        Function rightFn = args.getQuick(1);
+        return ColumnType.isVarcharOrString(rightFn.getType());
     }
 
     private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions) throws SqlException {
@@ -158,6 +169,94 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final LongList intervals = new LongList();
+        private final Function left;
+
+        public EqTimestampStrConstantFunction(
+                Function left,
+                CharSequence right,
+                int rightPosition
+        ) throws SqlException {
+            this.left = left;
+            parseAndApplyIntervalEx(right, intervals, rightPosition);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(intervals);
+        }
+    }
+
+    private static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final LongList intervals = new LongList();
+        private final Function left;
+        private final Function right;
+
+        public EqTimestampStrFunction(Function left, Function right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long ts = left.getTimestamp(rec);
+            if (ts == Numbers.LONG_NULL) {
+                return negated;
+            }
+            CharSequence timestampAsString = right.getStrA(rec);
+            if (timestampAsString == null) {
+                return negated;
+            }
+            intervals.clear();
+            try {
+                // we are ignoring exception contents here, so we do not need the exact position
+                parseAndApplyIntervalEx(timestampAsString, intervals, 0);
+            } catch (SqlException e) {
+                return negated;
+            }
+            return negated != isInIntervals(intervals, ts);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(right);
+        }
+    }
+
     private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final LongList inList;
         private final Function tsFunc;
@@ -175,7 +274,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long ts = tsFunc.getTimestamp(rec);
-            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(ts, Vect.BIN_SEARCH_SCAN_UP) >= 0;
         }
 
         @Override
@@ -249,7 +348,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function intervalFunc;
         private final int intervalFuncPos;
         private final LongList intervals = new LongList();

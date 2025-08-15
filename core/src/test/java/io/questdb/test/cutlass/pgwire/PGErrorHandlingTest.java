@@ -24,14 +24,19 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.Socket;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.BootstrapTest;
+import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -45,7 +50,7 @@ import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class PGErrorHandlingTest extends BootstrapTest {
+public class PGErrorHandlingTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
@@ -69,8 +74,8 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 new FilesFacadeImpl() {
                                     @Override
-                                    public long openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 69) {
+                                    public long openRW(LPSZ name, int opts) {
+                                        if (counter.incrementAndGet() > 78) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);
@@ -89,7 +94,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection()) {
-                    conn.createStatement().execute("create table x(y long)");
+                    conn.createStatement().execute("create table x as (select 1L y)");
                     Assert.fail("Expected exception is missing");
                 } catch (PSQLException e) {
                     TestUtils.assertContains(e.getMessage(), "ERROR: Test error");
@@ -114,8 +119,9 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
-                                    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+                                    public @NotNull PGAuthenticatorFactory getPgWireAuthenticatorFactory() {
                                         return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new SocketAuthenticator() {
+
                                             @Override
                                             public void close() {
                                                 Misc.free(circuitBreaker);

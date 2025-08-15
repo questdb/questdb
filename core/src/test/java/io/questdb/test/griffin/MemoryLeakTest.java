@@ -82,7 +82,7 @@ public class MemoryLeakTest extends AbstractCairoTest {
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
-            ddl(compiler, "create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
+            execute(compiler, "create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
                 try (TableWriter writer = getWriter("users")) {

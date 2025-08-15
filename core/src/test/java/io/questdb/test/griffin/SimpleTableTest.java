@@ -38,8 +38,8 @@ public class SimpleTableTest extends AbstractCairoTest {
     @Test
     public void testTimeStampWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (timestamp timestamp) timestamp(timestamp);");
-            insert("insert into t values (1);");
+            execute("create table t (timestamp timestamp) timestamp(timestamp);");
+            execute("insert into t values (1);");
 
             String expected1 = "time\n" +
                     "1970-01-01T00:00:00.000001Z\n";

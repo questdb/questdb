@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
@@ -33,34 +36,27 @@ import io.questdb.std.Misc;
 /**
  * SortedLightRecordCursor which implements LIMIT clause.
  */
-public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor {
-
+public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor, DynamicLimitCursor {
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
-    private final long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
-    private final long skipFirst; // skip first N rows
-    private final long skipLast;  // skip last N rows
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isChainBuilt;
     private boolean isOpen;
+    private long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
     private long rowsLeft;
+    private long skipFirst; // skip first N rows
+    private long skipLast;  // skip last N rows
 
     public LimitedSizeSortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
-            RecordComparator comparator,
-            long limit,
-            long skipFirst,
-            long skipLast
+            RecordComparator comparator
     ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.limit = limit;
-        this.skipFirst = skipFirst;
-        this.skipLast = skipLast;
         this.isOpen = true;
     }
 
@@ -120,6 +116,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(isChainBuilt) + baseCursor.preComputedStateSize();
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(record, atRowId);
     }
@@ -139,6 +140,13 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         }
 
         rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
+    }
+
+    @Override
+    public void updateLimits(long limit, long skipFirst, long skipLast) {
+        this.limit = limit;
+        this.skipFirst = skipFirst;
+        this.skipLast = skipLast;
     }
 
     private void buildChain() {

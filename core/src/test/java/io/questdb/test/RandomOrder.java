@@ -24,15 +24,21 @@
 
 package io.questdb.test;
 
+import io.questdb.std.Os;
 import org.junit.runner.manipulation.Ordering;
 
 import java.util.Random;
 
 public class RandomOrder implements Ordering.Factory {
+    private final static long RANDOM_ORDER_SEED;
+
     @Override
     public Ordering create(Ordering.Context context) {
-        long seed = new Random().nextLong();
-        System.out.println("RandomOrder: seed = " + seed);
-        return Ordering.shuffledBy(new Random(seed));
+        return Ordering.shuffledBy(new Random(RANDOM_ORDER_SEED));
+    }
+
+    static {
+        RANDOM_ORDER_SEED = Os.currentTimeMicros();
+        System.out.println("RandomOrder seed: " + RANDOM_ORDER_SEED);
     }
 }

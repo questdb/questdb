@@ -59,7 +59,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAndFilterPrefixShouldNotAccessUnmappedMemory() {
-        Path path = new Path().of(configuration.getRoot());
+        Path path = new Path().of(configuration.getDbRoot());
 
         // allocate and map 1-page index
         long pageSize = Files.PAGE_SIZE;
@@ -69,7 +69,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
         final DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
         long argsAddress = LatestByArguments.allocateMemoryArray(1);
 
-        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool();
+        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
 
         try {
             BitmapIndexTest.create(configuration, path, "x", 64);
@@ -89,7 +89,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                 }
             }
 
-            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
+            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 GeoHashNative.latestByAndFilterPrefix(
                         frameMemoryPool, // won't be used
                         indexReader.getKeyBaseAddress(),
@@ -97,7 +97,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                         indexReader.getValueBaseAddress(),
                         indexReader.getValueMemorySize(),
                         argsAddress,
-                        indexReader.getUnIndexedNullCount(),
+                        indexReader.getColumnTop(),
                         255,
                         0,
                         0,

@@ -27,7 +27,6 @@ package io.questdb.test;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.AllocationsTracker;
 import io.questdb.std.Os;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
@@ -40,7 +39,6 @@ import java.lang.management.ThreadMXBean;
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
     private static final Log LOG = LogFactory.getLog(TestListener.class);
-
     long testStartMs = -1;
 
     public static void dumpThreadStacks() {
@@ -67,9 +65,9 @@ public class TestListener extends RunListener {
     public void testAssumptionFailure(Failure failure) {
         Description description = failure.getDescription();
         LOG.error()
-                .$("***** Test Failed *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
+                .$("***** Test Assumption Violated ***** ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$(" duration_ms=")
                 .$(getTestDuration())
                 .$(" : ")
@@ -78,20 +76,33 @@ public class TestListener extends RunListener {
 
     @Override
     public void testFailure(Failure failure) {
-        testAssumptionFailure(failure);
+        Description description = failure.getDescription();
+        LOG.error()
+                .$("***** Test Failed ***** ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration())
+                .$(" : ")
+                .$(failure.getException()).$();
     }
 
     @Override
     public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
-        AllocationsTracker.dumpAllocations(LOG, "End of test case");
+        LOG.infoW().$("<<<< ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration()).$();
+        System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
-        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
-        AllocationsTracker.dumpAllocations(LOG, "Start of test case");
+        LOG.infoW().$(">>>> ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$();
+        System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
     private long getTestDuration() {
@@ -103,12 +114,11 @@ public class TestListener extends RunListener {
             try {
                 while (true) {
                     dumpThreadStacks();
-                    AllocationsTracker.dumpAllocations(LOG, "Periodic dump");
                     Os.sleep(10 * 60 * 1000);
                 }
             } catch (Throwable t) {
                 System.out.println("Thread dumper failed!");
-                t.printStackTrace();
+                t.printStackTrace(System.out);
             }
         });
 

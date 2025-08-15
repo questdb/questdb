@@ -2,11 +2,11 @@ variables:
   table_name: "sensor_data"
 
 tests:
-  - name: Insert and Select Test
-    description: Test inserting and selecting data.
+  - name: Test Empty Array
+    description: Test inserting and selecting empty array.
     prepare:
       - action: execute
-        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+        query: "CREATE TABLE ${table_name} (id INT, arr double[]);"
     steps:
       - loop:
           range:
@@ -15,12 +15,236 @@ tests:
           as: id
           steps:
             - action: execute
-              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              query: "INSERT INTO ${table_name} (id, arr) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "{}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM ${table_name}"
+        expect:
+          result_contains:
+            - [ 1, "{}" ]
+            - [ 2, "{}" ]
+            - [ 10, "{}" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+
+  - name: Test Array
+    description: Test inserting and selecting data with an array.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE array_table (id INT, arr double[], arr2 double[]);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO array_table (id, arr, arr2) VALUES ($[1], $[2], $[3]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "{-1, 2, 3, 4, 5.42}"
+                  type: "ARRAY_FLOAT8"
+                - value: "{0, 1, 2, 3, 4, 5}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM array_table"
+        expect:
+          result_contains:
+            - [ 1, "{-1.0,2.0,3.0,4.0,5.42}",  "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 2, "{-1.0,2.0,3.0,4.0,5.42}",  "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 10, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS array_table;"
+
+  - name: Test non Vanilla Arrays
+    description: Selecting sliced arrays
+    exclude: [ 'golang' ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]] arr FROM long_sequence(1))"
+    steps:
+      - action: query
+        query: "SELECT arr[1:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0,2.0}}" ]
+      - action: query
+        query: "SELECT arr[2:] slice FROM tango"
+        expect:
+          result:
+            - [ "{{3.0,4.0},{5.0,6.0}}" ]
+      - action: query
+        query: "SELECT arr[3:, 1:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{5.0}}" ]
+      - action: query
+        query: "SELECT arr[3:, 2] slice FROM tango"
+        expect:
+          result:
+            - [ "{6.0}" ]
+      - action: query
+        query: "SELECT arr[1:3] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0,2.0},{3.0,4.0}}" ]
+      - action: query
+        query: "SELECT arr[1:3, 1:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0},{3.0}}" ]
+      - action: query
+        query: "SELECT arr[2, 2] element FROM tango"
+        expect:
+          result:
+            - [ 4.0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS tango;"
+
+  - name: Bindvar gaps with subqueries
+    description: https://github.com/questdb/questdb/issues/5512
+    exclude: [ 'psycopg2', 'psycopg3', 'asyncpg', 'rust', 'php', 'nodejs-postgres' ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"
+      - action: execute
+        query: "INSERT INTO test_table(value,state,opened_at) VALUES (1, 'OPEN', '2001'), (4, 'CLOSED', '2002'), (2, 'CLOSED', '2003'), (7, 'CLOSED', '2004'), (1, 'CLOSED', '2005')"
+    steps:
+      - action: query
+        query: "WITH s AS (SELECT * from test_table WHERE value < $[1]) SELECT s.state, s.opened_at FROM s WHERE 1=1 AND state <> $[4];"
+        parameters:
+          - value: "7"
+            type: "FLOAT8"
+          - value: ""
+            type: "VARCHAR"
+          - value: ""
+            type: "VARCHAR"
+          - value: "OPEN"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ 'CLOSED', '2002-01-01T00:00:00.000000Z' ]
+            - [ 'CLOSED', '2003-01-01T00:00:00.000000Z' ]
+            - [ 'CLOSED', '2005-01-01T00:00:00.000000Z' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS test_table;"
+  - name: Binding in projection
+    description: Test binding variable in projection, without any function
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (timestamp timestamp, vch varchar);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (timestamp, vch) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+                - value: "${id}"
+                  type: "VARCHAR"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT $[1], * FROM ${table_name} WHERE vch IN ($[2], $[3]);"
+        parameters:
+          - value: "42"
+            type: "VARCHAR"
+          - value: "2"
+            type: "VARCHAR"
+          - value: "3"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ '42', '2023-10-01T10:00:00.000000Z', '2' ]
+            - [ '42', '2023-10-01T10:00:00.000000Z', '3' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: In Varchar Test
+    description: Test inserting and selecting data with a varchar using the IN clause.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (timestamp timestamp, vch varchar);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (timestamp, vch) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+                - value: "${id}"
+                  type: "VARCHAR"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM ${table_name} WHERE vch IN ($[1], $[2], $[3]);"
+        parameters:
+          - value: "1"
+            type: "VARCHAR"
+          - value: "2"
+            type: "VARCHAR"
+          - value: "11"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ '2023-10-01T10:00:00.000000Z', '1' ]
+            - [ '2023-10-01T10:00:00.000000Z', '2' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Insert and Select Test
+    description: Test inserting and selecting data.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, b boolean, d date, ch char, timestamp timestamp);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
               parameters:
                 - value: "${id}"
                   type: "INT4"
                 - value: "${id}.5"
                   type: "FLOAT8"
+                - value: "true"
+                  type: "BOOLEAN"
+                - value: "2023-10-01"
+                  type: "DATE"
+                - value: "*"
+                  type: "CHAR"
                 - value: "2023-10-01T10:00:00.000000Z"
                   type: "TIMESTAMP"
               expect:
@@ -33,12 +257,18 @@ tests:
             - [ 1, 10 ]
       - action: execute
         description: Insert a row with a unique timestamp so we can query it later
-        query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
         parameters:
           - value: "11"
             type: "INT4"
           - value: "11.5"
             type: "FLOAT8"
+          - value: "false"
+            type: "BOOLEAN"
+          - value: "2024-10-02"
+            type: "DATE"
+          - value: "-"
+            type: "CHAR"
           - value: "2024-10-01T10:00:00.000000Z"
             type: "TIMESTAMP"
         expect:
@@ -53,7 +283,7 @@ tests:
         # let's use the exact match here since it only returns one row
         expect:
           result:
-            - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
+            - [ 11, 11.5, False, "2024-10-02T00:00:00.000000Z", '-', "2024-10-01T10:00:00.000000Z" ]
       - action: query
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:
@@ -102,7 +332,7 @@ tests:
     iterations: 2
     prepare:
       - action: execute
-        query: "CREATE TABLE ${table_name} as (SELECT x, x::varchar FROM long_sequence(1000000));"
+        query: "CREATE TABLE ${table_name} as (SELECT x, x::varchar y FROM long_sequence(1000000));"
     steps:
       - action: query
         query: "SELECT 0, * FROM ${table_name};"
@@ -140,8 +370,6 @@ tests:
                   - [ 1 ]
       - action: execute
         query: "ALTER TABLE ${table_name} ADD COLUMN ts2 timestamp;"
-        expect:
-          result:
       - action: execute
         query: "UPDATE ${table_name} SET ts2 = timestamp;"
         expect:
@@ -157,7 +385,7 @@ tests:
             - [ 999, 999.5, '2023-10-01T10:00:00.999000Z', '2023-10-01T10:00:00.999000Z' ]
       - action: execute
         query: "ALTER TABLE ${table_name} DROP COLUMN timestamp;"
-    #        # The action bellow is currently failing with: cached query plan cannot be used because table schema has changed
+    #        # The action below is currently failing with: cached query plan cannot be used because table schema has changed
     #        # The action should be re-enabled once the issue is fixed
     #      - action: query
     #        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
@@ -167,6 +395,39 @@ tests:
     #        expect:
     #          result:
     #            - [ 999, 999.5, '2023-10-01T10:00:00.999000Z' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Select With Limit Test
+    description: Test inserting and selecting data.
+    prepare:
+      - action: execute
+        query: "create table ${table_name} as (select concat('Sym', x%3) col1, x%4 status, timestamp_sequence(20000000, 100000) ts from long_sequence(100)) timestamp(ts) partition by none bypass wal;"
+    steps:
+      - action: query
+        description: Check with first limits
+        query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
+        parameters:
+          - value: "1"
+            type: "INT8"
+          - value: "3"
+            type: "INT8"
+        # let's use the exact match here since it only returns one row
+        expect:
+          result:
+            - [ 'Sym2', 50, '1970-01-01T00:00:29.700000Z' ]
+            - [ 'Sym1', 49, '1970-01-01T00:00:29.900000Z' ]
+      - action: query
+        description: Check with second limits
+        query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
+        parameters:
+          - value: "1"
+            type: "INT8"
+          - value: "2"
+            type: "INT8"
+        expect:
+          result:
+            - [ 'Sym2', 50, '1970-01-01T00:00:29.700000Z' ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"

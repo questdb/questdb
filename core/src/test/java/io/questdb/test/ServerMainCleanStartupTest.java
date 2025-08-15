@@ -25,13 +25,10 @@
 package io.questdb.test;
 
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -60,26 +57,23 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 serverMain.start();
-                serverMain.getEngine().compile("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
-                serverMain.getEngine().compile("create table y (b int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
+                serverMain.getEngine().execute("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
+                serverMain.getEngine().execute("create table y (b int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
 
-                serverMain.getEngine().compile("insert into y values(100, 1)", sqlExecutionContext);
-                serverMain.getEngine().compile("insert into y values(200, 2)", sqlExecutionContext);
+                CairoEngine cairoEngine1 = serverMain.getEngine();
+                cairoEngine1.execute("insert into y values(100, 1)", sqlExecutionContext);
+                CairoEngine cairoEngine = serverMain.getEngine();
+                cairoEngine.execute("insert into y values(200, 2)", sqlExecutionContext);
 
-                // wait for the row count
-                try (RecordCursorFactory rfc = serverMain.getEngine().select("select count() from y", sqlExecutionContext)) {
-                    while (true) {
-                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)) {
-                            Record rec = cursor.getRecord();
-                            if (cursor.hasNext()) {
-                                if (rec.getLong(0) == 2) {
-                                    break;
-                                }
-                            }
-                            Os.pause();
-                        }
-                    }
-                }
+                // wait for txns to be written
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "select wait_wal_table('y')",
+                        sink,
+                        "wait_wal_table('y')\n" +
+                                "true\n"
+                );
 
                 // ensure transactions
                 TestUtils.assertSql(
@@ -87,7 +81,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         sqlExecutionContext,
                         "select * from wal_tables order by 1",
                         sink,
-                        "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                        "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                                 "x\tfalse\t0\t0\t0\t\t\t0\n" +
                                 "y\tfalse\t2\t0\t2\t\t\t0\n"
                 );
@@ -99,7 +93,6 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1",
                         sink,
                         "table_name\townership_reason\n" +
-                                "x\t\n" +
                                 "y\t\n"
                 );
 

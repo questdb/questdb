@@ -35,7 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
-import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
+import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 
 //contiguous mapped readable 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
@@ -58,13 +58,19 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public void changeSize(long dataSize) {
+        assert dataSize > 0 : "invalid size: " + dataSize;
+        setSize0(dataSize);
+    }
+
+    @Override
     public void close() {
         clear();
         if (pageAddress != 0) {
             ff.munmap(pageAddress, size, memoryTag);
             LOG.debug().$("unmapped [pageAddress=").$(pageAddress)
                     .$(", size=").$(size)
-                    .$(", tag=").$(memoryTag)
+                    .$(", memoryTag=").$(memoryTag)
                     .I$();
             size = 0;
             pageAddress = 0;
@@ -101,7 +107,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         this.memoryTag = memoryTag;
         this.madviseOpts = madviseOpts;
         try {
@@ -113,7 +119,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                     throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
                 }
             }
-            assert !PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
+            assert !VM_PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
             map(ff, name, size);
         } catch (Throwable e) {
             close();

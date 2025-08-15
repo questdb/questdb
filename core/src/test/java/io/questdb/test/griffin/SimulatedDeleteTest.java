@@ -33,13 +33,13 @@ public class SimulatedDeleteTest extends AbstractCairoTest {
     @Test
     public void testNotSelectDeleted() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp) timestamp(timestamp);");
+            execute("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp) timestamp(timestamp);");
 
-            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);");
-            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);");
-            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);");
-            insert("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);");
-            insert("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);");
+            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);");
+            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);");
+            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);");
+            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);");
+            execute("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);");
 
             assertSql(
                     "cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
@@ -51,13 +51,13 @@ public class SimulatedDeleteTest extends AbstractCairoTest {
     @Test
     public void testNotSelectDeletedByLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table state_table(time timestamp, id int, state symbol) timestamp(time);");
+            execute("create table state_table(time timestamp, id int, state symbol) timestamp(time);");
 
-            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            insert("insert into state_table values(systimestamp(), 12345, 'OFF');");
-            insert("insert into state_table values(systimestamp(), 12345, 'ON');");
+            execute("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            execute("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            execute("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            execute("insert into state_table values(systimestamp(), 12345, 'OFF');");
+            execute("insert into state_table values(systimestamp(), 12345, 'ON');");
 
             TestUtils.assertSql(
                     engine,

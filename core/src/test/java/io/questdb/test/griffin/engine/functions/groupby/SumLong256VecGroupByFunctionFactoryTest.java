@@ -49,12 +49,12 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumBigFive() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (x long256)");
-            insert("insert into tab values (0xb00ee5505bd95e51dd18889bae1dee3404d446e61d5293f55ff29ba4a01ab073)");
-            insert("insert into tab values (0x6f64ae42c48c96a19e099d7a980099af601f70d614b709804ea60bf902c30e3e)");
-            insert("insert into tab values (0x7c6ec2b2ffd4a89ec87dd041359f34661ce5fa64b58567a438c725aa47e609dd)");
-            insert("insert into tab values (0x15ed3484045af1d460b09ed4a3984890458c09608a4ce455731bed64a1545c05)");
-            insert("insert into tab values (0xb6292e820db4d91ba9a74c8c459676d127590af55a4eccba93a826db814c49c6)");
+            execute("create table tab (x long256)");
+            execute("insert into tab values (0xb00ee5505bd95e51dd18889bae1dee3404d446e61d5293f55ff29ba4a01ab073)");
+            execute("insert into tab values (0x6f64ae42c48c96a19e099d7a980099af601f70d614b709804ea60bf902c30e3e)");
+            execute("insert into tab values (0x7c6ec2b2ffd4a89ec87dd041359f34661ce5fa64b58567a438c725aa47e609dd)");
+            execute("insert into tab values (0x15ed3484045af1d460b09ed4a3984890458c09608a4ce455731bed64a1545c05)");
+            execute("insert into tab values (0xb6292e820db4d91ba9a74c8c459676d127590af55a4eccba93a826db814c49c6)");
             String query = "select sum(x) from tab";
             String ex = "sum\n0x67f8b94c324a68824df7e1b864ec7baaeebec676cc2ab629ee23e1880d646e59\n";
             printSqlResult(ex, query, null, false, true);

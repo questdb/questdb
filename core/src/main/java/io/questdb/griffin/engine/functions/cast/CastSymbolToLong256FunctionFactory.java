@@ -29,7 +29,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
@@ -45,13 +49,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
 
     static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink<?> sink) {
         if (Numbers.extractLong256(value, long256Builder)) {
-            Numbers.appendLong256(
-                    long256Builder.getLong0(),
-                    long256Builder.getLong1(),
-                    long256Builder.getLong2(),
-                    long256Builder.getLong3(),
-                    sink
-            );
+            Numbers.appendLong256(long256Builder, sink);
         }
     }
 

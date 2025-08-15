@@ -24,8 +24,10 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.DirectLongLongSortedList;
 
 public final class Unordered4MapCursor implements MapRecordCursor {
     private final long entrySize;
@@ -34,9 +36,9 @@ public final class Unordered4MapCursor implements MapRecordCursor {
     private final Unordered4MapRecord recordB;
     private long address;
     private int count;
-    private long limit;
+    private long memLimit;
+    private long memStart;
     private int remaining;
-    private long topAddress;
     private long zeroKeyAddress; // set to 0 when there is no zero
 
     Unordered4MapCursor(Unordered4MapRecord record, Unordered4Map map) {
@@ -86,6 +88,30 @@ public final class Unordered4MapCursor implements MapRecordCursor {
     }
 
     @Override
+    public void longTopK(DirectLongLongSortedList list, Function recordFunction) {
+        // First, we handle zero key.
+        if (zeroKeyAddress != 0) {
+            recordA.of(zeroKeyAddress);
+            long v = recordFunction.getLong(recordA);
+            list.add(zeroKeyAddress, v);
+        }
+
+        // Then we handle all non-zero keys.
+        for (long addr = memStart; addr < memLimit; addr += entrySize) {
+            if (!map.isZeroKey(addr)) {
+                recordA.of(addr);
+                long v = recordFunction.getLong(recordA);
+                list.add(addr, v);
+            }
+        }
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         ((Unordered4MapRecord) record).of(atRowId);
     }
@@ -97,7 +123,7 @@ public final class Unordered4MapCursor implements MapRecordCursor {
 
     @Override
     public void toTop() {
-        address = topAddress;
+        address = memStart;
         remaining = count;
         if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
             skipToNonZeroKey();
@@ -107,17 +133,17 @@ public final class Unordered4MapCursor implements MapRecordCursor {
     private void skipToNonZeroKey() {
         do {
             address += entrySize;
-        } while (address < limit && map.isZeroKey(address));
+        } while (address < memLimit && map.isZeroKey(address));
     }
 
-    Unordered4MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
-        this.topAddress = address;
-        this.limit = limit;
+    Unordered4MapCursor init(long memStart, long memLimit, long zeroKeyAddress, int count) {
+        this.memStart = memStart;
+        this.memLimit = memLimit;
         this.count = count;
         this.zeroKeyAddress = zeroKeyAddress;
         toTop();
-        recordA.setLimit(limit);
-        recordB.setLimit(limit);
+        recordA.setLimit(memLimit);
+        recordB.setLimit(memLimit);
         return this;
     }
 }

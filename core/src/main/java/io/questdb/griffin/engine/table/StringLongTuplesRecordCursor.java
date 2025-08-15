@@ -25,11 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-final class StringLongTuplesRecordCursor implements RecordCursor {
+final class StringLongTuplesRecordCursor implements NoRandomAccessRecordCursor {
     private final TableWriterMetricsRecord record = new TableWriterMetricsRecord();
     private String[] keys;
     private int pos;
@@ -42,11 +42,6 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException("RecordB not supported");
     }
 
     @Override
@@ -66,8 +61,8 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException("random access not supported");
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
@@ -105,9 +100,6 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
 
         @Override
         public int getStrLen(int col) {
-            if (col != 0) {
-                throw CairoException.nonCritical().put("unsupported string column number [column=").put(col).put("]");
-            }
             return getStrA(col).length();
         }
     }

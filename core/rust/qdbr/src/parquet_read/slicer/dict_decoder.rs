@@ -1,5 +1,4 @@
-use crate::parquet_write::ParquetResult;
-use parquet2::error::Error;
+use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::page::DictPage;
 use std::mem::size_of;
 use std::ptr;
@@ -15,7 +14,7 @@ pub struct VarDictDecoder<'a> {
     pub avg_key_len: f32,
 }
 
-impl<'a> DictDecoder for VarDictDecoder<'a> {
+impl DictDecoder for VarDictDecoder<'_> {
     #[inline]
     fn get_dict_value(&self, index: u32) -> &[u8] {
         self.dict_values[index as usize]
@@ -41,10 +40,10 @@ impl<'a> VarDictDecoder<'a> {
         let mut total_key_len = 0;
         for i in 0..dict_page.num_values {
             if offset + size_of::<u32>() > dict_data.len() {
-                return Err(Error::OutOfSpec(format!(
-                    "dictionary data page is too short to read value length {}",
-                    i
-                )));
+                return Err(fmt_err!(
+                    Layout,
+                    "dictionary data page is too short to read value length {i}"
+                ));
             }
 
             let str_len =
@@ -53,18 +52,18 @@ impl<'a> VarDictDecoder<'a> {
             offset += size_of::<u32>();
 
             if offset + str_len > dict_data.len() {
-                return Err(Error::OutOfSpec(format!(
-                    "dictionary data page is too short to read value {}",
-                    i
-                )));
+                return Err(fmt_err!(
+                    Layout,
+                    "dictionary data page is too short to read value {i}"
+                ));
             }
 
             let str_slice = &dict_data[offset..offset + str_len];
             if is_utf8 && std::str::from_utf8(str_slice).is_err() {
-                return Err(Error::OutOfSpec(format!(
-                    "dictionary value {} is not valid utf8",
-                    i
-                )));
+                return Err(fmt_err!(
+                    Layout,
+                    "dictionary value {i} ({str_slice:?}) is not valid utf8"
+                ));
             }
 
             dict_values.push(str_slice);
@@ -83,7 +82,7 @@ pub struct FixedDictDecoder<'a, const N: usize> {
     dict_page: &'a [u8],
 }
 
-impl<'a, const N: usize> DictDecoder for FixedDictDecoder<'a, N> {
+impl<const N: usize> DictDecoder for FixedDictDecoder<'_, N> {
     #[inline]
     fn get_dict_value(&self, index: u32) -> &[u8] {
         self.dict_page[index as usize * N..(index as usize + 1) * N].as_ref()
@@ -103,10 +102,10 @@ impl<'a, const N: usize> DictDecoder for FixedDictDecoder<'a, N> {
 impl<'a, const N: usize> FixedDictDecoder<'a, N> {
     pub fn try_new(dict_page: &'a DictPage) -> ParquetResult<Self> {
         if N * dict_page.num_values != dict_page.buffer.len() {
-            return Err(Error::OutOfSpec(format!(
-                "dictionary data page size is not multiple of {}",
-                N
-            )));
+            return Err(fmt_err!(
+                Layout,
+                "dictionary data page size is not multiple of {N}"
+            ));
         }
 
         Ok(Self { dict_page: dict_page.buffer.as_ref() })

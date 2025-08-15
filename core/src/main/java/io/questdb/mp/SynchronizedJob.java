@@ -45,6 +45,7 @@ public abstract class SynchronizedJob implements Job {
         return false;
     }
 
+    @Override
     public boolean run(int workerId) {
         return run(workerId, Job.RUNNING_STATUS);
     }

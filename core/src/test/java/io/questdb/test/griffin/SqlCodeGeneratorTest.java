@@ -59,6 +59,40 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
+    public static boolean expectedUnionCastMatrixIsSymmetrical(int[][] expected) {
+        int n = expected.length;
+
+        // Check if the matrix is square
+        for (int[] row : expected) {
+            if (row.length != n) {
+                System.err.println("Matrix is not square.");
+                return false;
+            }
+        }
+
+        boolean symmetrical = true;
+
+        final java.util.function.IntFunction<String> fmtType = (int columnType) -> String.format("%d/%s", columnType, ColumnType.nameOf(columnType));
+
+        for (int i = 0; i < n; i++) {
+            // Check upper triangular vs lower triangular
+            for (int j = 0; j < i; j++) {
+                if (expected[i][j] != expected[j][i]) {
+                    System.err.printf("* Discrepancy at `expected[%s][%s] == %s`, but `expected[%s][%s] == %s`\n",
+                            fmtType.apply(i),
+                            fmtType.apply(j),
+                            fmtType.apply(expected[i][j]),
+                            fmtType.apply(j),
+                            fmtType.apply(i),
+                            fmtType.apply(expected[j][i]));
+                    symmetrical = false;
+                }
+            }
+        }
+
+        return symmetrical;
+    }
+
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
         assertQuery(
@@ -97,7 +131,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                true
+                false
         );
     }
 
@@ -118,7 +152,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                true
+                false
         );
     }
 
@@ -315,19 +349,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBindVariableInvalid() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY");
-            try {
-                assertExceptionNoLeakCheck("select * from alcatel_traffic_tmp where deviceName in ($n1)");
-            } catch (SqlException e) {
-                Assert.assertEquals(51, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
-            }
-        });
-    }
-
-    @Test
     public void testBindVariableWithILike() throws Exception {
         testBindVariableWithLike0("ilike");
     }
@@ -427,7 +448,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                true
+                false
         );
     }
 
@@ -495,6 +516,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testColumnAliasCaseSensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol SYMBOL)");
+            execute("insert into trades values ('USD'), ('EUR')");
+            assertSql(
+                    "SYMBOL\nUSD\nEUR\n",
+                    "SELECT symbol AS SYMBOL FROM trades"
+            );
+        });
     }
 
     @Test
@@ -613,7 +646,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testCreateTableIfNotExists() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 10; i++) {
-                ddl("create table if not exists y as (select rnd_int() a from long_sequence(21))");
+                execute("create table if not exists y as (select rnd_int() a from long_sequence(21))");
             }
         });
 
@@ -650,7 +683,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col string)");
+            execute("create table x (col string)");
 
             engine.clear();
 
@@ -666,7 +699,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                ddl(compiler, "create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
+                execute(compiler, "create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
                 try (TableReader reader = engine.getReader("y")) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
@@ -678,7 +711,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col string)");
+            execute("create table x (col string)");
 
             try {
                 assertExceptionNoLeakCheck("create table y as (x), cast(col as symbol capacity 100000000)");
@@ -694,8 +727,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col string)");
-            ddl("create table y as (x), cast(col as symbol nocache)");
+            execute("create table x (col string)");
+            execute("create table y as (x), cast(col as symbol nocache)");
 
             try (TableReader reader = getReader("y")) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
@@ -748,21 +781,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testDistinctFunctionColumn() throws Exception {
         final String expected = "v\n" +
-                "8.0\n" +
+                "0.0\n" +
                 "1.0\n" +
-                "7.0\n" +
                 "2.0\n" +
                 "3.0\n" +
                 "4.0\n" +
-                "0.0\n" +
-                "6.0\n" +
-                "9.0\n" +
                 "5.0\n" +
+                "6.0\n" +
+                "7.0\n" +
+                "8.0\n" +
+                "9.0\n" +
                 "10.0\n";
 
         assertQuery(
                 expected,
-                "select distinct round(val*10, 0) v from prices",
+                "select distinct round(val*10, 0) v from prices order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -771,6 +804,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -778,21 +812,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testDistinctOperatorColumn() throws Exception {
         final String expected = "v\n" +
-                "10.0\n" +
+                "2.0\n" +
                 "3.0\n" +
-                "9.0\n" +
                 "4.0\n" +
                 "5.0\n" +
                 "6.0\n" +
-                "2.0\n" +
-                "8.0\n" +
-                "11.0\n" +
                 "7.0\n" +
+                "8.0\n" +
+                "9.0\n" +
+                "10.0\n" +
+                "11.0\n" +
                 "12.0\n";
 
         assertQuery(
                 expected,
-                "select distinct 2+round(val*10,0) v from prices",
+                "select distinct 2+round(val*10,0) v from prices order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -801,6 +835,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -827,7 +862,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -839,7 +874,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(
                 expected,
-                "select distinct pair from prices where pair in ('A','B')",
+                "select distinct pair from prices where pair in ('A','B') order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -851,6 +886,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -901,7 +937,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 "k",
                 true,
-                true
+                false
         );
     }
 
@@ -1047,13 +1083,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "k",
                     "insert into x select * from (" +
                             "select" +
-                            " rnd_double(0)*100," +
+                            " 0.0992," +
                             " 'HYRX'," +
                             " to_timestamp('1971', 'yyyy') t" +
                             " from long_sequence(1)" +
                             ") timestamp(t)",
                     expected +
-                            "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n",
+                            "0.0992\tHYRX\t1971-01-01T00:00:00.000000Z\n",
                     true
             );
             Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -1906,7 +1942,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    FROM long_sequence(10)\n" +
                 ") TIMESTAMP(ts) PARTITION BY DAY", null, null, null, false, true, false);
 
-        drop("drop table tab");
+        execute("drop table tab");
 
         assertQuery("min\tmax\n" +
                 "\t\n", "SELECT min(ts), max(ts)\n" +
@@ -1991,6 +2027,164 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFunctionArgsImplicitCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR, c4 LONG, c5 DOUBLE);");
+            execute("INSERT INTO t1(c0, c1) VALUES (1, '2012-01-01');");
+
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c0);",
+                    null,
+                    true,
+                    false
+            );
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c2);",
+                    null,
+                    true,
+                    false
+            );
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c3);",
+                    null,
+                    true,
+                    false
+            );
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c4);",
+                    null,
+                    true,
+                    false
+            );
+            assertException(
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c5);",
+                    41,
+                    "there is no matching operator `>` with the argument types: SYMBOL > DOUBLE"
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE uuid_str (c1 uuid, c2 string);");
+            execute("INSERT INTO uuid_str VALUES('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+
+            assertQuery(
+                    "c1\tc2\n" +
+                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                    "SELECT * FROM uuid_str where c1 = c2",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE varchar_date (c1 varchar, c2 date);");
+            execute("INSERT INTO varchar_date VALUES('2025-03-28', '2029-03-28')");
+
+            assertQuery(
+                    "c1\tc2\n" +
+                            "2025-03-28\t2029-03-28T00:00:00.000Z\n",
+                    "SELECT * FROM varchar_date where c1 < c2",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE char_cast (c1 char, c2 short, c3 int, c4 long, c5 float, c6 double);");
+            execute("INSERT INTO char_cast VALUES('9', 1, 1, 1, 1, 1)");
+
+            assertQuery(
+                    "c1\n" +
+                            "9\n",
+                    "SELECT c1 FROM char_cast where c1 > c2 and c1 > c3 and c1 > c4 and c1 > c5 and c1 > c6",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE date_double (c1 date, c2 timestamp, c3 double);");
+            execute("INSERT INTO date_double VALUES('2025-03-28', '2025-03-29', 100.0)");
+
+            assertQuery(
+                    "c3\n" +
+                            "100.0\n",
+                    "SELECT c3 FROM date_double where c1 < c2 and c2 > c3 and c1 > c3",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ipv4_str (c1 ipv4, c2 varchar);");
+            execute("INSERT INTO ipv4_str VALUES('0.0.0.3', '0.0.0.2')");
+
+            assertQuery(
+                    "count\n" +
+                            "1\n",
+                    "SELECT count(c1) FROM ipv4_str",
+                    null,
+                    false,
+                    true
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "column\n" +
+                            "1\n",
+                    "SELECT '2' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "column\n" +
+                            "255\n",
+                    "SELECT '256' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertException(
+                    "SELECT 'm' -1",
+                    0,
+                    "inconvertible value: m [CHAR -> INT]"
+            );
+
+            assertException(
+                    "select ~'m'",
+                    0,
+                    "inconvertible value: m [CHAR -> INT]"
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 int);");
+            execute("INSERT INTO x VALUES(10)");
+
+            assertQuery(
+                    "column\n" +
+                            "-9\n",
+                    "SELECT '1' - c1 FROM x",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testGreaterNoOpFilter() throws Exception {
         assertQuery(
                 "c0\n",
@@ -2031,7 +2225,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "b\t65\n" +
                     "c\t75\n";
 
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_symbol('a','b','c') s," +
@@ -2098,8 +2292,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testJoinOnExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table l as( select x from long_sequence(100) )");
-            ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
+            execute("create table l as( select x from long_sequence(100) )");
+            execute("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
                     engine,
@@ -2214,8 +2408,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testJoinWhereExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table l as( select x from long_sequence(100) )");
-            ddl("create table rr as( select x + 50 as y from long_sequence(100) )");
+            execute("create table l as( select x from long_sequence(100) )");
+            execute("create table rr as( select x + 50 as y from long_sequence(100) )");
 
             TestUtils.assertSql(
                     engine,
@@ -2432,6 +2626,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexed() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
@@ -2511,6 +2707,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedExternalFilter() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
@@ -2656,9 +2854,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
             // insert three partitions
-            insert(
+            execute(
                     "insert into trips select " +
                             "rnd_int(), " +
                             "rnd_symbol('KK','ZZ', 'TT'), " +
@@ -2667,7 +2865,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             );
 
             // cast('1970-01-02' as timestamp) produces incorrect timestamp
-            insert(
+            execute(
                     "insert into trips select " +
                             "rnd_int(), " +
                             "rnd_symbol('DD','QQ', 'TT'), " +
@@ -2675,7 +2873,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "from long_sequence(1000)"
             );
 
-            insert(
+            execute(
                     "insert into trips select " +
                             "rnd_int(), " +
                             "rnd_symbol('PP','QQ', 'CC'), " +
@@ -2702,6 +2900,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash1c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(1);
             assertQueryNoLeakCheck(
@@ -2720,6 +2920,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash2c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -2738,6 +2940,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash2cFn() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -2756,6 +2960,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash4c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(4);
             assertQueryNoLeakCheck(
@@ -2774,6 +2980,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHash8c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(8);
             assertQueryNoLeakCheck(
@@ -2792,6 +3000,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -2811,8 +3021,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " rnd_symbol(113, 4, 4, 2) s," +
@@ -2840,6 +3052,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashLiteralExpected() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -2862,6 +3076,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashOutOfRangeFn() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -2884,6 +3100,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -2907,6 +3125,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -2933,6 +3153,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -2959,6 +3181,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd6Bits() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashBitsTable();
             assertQueryNoLeakCheck(
@@ -2981,6 +3205,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashTable();
             assertQueryNoLeakCheck(
@@ -3001,6 +3227,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRndLongBitsMask() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashBitsTable();
             assertQueryNoLeakCheck(
@@ -3018,6 +3246,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashRndLongBitsPrefix() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createRndGeoHashBitsTable();
             try {
@@ -3038,6 +3268,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashStrCast() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -3056,6 +3288,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(1);
             assertQueryNoLeakCheck(
@@ -3073,6 +3307,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             assertQueryNoLeakCheck(
@@ -3090,6 +3326,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(4);
             assertQueryNoLeakCheck(
@@ -3107,6 +3345,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(8);
             assertQueryNoLeakCheck(
@@ -3123,6 +3363,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinColumnNotLiteral() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3142,6 +3384,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinColumnWrongType() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3161,6 +3405,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinEmpty() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3180,6 +3426,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinNullArg() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3199,6 +3447,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3218,6 +3468,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinWrongCast() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(() -> {
             createGeoHashTable(2);
             try {
@@ -3238,9 +3490,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedListMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
             // insert three partitions
-            insert(
+            execute(
                     "insert into trips select " +
                             "rnd_int(), " +
                             "rnd_symbol('KK','ZZ', 'TT'), " +
@@ -3249,7 +3501,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             );
 
             // cast('1970-01-02' as timestamp) produces incorrect timestamp
-            insert(
+            execute(
                     "insert into trips select " +
                             "rnd_int(), " +
                             "rnd_symbol('DD','QQ', 'TT'), " +
@@ -3257,7 +3509,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "from long_sequence(1000)"
             );
 
-            insert(
+            execute(
                     "insert into trips select " +
                             "rnd_int(), " +
                             "rnd_symbol('PP','QQ', 'CC'), " +
@@ -3284,6 +3536,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedMixed() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
@@ -3332,6 +3586,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedMixedColumns() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         final String expected = "k\ta\n" +
                 "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
                 "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
@@ -3362,11 +3618,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedMultiplePartitions() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         assertMemoryLeak(
                 () -> {
-                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+                    execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    insert(
+                    execute(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
@@ -3375,7 +3633,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    insert(
+                    execute(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
@@ -3383,7 +3641,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     "from long_sequence(1000)"
                     );
 
-                    insert(
+                    execute(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
@@ -3449,9 +3707,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByAllMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY");
+                    execute("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY");
                     // insert three partitions
-                    insert(
+                    execute(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('KK','ZZ', 'TT'), " +
@@ -3460,7 +3718,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     );
 
                     // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    insert(
+                    execute(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('DD','QQ', 'TT'), " +
@@ -3468,7 +3726,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     "from long_sequence(1000)"
                     );
 
-                    insert(
+                    execute(
                             "insert into trips select " +
                                     "rnd_int(), " +
                                     "rnd_symbol('PP','QQ', 'CC'), " +
@@ -3522,7 +3780,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllValueIndexedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(\n" +
+            execute("create table balances(\n" +
                     "cust_id SYMBOL index,\n" +
                     "balance_ccy SYMBOL,\n" +
                     "balance DOUBLE,\n" +
@@ -3530,14 +3788,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     ")\n" +
                     "timestamp(timestamp)");
 
-            insert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
-            insert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
-            insert("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
-            insert("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
-            insert("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
-            insert("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
-            insert("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
-            insert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
+            execute("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
+            execute("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
+            execute("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
+            execute("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
+            execute("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
+            execute("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
+            execute("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
+            execute("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
 
             TestUtils.assertSql(
                     engine,
@@ -3696,7 +3954,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
-                    compiler.compile(
+                    execute(
+                            compiler,
                             "create table x as " +
                                     "(" +
                                     "select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 100000000000) k from" +
@@ -4550,7 +4809,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(" +
+            execute("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
@@ -4558,16 +4817,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "    other_ts timestamp" +
                     ") timestamp(ts) partition by day");
 
-            insert("insert into tab values ('d1', 'c1', 111, 1, 3)");
-            insert("insert into tab values ('d1', 'c1', 112, 2, 2)");
-            insert("insert into tab values ('d1', 'c1', 113, 3, 1)");
-            insert("insert into tab values ('d1', 'c2', 121, 2, 1)");
-            insert("insert into tab values ('d1', 'c2', 122, 3, 2)");
-            insert("insert into tab values ('d1', 'c2', 123, 4, 3)");
-            insert("insert into tab values ('d2', 'c1', 211, 3, 3)");
-            insert("insert into tab values ('d2', 'c1', 212, 4, 3)");
-            insert("insert into tab values ('d2', 'c2', 221, 5, 4)");
-            insert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+            execute("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            execute("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            execute("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            execute("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            execute("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            execute("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            execute("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            execute("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            execute("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            execute("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
             // latest by designated timestamp, no order by, select all columns
             assertSql(
@@ -4626,7 +4885,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(" +
+            execute("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
@@ -4634,16 +4893,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "    other_ts timestamp" +
                     ") timestamp(ts) partition by day");
 
-            insert("insert into tab values ('d1', 'c1', 111, 1, 3)");
-            insert("insert into tab values ('d1', 'c1', 112, 2, 2)");
-            insert("insert into tab values ('d1', 'c1', 113, 3, 1)");
-            insert("insert into tab values ('d1', 'c2', 121, 2, 1)");
-            insert("insert into tab values ('d1', 'c2', 122, 3, 2)");
-            insert("insert into tab values ('d1', 'c2', 123, 4, 3)");
-            insert("insert into tab values ('d2', 'c1', 211, 3, 3)");
-            insert("insert into tab values ('d2', 'c1', 212, 4, 3)");
-            insert("insert into tab values ('d2', 'c2', 221, 5, 4)");
-            insert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+            execute("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            execute("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            execute("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            execute("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            execute("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            execute("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            execute("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            execute("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            execute("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            execute("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
             // select all columns
             assertSql(
@@ -5063,6 +5322,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySupportedColumnTypes2() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         testLatestBySupportedColumnTypes(
                 "create table tab (" +
                         "    boolean boolean, " +
@@ -5080,6 +5341,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySupportedColumnTypes3() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
         testLatestBySupportedColumnTypes(
                 "create table tab (" +
                         "    boolean boolean, " +
@@ -5125,7 +5388,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
         CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON";
-        ddl(createTableDDL);
+        execute(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
             assertException(
@@ -5171,8 +5434,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create TABLE sensors (ID LONG, make STRING, city STRING);");
-            insert(
+            execute("create TABLE sensors (ID LONG, make STRING, city STRING);");
+            execute(
                     "INSERT INTO sensors\n" +
                             "SELECT\n" +
                             "    x ID, --increasing integer\n" +
@@ -5181,7 +5444,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "FROM long_sequence(10000) x;"
             );
 
-            ddl(
+            execute(
                     "CREATE TABLE readings\n" +
                             "AS(\n" +
                             "    SELECT\n" +
@@ -5288,7 +5551,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x from long_sequence(10))");
+            execute("create table x as (select x from long_sequence(10))");
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("x limit -9223372036854775807-1, -1")) {
                 assertCursor(
@@ -5305,7 +5568,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 "10\n",
                         factory,
                         true,
-                        false
+                        true
                 );
             }
         });
@@ -5596,78 +5859,83 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
                 "-2099411412\ttrue\t\tnull\tnull\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
                 "-2088317486\tfalse\tU\t0.7446000371089992\tnull\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
-                "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
-                "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                "-2077041000\ttrue\tM\t0.7340656260730631\t0.50258905\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966377\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
                 "-1508370878\tfalse\t\tnull\tnull\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
                 "00000010 2c 23\tVLOMPBETTTKRIV\n" +
-                "-1271909747\ttrue\tB\tnull\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
-                "-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
-                "-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
-                "-857795778\ttrue\t\t0.07828020681514525\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
-                "-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
-                "-42049305\tfalse\tW\t0.4698648140712085\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
-                "33027131\tfalse\tS\t0.15369837085455984\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
+                "-1271909747\ttrue\tB\tnull\t0.1250304\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
+                "-1234141625\tfalse\tC\t0.06381657870188628\t0.76062524\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
+                "-1172180184\tfalse\tS\t0.5891216483879789\t0.28200203\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
+                "-857795778\ttrue\t\t0.07828020681514525\t0.23945916\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
+                "-682294338\ttrue\tG\t0.9153044839960652\t0.79431856\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                "-42049305\tfalse\tW\t0.4698648140712085\t0.89116156\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
+                "33027131\tfalse\tS\t0.15369837085455984\t0.50830877\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
                 "131103569\ttrue\tO\tnull\tnull\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
-                "161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                "161592763\ttrue\tZ\t0.18769708157331322\t0.16381371\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
                 "00000010 8e e5 61 2f\tQOLYXWC\n" +
-                "971963578\ttrue\t\t0.22347827811588927\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
-                "976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
-                "1150448121\ttrue\tC\t0.600707072503926\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                "971963578\ttrue\t\t0.22347827811588927\t0.73472875\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
+                "976011946\ttrue\tU\t0.24001459007748394\t0.9292491\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
+                "1150448121\ttrue\tC\t0.600707072503926\t0.7397816\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
                 "00000010 00\t\n" +
-                "1194691156\tfalse\tQ\tnull\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
-                "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
-                "1569490116\tfalse\tZ\tnull\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
+                "1194691156\tfalse\tQ\tnull\t0.29150975\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
+                "1431425139\tfalse\t\t0.30716667810043663\t0.4274704\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
+                "1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
 
         assertQuery(expected, "x order by a,b,c,d,e,f,g,i,j,k,l,n", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_int() a," +
-                " rnd_boolean() b," +
-                " rnd_str(1,1,2) c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) i," +
-                " rnd_long() j," +
-                " timestamp_sequence(0, 1000000000) k," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by NONE", null, "insert into x(a,d,c,k) select * from (" +
-                "select" +
-                " 1194691157," +
-                " rnd_double(0)*100," +
-                " 'RXGZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
-                "-2099411412\ttrue\t\tnull\tnull\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
-                "-2088317486\tfalse\tU\t0.7446000371089992\tnull\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
-                "-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
-                "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
-                "-1508370878\tfalse\t\tnull\tnull\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
-                "00000010 2c 23\tVLOMPBETTTKRIV\n" +
-                "-1271909747\ttrue\tB\tnull\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
-                "-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
-                "-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
-                "-857795778\ttrue\t\t0.07828020681514525\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
-                "-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
-                "-42049305\tfalse\tW\t0.4698648140712085\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
-                "33027131\tfalse\tS\t0.15369837085455984\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
-                "131103569\ttrue\tO\tnull\tnull\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
-                "161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
-                "00000010 8e e5 61 2f\tQOLYXWC\n" +
-                "971963578\ttrue\t\t0.22347827811588927\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
-                "976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
-                "1150448121\ttrue\tC\t0.600707072503926\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
-                "00000010 00\t\n" +
-                "1194691156\tfalse\tQ\tnull\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
-                "1194691157\tfalse\tRXGZ\t88.69397617459538\tnull\t0\t\t\tnull\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
-                "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
-                "1569490116\tfalse\tZ\tnull\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", null, "insert into x(a,d,c,k) select * from (" +
+                        "select" +
+                        " 1194691157," +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
+                        "-2099411412\ttrue\t\tnull\tnull\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
+                        "-2088317486\tfalse\tU\t0.7446000371089992\tnull\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
+                        "-2077041000\ttrue\tM\t0.7340656260730631\t0.50258905\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                        "-1915752164\tfalse\tI\t0.8786111112537701\t0.9966377\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                        "-1508370878\tfalse\t\tnull\tnull\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
+                        "00000010 2c 23\tVLOMPBETTTKRIV\n" +
+                        "-1271909747\ttrue\tB\tnull\t0.1250304\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
+                        "-1234141625\tfalse\tC\t0.06381657870188628\t0.76062524\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
+                        "-1172180184\tfalse\tS\t0.5891216483879789\t0.28200203\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
+                        "-857795778\ttrue\t\t0.07828020681514525\t0.23945916\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
+                        "-682294338\ttrue\tG\t0.9153044839960652\t0.79431856\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                        "-42049305\tfalse\tW\t0.4698648140712085\t0.89116156\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
+                        "33027131\tfalse\tS\t0.15369837085455984\t0.50830877\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
+                        "131103569\ttrue\tO\tnull\tnull\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
+                        "161592763\ttrue\tZ\t0.18769708157331322\t0.16381371\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "00000010 8e e5 61 2f\tQOLYXWC\n" +
+                        "971963578\ttrue\t\t0.22347827811588927\t0.73472875\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
+                        "976011946\ttrue\tU\t0.24001459007748394\t0.9292491\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
+                        "1150448121\ttrue\tC\t0.600707072503926\t0.7397816\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                        "00000010 00\t\n" +
+                        "1194691156\tfalse\tQ\tnull\t0.29150975\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
+                        "1194691157\tfalse\tRXGZ\t88.69397617459538\tnull\t0\t\t\tnull\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
+                        "1431425139\tfalse\t\t0.30716667810043663\t0.4274704\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
+                        "1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -5890,19 +6158,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\t1970-01-10T06:13:20.000000Z\n" +
                 "0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t1970-01-03T07:33:20.000000Z\n" +
                 "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t1970-01-05T15:06:40.000000Z\n" +
-                "0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\t1970-01-22T23:46:40.000000Z\n" +
                 "0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\t1970-01-13T17:33:20.000000Z\n" +
+                "0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\t1970-01-22T23:46:40.000000Z\n" +
                 "0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\t1970-01-20T16:13:20.000000Z\n" +
                 "0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t1970-01-06T18:53:20.000000Z\n" +
                 "0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t1970-01-11T10:00:00.000000Z\n" +
                 "0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\t1970-01-19T12:26:40.000000Z\n" +
                 "0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\t1970-01-18T08:40:00.000000Z\n" +
                 "0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\t1970-01-16T01:06:40.000000Z\n" +
+                "0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t1970-01-09T02:26:40.000000Z\n" +
                 "0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\t1970-01-07T22:40:00.000000Z\n" +
                 "0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t1970-01-02T03:46:40.000000Z\n" +
-                "0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t1970-01-09T02:26:40.000000Z\n" +
-                "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
-                "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
+                "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n" +
+                "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n";
 
         final String expected2 = "a\tb\tk\n" +
                 "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
@@ -5912,8 +6180,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\t1970-01-10T06:13:20.000000Z\n" +
                 "0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t1970-01-03T07:33:20.000000Z\n" +
                 "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t1970-01-05T15:06:40.000000Z\n" +
-                "0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\t1970-01-22T23:46:40.000000Z\n" +
                 "0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\t1970-01-13T17:33:20.000000Z\n" +
+                "0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\t1970-01-22T23:46:40.000000Z\n" +
                 "0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\t1970-01-20T16:13:20.000000Z\n" +
                 "0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t1970-01-06T18:53:20.000000Z\n" +
                 "0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t1970-01-11T10:00:00.000000Z\n" +
@@ -5921,28 +6189,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\t1970-01-18T08:40:00.000000Z\n" +
                 "0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\t1970-01-16T01:06:40.000000Z\n" +
                 "0xc736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3ebedf29efb28cdcb1\tW\t1971-01-01T00:00:00.000000Z\n" +
+                "0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t1970-01-09T02:26:40.000000Z\n" +
                 "0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\t1970-01-07T22:40:00.000000Z\n" +
                 "0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t1970-01-02T03:46:40.000000Z\n" +
-                "0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t1970-01-09T02:26:40.000000Z\n" +
-                "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
-                "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
+                "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n" +
+                "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n";
 
-        assertQuery(expected, "select * from x " +
-                " order by b, a", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_long256() a," +
-                " rnd_char() b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY", null, "insert into x select * from (" +
-                "select" +
-                " rnd_long256()," +
-                " 'W'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", expected2, true, true, false);
+        assertQuery(expected, "select * from x order by b, a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_long256() a," +
+                        " rnd_char() b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_long256()," +
+                        " 'W'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected2,
+                true, true, false);
     }
 
     @Test
@@ -6329,7 +6601,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                13, "unsupported column type: BINARY"
+                13,
+                "BINARY is not a supported type in ORDER BY clause"
         );
     }
 
@@ -6419,41 +6692,45 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b asc", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'ABC'," +
-                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tb\tk\n" +
-                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)", "a\tb\tk\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6481,41 +6758,45 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b desc", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'ABC'," +
-                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tb\tk\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)", "a\tb\tk\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6543,40 +6824,44 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b, k desc", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from long_sequence(20)" +
-                "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'ABC'," +
-                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tb\tk\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by MONTH", null, "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)", "a\tb\tk\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6604,41 +6889,45 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected, "x where k IN '1970-01' order by b desc, k", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "),index(b) timestamp(k) partition by DAY", null, "insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'ABC'," +
-                " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)", "a\tb\tk\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
-                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
-                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
-                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
-                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
-                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
-                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
-                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
-                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
-                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY", null, "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)", "a\tb\tk\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6786,7 +7075,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testRecordJoinExpansion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x(a int)");
+            execute("create table x(a int)");
             TestUtils.assertSql(
                     engine,
                     sqlExecutionContext,
@@ -6799,6 +7088,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "\t2200\n"
             );
         });
+    }
+
+    @Test
+    public void testResolveUnionOrderByPositionInJoinModel() throws Exception {
+        execute("create table t1 (id symbol, value double, timestamp timestamp) timestamp(timestamp)");
+        execute("create table t2 (id symbol, value double, value_max double, timestamp timestamp) timestamp(timestamp)");
+        execute("insert into t1 (id, value, timestamp) values ('id1', 2, '2024-12-26T14:30:00Z');\n");
+        execute("insert into t2 (id, value, value_max, timestamp) values ('id2', 1, 10, '2024-12-26T14:30:00Z');\n");
+        assertQueryNoLeakCheck("delta\ttimestamp\n" +
+                        "0.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "1.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "-1.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "0.0\t2024-12-26T14:30:00.000000Z\n",
+                "with base as ( select max(value) as val, timestamp from t1 sample by 1m " +
+                        "UNION select max(value) as val, timestamp from t2 sample by 1m ), " +
+                        "sub as ( select min(value) as val, timestamp from t1 sample by 1m " +
+                        "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
+                        "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;",
+                null,
+                false,
+                true
+        );
     }
 
     @Test
@@ -7037,31 +7348,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSelectColumns() throws Exception {
         assertQuery(
                 "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
-                        "null\t1569490116\tfalse\t\tnull\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
-                        "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
-                        "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.9205\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
-                        "18\t-1201923128\ttrue\tUVS\t0.7588175403454873\t0.5779\t-4379\t480\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
-                        "null\t865832060\ttrue\t\t0.14830552335848957\t0.9442\t2508\t95\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                        "null\t1569490116\tfalse\t\tnull\t0.7611029\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
+                        "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793466\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
+                        "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.92050034\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
+                        "18\t-1201923128\ttrue\tUVS\t0.7588175403454873\t0.57789475\t-4379\t480\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t00000000 28 c7 84 47 dc d2 85 7f a5 b8 7b 4a 9d 46\n" +
+                        "null\t865832060\ttrue\t\t0.14830552335848957\t0.9441659\t2508\t95\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                         "00000010 38 e1\n" +
-                        "22\t1100812407\tfalse\tOVL\tnull\t0.7633\t-17778\t698\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
-                        "18\t1677463366\tfalse\tMNZ\t0.33747075654972813\t0.1179\t18904\t533\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
+                        "22\t1100812407\tfalse\tOVL\tnull\t0.7632615\t-17778\t698\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
+                        "18\t1677463366\tfalse\tMNZ\t0.33747075654972813\t0.117853105\t18904\t533\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
                         "00000010 28 60\n" +
-                        "4\t39497392\tfalse\tUOH\t0.029227696942726644\t0.1718\t14242\t652\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                        "4\t39497392\tfalse\tUOH\t0.029227696942726644\t0.17180288\t14242\t652\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                         "00000010 ea 4e ea 8b\n" +
-                        "10\t1545963509\tfalse\tNWI\t0.11371841836123953\t0.0620\t-29980\t356\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
-                        "4\t53462821\tfalse\tGOO\t0.05514933756198426\t0.1195\t-6087\t115\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
-                        "30\t-2139296159\tfalse\t\t0.18586435581637295\t0.5638\t21020\t299\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
+                        "10\t1545963509\tfalse\tNWI\t0.11371841836123953\t0.062027454\t-29980\t356\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\n" +
+                        "4\t53462821\tfalse\tGOO\t0.05514933756198426\t0.11951214\t-6087\t115\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
+                        "30\t-2139296159\tfalse\t\t0.18586435581637295\t0.5637742\t21020\t299\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t00000000 b8 07 b1 32 57 ff 9a ef 88 cb 4b\n" +
                         "21\t-406528351\tfalse\tNLE\tnull\tnull\t21057\t968\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\t1970-01-01T03:03:20.000000Z\t43\t\n" +
-                        "17\t415709351\tfalse\tGQZ\t0.49199001716312474\t0.6292\t18605\t581\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
+                        "17\t415709351\tfalse\tGQZ\t0.49199001716312474\t0.6292086\t18605\t581\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t00000000 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e\n" +
                         "00000010 44 a8 0d fe\n" +
-                        "19\t-1387693529\ttrue\tMCG\t0.848083900630095\t0.4699\t24206\t119\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
+                        "19\t-1387693529\ttrue\tMCG\t0.848083900630095\t0.4698648\t24206\t119\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t00000000 8f bb 2a 4b af 8f 89 df 35 8f da fe 33 98 80 85\n" +
                         "00000010 20 53 3b 51\n" +
-                        "21\t346891421\tfalse\t\t0.933609514582851\t0.6380\t15084\t405\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
-                        "27\t263487884\ttrue\tHZQ\t0.7039785408034679\t0.8461\t31562\t834\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
-                        "9\t-1034870849\tfalse\tLSV\t0.6506604601705693\t0.7020\t-838\t110\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
-                        "26\t1848218326\ttrue\tSUW\t0.8034049105590781\t0.0440\t-3502\t854\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
+                        "21\t346891421\tfalse\t\t0.933609514582851\t0.6379992\t15084\t405\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
+                        "27\t263487884\ttrue\tHZQ\t0.7039785408034679\t0.84612113\t31562\t834\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t00000000 71 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2\n" +
+                        "9\t-1034870849\tfalse\tLSV\t0.6506604601705693\t0.7020445\t-838\t110\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t00000000 4b fb 2d 16 f3 89 a3 83 64 de\n" +
+                        "26\t1848218326\ttrue\tSUW\t0.8034049105590781\t0.044039965\t-3502\t854\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t00000000 6d 54 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a\n" +
                         "5\t-1496904948\ttrue\tDBZ\t0.2862717364877081\tnull\t5698\t764\t2015-02-06T02:49:54.147Z\t\t\tnull\t-3058745577013275321\t1970-01-01T05:00:00.000000Z\t19\t00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
-                        "20\t856634079\ttrue\tRJU\t0.10820602386069589\t0.4565\t13505\t669\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
+                        "20\t856634079\ttrue\tRJU\t0.10820602386069589\t0.45646673\t13505\t669\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t00000000 f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0 35 d8\n" +
                         "00000010 ab 3f a1 f5\n",
                 "select a,a1,b,c,d,e,f1,f,g,h,i,j,j1,k,l,m from x",
                 "create table x as (" +
@@ -7094,26 +7405,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSelectColumnsSansTimestamp() throws Exception {
         assertQuery(
                 "a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\n" +
-                        "null\t1569490116\tfalse\t\tnull\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\n" +
-                        "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\n" +
-                        "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.9205\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\n" +
-                        "18\t-1201923128\ttrue\tUVS\t0.7588175403454873\t0.5779\t-4379\t480\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\n" +
-                        "null\t865832060\ttrue\t\t0.14830552335848957\t0.9442\t2508\t95\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\n" +
-                        "22\t1100812407\tfalse\tOVL\tnull\t0.7633\t-17778\t698\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\n" +
-                        "18\t1677463366\tfalse\tMNZ\t0.33747075654972813\t0.1179\t18904\t533\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\n" +
-                        "4\t39497392\tfalse\tUOH\t0.029227696942726644\t0.1718\t14242\t652\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\n" +
-                        "10\t1545963509\tfalse\tNWI\t0.11371841836123953\t0.0620\t-29980\t356\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\n" +
-                        "4\t53462821\tfalse\tGOO\t0.05514933756198426\t0.1195\t-6087\t115\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\n" +
-                        "30\t-2139296159\tfalse\t\t0.18586435581637295\t0.5638\t21020\t299\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\n" +
+                        "null\t1569490116\tfalse\t\tnull\t0.7611029\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\n" +
+                        "10\t1253890363\tfalse\tXYS\t0.1911234617573182\t0.5793466\t-1379\t881\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\n" +
+                        "27\t-1819240775\ttrue\tGOO\t0.04142812470232493\t0.92050034\t-9039\t97\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\n" +
+                        "18\t-1201923128\ttrue\tUVS\t0.7588175403454873\t0.57789475\t-4379\t480\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tnull\t-6161552193869048721\n" +
+                        "null\t865832060\ttrue\t\t0.14830552335848957\t0.9441659\t2508\t95\t\t2015-10-20T09:33:20.502524Z\t\tnull\t-3289070757475856942\n" +
+                        "22\t1100812407\tfalse\tOVL\tnull\t0.7632615\t-17778\t698\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\n" +
+                        "18\t1677463366\tfalse\tMNZ\t0.33747075654972813\t0.117853105\t18904\t533\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\n" +
+                        "4\t39497392\tfalse\tUOH\t0.029227696942726644\t0.17180288\t14242\t652\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\n" +
+                        "10\t1545963509\tfalse\tNWI\t0.11371841836123953\t0.062027454\t-29980\t356\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\n" +
+                        "4\t53462821\tfalse\tGOO\t0.05514933756198426\t0.11951214\t-6087\t115\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\n" +
+                        "30\t-2139296159\tfalse\t\t0.18586435581637295\t0.5637742\t21020\t299\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\n" +
                         "21\t-406528351\tfalse\tNLE\tnull\tnull\t21057\t968\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\n" +
-                        "17\t415709351\tfalse\tGQZ\t0.49199001716312474\t0.6292\t18605\t581\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\n" +
-                        "19\t-1387693529\ttrue\tMCG\t0.848083900630095\t0.4699\t24206\t119\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\n" +
-                        "21\t346891421\tfalse\t\t0.933609514582851\t0.6380\t15084\t405\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\n" +
-                        "27\t263487884\ttrue\tHZQ\t0.7039785408034679\t0.8461\t31562\t834\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\n" +
-                        "9\t-1034870849\tfalse\tLSV\t0.6506604601705693\t0.7020\t-838\t110\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\n" +
-                        "26\t1848218326\ttrue\tSUW\t0.8034049105590781\t0.0440\t-3502\t854\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\n" +
+                        "17\t415709351\tfalse\tGQZ\t0.49199001716312474\t0.6292086\t18605\t581\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\n" +
+                        "19\t-1387693529\ttrue\tMCG\t0.848083900630095\t0.4698648\t24206\t119\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\n" +
+                        "21\t346891421\tfalse\t\t0.933609514582851\t0.6379992\t15084\t405\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\n" +
+                        "27\t263487884\ttrue\tHZQ\t0.7039785408034679\t0.84612113\t31562\t834\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\n" +
+                        "9\t-1034870849\tfalse\tLSV\t0.6506604601705693\t0.7020445\t-838\t110\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tnull\t-6929866925584807039\n" +
+                        "26\t1848218326\ttrue\tSUW\t0.8034049105590781\t0.044039965\t-3502\t854\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\n" +
                         "5\t-1496904948\ttrue\tDBZ\t0.2862717364877081\tnull\t5698\t764\t2015-02-06T02:49:54.147Z\t\t\tnull\t-3058745577013275321\n" +
-                        "20\t856634079\ttrue\tRJU\t0.10820602386069589\t0.4565\t13505\t669\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\n",
+                        "20\t856634079\ttrue\tRJU\t0.10820602386069589\t0.45646673\t13505\t669\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\n",
                 "select a,a1,b,c,d,e,f1,f,g,h,i,j,j1 from x",
                 "create table x as (" +
                         "select" +
@@ -7245,19 +7556,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected2,
                 true,
                 false,
-                false
+                true
         );
     }
 
     @Test
     public void testSelectDistinctWithColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table my_table as (select x as id from long_sequence(1))");
+            execute("create table my_table as (select x as id from long_sequence(1))");
             try (RecordCursorFactory factory = select("select distinct id as foo from my_table")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
-                assertCursor("foo\n" +
-                        "1\n", factory, true, false);
+                assertCursor(
+                        "foo\n" +
+                                "1\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -7265,27 +7581,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctWithColumnAliasAndTableFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table my_table (id long)");
+            execute("create table my_table (id long)");
             try (RecordCursorFactory factory = select("select distinct x as foo from long_sequence(1)")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
 
-                assertCursor("foo\n" +
-                        "1\n", factory, true, false);
+                assertCursor(
+                        "foo\n" +
+                                "1\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
 
     @Test
     public void testSelectDistinctWithColumnAliasOnExplicitJoin() throws Exception {
-        assertQuery("id\n" +
+        assertQuery(
+                "id\n" +
                         "1\n" +
                         "2\n",
                 "select distinct t1.id " +
                         "from  tab t1 " +
                         "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
                 "create table tab as (select x as id from long_sequence(3))",
-                null, false, false
+
+                null,
+                true,
+                true
         );
     }
 
@@ -7297,7 +7622,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select distinct t1.id " +
                         "from  tab t1, tab t2",
                 "create table tab as (select x as id from long_sequence(2))",
-                null, false, false
+                null, true, true
         );
     }
 
@@ -7342,28 +7667,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectExpectedOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(" +
+            execute("create table tab(" +
                     "    id symbol index, " +
                     "    name symbol index, " +
                     "    value double, " +
                     "    ts timestamp" +
                     ") timestamp(ts) partition by DAY");
-            insert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
             assertSql(
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
@@ -7389,7 +7714,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table my_table (sym int, id long)");
+            execute("create table my_table (sym int, id long)");
             try (RecordCursorFactory factory = select("select sum(a.sym) yo, a.id from my_table a")) {
                 Assert.assertNotNull(factory);
             }
@@ -7443,7 +7768,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k) partition by DAY",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -7490,8 +7815,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testStringyTypeIntComparison() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR);");
-            insert("INSERT INTO t1(c0) VALUES (1);");
+            execute("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR);");
+            execute("INSERT INTO t1(c0) VALUES (1);");
 
             assertSql(
                     "c0\tc1\n",
@@ -7511,7 +7836,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testStrippingRowId() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (a int)");
+            execute("create table x (a int)");
             RecordCursorFactory factory = select("select * from '*!*x'");
             Assert.assertNotNull(factory);
             try {
@@ -7567,7 +7892,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ds double)");
+            execute("create table x (ds double)");
 
             executeInsertStatement(1.0);
             executeInsertStatement(2.0);
@@ -7577,7 +7902,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ds double)");
+            execute("create table x (ds double)");
 
             executeInsertStatement(1.0);
             executeInsertStatement(1.0);
@@ -7595,7 +7920,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ds double)");
+            execute("create table x (ds double)");
 
             executeInsertStatement(1.0);
             executeInsertStatement(1.0);
@@ -7645,7 +7970,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 2);
 
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     "select" +
                     " rnd_symbol('foo','bar') s," +
                     " timestamp_sequence(0, 10000000000) ts" +
@@ -7697,9 +8022,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testTimestampCrossReference() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (val double, t timestamp)");
-            ddl("create table y (timestamp timestamp, d double)");
-            insert("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)");
+            execute("create table x (val double, t timestamp)");
+            execute("create table y (timestamp timestamp, d double)");
+            execute("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)");
 
             // to shut up memory leak check
             engine.clear();
@@ -7771,8 +8096,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testTimestampPropagation() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table readings (sensorId int)");
-            ddl("create table sensors (ID int, make symbol, city symbol)");
+            execute("create table readings (sensorId int)");
+            execute("create table sensors (ID int, make symbol, city symbol)");
             assertQueryNoLeakCheck(
                     "sensorId\tsensId\tmake\tcity\n",
                     "SELECT * FROM readings JOIN(SELECT ID sensId, make, city FROM sensors) ON readings.sensorId = sensId",
@@ -7783,9 +8108,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionCastMatrix() {
+        final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
+        printExpectedUnionCastMatrix(expected);
+
+        Assert.assertTrue(expectedUnionCastMatrixIsSymmetrical(expected));
+
+        final int[][] actual = SqlCodeGenerator.actualUnionCastMatrix();
+        Assert.assertEquals(expected.length, actual.length);
+
+        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+            final int[] expToTypes = expected[typeA];
+            final int[] actToTypes = actual[typeA];
+            Assert.assertArrayEquals(ColumnType.nameOf(typeA), expToTypes, actToTypes);
+        }
+    }
+
+    @Test
     public void testUnionCastTypeSymmetry() {
         for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
+                if (ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB)) {
+                    continue;
+                }
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,
                         SqlCodeGenerator.getUnionCastType(typeA, typeB),
@@ -7799,7 +8144,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl("create TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);");
+                    execute("create TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);");
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
@@ -8038,23 +8383,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Should not fail any more.
+     */
     @Test
     public void testWithinClauseWithFilterFails() throws Exception {
-        assertException(
+        configOverrideUseWithinLatestByOptimisation();
+
+        assertQuery(
+                "x\tsym\tgeo\tts\n" +
+                        "19\tb\tz2\t1970-01-01T00:00:00.000019Z\n" +
+                        "20\ta\trk\t1970-01-01T00:00:00.000020Z\n",
                 "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
                 "create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym) timestamp(ts)",
-                28,
-                "WITHIN clause doesn't work with filters"
+                "ts",
+                true,
+                true
         );
     }
 
     @Test
     public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by x",
                 "create table tab as " +
                         "(" +
@@ -8065,26 +8420,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "         x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym_idx) timestamp(ts)",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
 
-        assertException(
+        assertQuery(
+                "x\tsym_idx\tsym_noidx\tgeo\tts\n",
                 "select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
-                28,
-                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+                null,
+                "ts",
+                true,
+                true
         );
     }
 
@@ -8109,50 +8474,132 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testWithinClauseWithoutLatestByFails() throws Exception {
-        assertException(
+        assertQuery("x\tsym\tgeo\tts\n",
                 "select * from tab where geo within(#zz)",
                 "create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
                         " from long_sequence(20) " +
                         "), index(sym) timestamp(ts)",
-                28,
-                "WITHIN clause requires LATEST BY clause"
+                "ts",
+                true,
+                false
         );
     }
 
-    private void createGeoHashTable(int chars) throws SqlException {
-        ddl(String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) + ", index(uuid) timestamp(time) partition by DAY");
+    @Test
+    public void testWithinDoesNotThrowSegfaultWithEmptySymbolColumn() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
 
-        insert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
-        insert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
-        insert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
-        insert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
-        insert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
-        insert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
-        insert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
-        insert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
-        insert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
-        insert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
-        insert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
-        insert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
-        insert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
-        insert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
-        insert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
-        insert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
-        insert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
-        insert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
-        insert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
-        insert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
-        insert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
-        insert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
-        insert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
-        insert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
-        insert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
+        String ddlTrips = "CREATE TABLE trips (\n" +
+                "pickup_datetime TIMESTAMP,\n" +
+                "pickup_geohash GEOHASH(12c)\n" +
+                ") timestamp(pickup_datetime)\n";
+
+        String dmlTrips = "INSERT INTO trips (pickup_datetime, pickup_geohash) VALUES \n" +
+                "    ('2009-01-01T00:00:00.000000Z', #dr5rsjutvshf),\n" +
+                "    ('2009-01-01T00:00:00.000000Z', #dr5ruy5ttnw1),\n" +
+                "    ('2009-01-01T00:00:02.000000Z', #dr5ruvkrr2fe),\n" +
+                "    ('2009-01-01T00:00:04.000000Z', #dr5reff6hu5e),\n" +
+                "    ('2009-01-01T00:00:07.000000Z', #dr5rshd6guzu),\n" +
+                "    ('2009-01-01T00:00:09.000000Z', #dr5rugk21jew),\n" +
+                "    ('2009-01-01T00:00:10.000000Z', #dr5ru7bhxxr7),\n" +
+                "    ('2009-01-01T00:00:13.000000Z', #dr5ruhv90nt3),\n" +
+                "    ('2009-01-01T00:00:15.000000Z', #dr5ru43qt65b),\n" +
+                "    ('2009-01-01T00:00:16.000000Z', #dr5rt6qwr9s8),\n" +
+                "    ('2009-01-01T00:00:17.000000Z', #dr5rvn6ccrhq),\n" +
+                "    ('2009-01-01T00:00:21.000000Z', #dr5rgcj30u1n),\n" +
+                "    ('2009-01-01T00:00:23.000000Z', #dr5rgbk02dxk),\n" +
+                "    ('2009-01-01T00:00:25.000000Z', #000000000000),\n" +
+                "    ('2009-01-01T00:00:25.000000Z', #s00000000000),\n" +
+                "    ('2009-01-01T00:00:27.000000Z', #dr5rutj2ty38),\n" +
+                "    ('2009-01-01T00:00:27.000000Z', #dr5rsncg1he5),\n" +
+                "    ('2009-01-01T00:00:27.000000Z', #dr5x1p1t86gx),\n" +
+                "    ('2009-01-01T00:00:28.000000Z', #dr5ruswebtne),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr5rsqhc82jq),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr5rzjybb9g4),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr7grdqzppp0),\n" +
+                "    ('2009-01-01T00:00:29.000000Z', #dr5rgbw8fxz6),\n" +
+                "    ('2009-01-01T00:00:30.000000Z', #dr5rsqqnccnz),\n" +
+                "    ('2009-01-01T00:00:30.000000Z', #dr5rtnj79c20),\n" +
+                "    ('2009-01-01T00:00:33.000000Z', #dr5rzjy9r094),\n" +
+                "    ('2009-01-01T00:00:36.000000Z', #dr5rvhfgw67v),\n" +
+                "    ('2009-01-01T00:00:37.000000Z', #dr5rsnpw997n),\n" +
+                "    ('2009-01-01T00:00:39.000000Z', #dr72h8hkt556),\n" +
+                "    ('2009-01-01T00:00:43.000000Z', #000000000000)\n";
+
+        assertMemoryLeak(() -> {
+            execute(ddlTrips);
+            execute(dmlTrips);
+            execute("ALTER TABLE trips ADD COLUMN sym SYMBOL;");
+            execute("ALTER TABLE trips ALTER COLUMN sym ADD INDEX;");
+            drainWalQueue();
+
+            String query = "trips WHERE pickup_geohash WITHIN (#dr5) LATEST ON pickup_datetime PARTITION BY sym;";
+
+            // below will segfault
+            assertQuery("pickup_datetime\tpickup_geohash\tsym\n",
+                    query,
+                    null,
+                    "pickup_datetime",
+                    true,
+                    true
+            );
+        });
+    }
+
+    private static void printExpectedUnionCastMatrix(int[][] expected) {
+        System.err.println("    private static final int[][] UNION_CAST_MATRIX = new int[][]{");
+        for (int i = 0; i < expected.length; ++i) {
+            System.err.print("            {");
+            for (int j = 0; j < expected[i].length; ++j) {
+                if (j > 0) {
+                    System.err.print(", ");
+                }
+                System.err.printf("%2d", expected[i][j]);
+            }
+            if (i < expected.length - 1) {
+                System.err.print("}, ");
+            } else {
+                System.err.print("}  ");
+            }
+            System.err.printf("// %2d = %s\n", i, ColumnType.nameOf(i));
+        }
+        System.err.println("    };");
+    }
+
+    private void createGeoHashTable(int chars) throws SqlException {
+        execute(String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) + ", index(uuid) timestamp(time) partition by DAY");
+
+        execute("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
+        execute("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
+        execute("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
+        execute("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
+        execute("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
+        execute("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
+        execute("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
+        execute("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
+        execute("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
+        execute("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
+        execute("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
+        execute("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
+        execute("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
+        execute("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
+        execute("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
+        execute("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
+        execute("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
+        execute("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
+        execute("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
+        execute("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
+        execute("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
+        execute("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
+        execute("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
+        execute("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
+        execute("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
     }
 
     private void createRndGeoHashBitsTable() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -8167,7 +8614,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     private void createRndGeoHashTable() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -8184,7 +8631,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
-        insert(ddl);
+        execute(ddl);
     }
 
     private void expectSqlResult(CharSequence expected, CharSequence query) throws SqlException {
@@ -8193,7 +8640,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create TABLE 'alcatel_traffic_tmp' (" +
+            execute("create TABLE 'alcatel_traffic_tmp' (" +
                     "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
                     "time TIMESTAMP, " +
                     "slot SYMBOL, " +
@@ -8201,13 +8648,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "downStream DOUBLE, " +
                     "upStream DOUBLE" +
                     ") timestamp(time) partition by DAY");
-            ddl("create table src as (" +
+            execute("create table src as (" +
                     "    select rnd_symbol(15000, 4,4,0) sym, " +
                     "           timestamp_sequence(0, 100000) ts, " +
                     "           rnd_double() val " +
                     "    from long_sequence(500)" +
                     ")");
-            insert("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
+            execute("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // =
             try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName in $1")) {
                 bindVariableService.clear();
@@ -8241,7 +8688,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testBindVariableInLookupList(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create TABLE 'alcatel_traffic_tmp' (" +
+            execute("create TABLE 'alcatel_traffic_tmp' (" +
                     "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
                     "time TIMESTAMP, " +
                     "slot SYMBOL, " +
@@ -8249,13 +8696,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "downStream DOUBLE, " +
                     "upStream DOUBLE" +
                     ") timestamp(time) partition by DAY");
-            ddl("create table src as (" +
+            execute("create table src as (" +
                     "    select rnd_symbol(15000, 4,4,0) sym, " +
                     "           timestamp_sequence(0, 100000) ts, " +
                     "           rnd_double() val " +
                     "    from long_sequence(500)" +
                     ")");
-            insert("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
+            execute("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src");
             // in
             try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName in ($1,$2)")) {
                 bindVariableService.clear();
@@ -8292,7 +8739,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xy as (select rnd_str() v from long_sequence(100))");
+            execute("create table xy as (select rnd_str() v from long_sequence(100))");
             refreshTablesInBaseEngine();
             bindVariableService.clear();
             try (RecordCursorFactory factory = select("xy where v " + keyword + " $1")) {
@@ -8346,7 +8793,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8371,7 +8818,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8399,26 +8846,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(ddl);
+            execute(ddl);
 
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
                     engine,
@@ -8435,7 +8882,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8459,7 +8906,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
@@ -8484,24 +8931,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testLatestByMultiColumnPlusFilter(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(ddl);
+            execute(ddl);
 
-            insert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-            insert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
-            insert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            execute("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            execute("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
 
             assertSql(
                     "id\tname\tvalue\tts\n" +
@@ -8548,26 +8995,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(ddl);
+            execute(ddl);
 
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
-            insert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
-            insert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
-            insert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            execute("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            execute("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            execute("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
                     engine,
@@ -8586,19 +9033,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     private void testLatestBySupportedColumnTypes(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
             // supported: [BOOLEAN, CHAR, INT, LONG, LONG256, STRING, SYMBOL]
-            ddl(ddl);
+            execute(ddl);
 
-            insert("insert into tab values (false, cast(24814 as short), 24814, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'ORANGE', '123', '1970-01-01T00:00:01.000000Z')");
-            insert("insert into tab values (true, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'A', 'COCO', 'XoXoX', '1970-01-01T00:00:02.000000Z')");
-            insert("insert into tab values (true, cast(14817 as short), 14817, 3614738589890112276, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'Q', null, 'XoXoX', '1970-01-01T00:00:03.000000Z')");
-            insert("insert into tab values (true, cast(24814 as short), 24814, 3614738589890112276, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', null, 'XoXoX', '1970-01-01T00:00:04.000000Z')");
-            insert("insert into tab values (true, cast(24814 as short), 24814, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Q', 'BANANA', '_(*y*)_', '1970-01-01T00:00:05.000000Z')");
-            insert("insert into tab values (false, cast(14817 as short), 14817, 6404066507400987550, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'M', null, '123', '1970-01-01T00:00:06.000000Z')");
-            insert("insert into tab values (false, cast(14333 as short), 14333, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'COCO', '123', '1970-01-01T00:00:07.000000Z')");
-            insert("insert into tab values (false, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Z', 'BANANA', '_(*y*)_', '1970-01-01T00:00:08.000000Z')");
-            insert("insert into tab values (true, cast(24814 as short), 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
-            insert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
-            insert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-02T00:00:01.000000Z')");
+            execute("insert into tab values (false, cast(24814 as short), 24814, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'ORANGE', '123', '1970-01-01T00:00:01.000000Z')");
+            execute("insert into tab values (true, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'A', 'COCO', 'XoXoX', '1970-01-01T00:00:02.000000Z')");
+            execute("insert into tab values (true, cast(14817 as short), 14817, 3614738589890112276, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'Q', null, 'XoXoX', '1970-01-01T00:00:03.000000Z')");
+            execute("insert into tab values (true, cast(24814 as short), 24814, 3614738589890112276, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', null, 'XoXoX', '1970-01-01T00:00:04.000000Z')");
+            execute("insert into tab values (true, cast(24814 as short), 24814, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Q', 'BANANA', '_(*y*)_', '1970-01-01T00:00:05.000000Z')");
+            execute("insert into tab values (false, cast(14817 as short), 14817, 6404066507400987550, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'M', null, '123', '1970-01-01T00:00:06.000000Z')");
+            execute("insert into tab values (false, cast(14333 as short), 14333, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'COCO', '123', '1970-01-01T00:00:07.000000Z')");
+            execute("insert into tab values (false, cast(14817 as short), 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Z', 'BANANA', '_(*y*)_', '1970-01-01T00:00:08.000000Z')");
+            execute("insert into tab values (true, cast(24814 as short), 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
+            execute("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
+            execute("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-02T00:00:01.000000Z')");
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +

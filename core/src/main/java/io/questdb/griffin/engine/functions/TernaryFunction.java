@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -60,20 +61,18 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default void initCursor() {
-        getLeft().initCursor();
-        getCenter().initCursor();
-        getRight().initCursor();
-    }
-
-    @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getCenter().isConstant() && getRight().isConstant();
     }
 
     @Override
-    default boolean isThreadSafe() {
-        return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
+    }
+
+    @Override
+    default boolean isRandom() {
+        return getLeft().isRandom() || getCenter().isRandom() || getRight().isRandom();
     }
 
     @Override
@@ -90,8 +89,39 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default void memoize(Record record) {
+        getLeft().memoize(record);
+        getCenter().memoize(record);
+        getRight().memoize(record);
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof TernaryFunction) {
+            getLeft().offerStateTo(((TernaryFunction) that).getLeft());
+            getCenter().offerStateTo(((TernaryFunction) that).getCenter());
+            getRight().offerStateTo(((TernaryFunction) that).getRight());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getCenter().shouldMemoize() || getRight().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getLeft().supportsParallelism() && getCenter().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess() && getCenter().supportsRandomAccess();
     }
 
     @Override

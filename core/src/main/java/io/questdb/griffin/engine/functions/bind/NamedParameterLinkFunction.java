@@ -25,19 +25,24 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class NamedParameterLinkFunction implements ScalarFunction {
+public class NamedParameterLinkFunction implements Function {
     private final int type;
     private final String variableName;
     private Function base;
@@ -50,6 +55,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public void close() {
         base = Misc.free(base);
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return getBase().getArray(rec);
     }
 
     @Override
@@ -120,6 +130,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -212,10 +227,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         return getBase().getVarcharSize(rec);
     }
 
-    public String getVariableName() {
-        return variableName;
-    }
-
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableName);
@@ -227,12 +238,17 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

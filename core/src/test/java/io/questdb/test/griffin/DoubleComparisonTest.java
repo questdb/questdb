@@ -31,7 +31,7 @@ import org.junit.Test;
 public class DoubleComparisonTest extends AbstractCairoTest {
     @Test
     public void testEquals() throws SqlException {
-        ddl("create table foo as (select rnd_double() a from long_sequence(100000))");
+        execute("create table foo as (select rnd_double() a from long_sequence(100000))");
         assertSql(
                 "c\n" +
                         "100000\n",

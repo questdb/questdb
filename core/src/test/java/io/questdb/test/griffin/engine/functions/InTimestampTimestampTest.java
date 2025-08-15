@@ -35,7 +35,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarRuntimeConstantsWithConstant() throws SqlException {
-        ddl("create table MovementLog(\n" +
+        execute("create table MovementLog(\n" +
                 "ts timestamp,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
@@ -57,13 +57,13 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ($2, '1970-01-01T00:00:00.005000Z', $3)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
     @Test
     public void testBindVarTypeChange() throws SqlException {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
@@ -111,7 +111,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalBindVariable() throws SqlException {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
+        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
 
         // baseline
         assertSql(
@@ -150,7 +150,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testListOfTimestamps() throws SqlException {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         assertSql(
                 "a\tts\n" +
@@ -163,7 +163,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testListOfTimestampsInvalidInput() throws Exception {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         assertException(
                 "test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')",
@@ -174,7 +174,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testListOfTimestampsUnsupportedType() throws Exception {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         assertException(
                 "test where ts in ('1970-01-01T00:00:00.070000Z', true)",

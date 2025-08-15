@@ -33,7 +33,10 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,6 +79,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         RecordCursor masterCursor = null;
         try {
@@ -110,25 +115,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);
-    }
-
-    private static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
-        final Record masterRecord = masterCursor.getRecord();
-        long size = 0;
-        try {
-            masterCursor.toTop();
-            while (masterCursor.hasNext()) {
-                MapKey key = map.withKey();
-                key.put(masterRecord, keySink);
-                MapValue value = key.findValue();
-                if (value != null) {
-                    size += value.getInt(1);
-                }
-            }
-            return size;
-        } finally {
-            masterCursor.toTop();
-        }
     }
 
     private static void populateRowIDHashMap(
@@ -171,7 +157,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
-        private long size = -1;
         private LongChain.Cursor slaveChainCursor;
         private Record slaveRecord;
 
@@ -189,10 +174,23 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            buildMapOfSlaveRecords();
+            final Record masterRecord = masterCursor.getRecord();
+            while (masterCursor.hasNext()) {
+                MapKey key = joinKeyMap.withKey();
+                key.put(masterRecord, masterSink);
+                MapValue value = key.findValue();
+                if (value != null) {
+                    counter.add(value.getInt(1));
+                }
+            }
+        }
+
+        @Override
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                size = -1;
                 Misc.free(joinKeyMap);
                 Misc.free(slaveChain);
                 super.close();
@@ -207,7 +205,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
-
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
@@ -230,12 +227,13 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isMapBuilt ? 1 : 0;
+        }
+
+        @Override
         public long size() {
-            if (size > -1) {
-                return size;
-            }
-            buildMapOfSlaveRecords();
-            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
+            return -1;
         }
 
         @Override
@@ -269,7 +267,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
-            size = -1;
             isMapBuilt = false;
         }
     }

@@ -174,7 +174,7 @@ final class Mig607 {
         path.concat(columnName).put(".o").$();
     }
 
-    private static void trimFile(FilesFacade ff, LPSZ path, long size, long opts) {
+    private static void trimFile(FilesFacade ff, LPSZ path, long size, int opts) {
         final long fd = TableUtils.openFileRWOrFail(ff, path, opts);
         if (!ff.truncate(fd, size)) {
             // This should never happen on migration but better to be on safe side anyway
@@ -229,7 +229,7 @@ final class Mig607 {
                         // we need to use transient row count instead
                         long rowCount = partitionIndex < partitionCount - 1 ? txMem.getLong(partitionDataOffset + Long.BYTES) : transientRowCount;
                         long txSuffix = txMem.getLong(MigrationActions.prefixedBlockOffset(partitionDataOffset, 2, Long.BYTES));
-                        setPathForPartition(
+                        setPathForNativePartition(
                                 path.trimTo(plen),
                                 partitionBy,
                                 txMem.getLong(partitionDataOffset),

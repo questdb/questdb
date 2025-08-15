@@ -36,7 +36,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testAllConst() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
         assertQuery("a\tts\n", "test where a in NULL", false);
         assertQuery("a\tts\n" +
                 "16\t1970-01-01T00:00:15.000000Z\n", "test where a in ('16', NULL)", false);
@@ -50,7 +50,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeChange() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -84,7 +84,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeNotConvertible() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -105,7 +105,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testChar() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
         assertQuery("a\tts\n" +
                 "3\t1970-01-01T00:00:02.000000Z\n", "test where a in '3'::char", false);
         assertQuery("a\tts\n" +
@@ -142,7 +142,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVarMixed() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -163,7 +163,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testConstConst() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
         assertQuery("a\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +
                 "2\t1970-01-01T00:00:01.000000Z\n" +
@@ -181,7 +181,7 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testNonConstExpression() throws Exception {
-        ddl("create table in_values as (select cast(x as varchar) value, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
+        execute("create table in_values as (select cast(x as varchar) value, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
 
         assertException(
                 "test where a in (select value from in_values)",
@@ -203,8 +203,8 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testNull() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
-        insert("insert into test values (NULL, '1970-01-01T00:03:00.000000Z')");
+        execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("insert into test values (NULL, '1970-01-01T00:03:00.000000Z')");
 
         assertQuery("a\tts\n" +
                 "\t1970-01-01T00:03:00.000000Z\n", "test where a in NULL", false);

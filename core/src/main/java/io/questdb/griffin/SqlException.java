@@ -35,11 +35,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
-
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-
+    private static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
+    private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
+    private int error;
     private int position;
 
     protected SqlException() {
@@ -100,6 +102,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid date");
     }
 
+    public static SqlException matViewDoesNotExist(int position, CharSequence tableName) {
+        return position(position).errorCode(EXCEPTION_MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(tableName).put(']');
+    }
+
+    public static SqlException nonDeterministicColumn(int position, CharSequence column) {
+        return position(position).put("non-deterministic function cannot be used in materialized view: ").put(column);
+    }
+
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
         return tok == null ?
                 SqlException.$(position, msg)
@@ -118,15 +128,20 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         assert (ex = new SqlException()) != null;
         ex.message.clear();
         ex.position = position;
+        ex.error = 0;
         return ex;
     }
 
     public static SqlException tableDoesNotExist(int position, CharSequence tableName) {
-        return position(position).put("table does not exist [table=").put(tableName).put(']');
+        return position(position).errorCode(EXCEPTION_TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
     }
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
         return position(position).put("unexpected token [").put(token).put(']');
+    }
+
+    public static SqlException unexpectedToken(int position, CharSequence token, @NotNull CharSequence extraMessage) {
+        return position(position).put("unexpected token [").put(token).put("] - ").put(extraMessage);
     }
 
     public static SqlException unsupportedCast(int position, CharSequence columnName, int fromType, int toType) {
@@ -134,6 +149,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", from=").put(ColumnType.nameOf(fromType))
                 .put(", to=").put(ColumnType.nameOf(toType))
                 .put(']');
+    }
+
+    public static SqlException walRecoverable(int position) {
+        return position(position).errorCode(EXCEPTION_WAL_RECOVERABLE);
     }
 
     @Override
@@ -158,9 +177,24 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return result;
     }
 
+    public boolean isTableDoesNotExist() {
+        return error == EXCEPTION_TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isWalRecoverable() {
+        return error == EXCEPTION_WAL_RECOVERABLE;
+    }
+
     public SqlException put(@Nullable CharSequence cs) {
         if (cs != null) {
             message.put(cs);
+        }
+        return this;
+    }
+
+    public SqlException put(@Nullable CharSequence cs, int lo, int hi) {
+        if (cs != null) {
+            message.put(cs, lo, hi);
         }
         return this;
     }
@@ -209,5 +243,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
+    }
+
+    private SqlException errorCode(int errorCode) {
+        this.error = errorCode;
+        return this;
     }
 }

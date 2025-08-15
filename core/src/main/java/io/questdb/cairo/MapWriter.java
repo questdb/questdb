@@ -68,13 +68,13 @@ public interface MapWriter extends SymbolCountProvider {
         }
     }
 
-    MemoryR getSymbolOffsetsMemory();
-
-    MemoryR getSymbolValuesMemory();
-
     boolean getNullFlag();
 
     int getSymbolCapacity();
+
+    MemoryR getSymbolOffsetsMemory();
+
+    MemoryR getSymbolValuesMemory();
 
     boolean isCached();
 

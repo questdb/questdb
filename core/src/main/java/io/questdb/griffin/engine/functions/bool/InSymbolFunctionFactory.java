@@ -38,7 +38,12 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -49,8 +54,8 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -112,13 +117,13 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final CharSequenceHashSet deferredSet;
+        private final IntList deferredValuePositions;
         private final ObjList<Function> deferredValues;
         private final IntHashSet intSet = new IntHashSet();
         private final TestFunc intTest = this::testAsInt;
         private final CharSequenceHashSet set;
         private final TestFunc strTest = this::testAsString;
         private TestFunc testFunc;
-        private final IntList deferredValuePositions;
 
         public Func(SymbolFunction arg, CharSequenceHashSet set, ObjList<Function> deferredValues, IntList deferredValuePositions) {
             this.arg = arg;

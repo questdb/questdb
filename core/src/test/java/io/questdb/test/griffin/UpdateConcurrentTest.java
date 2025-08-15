@@ -150,13 +150,14 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
         setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20000); // On in CI Windows updates are particularly slow
         setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000L);
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20_000L);
+        spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
                     " 0 as x" +
                     " from long_sequence(5))" +

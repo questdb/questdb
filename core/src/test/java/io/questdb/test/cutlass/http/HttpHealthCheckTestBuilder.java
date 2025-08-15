@@ -45,22 +45,18 @@ public class HttpHealthCheckTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
     private boolean injectUnhandledError;
-    private Metrics metrics;
     private boolean pessimisticHealthCheck = false;
     private TemporaryFolder temp;
 
     public void run(HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
                     .withPessimisticHealthCheck(pessimisticHealthCheck)
-                    .build();
-            if (metrics == null) {
-                metrics = Metrics.enabled();
-            }
-
-            WorkerPool workerPool = new TestWorkerPool(1, metrics);
+                    .build(cairoConfiguration);
+            WorkerPool workerPool = new TestWorkerPool(1, httpConfiguration.getMetrics());
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
@@ -72,16 +68,16 @@ public class HttpHealthCheckTestBuilder {
                 });
             }
 
-            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer ignored = Services.INSTANCE.createMinHttpServer(httpConfiguration, workerPool, metrics)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    HttpServer ignored = Services.INSTANCE.createMinHttpServer(httpConfiguration, workerPool)
             ) {
                 workerPool.start(LOG);
 
+                final Metrics metrics = cairoConfiguration.getMetrics();
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {
-                        if (metrics.health().unhandledErrorsCount() > 0) {
+                        if (metrics.healthMetrics().unhandledErrorsCount() > 0) {
                             break;
                         }
                         Os.sleep(50);
@@ -99,11 +95,6 @@ public class HttpHealthCheckTestBuilder {
 
     public HttpHealthCheckTestBuilder withInjectedUnhandledError() {
         this.injectUnhandledError = true;
-        return this;
-    }
-
-    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
-        this.metrics = metrics;
         return this;
     }
 

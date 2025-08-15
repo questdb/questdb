@@ -28,7 +28,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -156,7 +160,7 @@ public class SendAndReceiveRequestBuilder {
                     receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i) & 0xff);
                 }
                 received += n;
-                if (null != listener) {
+                if (listener != null) {
                     listener.onReceived(received);
                 }
             } else if (n < 0) {
@@ -273,7 +277,7 @@ public class SendAndReceiveRequestBuilder {
                     receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
                 }
                 received += n;
-                if (null != listener) {
+                if (listener != null) {
                     listener.onReceived(received);
                 }
             } else if (n < 0) {

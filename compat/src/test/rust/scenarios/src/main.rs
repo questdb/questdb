@@ -1,3 +1,4 @@
+use crate::TestError::AssertionError;
 use chrono::NaiveDateTime;
 use regex::Regex;
 use serde::Deserialize;
@@ -8,7 +9,12 @@ use std::fs;
 use std::process;
 use thiserror::Error;
 use tokio_postgres::{types::ToSql, Client, NoTls, Row};
-use crate::TestError::AssertionError;
+use std::error::Error;
+use std::fmt;
+use postgres_protocol::types::{float8_from_sql, Array};
+use tokio_postgres::types::{FromSql, Type, Kind};
+use fallible_iterator::FallibleIterator;
+
 
 #[derive(Debug, Deserialize)]
 struct TestFile {
@@ -25,6 +31,8 @@ struct TestCase {
     prepare: Option<Vec<Step>>,
     steps: Vec<Step>,
     teardown: Option<Vec<Step>>,
+    iterations: Option<u32>,
+    exclude: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +41,7 @@ enum Step {
     ActionStep(ActionStep),
     LoopEnvelope {
         #[serde(rename = "loop")]
-        loop_: Loop
+        loop_: Loop,
     },
 }
 
@@ -83,15 +91,20 @@ struct Expect {
 
 #[tokio::main]
 async fn main() -> TestResult<()> {
-    let yaml_file = env::args().nth(1).ok_or_else(|| TestError::InputError("Usage: runner <test_file.yaml>".to_string()))?;
-    let yaml_content = fs::read_to_string(&yaml_file).map_err(|e| TestError::InputError(e.to_string()))?;
-    let test_file: TestFile = serde_yaml::from_str(&yaml_content).map_err(|e| TestError::InputError(e.to_string()))?;
+    let yaml_file = env::args()
+        .nth(1)
+        .ok_or_else(|| TestError::InputError("Usage: runner <test_file.yaml>".to_string()))?;
+    let yaml_content =
+        fs::read_to_string(&yaml_file).map_err(|e| TestError::InputError(e.to_string()))?;
+    let test_file: TestFile =
+        serde_yaml::from_str(&yaml_content).map_err(|e| TestError::InputError(e.to_string()))?;
 
-    let (client, connection) = tokio_postgres::connect(
-        "host=localhost port=8812 user=admin password=quest dbname=qdb",
-        NoTls,
-    )
-        .await?;
+    let port = env::var("PGPORT").unwrap_or_else(|_| "8812".to_string());
+    let connection_string = format!(
+        "host=localhost port={} user=admin password=quest dbname=qdb",
+        port
+    );
+    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls).await?;
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -110,9 +123,23 @@ async fn main() -> TestResult<()> {
 
 async fn run_tests(client: &Client, test_file: &TestFile) -> TestResult<bool> {
     let mut all_tests_passed = true;
+    let rust_string = "rust".to_string();
     for test in &test_file.tests {
-        if !run_test(client, &test_file.variables, test).await? {
-            all_tests_passed = false;
+        let iterations = test.iterations.unwrap_or(50);
+
+        if let Some(excludes) = &test.exclude {
+            if excludes.contains(&rust_string) {
+                println!("Skipping test: {:?} because it's excluded for Rust", test.name);
+                continue;
+            }
+        }
+
+
+        for i in 0..iterations {
+            println!("Running test '{}' (iteration {})", test.name, i);
+            if !run_test(client, &test_file.variables, test).await? {
+                all_tests_passed = false;
+            }
         }
     }
     Ok(all_tests_passed)
@@ -138,7 +165,11 @@ async fn run_test(
     if test_passed {
         println!("Test '{}' passed.", test.name);
     } else {
-        eprintln!("Test '{}' failed: {:?}", test.name, test_result.unwrap_err());
+        eprintln!(
+            "Test '{}' failed: {:?}",
+            test.name,
+            test_result.unwrap_err()
+        );
     }
 
     if let Some(teardown_steps) = &test.teardown {
@@ -209,7 +240,8 @@ async fn execute_step(
     let query_with_vars = substitute_variables(query_template, variables)?;
     let query = replace_param_placeholders(&query_with_vars);
 
-    let params: Vec<Box<dyn ToSql + Sync>> = action_step.parameters
+    let params: Vec<Box<dyn ToSql + Sync>> = action_step
+        .parameters
         .as_ref()
         .map(|params| extract_parameters(params, variables))
         .transpose()?
@@ -256,33 +288,67 @@ fn extract_parameters(
     parameters: &[TypedParameter],
     variables: &HashMap<String, String>,
 ) -> Result<Vec<Box<dyn ToSql + Sync>>, Box<dyn std::error::Error>> {
-    parameters.iter().map(|param| {
-        let param_value: Box<dyn ToSql + Sync> = match &param.value {
-            Value::Number(n) => match param.type_.as_str() {
-                "int4" => Box::new(n.as_i64().ok_or("Invalid int4")? as i32),
-                "int8" => Box::new(n.as_i64().ok_or("Invalid int8")?),
-                "timestamp" => Box::new(parse_timestamp(&n.to_string())?),
-                "float4" => Box::new(n.as_f64().ok_or("Invalid float4")? as f32),
-                "float8" => Box::new(n.as_f64().ok_or("Invalid float8")?),
-                "varchar" => Box::new(n.to_string()),
-                _ => return Err("Unsupported parameter type".into()),
-            },
-            Value::String(s) => {
-                let substituted = substitute_variables(s, variables)?;
-                match param.type_.to_lowercase().as_str() {
-                    "int4" => Box::new(substituted.parse::<i32>()?),
-                    "int8" => Box::new(substituted.parse::<i64>()?),
-                    "timestamp" => Box::new(parse_timestamp(&substituted)?),
-                    "float4" => Box::new(substituted.parse::<f32>()?),
-                    "float8" => Box::new(substituted.parse::<f64>()?),
-                    "varchar" => Box::new(substituted),
+    parameters
+        .iter()
+        .map(|param| {
+            let param_value: Box<dyn ToSql + Sync> = match &param.value {
+                Value::Number(n) => match param.type_.as_str() {
+                    "int4" => Box::new(n.as_i64().ok_or("Invalid int4")? as i32),
+                    "int8" => Box::new(n.as_i64().ok_or("Invalid int8")?),
+                    "timestamp" => Box::new(parse_timestamp(&n.to_string())?),
+                    "float4" => Box::new(n.as_f64().ok_or("Invalid float4")? as f32),
+                    "float8" => Box::new(n.as_f64().ok_or("Invalid float8")?),
+                    "varchar" => Box::new(n.to_string()),
                     _ => return Err("Unsupported parameter type".into()),
+                },
+                Value::String(s) => {
+                    let substituted = substitute_variables(s, variables)?;
+                    match param.type_.to_lowercase().as_str() {
+                        "int4" => Box::new(substituted.parse::<i32>()?),
+                        "int8" => Box::new(substituted.parse::<i64>()?),
+                        "timestamp" => Box::new(parse_timestamp(&substituted)?),
+                        "float4" => Box::new(substituted.parse::<f32>()?),
+                        "float8" => Box::new(substituted.parse::<f64>()?),
+                        "varchar" => Box::new(substituted),
+                        "boolean" => Box::new(substituted.parse::<bool>()?),
+                        "char" => Box::new(substituted),
+
+                        // date is formatted as '2024-10-02' we need to create a timestamp (NaiveDateTime) out of it
+                        // why? QuestDB sends date columns over PGWire as Timestamps so when Rust PGWire client
+                        // asks (PGWire DESCRIBE) server for a date column, server returns pretends it's a timestamp
+                        // and the client refuses to set a date value to a timestamp column
+                        "date" => Box::new(
+                            substituted
+                                .parse::<chrono::NaiveDate>()?
+                                .and_time(chrono::NaiveTime::MIN),
+                        ),
+
+                        "array_float8" => {
+                            // Parse PostgreSQL float array format: {-1, 2, NULL, 4, 5.42}
+                            let trimmed = substituted.trim_start_matches('{').trim_end_matches('}');
+                            let float_array: Vec<Option<f64>> = trimmed
+                                .split(',')
+                                .map(|s | s.trim())
+                                .filter(|s| !s.is_empty())
+                                .map(|s| {
+                                    if s.eq_ignore_ascii_case("NULL") {
+                                        Ok(None)
+                                    } else {
+                                        s.parse::<f64>().map(Some)
+                                    }
+                                })
+                                .collect::<Result<Vec<Option<f64>>, _>>()?;
+                            Box::new(float_array)
+                        }
+
+                        _ => return Err("Unsupported parameter type".into()),
+                    }
                 }
-            }
-            _ => return Err("Unsupported parameter type".into()),
-        };
-        Ok(param_value)
-    }).collect()
+                _ => return Err("Unsupported parameter type".into()),
+            };
+            Ok(param_value)
+        })
+        .collect()
 }
 
 fn parse_timestamp(s: &str) -> Result<NaiveDateTime, chrono::ParseError> {
@@ -331,18 +397,24 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
     let column_type = row.columns()[idx].type_();
 
     match *column_type {
-        tokio_postgres::types::Type::INT2 => Value::Number(row.get::<_, i16>(idx).into()),
-        tokio_postgres::types::Type::INT4 => Value::Number(row.get::<_, i32>(idx).into()),
-        tokio_postgres::types::Type::INT8 => Value::Number(row.get::<_, i64>(idx).into()),
-        tokio_postgres::types::Type::FLOAT4 => Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx))),
-        tokio_postgres::types::Type::FLOAT8 => Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx))),
+        Type::INT2 => Value::Number(row.get::<_, i16>(idx).into()),
+        Type::INT4 => Value::Number(row.get::<_, i32>(idx).into()),
+        Type::INT8 => Value::Number(row.get::<_, i64>(idx).into()),
+        Type::FLOAT4 => {
+            Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx)))
+        }
+        Type::FLOAT8 => {
+            Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx)))
+        }
         tokio_postgres::types::Type::BOOL => Value::Bool(row.get(idx)),
-        tokio_postgres::types::Type::TIMESTAMP => {
+        Type::TIMESTAMP => {
             let val: NaiveDateTime = row.get(idx);
             Value::String(val.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
         }
-        tokio_postgres::types::Type::VARCHAR => {
-            Value::String(row.get(idx))
+        Type::VARCHAR => Value::String(row.get(idx)),
+        Type::FLOAT8_ARRAY => {
+            let PgArrayString (float_array) = row.get(idx);
+            Value::String(float_array)
         }
         _ => Value::String(row.get(idx)),
     }
@@ -375,7 +447,8 @@ fn handle_query_result(
                 if let Some(expected_error) = &expectation.error {
                     let error_message = e.to_string();
                     if !error_message.contains(expected_error) {
-                        let error = AssertError::ErrorMsgMismatch(expected_error.clone(), error_message);
+                        let error =
+                            AssertError::ErrorMsgMismatch(expected_error.clone(), error_message);
                         return Err(AssertionError(error));
                     }
                 } else {
@@ -406,7 +479,7 @@ fn handle_execute_result(
                             "Expected result {:?}, got {:?}",
                             expected_value, rows_affected
                         )
-                            .into());
+                        .into());
                     }
                 }
             }
@@ -420,7 +493,7 @@ fn handle_execute_result(
                             "Expected error '{}', but got '{}'",
                             expected_error, error_message
                         )
-                            .into());
+                        .into());
                     }
                 } else {
                     return Err(e.into());
@@ -431,6 +504,111 @@ fn handle_execute_result(
         }
     }
     Ok(())
+}
+
+/// String representation of a PostgreSQL multi-dimensional array
+#[derive(Debug, Clone)]
+pub struct PgArrayString(pub String);
+
+impl fmt::Display for PgArrayString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<'a> FromSql<'a> for PgArrayString {
+    fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
+        // Check if it's an array type
+        match ty.kind() {
+            Kind::Array(element_type) => {
+                let array: Array = postgres_protocol::types::array_from_sql(raw)?;
+                let mut buffer = String::new();
+                array_to_text(&array, 0, 0, &mut buffer, element_type)?;
+                Ok(PgArrayString(buffer))
+            },
+            _ => Err("expected array type".into()),
+        }
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(ty.kind(), Kind::Array(_))
+    }
+}
+
+fn array_to_text(
+    array: &Array,
+    dim: usize,
+    mut flat_index: usize,
+    buffer: &mut String,
+    element_type: &Type
+) -> Result<usize, Box<dyn Error + Sync + Send>> {
+    // Get dimensions info - manually collect them
+    let mut dimensions = Vec::new();
+    let mut dims_iter = array.dimensions();
+    while let Ok(Some(dim_result)) = dims_iter.next() {
+        dimensions.push(dim_result);
+    }
+
+    if dimensions.is_empty() {
+        buffer.push_str("{}");
+        return Ok(flat_index);
+    }
+
+    let count = dimensions[dim].len as usize;
+
+    // Calculate stride for this dimension
+    let stride = if dim < dimensions.len() - 1 {
+        dimensions[dim + 1..].iter().map(|d| d.len as usize).product()
+    } else {
+        1 // Leaf dimension
+    };
+
+    let at_deepest_dim = dim == dimensions.len() - 1;
+
+    // Opening brace
+    buffer.push('{');
+
+    if at_deepest_dim {
+        // Leaf level - append actual values
+        for i in 0..count {
+            if i > 0 {
+                buffer.push(',');
+            }
+
+            // Get the value at flat_index
+            let value = array.values().nth(flat_index)?
+                .ok_or("Value index out of bounds")?;
+
+            match value {
+                None => buffer.push_str("NULL"),
+                Some(val) => {
+                    // Ensure decimal point for integers
+                    let f8 = float8_from_sql(val)?;
+                    if f8.fract().abs() < f64::EPSILON {
+                        buffer.push_str(&format!("{:.1}", f8));
+                    } else {
+                        buffer.push_str(&f8.to_string());
+                    }
+                }
+            }
+            flat_index += stride;
+        }
+    } else {
+        // Nested dimension - recursively process
+        for i in 0..count {
+            if i > 0 {
+                buffer.push(',');
+            }
+
+            // Recursive call for next dimension
+            flat_index = array_to_text(array, dim + 1, flat_index, buffer, element_type)?;
+        }
+    }
+
+    // Closing brace
+    buffer.push('}');
+
+    Ok(flat_index)
 }
 
 #[derive(Error, Debug)]

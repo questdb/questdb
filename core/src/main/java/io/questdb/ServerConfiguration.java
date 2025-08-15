@@ -26,44 +26,76 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.Utf8StringSink;
 
 public interface ServerConfiguration {
     String OSS = "OSS";
+
+    /**
+     * Exports subset of configuration options into the provided sink. The config is exported
+     * int JSON format.
+     *
+     * @param sink the target sink
+     */
+    default void exportConfiguration(Utf8StringSink sink) {
+        sink.putAscii("\"config\":{");
+        // bitwise OR below is intentional, always want to append passthrough config
+        if (
+                getCairoConfiguration().exportConfiguration(sink)
+                        | getPublicPassthroughConfiguration().exportConfiguration(sink)
+        ) {
+            sink.clear(sink.size() - 1);
+        }
+        sink.putAscii("},");
+    }
 
     CairoConfiguration getCairoConfiguration();
 
     FactoryProvider getFactoryProvider();
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+    HttpServerConfiguration getHttpMinServerConfiguration();
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    HttpFullFatServerConfiguration getHttpServerConfiguration();
+
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
+    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
+
     MemoryConfiguration getMemoryConfiguration();
+
+    Metrics getMetrics();
 
     MetricsConfiguration getMetricsConfiguration();
 
-    PGWireConfiguration getPGWireConfiguration();
+    PGConfiguration getPGWireConfiguration();
 
     PublicPassthroughConfiguration getPublicPassthroughConfiguration();
+
+    WorkerPoolConfiguration getQueryWorkerPoolConfiguration();
 
     default String getReleaseType() {
         return OSS;
     }
 
+    // used to detect configuration reloads
+    default long getVersion() {
+        return 0;
+    }
+
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
+    WorkerPoolConfiguration getWriteWorkerPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }

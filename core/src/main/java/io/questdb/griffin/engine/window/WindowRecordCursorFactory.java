@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.VirtualFunctionDirectSymbolRecordCursor;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -88,6 +88,8 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
         return cursor;
@@ -138,7 +140,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         closed = true;
     }
 
-    class WindowRecordCursor extends VirtualFunctionDirectSymbolRecordCursor {
+    class WindowRecordCursor extends AbstractVirtualFunctionRecordCursor {
 
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
@@ -175,6 +177,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void skipRows(Counter rowCount) throws DataUnavailableException {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere
@@ -201,7 +208,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                     throw t;
                 }
             }
-            Function.init(functions, baseCursor, executionContext);
+            Function.init(functions, baseCursor, executionContext, null);
         }
 
         private void reopen(ObjList<Function> list) {

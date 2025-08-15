@@ -294,7 +294,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_EXISTS:
                     if (!ff.rmdir(path)) {
                         LOG.error()
-                                .$("could not overwrite table [tableName='").utf8(tableName)
+                                .$("could not overwrite table [tableName='").$safe(tableName)
                                 .$("',path='").$(path)
                                 .$(", errno=").$(ff.errno())
                                 .I$();
@@ -302,7 +302,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     securityContext.authorizeTableCreate();
-                    try (MemoryMARW memory = Vm.getMARWInstance()) {
+                    try (MemoryMARW memory = Vm.getCMARWInstance()) {
                         TableUtils.createTable(
                                 ff,
                                 root,
@@ -390,7 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.tableToken = cairoEngine.lockTableName(tableName, false);
+        this.tableToken = cairoEngine.lockTableName(tableName);
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
         }
@@ -675,7 +675,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } catch (TextImportException e) {
             LOG.error()
                     .$("could not import [phase=").$(CopyTask.getPhaseName(e.getPhase()))
-                    .$(", ex=").$(e.getFlyweightMessage())
+                    .$(", ex=").$safe(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
@@ -737,7 +737,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         closeWriter();
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.drop(tmpPath, tableToken);
+            cairoEngine.dropTableOrMatView(tmpPath, tableToken);
         }
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
@@ -840,7 +840,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             TypeManager typeManager,
-            SecurityContext securityContext) throws TextException {
+            SecurityContext securityContext
+    ) throws TextException {
         final TableWriter writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
@@ -942,7 +943,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         return path.equals(normalize(configuration.getConfRoot())) ||
-                path.equals(normalize(configuration.getRoot())) ||
+                path.equals(normalize(configuration.getDbRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
                 path.equals(normalize(configuration.getCheckpointRoot())) ||
                 path.equals(normalize(configuration.getBackupRoot()));
@@ -950,7 +951,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void logTypeError(int i, int type) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").$safe(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(type))
                 .$(", workerCount=").$(workerCount)
@@ -968,7 +969,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int hi = taskDistribution.getQuick(i * 3 + 2);
 
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put('_').put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableToken);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDbRoot()).concat(tableToken);
 
                 final int srcPlen = srcPath.size();
                 final int dstPlen = dstPath.size();
@@ -998,15 +999,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
-                        ff.iterateDir(srcPath.$(), (long name, int type) -> {
-                            if (type == Files.DT_FILE) {
-                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
-                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                        ff.iterateDir(
+                                srcPath.$(), (long name, int type) -> {
+                                    if (type == Files.DT_FILE) {
+                                        srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
+                                        dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
+                                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                            throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                        }
+                                    }
                                 }
-                            }
-                        });
+                        );
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
@@ -1088,11 +1091,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
             if (linesIndexed > 0) {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k)."
+                );
             } else {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "No rows in input file to import.");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "No rows in input file to import."
+                );
             }
         }
 
@@ -1392,11 +1399,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    void prepareTable(ObjList<CharSequence> names,
-                      ObjList<TypeAdapter> types,
-                      Path path,
-                      TypeManager typeManager,
-                      SecurityContext securityContext)
+    void prepareTable(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            SecurityContext securityContext
+    )
             throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
@@ -1439,7 +1448,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     createTable(
                             ff,
                             configuration.getMkDirMode(),
-                            configuration.getRoot(),
+                            configuration.getDbRoot(),
                             tableToken.getDirName(),
                             targetTableStructure.getTableName(),
                             targetTableStructure,
@@ -1659,11 +1668,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public boolean isIndexed(int columnIndex) {
             return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
         }
 
         @Override

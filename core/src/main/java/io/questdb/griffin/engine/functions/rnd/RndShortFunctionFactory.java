@@ -47,10 +47,10 @@ public class RndShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction();
+        return new RndShortFunction();
     }
 
-    private static class RndFunction extends ShortFunction implements Function {
+    private static class RndShortFunction extends ShortFunction implements Function {
 
         private Rnd rnd;
 
@@ -62,6 +62,21 @@ public class RndShortFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override

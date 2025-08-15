@@ -24,7 +24,21 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EmptyTxnScoreboardPool;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxnScoreboardPool;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,8 +49,26 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IOURing;
+import io.questdb.std.IOURingFacade;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -60,6 +92,7 @@ public class CopyTask {
     public static final byte STATUS_FAILED = 2;
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_STARTED = 0;
+    private static final TxnScoreboardPool EMPTY_SCOREBOARD_POOL = new EmptyTxnScoreboardPool();
     private static final Log LOG = LogFactory.getLog(CopyTask.class);
     private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
     private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
@@ -416,7 +449,7 @@ public class CopyTask {
                             long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
                                     | SwarUtils.markZeroBytes(word ^ MASK_QUOTE);
                             if (zeroBytesWord == 0) {
-                                ptr += 7;
+                                ptr += 8;
                                 continue;
                             } else {
                                 ptr += SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
@@ -491,7 +524,7 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
             String tableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false, false, false);
+            TableToken tableToken = new TableToken(tableName, tableName, cairoEngine.getNextTableId(), false, false, false);
 
             final int columnCount = metadata.getColumnCount();
             try (
@@ -505,8 +538,8 @@ public class CopyTask {
                             root,
                             cairoEngine.getDdlListener(tableToken),
                             cairoEngine.getCheckpointStatus(),
-                            cairoEngine.getMetrics(),
-                            cairoEngine
+                            cairoEngine,
+                            EMPTY_SCOREBOARD_POOL
                     )
             ) {
                 for (int i = 0; i < columnCount; i++) {
@@ -646,7 +679,7 @@ public class CopyTask {
             TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
             path.of(root).concat(tableToken.getTableName()).put('_').put(index);
             int plen = path.size();
-            TableUtils.setPathForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
+            TableUtils.setPathForNativePartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
             long columnMemory = 0;
@@ -877,7 +910,7 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) engine.getTableIdGenerator().getNextId(), false, false, false);
+            TableToken tableToken = new TableToken(publicTableName, publicTableName, engine.getNextTableId(), false, false, false);
             createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
 
             try (
@@ -891,8 +924,8 @@ public class CopyTask {
                             importRoot,
                             engine.getDdlListener(tableToken),
                             engine.getCheckpointStatus(),
-                            engine.getMetrics(),
-                            engine
+                            engine,
+                            EMPTY_SCOREBOARD_POOL
                     )
             ) {
                 tableWriterRef = writer;
@@ -1174,8 +1207,8 @@ public class CopyTask {
 
                 final long len = ff.length(fd);
                 if (len == -1) {
-                    throw CairoException.critical(ff.errno()).put(
-                                    "could not get length of file [path=").put(tmpPath)
+                    throw CairoException.critical(ff.errno())
+                            .put("could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }
 
@@ -1325,6 +1358,7 @@ public class CopyTask {
                 logError(offset, fieldIndex, dus);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
+                        w.cancel();
                         tableWriterRef.rollback();
                         throw TextException.$("bad syntax [line offset=").put(offset).put(",column=").put(fieldIndex).put(']');
                     case Atomicity.SKIP_ROW:
@@ -1351,7 +1385,9 @@ public class CopyTask {
                 if (i == timestampIndex || dus.size() == 0) {
                     continue;
                 }
-                if (onField(offset, dus, w, i)) return;
+                if (onField(offset, dus, w, i)) {
+                    return;
+                }
             }
             w.append();
         }

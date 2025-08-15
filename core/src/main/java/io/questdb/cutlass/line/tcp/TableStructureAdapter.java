@@ -24,7 +24,12 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
@@ -45,7 +50,12 @@ public class TableStructureAdapter implements TableStructure {
     private CharSequence tableName;
     private int timestampIndex = -1;
 
-    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy, boolean walEnabledDefault) {
+    public TableStructureAdapter(
+            CairoConfiguration configuration,
+            DefaultColumnTypes defaultColumnTypes,
+            int defaultPartitionBy,
+            boolean walEnabledDefault
+    ) {
         this.cairoConfiguration = configuration;
         this.defaultColumnTypes = defaultColumnTypes;
         this.defaultPartitionBy = defaultPartitionBy;
@@ -84,7 +94,11 @@ public class TableStructureAdapter implements TableStructure {
         if (columnIndex == getTimestampIndex()) {
             return ColumnType.TIMESTAMP;
         }
-        return defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        if (columnType == ColumnType.ARRAY) {
+            columnType = entities.get(columnIndex).getArray().getType();
+        }
+        return columnType;
     }
 
     @Override
@@ -134,11 +148,6 @@ public class TableStructureAdapter implements TableStructure {
 
     @Override
     public boolean isIndexed(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
         return false;
     }
 

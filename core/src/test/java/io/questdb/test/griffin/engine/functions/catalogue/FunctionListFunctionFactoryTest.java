@@ -25,7 +25,9 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -34,7 +36,6 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -58,7 +59,7 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
 
     private static Set<String> expectedFunctionNames() {
         Set<String> names = new HashSet<>();
-        for (FunctionFactory factory : ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())) {
+        for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(LOG).build()) {
             String signature = factory.getSignature();
             String name = signature.substring(0, signature.indexOf('('));
             if (isExcluded(name)) {
@@ -69,10 +70,10 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
         return names;
     }
 
-    private static Set<String> expectedFunctions() {
+    private static Set<String> expectedFunctions() throws SqlException {
         Set<String> lines = new HashSet<>();
         StringSink sink2 = new StringSink();
-        for (FunctionFactory factory : ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())) {
+        for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(LOG).build()) {
             String signature = factory.getSignature();
             String name = signature.substring(0, signature.indexOf('('));
             if (isExcluded(name)) {
@@ -85,6 +86,17 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
             sink2.put(factory.isRuntimeConstant()).put('\t');
             sink2.put(FunctionListFunctionFactory.FunctionFactoryType.getType(factory).name()).put('\n');
             lines.add(sink2.toString());
+
+            if (factory.shouldSwapArgs()) {
+                sink2.clear();
+                sink2.put(name).put('\t');
+                signature = FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs(name, signature);
+                sink2.put(signature).put('\t');
+                FunctionFactoryDescriptor.translateSignature(name, signature, sink2).put('\t');
+                sink2.put(factory.isRuntimeConstant()).put('\t');
+                sink2.put(FunctionListFunctionFactory.FunctionFactoryType.getType(factory).name()).put('\n');
+                lines.add(sink2.toString());
+            }
         }
         return lines;
     }

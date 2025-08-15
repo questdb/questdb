@@ -33,7 +33,7 @@ public class TruncateUncachedSymbolTest extends AbstractCairoTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl("CREATE TABLE\n" +
+                    execute("CREATE TABLE\n" +
                             "positions(\n" +
                             "\ttime timestamp, \n" +
                             "\tuuid symbol cache, \n" +
@@ -53,8 +53,8 @@ public class TruncateUncachedSymbolTest extends AbstractCairoTest {
                             "\thash6i int\n" +
                             ")\n" +
                             "timestamp(time);");
-                    ddl("alter TABLE positions ALTER COLUMN hash6 ADD INDEX", sqlExecutionContext);
-                    insert("INSERT INTO positions\n" +
+                    execute("alter TABLE positions ALTER COLUMN hash6 ADD INDEX", sqlExecutionContext);
+                    execute("INSERT INTO positions\n" +
                             "VALUES(\n" +
                             "    1578506142000000L,\n" +
                             "    '123e4567-e89b-12d3-a456-426614174000',\n" +
@@ -83,7 +83,7 @@ public class TruncateUncachedSymbolTest extends AbstractCairoTest {
                                     "2020-01-08T17:55:42.000000Z\t123e4567-e89b-12d3-a456-426614174000\t54.1803268\t7.8889438\tu\tu1\tu1t\tu1ts\tu1ts5\tu1ts5x\t1\t2\t3\t4\t5\t6\n"
                     );
 
-                    ddl("truncate table positions");
+                    execute("truncate table positions");
 
                     TestUtils.assertSql(
                             engine,

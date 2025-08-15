@@ -32,8 +32,8 @@ public class NullEqualsTest extends AbstractCairoTest {
     @Test
     public void testDoubleNullsEquals() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (a double, b double)");
-            insert("insert into x values(null, null)");
+            execute("create table x (a double, b double)");
+            execute("insert into x values(null, null)");
             assertSql("a\tb\n", "select * from x where a <> b");
             assertSql("a\tb\nnull\tnull\n", "select * from x where a = b");
         });
@@ -42,12 +42,12 @@ public class NullEqualsTest extends AbstractCairoTest {
     @Test
     public void testFloatNullNotNullEquals() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (a float, b float)");
-            insert("insert into x values(null, 1.0)");
-            insert("insert into x values(3.14, 1.0)");
+            execute("create table x (a float, b float)");
+            execute("insert into x values(null, 1.0)");
+            execute("insert into x values(3.14, 1.0)");
             assertSql("a\tb\n" +
-                    "null\t1.0000\n" +
-                    "3.1400\t1.0000\n", "select * from x where a <> b");
+                    "null\t1.0\n" +
+                    "3.14\t1.0\n", "select * from x where a <> b");
             assertSql("a\tb\n", "select * from x where a = b");
         });
     }
@@ -55,8 +55,8 @@ public class NullEqualsTest extends AbstractCairoTest {
     @Test
     public void testFloatNullsEquals() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (a float, b float)");
-            insert("insert into x values(null, null)");
+            execute("create table x (a float, b float)");
+            execute("insert into x values(null, null)");
             assertSql("a\tb\n", "select * from x where a <> b");
             assertSql("a\tb\nnull\tnull\n", "select * from x where a = b");
         });

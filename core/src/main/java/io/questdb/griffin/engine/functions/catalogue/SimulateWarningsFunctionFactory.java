@@ -53,7 +53,6 @@ public class SimulateWarningsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-
         if (configuration.isDevModeEnabled()) {
             final String tag = args.get(0).getStrA(null).toString();
             final String warning = args.get(1).getStrA(null).toString();
@@ -79,8 +78,8 @@ public class SimulateWarningsFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override

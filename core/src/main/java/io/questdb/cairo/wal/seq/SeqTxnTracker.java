@@ -24,34 +24,37 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
-import io.questdb.cairo.wal.O3JobParallelismRegulator;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Rnd;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.TestOnly;
 
-public class SeqTxnTracker implements O3JobParallelismRegulator {
-    private static final Log LOG = LogFactory.getLog(SeqTxnTracker.class);
+public class SeqTxnTracker {
+    public static final long UNINITIALIZED_TXN = -1;
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private final Metrics metrics;
+    private final TableWriterPressureControlImpl pressureControl;
+    private volatile long dirtyWriterTxn;
+    private boolean dropped;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private int maxRecordedInflightPartitions = 1;
-    // positive int: holds max parallelism
-    // negative int: holds backoff counter
-    private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     @SuppressWarnings("FieldMayBeFinal")
-    private volatile long seqTxn = -1;
+    private volatile long seqTxn = UNINITIALIZED_TXN;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
-    private long walBackoffUntil = -1;
-    private volatile long writerTxn = -1;
+    private volatile long writerTxn = UNINITIALIZED_TXN;
+
+    public SeqTxnTracker(CairoConfiguration configuration) {
+        this.pressureControl = new TableWriterPressureControlImpl(configuration);
+        this.metrics = configuration.getMetrics();
+
+    }
 
     public String getErrorMessage() {
         return errorMessage;
@@ -61,18 +64,12 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return errorTag;
     }
 
-    public int getMaxO3MergeParallelism() {
-        return Math.max(1, memoryPressureRegulationValue);
+    public long getLagTxnCount() {
+        return Math.max(0, this.dirtyWriterTxn - this.writerTxn);
     }
 
-    public int getMemoryPressureLevel() {
-        if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
-            return 0;
-        }
-        if (memoryPressureRegulationValue < 0) {
-            return 2;
-        }
-        return 1;
+    public TableWriterPressureControl getMemPressureControl() {
+        return pressureControl;
     }
 
     @TestOnly
@@ -85,60 +82,30 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return writerTxn;
     }
 
-    public void hadEnoughMemory(CharSequence tableName, Rnd rnd) {
-        maxRecordedInflightPartitions = 1;
-        walBackoffUntil = -1;
-        if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
-            // already at max parallelism, can't go more optimistic
-            return;
-        }
-        if (memoryPressureRegulationValue < 0) {
-            // was in backoff, go back to parallelism = 1
-            memoryPressureRegulationValue = 1;
-            LOG.info().$("Memory pressure easing off, removing backoff [table=").$(tableName).I$();
-            return;
-        }
-        if (rnd.nextInt(4) == 0) { // 25% chance to double parallelism
-            int beforeDoubling = memoryPressureRegulationValue;
-            memoryPressureRegulationValue *= 2;
-            if (memoryPressureRegulationValue < beforeDoubling) {
-                // overflow
-                memoryPressureRegulationValue = Integer.MAX_VALUE;
-            }
-        }
-        LOG.info().$("Memory pressure easing off [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
-    }
-
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
-        Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
-        long wtxn = writerTxn;
-        while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
-            wtxn = writerTxn;
+        if (Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1) && isSuspended) {
+            metrics.tableWriterMetrics().incSuspendedTables();
         }
+        // seqTxn has to be initialized before writerTxn since isInitialised() method checks writerTxn
         long stxn = seqTxn;
         while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
+        metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
+        long wtxn = writerTxn;
+        while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
+            wtxn = writerTxn;
+        }
+        metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
         return seqTxn > 0 && seqTxn > writerTxn;
     }
 
     public boolean isInitialised() {
-        return writerTxn != -1;
+        return writerTxn != UNINITIALIZED_TXN;
     }
 
-    @TestOnly
     public boolean isSuspended() {
         return suspendedState < 0;
-    }
-
-    public boolean notifyCommitReadable(long newWriterTxn) {
-        // This is only called under TableWriter lock
-        // with no threads race
-        writerTxn = newWriterTxn;
-        if (newWriterTxn > -1) {
-            suspendedState = 1;
-        }
-        return newWriterTxn < seqTxn;
     }
 
     public boolean notifyOnCheck(long newSeqTxn) {
@@ -148,7 +115,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
-        return writerTxn < seqTxn && suspendedState > 0 && MicrosecondClockImpl.INSTANCE.getTicks() > walBackoffUntil;
+        return writerTxn < seqTxn && suspendedState > 0 && pressureControl.isReadyToProcess();
     }
 
     public boolean notifyOnCommit(long newSeqTxn) {
@@ -157,6 +124,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                metrics.walMetrics().addSeqTxn(newSeqTxn - stxn);
                 break;
             }
             stxn = seqTxn;
@@ -168,38 +136,13 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    /**
-     * Applies anti-OOM measures if possible, either by reducing job parallelism, or applying backoff.<br>
-     * If it was possible to apply more measures, returns true → the operation can retry.<br>
-     * If all measures were exhausted, returns false → the operation should now fail.
-     */
-    public boolean onOutOfMemory(long nowMicros, CharSequence tableName, Rnd rnd) {
-        if (maxRecordedInflightPartitions == 1) {
-            // There was no parallelism
-            if (memoryPressureRegulationValue <= -5) {
-                // Maximum backoff already tried => fail
-                walBackoffUntil = -1;
-                return false;
-            }
-            if (memoryPressureRegulationValue > 0) {
-                // Switch from reducing parallelism to backoff
-                memoryPressureRegulationValue = -1;
-            } else {
-                // Increase backoff counter
-                memoryPressureRegulationValue--;
-            }
-            int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-memoryPressureRegulationValue).$(", delay=").$(delayMicros).$(" us]").$();
-            walBackoffUntil = nowMicros + delayMicros;
-            return true;
+    public synchronized void notifyOnDrop() {
+        if (dropped) {
+            return;
         }
-        // There was some parallelism, halve max parallelism
-        walBackoffUntil = -1;
-        memoryPressureRegulationValue = maxRecordedInflightPartitions / 2;
-        maxRecordedInflightPartitions = 1;
-        LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
-
-        return true;
+        dropped = true;
+        metrics.walMetrics().addSeqTxn(-seqTxn);
+        metrics.walMetrics().addWriterTxn(-writerTxn);
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
@@ -209,6 +152,8 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         // should be the last one to be set
         // to make sure error details are available for read when the table is suspended
         this.suspendedState = -1;
+
+        metrics.tableWriterMetrics().incSuspendedTables();
     }
 
     public void setUnsuspended() {
@@ -218,14 +163,32 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
 
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
+
+        metrics.tableWriterMetrics().decSuspendedTables();
     }
 
-    public boolean shouldBackOffDueToMemoryPressure(long nowMicros) {
-        return nowMicros < walBackoffUntil;
-    }
-
-    @Override
-    public void updateInflightPartitions(int count) {
-        maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
+    /**
+     * Updates writerTxn and dirtyWriterTxn and returns true if the ApplyWal2Tables job should be notified.
+     *
+     * @param writerTxn      txn that is available for reading
+     * @param dirtyWriterTxn txn that is in flight that is not yet fully written
+     * @return true if ApplyWal2Tables job should be notified
+     */
+    public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        if (dropped) {
+            return false;
+        }
+        long prevWriterTxn = this.writerTxn;
+        long prevDirtyWriterTxn = this.dirtyWriterTxn;
+        this.writerTxn = writerTxn;
+        this.dirtyWriterTxn = dirtyWriterTxn;
+        // Progress made means table is not suspended
+        if (writerTxn > prevWriterTxn) {
+            suspendedState = 1;
+            metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+        } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
+            suspendedState = 1;
+        }
+        return writerTxn < seqTxn;
     }
 }

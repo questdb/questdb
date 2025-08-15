@@ -29,7 +29,7 @@ import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * An immutable flyweight for a UTF-8 string stored in native memory.
+ * A flyweight to an immutable UTF-8 string stored in native memory.
  */
 public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
@@ -37,6 +37,21 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     private boolean ascii;
     private long hi;
     private long lo;
+
+    /**
+     * Trim the left by `count` bytes.
+     */
+    public void advance(int count) {
+        this.lo += count;
+        assert lo <= hi;
+    }
+
+    /**
+     * Trim left by one byte.
+     */
+    public void advance() {
+        advance(1);
+    }
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -70,6 +85,10 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         return this;
     }
 
+    public DirectUtf8String of(DirectUtf8String value) {
+        return of(value.lo(), value.hi());
+    }
+
     @Override
     public long ptr() {
         return lo;
@@ -88,6 +107,10 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     public void squeeze() {
         this.lo++;
         this.hi--;
+    }
+
+    public void squeezeHi(long delta) {
+        this.hi -= delta;
     }
 
     @NotNull

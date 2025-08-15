@@ -33,23 +33,36 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
+
+import java.util.function.IntFunction;
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
     public static final String SIGNATURE = "information_schema.columns()";
-
+    private static final IntObjHashMap<String> OID_TO_TYPE_NAME = new IntObjHashMap<>();
+    public static IntFunction<String> TYPE_TO_NAME = columnType -> {
+        int typeOid = PGOids.getTypeOid(columnType);
+        String sqlStdName = OID_TO_TYPE_NAME.get(typeOid);
+        if (sqlStdName != null) {
+            return sqlStdName;
+        }
+        return "unknown";
+    };
 
     @Override
     public String getSignature() {
@@ -69,18 +82,17 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new ColumnsCursorFactory());
+        return new CursorFunction(new ColumnsCursorFactory(TYPE_TO_NAME));
     }
 
-
-    private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
+    static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
         private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
         private long tableCacheVersion = -1;
 
-        private ColumnsCursorFactory() {
+        ColumnsCursorFactory(IntFunction<String> typeToName) {
             super(METADATA);
-            this.cursor = new ColumnRecordCursor(tableCache);
+            this.cursor = new ColumnRecordCursor(tableCache, typeToName);
         }
 
         @Override
@@ -106,12 +118,14 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final ColumnsRecord record = new ColumnsRecord();
             private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final IntFunction<String> typeToName;
             private int columnIdx;
             private int iteratorIdx;
             private CairoTable table;
 
-            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache, IntFunction<String> typeToName) {
                 this.tableCache = tableCache;
+                this.typeToName = typeToName;
             }
 
             @Override
@@ -127,34 +141,21 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
-
-                if (table == null) {
-                    if (!nextTable()) {
+                do {
+                    if (table == null && !nextTable()) {
                         return false;
                     }
-                }
-
-                assert table != null;
-                // we have a table
-
-                if (table == null) {
-                    throw new RuntimeException();
-                }
-
-                if (columnIdx < table.getColumnCount() - 1) {
-                    columnIdx++;
-                } else {
-                    columnIdx = -1;
-                    table = null;
-                    return hasNext();
-                }
-
-                CairoColumn column = table.getColumnQuiet(columnIdx);
-                assert column != null;
-
-                record.of(table.getTableName(), columnIdx, column.getName(), ColumnType.nameOf(column.getType()));
-
-                return true;
+                    // we have a table
+                    if (columnIdx < table.getColumnCount() - 1) {
+                        columnIdx++;
+                        CairoColumn column = table.getColumnQuiet(columnIdx);
+                        record.of(table.getTableName(), columnIdx, column.getName(), typeToName.apply(column.getType()));
+                        return true;
+                    } else {
+                        columnIdx = -1;
+                        table = null;
+                    }
+                } while (true);
             }
 
             public boolean nextTable() {
@@ -162,9 +163,14 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 if (iteratorIdx < tableCache.size() - 1) {
                     table = tableCache.getAt(++iteratorIdx);
-                } else return false;
+                    return true;
+                }
+                return false;
+            }
 
-                return true;
+            @Override
+            public long preComputedStateSize() {
+                return 0;
             }
 
             @Override
@@ -194,10 +200,22 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 public CharSequence getStrA(int col) {
                     switch (col) {
                         case 0:
-                            return tableName;
+                            // table_catalog
+                            return Constants.DB_NAME;
+                        case 1:
+                            // table_schema
+                            return Constants.PUBLIC_SCHEMA;
                         case 2:
-                            return columnName;
+                            return tableName;
                         case 3:
+                            return columnName;
+                        case 5:
+                            // column_default
+                            return null;
+                        case 6:
+                            // is_nullable
+                            return "yes";
+                        case 7:
                             return dataType;
                     }
                     return null;
@@ -210,8 +228,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStrA(col);
-                    return str != null ? str.length() : -1;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 private void of(CharSequence tableName, int ordinalPosition, CharSequence columnName, CharSequence dataType) {
@@ -226,10 +243,31 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("table_catalog", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("table_schema", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("column_default", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("is_nullable", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));
         METADATA = metadata;
+
+        // these are defined by the SQL standard, not even by PostgreSQL
+        // thus they are not in PGOids
+        OID_TO_TYPE_NAME.put(PGOids.PG_VARCHAR, "character varying");
+        OID_TO_TYPE_NAME.put(PGOids.PG_TIMESTAMP, "timestamp without time zone");
+        OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT8, "double precision");
+        OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT4, "real");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INT4, "integer");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INT2, "smallint");
+        OID_TO_TYPE_NAME.put(PGOids.PG_CHAR, "character");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INT8, "bigint");
+        OID_TO_TYPE_NAME.put(PGOids.PG_BOOL, "boolean");
+        OID_TO_TYPE_NAME.put(PGOids.PG_BYTEA, "bytea");
+        OID_TO_TYPE_NAME.put(PGOids.PG_DATE, "date");
+        OID_TO_TYPE_NAME.put(PGOids.PG_UUID, "character varying"); // SQL standard does not have UUID
+        OID_TO_TYPE_NAME.put(PGOids.PG_INTERNAL, "internal");
+        OID_TO_TYPE_NAME.put(PGOids.PG_OID, "integer"); // SQL standard does not have OID
     }
 }

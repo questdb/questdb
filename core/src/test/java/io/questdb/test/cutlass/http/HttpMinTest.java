@@ -28,13 +28,13 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -59,9 +59,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
     public void testResponsiveOnMemoryPressure() throws Exception {
         // TODO: fix on Windows
         Assume.assumeFalse(Os.isWindows());
-        Rnd random = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            long httpConnMem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
             assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
 
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -71,11 +69,12 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.start();
-                HttpContextConfiguration httpMinConfg = serverMain.getConfiguration().getHttpMinServerConfiguration().getHttpContextConfiguration();
-                long expectedAllocation = httpMinConfg.getSendBufferSize() + 20
-                        + httpMinConfg.getRecvBufferSize()
-                        + httpMinConfg.getRequestHeaderBufferSize() + 64
-                        + httpMinConfg.getMultipartHeaderBufferSize() + 64;
+                HttpServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
+                HttpContextConfiguration httpMinContextConfig = httpMinConfig.getHttpContextConfiguration();
+                long expectedAllocation = httpMinConfig.getSendBufferSize() + 20
+                        + httpMinConfig.getRecvBufferSize()
+                        + httpMinContextConfig.getRequestHeaderBufferSize() + 64
+                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64;
 
                 // Wait http min threads to start, they will need to allocate some memory
                 // directly after the server start.
@@ -83,13 +82,12 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     Os.sleep(10);
                 }
 
-                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getDispatcherConfiguration().getBindPort();
+                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
                 long buff = 0, rssAvailable = 0;
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-
                     while (true) {
                         try {
-                            rssAvailable = Unsafe.getRssMemAvailable();
+                            rssAvailable = Unsafe.getRssMemLimit() - Unsafe.getRssMemUsed();
                             buff = Unsafe.malloc(rssAvailable, MemoryTag.NATIVE_DEFAULT);
                             break;
                         } catch (CairoException e) {

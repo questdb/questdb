@@ -25,9 +25,19 @@
 package io.questdb.griffin.engine.window;
 
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordArray;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -75,7 +85,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
             this.comparators = comparators;
-            RecordChain recordChain = new RecordChain(
+            RecordArray recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
                     configuration.getSqlWindowStorePageSize(),
@@ -172,6 +182,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
         return cursor;
@@ -273,14 +285,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     class CachedWindowRecordCursor implements RecordCursor {
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
-        private final RecordChain recordChain;
+        private final RecordArray recordChain;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
-        public CachedWindowRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
+        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<LongTreeChain> orderedSources) {
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
@@ -340,6 +352,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
+        public long preComputedStateSize() {
+            return recordChain.size();
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             recordChain.recordAt(record, atRowId);
         }
@@ -364,7 +381,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             final Record chainRightRecord = recordChain.getRecordB();
             if (orderedGroupCount > 0) {
                 while (baseCursor.hasNext()) {
-                    recordChainOffset = recordChain.put(record, recordChainOffset);
+                    recordChainOffset = recordChain.put(record);
                     recordChain.recordAt(chainRecord, recordChainOffset);
                     for (int i = 0; i < orderedGroupCount; i++) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
@@ -374,7 +391,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    recordChainOffset = recordChain.put(record, recordChainOffset);
+                    recordChainOffset = recordChain.put(record);
                 }
             }
 
@@ -402,10 +419,18 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (unorderedFunctions != null) {
                 for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
                     final WindowFunction f = unorderedFunctions.getQuick(j);
-                    recordChain.toTop();
-                    while (recordChain.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                    if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                        recordChain.toTop();
+                        while (recordChain.hasNext()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                        }
+                    } else {
+                        recordChain.toBottom();
+                        while (recordChain.hasPrev()) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
+                        }
                     }
                 }
             }
@@ -477,7 +502,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 reopenTrees();
                 reopen(allFunctions);
             }
-            Function.init(allFunctions, this, executionContext);
+            Function.init(allFunctions, this, executionContext, null);
         }
 
         private void reopen(ObjList<?> list) {

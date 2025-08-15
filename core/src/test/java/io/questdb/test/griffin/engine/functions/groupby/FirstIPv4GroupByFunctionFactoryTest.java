@@ -38,7 +38,7 @@ public class FirstIPv4GroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-        ddl("create table tab (f ipv4)");
+        execute("create table tab (f ipv4)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -60,7 +60,7 @@ public class FirstIPv4GroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-        ddl("create table tab (f ipv4)");
+        execute("create table tab (f ipv4)");
 
         try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
@@ -85,7 +85,7 @@ public class FirstIPv4GroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-        ddl("create table tab (f ipv4)");
+        execute("create table tab (f ipv4)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -108,7 +108,7 @@ public class FirstIPv4GroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-        ddl("create table tab (f ipv4)");
+        execute("create table tab (f ipv4)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {

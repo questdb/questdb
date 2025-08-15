@@ -24,13 +24,17 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public interface LineHttpProcessorConfiguration {
+
     boolean autoCreateNewColumns();
 
     boolean autoCreateNewTables();
+
+    CairoConfiguration getCairoConfiguration();
 
     short getDefaultColumnTypeForFloat();
 
@@ -39,6 +43,8 @@ public interface LineHttpProcessorConfiguration {
     int getDefaultPartitionBy();
 
     CharSequence getInfluxPingVersion();
+
+    long getMaxRecvBufferSize();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -51,4 +57,6 @@ public interface LineHttpProcessorConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isUseLegacyStringDefault();
+
+    boolean logMessageOnError();
 }

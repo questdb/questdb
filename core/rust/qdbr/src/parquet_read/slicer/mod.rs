@@ -2,7 +2,7 @@ pub mod dict_decoder;
 pub mod dict_slicer;
 pub mod rle;
 
-use crate::parquet_write::{ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
 use std::mem::size_of;
@@ -20,7 +20,7 @@ pub trait DataPageSlicer {
 pub struct DataPageFixedSlicer<'a, const N: usize> {
     data: &'a [u8],
     pos: usize,
-    row_count: usize,
+    sliced_row_count: usize,
 }
 
 impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
@@ -41,11 +41,11 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count * N
+        self.sliced_row_count * N
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -55,14 +55,14 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
 
 impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
     pub fn new(data: &'a [u8], row_count: usize) -> Self {
-        Self { data, pos: 0, row_count }
+        Self { data, pos: 0, sliced_row_count: row_count }
     }
 }
 
 pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
     decoder: delta_bitpacked::Decoder<'a>,
-    row_count: usize,
-    error: Result<(), ParquetError>,
+    sliced_row_count: usize,
+    error: ParquetResult<()>,
     error_value: [u8; N],
     buffer: [u8; N],
 }
@@ -78,16 +78,14 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                     &self.buffer
                 }
                 Err(_) => {
-                    self.error = Err(ParquetError::OutOfSpec(
-                        "not enough values to iterate".to_string(),
-                    ));
+                    // TODO(amunra): Clean-up, this is _not_ a layout error!
+                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                     &self.error_value
                 }
             },
             None => {
-                self.error = Err(ParquetError::OutOfSpec(
-                    "not enough values to iterate".to_string(),
-                ));
+                // TODO(amunra): Clean-up, this is _not_ a layout error!
+                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                 &self.error_value
             }
         }
@@ -104,11 +102,11 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count * N
+        self.sliced_row_count * N
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -121,7 +119,7 @@ impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
         let decoder = delta_bitpacked::Decoder::try_new(data)?;
         Ok(Self {
             decoder,
-            row_count,
+            sliced_row_count: row_count,
             error: Ok(()),
             error_value: [0; N],
             buffer: [0; N],
@@ -131,7 +129,7 @@ impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
 
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
-    row_count: usize,
+    sliced_row_count: usize,
     index: usize,
     lengths: Vec<i32>,
     pos: usize,
@@ -158,7 +156,7 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
@@ -171,7 +169,11 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
 }
 
 impl<'a> DeltaLengthArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+    pub fn try_new(
+        data: &'a [u8],
+        row_count: usize,
+        sliced_row_count: usize,
+    ) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
         let lengths: Vec<_> = decoder
             .by_ref()
@@ -182,7 +184,7 @@ impl<'a> DeltaLengthArraySlicer<'a> {
         let data_offset = decoder.consumed_bytes();
         Ok(Self {
             data: &data[data_offset..],
-            row_count,
+            sliced_row_count,
             index: 0,
             lengths,
             pos: 0,
@@ -195,8 +197,9 @@ pub struct DeltaBytesArraySlicer<'a> {
     suffix: std::vec::IntoIter<i32>,
     data: &'a [u8],
     data_offset: usize,
+    sliced_row_count: usize,
     last_value: Vec<u8>,
-    error: Result<(), ParquetError>,
+    error: ParquetResult<()>,
 }
 
 impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
@@ -223,17 +226,14 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                             extend_lifetime
                         }
                         None => {
-                            self.error = Err(ParquetError::OutOfSpec(
-                                "not enough suffix values to iterate".to_string(),
-                            ));
+                            self.error =
+                                Err(fmt_err!(Layout, "not enough suffix values to iterate"));
                             &[]
                         }
                     }
                 }
                 None => {
-                    self.error = Err(ParquetError::OutOfSpec(
-                        "not enough prefix values to iterate".to_string(),
-                    ));
+                    self.error = Err(fmt_err!(Layout, "not enough prefix values to iterate"));
                     &[]
                 }
             },
@@ -252,7 +252,7 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
     }
 
     fn count(&self) -> usize {
-        self.prefix.size_hint().0
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
@@ -265,7 +265,11 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
 }
 
 impl<'a> DeltaBytesArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+    pub fn try_new(
+        data: &'a [u8],
+        row_count: usize,
+        sliced_row_count: usize,
+    ) -> ParquetResult<Self> {
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
         let prefix = (&mut decoder)
@@ -285,6 +289,7 @@ impl<'a> DeltaBytesArraySlicer<'a> {
             suffix: suffix.into_iter(),
             data: values,
             data_offset,
+            sliced_row_count,
             last_value: vec![],
             error: Ok(()),
         })
@@ -294,7 +299,7 @@ impl<'a> DeltaBytesArraySlicer<'a> {
 pub struct PlainVarSlicer<'a> {
     data: &'a [u8],
     pos: usize,
-    row_count: usize,
+    sliced_row_count: usize,
 }
 
 impl DataPageSlicer for PlainVarSlicer<'_> {
@@ -324,7 +329,7 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
 
     #[inline]
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     #[inline]
@@ -338,70 +343,21 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
 }
 
 impl<'a> PlainVarSlicer<'a> {
-    pub fn new(data: &'a [u8], row_count: usize) -> Self {
-        Self { data, pos: 0, row_count }
+    pub fn new(data: &'a [u8], sliced_row_count: usize) -> Self {
+        Self { data, pos: 0, sliced_row_count }
     }
 }
 
-// pub struct PlainVarDictSlicer<'a, T: DictDecoder> {
-//     data: &'a [u8],
-//     dict: T,
-//     pos: usize,
-//     row_count: usize,
-// }
-//
-// impl<T: DictDecoder> DataPageSlicer for PlainVarDictSlicer<'_, T> {
-//     fn next(&mut self) -> &[u8] {
-//         let index = unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) };
-//         self.pos += size_of::<u32>();
-//         self.dict.get_dict_value(index)
-//     }
-//
-//     fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
-//         None
-//     }
-//
-//     fn skip(&mut self, count: usize) {
-//         for _ in 0..count {
-//             let len = unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) };
-//             self.pos += len as usize + size_of::<u32>();
-//         }
-//     }
-//
-//     fn count(&self) -> usize {
-//         self.row_count
-//     }
-//
-//     fn data_size(&self) -> usize {
-//         self.row_count * self.dict.avg_key_len() as usize
-//     }
-//
-//     fn result(&self) -> ParquetResult<()> {
-//         Ok(())
-//     }
-// }
-//
-// impl<'a, T: DictDecoder> PlainVarDictSlicer<'a, T> {
-//     pub fn new(data: &'a [u8], dict: T, row_count: usize) -> Self {
-//         Self {
-//             data,
-//             dict,
-//             pos: 0,
-//             row_count,
-//         }
-//     }
-// }
-
 pub struct BooleanBitmapSlicer<'a> {
     bitmap_iter: BitmapIter<'a>,
-    row_count: usize,
+    sliced_row_count: usize,
     error: ParquetResult<()>,
 }
 
 const BOOL_TRUE: [u8; 1] = [1];
 const BOOL_FALSE: [u8; 1] = [0];
 
-impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
+impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     fn next(&mut self) -> &[u8] {
         if let Some(val) = self.bitmap_iter.next() {
             if val {
@@ -409,9 +365,7 @@ impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
             }
             return &BOOL_FALSE;
         }
-        self.error = Err(ParquetError::OutOfSpec(
-            "not enough bitmap values to iterate".to_string(),
-        ));
+        self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
         &BOOL_FALSE
     }
 
@@ -426,11 +380,11 @@ impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -439,9 +393,9 @@ impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
 }
 
 impl<'a> BooleanBitmapSlicer<'a> {
-    pub fn new(data: &'a [u8], row_count: usize) -> Self {
+    pub fn new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> Self {
         let bitmap_iter = BitmapIter::new(data, 0, row_count);
-        Self { bitmap_iter, row_count, error: Ok(()) }
+        Self { bitmap_iter, sliced_row_count, error: Ok(()) }
     }
 }
 

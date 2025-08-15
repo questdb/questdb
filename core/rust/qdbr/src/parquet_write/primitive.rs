@@ -1,5 +1,9 @@
 use std::fmt::Debug;
 
+use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
+use crate::parquet_write::Nullable;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
@@ -7,10 +11,6 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::schema::Repetition;
 use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
-use crate::parquet_write::{Nullable, ParquetError, ParquetResult};
 
 pub fn float_slice_to_page_plain<T, P>(
     slice: &[T],
@@ -61,10 +61,12 @@ where
             encoding,
             encode_delta_nullable,
         ),
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding integer as {:?}",
-            other
-        )))?,
+        other => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
     }
     .map(Page::Data)
 }
@@ -97,10 +99,12 @@ where
             encoding,
             encode_delta_notnull,
         ),
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding integer as {:?}",
-            other
-        )))?,
+        other => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
     }
     .map(Page::Data)
 }

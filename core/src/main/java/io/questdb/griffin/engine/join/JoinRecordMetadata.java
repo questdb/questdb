@@ -24,7 +24,14 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -94,15 +101,15 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
-        final CharSequence columnName = m.getName();
+        final CharSequence columnName = m.getColumnName();
         final int dot = addAlias(tableAlias, columnName);
         final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
-                    m.getType(),
-                    m.isIndexed(),
+                    m.getColumnType(),
+                    m.isSymbolIndexFlag(),
                     m.getIndexValueBlockCapacity(),
                     m.isSymbolTableStatic(),
                     m.getMetadata()
@@ -129,7 +136,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final MapKey key = map.withKey();
-        final int dot = Chars.indexOf(columnName, lo, '.');
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.', lo, hi);
         if (dot == -1) {
             key.putStr(null);
             key.putStrLowerCase(columnName, lo, hi);

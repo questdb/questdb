@@ -158,7 +158,7 @@ public class SymbolMapUtil {
 
     private static MemoryMARW open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, LPSZ path, MemoryMARW mem) {
         if (mem == null) {
-            mem = Vm.getMARWInstance(
+            mem = Vm.getCMARWInstance(
                     ff,
                     path,
                     mapPageSize,

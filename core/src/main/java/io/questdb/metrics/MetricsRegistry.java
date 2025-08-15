@@ -24,17 +24,23 @@
 
 package io.questdb.metrics;
 
-public interface MetricsRegistry extends Scrapable {
+public interface MetricsRegistry extends Target {
 
-    void addScrapable(Scrapable scrapable);
+    void addTarget(Target target);
+
+    AtomicLongGauge newAtomicLongGauge(CharSequence name);
+
+    CounterWithTwoLabels newCounter(
+            CharSequence name,
+            CharSequence labelName0,
+            CharSequence[] labelValues0,
+            CharSequence labelName1,
+            CharSequence[] labelValues1
+    );
 
     Counter newCounter(CharSequence name);
 
     CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
-
-    CounterWithTwoLabels newCounter(CharSequence name,
-                                    CharSequence labelName0, CharSequence[] labelValues0,
-                                    CharSequence labelName1, CharSequence[] labelValues1);
 
     DoubleGauge newDoubleGauge(CharSequence name);
 

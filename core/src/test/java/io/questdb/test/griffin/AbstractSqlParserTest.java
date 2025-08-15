@@ -34,7 +34,11 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
@@ -43,6 +47,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class AbstractSqlParserTest extends AbstractCairoTest {
+
     private static void assertSyntaxError0(
             String query,
             int position,
@@ -61,7 +66,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     TableModel tableModel = tableModels[i];
                     TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken).slash$();
                     configuration.getFilesFacade().rmdir(path);
                 }
             }
@@ -81,7 +86,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = nameSets.size(); i < n; i++) {
                     boolean f = nameSets.getQuick(i).contains(tok);
                     if (f) {
-                        Assert.assertFalse(found);
+                        Assert.assertFalse("ambiguous column: " + tok, found);
                         found = true;
                     }
                 }
@@ -111,6 +116,22 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
+    private void addColumnToNameSets(ObjList<LowerCaseCharSequenceHashSet> nameSets, CharSequence columnName) {
+        // Add column to name set 0 (it always exists, we are assuming this column can be referenced by the projection)
+        // unless that is, column already exists in one of the sets. If we don't check column existence, it might
+        // cause "ambiguous" column error.
+        boolean found = false;
+        for (int i = 0, n = nameSets.size(); i < n; i++) {
+            if (nameSets.getQuick(i).contains(columnName)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            nameSets.getQuick(0).add(columnName);
+        }
+    }
+
     protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
         refreshTablesInBaseEngine();
         assertSyntaxError0(query, position, contains, tableModels);
@@ -131,7 +152,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
         assertModel(
-                "insert into test (test_timestamp, test_value) values (cast('2020-12-31 15:15:51.663+00:00',timestamp), '256')",
+                "insert into test (test_timestamp, test_value) values ('2020-12-31 15:15:51.663+00:00'::timestamp, '256')",
                 "insert into test (test_timestamp, test_value) values (timestamp with time zone '2020-12-31 15:15:51.663+00:00', '256')",
                 ExecutionModel.INSERT,
                 tableModels
@@ -184,7 +205,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     TableModel tableModel = tableModels[i];
                     TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken).slash$();
                     Assert.assertTrue(filesFacade.rmdir(path));
                 }
             }
@@ -213,6 +234,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
             for (int i = 0, n = columns.size(); i < n; i++) {
                 AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
+                addColumnToNameSets(nameSets, columns.getQuick(i).getName());
             }
 
             columns = nested.getTopDownColumns();

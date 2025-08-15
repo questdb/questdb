@@ -69,12 +69,12 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_MIG);
 
         try (
-                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
+                MemoryARW virtualMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
                 Path path = new Path();
-                MemoryMARW rwMemory = Vm.getMARWInstance()
+                MemoryMARW rwMemory = Vm.getCMARWInstance()
         ) {
             MigrationContext context = new MigrationContext(engine, mem, tempMemSize, virtualMem, rwMemory);
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
 
             // check if all tables have been upgraded already
             path.concat(TableUtils.UPGRADE_FILE_NAME);
@@ -156,7 +156,7 @@ public class EngineMigration {
 
     private static void upgradeTables(MigrationContext context, int latestTableVersion, int latestMigrationVersion) {
         final FilesFacade ff = context.getFf();
-        final CharSequence root = context.getConfiguration().getRoot();
+        final CharSequence root = context.getConfiguration().getDbRoot();
         long mem = context.getTempMemory(8);
 
         try (Path path = new Path(); Path copyPath = new Path()) {

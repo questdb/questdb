@@ -26,30 +26,54 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
+public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
+    private final boolean crossedIndex;
     private final SelectedRecordCursor cursor;
     private SelectedPageFrameCursor pageFrameCursor;
+    private SelectedTimeFrameCursor timeFrameCursor;
 
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
         super(metadata);
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+        this.crossedIndex = isCrossedIndex(columnCrossIndex);
+    }
+
+    public static boolean isCrossedIndex(IntList columnCrossIndex) {
+        for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
+            if (columnCrossIndex.get(i) != i) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -80,6 +104,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public IntList getColumnCrossIndex() {
+        return columnCrossIndex;
+    }
+
+    @Override
     public CompiledFilter getCompiledFilter() {
         return base.getCompiledFilter();
     }
@@ -87,6 +116,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (!crossedIndex) {
+            return baseCursor;
+        }
         try {
             cursor.of(baseCursor);
             return cursor;
@@ -104,8 +136,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
-        if (baseCursor == null) {
-            return null;
+        if (baseCursor == null || !crossedIndex) {
+            return baseCursor;
         }
         if (pageFrameCursor == null) {
             pageFrameCursor = new SelectedPageFrameCursor(columnCrossIndex);
@@ -119,6 +151,18 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        TimeFrameRecordCursor baseCursor = base.getTimeFrameCursor(executionContext);
+        if (baseCursor == null || !crossedIndex) {
+            return baseCursor;
+        }
+        if (timeFrameCursor == null) {
+            timeFrameCursor = new SelectedTimeFrameCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+        }
+        return timeFrameCursor.of(baseCursor);
+    }
+
+    @Override
     public void halfClose() {
         base.halfClose();
     }
@@ -129,6 +173,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isProjection() {
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -136,6 +185,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
+    }
+
+    @Override
+    public boolean supportsTimeFrameCursor() {
+        return base.supportsTimeFrameCursor();
     }
 
     @Override
@@ -208,6 +262,33 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long getParquetAddr() {
+            return baseFrame.getParquetAddr();
+        }
+
+        @Override
+        public long getParquetFileSize() {
+            final long fileSize = baseFrame.getParquetFileSize();
+            assert fileSize > 0 || baseFrame.getFormat() != PartitionFormat.PARQUET;
+            return fileSize;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return baseFrame.getParquetRowGroup();
+        }
+
+        @Override
+        public int getParquetRowGroupHi() {
+            return baseFrame.getParquetRowGroupHi();
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return baseFrame.getParquetRowGroupLo();
+        }
+
+        @Override
         public long getPartitionHi() {
             return baseFrame.getPartitionHi();
         }
@@ -249,18 +330,13 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public IntList getColumnIndexes() {
+            return baseCursor.getColumnIndexes();
+        }
+
+        @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
-        }
-
-        @Override
-        public TableReader getTableReader() {
-            return baseCursor.getTableReader();
-        }
-
-        @Override
-        public long getUpdateRowId(long rowIndex) {
-            return baseCursor.getUpdateRowId(rowIndex);
         }
 
         @Override
@@ -269,14 +345,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public @Nullable PageFrame next() {
-            PageFrame baseFrame = baseCursor.next();
+        public @Nullable PageFrame next(long skipTarget) {
+            PageFrame baseFrame = baseCursor.next(skipTarget);
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
-        }
-
-        @Override
-        public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
-            return baseCursor.of(partitionFrameCursor);
         }
 
         @Override
@@ -297,6 +368,102 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         public SelectedPageFrameCursor wrap(PageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             return this;
+        }
+    }
+
+    public static final class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
+        private final IntList columnCrossIndex;
+        private final SelectedRecord recordA;
+        private final SelectedRecord recordB;
+        private TimeFrameRecordCursor baseCursor;
+
+        public SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
+            this.columnCrossIndex = columnCrossIndex;
+            this.recordA = new SelectedRecord(columnCrossIndex);
+            if (supportsRandomAccess) {
+                this.recordB = new SelectedRecord(columnCrossIndex);
+            } else {
+                this.recordB = null;
+            }
+        }
+
+        @Override
+        public void close() {
+            baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public Record getRecord() {
+            return recordA;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (recordB != null) {
+                return recordB;
+            }
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public TimeFrame getTimeFrame() {
+            return baseCursor.getTimeFrame();
+        }
+
+        @Override
+        public void jumpTo(int frameIndex) {
+            baseCursor.jumpTo(frameIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public boolean next() {
+            return baseCursor.next();
+        }
+
+        public SelectedTimeFrameCursor of(TimeFrameRecordCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            recordA.of(baseCursor.getRecord());
+            if (recordB != null) {
+                recordB.of(baseCursor.getRecordB());
+            }
+            return this;
+        }
+
+        @Override
+        public long open() throws DataUnavailableException {
+            return baseCursor.open();
+        }
+
+        @Override
+        public boolean prev() {
+            return baseCursor.prev();
+        }
+
+        @Override
+        public void recordAt(Record record, long rowId) {
+            record = ((SelectedRecord) record).getBaseRecord();
+            baseCursor.recordAt(record, rowId);
+        }
+
+        @Override
+        public void recordAtRowIndex(Record record, long rowIndex) {
+            record = ((SelectedRecord) record).getBaseRecord();
+            baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
         }
     }
 }

@@ -27,12 +27,23 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.UndefinedFunction;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -40,6 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<IPv4BindVariable> IPv4VarPool;
+    private final ObjectPool<ArrayBindVariable> arrayVarPool;
     private final ObjectPool<BooleanBindVariable> booleanVarPool;
     private final ObjectPool<ByteBindVariable> byteVarPool;
     private final ObjectPool<CharBindVariable> charVarPool;
@@ -76,6 +88,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
         this.uuidVarPool = new ObjectPool<>(UuidBindVariable::new, 8);
         this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
+        this.arrayVarPool = new ObjectPool<>(ArrayBindVariable::new, poolSize); // todo: this might be excessive, smaller pool size might be enough
     }
 
     @Override
@@ -98,13 +111,21 @@ public class BindVariableServiceImpl implements BindVariableService {
         geoHashVarPool.clear();
         uuidVarPool.clear();
         varcharVarPool.clear();
+        arrayVarPool.clear();
     }
 
     @Override
     public int define(int index, int type, int position) throws SqlException {
+        // check if the function already defined as this type
+        // to avoid overhead of re-defining each variable
+        Function function = getFunction(index);
+        if (function != null && function.getType() == type) {
+            return type;
+        }
         switch (ColumnType.tagOf(type)) {
             // unable to define undefined type
             case ColumnType.UNDEFINED:
+                setUndefined(index);
                 return type;
             case ColumnType.BOOLEAN:
                 setBoolean(index);
@@ -165,6 +186,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VARCHAR:
                 setVarchar(index);
                 return type;
+            case ColumnType.ARRAY:
+                setArrayType(index, type);
+                return type;
             default:
                 throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
         }
@@ -194,6 +218,19 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public ObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
+    }
+
+    @Override
+    public void setArray(int index, ArrayView value) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setArray0(function, value, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = arrayVarPool.next());
+            ((ArrayBindVariable) function).setView(value);
+        }
     }
 
     @Override
@@ -720,7 +757,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setVarchar(int index, Utf8Sequence value) throws SqlException {
+    public void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
@@ -749,6 +786,21 @@ public class BindVariableServiceImpl implements BindVariableService {
             throw SqlException.$(0, "bind variable at ").put(index).put(" is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
         }
         throw SqlException.$(0, "bind variable '").put(name).put("' is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
+    }
+
+    private static void setArray0(Function function, ArrayView value, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = ColumnType.tagOf(function.getType());
+        switch (functionType) {
+            case ColumnType.ARRAY:
+                ((ArrayBindVariable) function).setView(value);
+                break;
+            case ColumnType.STRING:
+            case ColumnType.VARCHAR:
+                throw new UnsupportedOperationException("implement me");
+            default:
+                reportError(function, ColumnType.ARRAY, index, name);
+                break;
+        }
     }
 
     private static void setBoolean0(Function function, boolean value, int index, @Nullable CharSequence name) throws SqlException {
@@ -1138,6 +1190,9 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.UUID:
                 SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
                 break;
+            case ColumnType.ARRAY:
+                ((ArrayBindVariable) function).parseArray(value);
+                break;
             default:
                 reportError(function, ColumnType.STRING, index, name);
                 break;
@@ -1201,7 +1256,12 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setVarchar0(
+            Function function,
+            @Transient Utf8Sequence value,
+            int index,
+            @Nullable CharSequence name
+    ) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:
@@ -1269,6 +1329,41 @@ public class BindVariableServiceImpl implements BindVariableService {
             default:
                 reportError(function, ColumnType.VARCHAR, index, name);
                 break;
+        }
+    }
+
+    private void setArray(int index) throws SqlException {
+        setArray(index, null);
+    }
+
+    private void setArrayType(int index, int colType) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function == null) {
+            indexedVariables.setQuick(index, function = arrayVarPool.next());
+            ((ArrayBindVariable) function).assignType(colType);
+        } else {
+            short tag = ColumnType.tagOf(function.getType());
+            if (tag == ColumnType.ARRAY) {
+                ((ArrayBindVariable) function).assignType(colType);
+            } else {
+                reportError(function, colType, index, null);
+            }
+        }
+    }
+
+    private void setUndefined(int index) {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            if (function.getType() != ColumnType.UNDEFINED) {
+                Misc.free(function);
+                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+            }
+        } else {
+            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
         }
     }
 }

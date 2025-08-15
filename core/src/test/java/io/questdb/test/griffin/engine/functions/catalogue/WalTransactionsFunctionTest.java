@@ -38,10 +38,10 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testNonWal() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY BYPASS WAL");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
-            ddl("alter table x add column z int");
+            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
+            execute("alter table x add column z int");
 
             try (RecordCursorFactory ignore = select("select * from wal_transactions('x')")) {
                 Assert.fail();
@@ -65,13 +65,41 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTransactionIdempotency() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\tsymbol SYMBOL CAPACITY 256 CACHE,\n" +
+                    "\tside SYMBOL CAPACITY 256 CACHE,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tamount DOUBLE,\n" +
+                    "\ttimestamp TIMESTAMP\n" +
+                    ") timestamp(timestamp) PARTITION BY DAY WAL\n");
+
+            assertQueryNoLeakCheck(
+                    "column\n" +
+                            "null\n",
+                    "with segments as (\n" +
+                            "\tselect walid, segmentId from wal_transactions('trades')\n" +
+                            "\twhere sequencerTxn = 10\n" +
+                            ")\n" +
+                            "select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt\n" +
+                            "join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId\n" +
+                            "where sequencerTxn > 10;\n",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWalTransactions() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
-            ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
-            ddl("alter table x add column z int");
+            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
+            execute("alter table x add column z int");
 
             drainWalQueue();
 
@@ -89,10 +117,10 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     public void testWalTransactionsLastLine() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
-            ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
-            ddl("alter table x add column z int");
+            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
+            execute("alter table x add column z int");
 
             drainWalQueue();
 
@@ -109,11 +137,11 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-            ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
-            insert("insert into x values ('2020-02-01T00:00:00.000000Z', 2, 3)");
-            ddl("alter table x add column z int");
-            ddl("alter table x drop column z");
+            execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
+            execute("insert into x values ('2020-02-01T00:00:00.000000Z', 2, 3)");
+            execute("alter table x add column z int");
+            execute("alter table x drop column z");
 
             drainWalQueue();
 

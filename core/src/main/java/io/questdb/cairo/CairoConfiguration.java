@@ -24,29 +24,44 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformation;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigPropertyValue;
+import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IOURingFacade;
+import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.Rnd;
+import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.lang.ThreadLocal;
 import java.util.Map;
 import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
-    long O_ASYNC = 0x40;
-    long O_DIRECT = 0x4000;
-    long O_NONE = 0;
-    long O_SYNC = 0x80;
+    int O_ASYNC = 0x40;
+    int O_DIRECT = 0x4000;
+    int O_NONE = 0;
+    int O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -56,6 +71,20 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    /**
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format.
+     *
+     * @return true if anything was exported
+     */
+    default boolean exportConfiguration(CharSink<?> sink) {
+        return false;
+    }
+
+    default boolean freeLeakedReaders() {
+        return true;
+    }
 
     /**
      * All effective configuration values are seen by the server instance.
@@ -101,7 +130,13 @@ public interface CairoConfiguration {
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
-    int getColumnCastModelPoolCapacity();
+    /**
+     * Maximum size for a generated alias, the column will be truncated if it's longer than that. Note
+     * that this flag only works if isColumnAliasExpressionEnabled is enabled.
+     *
+     * @return the maximum size of a generated alias.
+     */
+    int getColumnAliasGeneratedMaxSize();
 
     int getColumnIndexerQueueCapacity();
 
@@ -114,6 +149,8 @@ public interface CairoConfiguration {
     double getColumnPurgeRetryDelayMultiplier();
 
     int getColumnPurgeTaskPoolCapacity();
+
+    long getCommitLatency();
 
     int getCommitMode();
 
@@ -131,9 +168,9 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
-    long getCreateTableModelBatchSize();
+    int getCreateTableColumnModelPoolCapacity();
 
-    int getCreateTableModelPoolCapacity();
+    long getCreateTableModelBatchSize();
 
     long getDataAppendPageSize();
 
@@ -149,6 +186,11 @@ public interface CairoConfiguration {
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
     @NotNull
+    String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+
+    boolean getDebugWalApplyBlockFailureNoRetry();
+
+    @NotNull
     DateLocale getDefaultDateLocale();
 
     int getDefaultSeqPartTxnCount();
@@ -158,8 +200,6 @@ public interface CairoConfiguration {
     int getDefaultSymbolCapacity();
 
     int getDetachedMkDirMode();
-
-    int getDoubleToStrCastScale();
 
     default Map<String, String> getEnv() {
         return System.getenv();
@@ -172,10 +212,10 @@ public interface CairoConfiguration {
 
     int getFileOperationRetryCount();
 
+    boolean getFileDescriptorCacheEnabled();
+
     @NotNull
     FilesFacade getFilesFacade();
-
-    int getFloatToStrCastScale();
 
     long getGroupByAllocatorDefaultChunkSize();
 
@@ -187,9 +227,9 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    long getGroupByPresizeMaxHeapSize();
+    long getGroupByPresizeMaxCapacity();
 
-    long getGroupByPresizeMaxSize();
+    long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
 
@@ -197,6 +237,8 @@ public interface CairoConfiguration {
     default IOURingFacade getIOURingFacade() {
         return IOURingFacadeImpl.INSTANCE;
     }
+
+    int getIdGenerateBatchStep();
 
     long getIdleCheckInterval();
 
@@ -214,6 +256,12 @@ public interface CairoConfiguration {
 
     int getInsertModelPoolCapacity();
 
+    /**
+     * Installation root, i.e., the directory that usually contains the "conf", "db", etc. directories.
+     */
+    @NotNull
+    String getInstallRoot();
+
     int getLatestByQueueCapacity();
 
     @NotNull
@@ -222,6 +270,26 @@ public interface CairoConfiguration {
     boolean getLogLevelVerbose();
 
     boolean getLogSqlQueryProgressExe();
+
+    DateFormat getLogTimestampFormat();
+
+    String getLogTimestampTimezone();
+
+    DateLocale getLogTimestampTimezoneLocale();
+
+    TimeZoneRules getLogTimestampTimezoneRules();
+
+    long getMatViewInsertAsSelectBatchSize();
+
+    int getMatViewMaxRefreshIntervals();
+
+    int getMatViewMaxRefreshRetries();
+
+    long getMatViewRefreshIntervalsUpdatePeriod();
+
+    long getMatViewRefreshOomRetryTimeout();
+
+    int getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -236,6 +304,8 @@ public interface CairoConfiguration {
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
+
+    Metrics getMetrics();
 
     @NotNull
     default MicrosecondClock getMicrosecondClock() {
@@ -322,6 +392,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPreferencesStringPoolCapacity();
+
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
@@ -350,9 +422,6 @@ public interface CairoConfiguration {
     int getRndFunctionMemoryPageSize();
 
     @NotNull
-    String getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
-
-    @NotNull
     default RostiAllocFacade getRostiAllocFacade() {
         return RostiAllocFacadeImpl.INSTANCE;
     }
@@ -361,11 +430,13 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    int getScoreboardFormat();
+
     long getSequencerCheckInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
+     * on database start the id is compared with the ID stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
@@ -377,6 +448,10 @@ public interface CairoConfiguration {
 
     int getSqlAsOfJoinLookAhead();
 
+    int getSqlAsOfJoinMapEvacuationThreshold();
+
+    int getSqlAsOfJoinShortCircuitCacheCapacity();
+
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();
@@ -387,7 +462,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" sql
+    // null or empty input root disables "copy" SQL
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -455,7 +530,11 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    double getSqlParallelFilterPreTouchThreshold();
+
     int getSqlParallelWorkStealingThreshold();
+
+    int getSqlParquetFrameCacheCapacity();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -492,6 +571,8 @@ public interface CairoConfiguration {
     int getSqlWindowTreeKeyPageSize();
 
     int getStrFunctionMaxBufferLength();
+
+    long getSymbolTableAppendPageSize();
 
     long getSystemDataAppendPageSize();
 
@@ -575,6 +656,8 @@ public interface CairoConfiguration {
 
     long getWorkStealTimeoutNanos();
 
+    long getWriteBackOffTimeoutOnMemPressureMs();
+
     long getWriterAsyncCommandBusyWaitTimeout();
 
     long getWriterAsyncCommandMaxTimeout();
@@ -583,7 +666,7 @@ public interface CairoConfiguration {
 
     long getWriterCommandQueueSlotSize();
 
-    long getWriterFileOpenOpts();
+    int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
 
@@ -594,11 +677,22 @@ public interface CairoConfiguration {
      */
     boolean isCheckpointRecoveryEnabled();
 
+    /**
+     * This is a flag to enable/disable the generation of column alias based on the expression passed as a query.
+     *
+     * @return true if SqlParser should return the expression normalized instead of the default behavior.
+     */
+    boolean isColumnAliasExpressionEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isMatViewEnabled();
+
+    boolean isMatViewParallelSqlEnabled();
 
     boolean isMultiKeyDedupEnabled();
 
@@ -606,7 +700,11 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
-    boolean getPartitionO3OverwriteControlEnabled();
+    boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    boolean isPartitionO3OverwriteControlEnabled();
+
+    boolean isQueryTracingEnabled();
 
     boolean isReadOnlyInstance();
 
@@ -620,9 +718,39 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelReadParquetEnabled();
+
+    boolean isSqlParallelTopKEnabled();
+
     boolean isTableTypeConversionEnabled();
 
+    /**
+     * A compatibility switch that controls validation of sample-by fill type.
+     * <p>
+     * This temporary switch maintains backward compatibility following changes introduced in
+     * <a href="https://github.com/questdb/questdb/pull/5324">this PR</a>.
+     * The pull request implemented stricter validation of sample validity, where:
+     * <p>
+     * 1. LINEAR interpolation is disabled by default
+     * 2. Group-by functions must explicitly declare support for interpolation
+     * <p>
+     * Currently, LINEAR interpolation is enabled only for functions with verified test coverage.
+     * However, there may be other functions that support interpolation but lack proper testing.
+     * The introduction of strict validation could break these untested functions.
+     * <p>
+     * This switch allows users to disable the validation check and maintain the previous behavior.
+     * Note: This configuration option is temporary and will be removed in a future release, at
+     * which point sample-by-fill type validation will become mandatory.
+     *
+     * @return true if sample-by-fill type validation is enabled (default), false otherwise
+     */
+    default boolean isValidateSampleByFillType() {
+        return true;
+    }
+
     boolean isWalApplyEnabled();
+
+    boolean isWalApplyParallelSqlEnabled();
 
     boolean isWalSupported();
 
@@ -638,10 +766,9 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
-    boolean isPartitionEncoderParquetStatisticsEnabled();
-
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-    }
+    int maxArrayElementCount();
 
     boolean useFastAsOfJoin();
+
+    boolean useWithinLatestByOptimisation();
 }

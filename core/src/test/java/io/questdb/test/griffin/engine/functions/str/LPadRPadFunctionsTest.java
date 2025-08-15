@@ -33,7 +33,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testAscii() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
+            execute("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
             assertSql(
                     "lpad\trpad\n" +
                             "  abc\tabc  \n" +
@@ -49,7 +49,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testAsciiFill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
+            execute("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
             assertSql(
                     "lpad\trpad\n" +
                             "..abc\tabc..\n" +
@@ -65,7 +65,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testAsciiTrim() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
+            execute("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
             final String expected = "lpad\trpad\n" +
                     "ab\tbc\n" +
                     "ab\tbc\n" +
@@ -88,23 +88,34 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testCheckMaxBuffer() throws Exception {
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        assertException("select rpad('w3r'::varchar, " + (maxLength + 1) + ")",
-                -1,
-                "breached memory limit set for rpad(ØI) [maxLength=1048576, requiredLength=1048577]");
-        assertException("select lpad('w3r'::varchar, " + (maxLength + 1) + ")",
-                -1,
-                "breached memory limit set for lpad(ØI) [maxLength=1048576, requiredLength=1048577]");
-        assertException("select rpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
-                -1,
-                "breached memory limit set for rpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
-        assertException("select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
-                -1,
-                "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
+        assertException(
+                "select rpad('w3r'::varchar, " + (maxLength + 1) + ")",
+                0,
+                "breached memory limit set for rpad(ØI) [maxLength=1048576, requiredLength=1048577]"
+        );
+
+        assertException(
+                "select lpad('w3r'::varchar, " + (maxLength + 1) + ")",
+                0,
+                "breached memory limit set for lpad(ØI) [maxLength=1048576, requiredLength=1048577]"
+        );
+
+        assertException(
+                "select rpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
+                0,
+                "breached memory limit set for rpad(ØIØ) [maxLength=1048576, requiredLength=1048577]"
+        );
+
+        assertException(
+                "select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
+                0,
+                "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]"
+        );
     }
 
     @Test
     public void testFuncFuncGenericCase() throws SqlException {
-        ddl("create table x as (select rnd_varchar('x', 'y', 'z') str, rnd_varchar('abc','def','ghi') fill from long_sequence(5))");
+        execute("create table x as (select rnd_varchar('x', 'y', 'z') str, rnd_varchar('abc','def','ghi') fill from long_sequence(5))");
         assertSql(
                 "lpad\trpad\n" +
                         "abcabcx\txabcabc\n" +
@@ -118,7 +129,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
 
     @Test
     public void testPadNulls() throws SqlException {
-        ddl("create table x as (select null::varchar as vc from long_sequence(10))");
+        execute("create table x as (select null::varchar as vc from long_sequence(10))");
         assertSql(
                 "count\n10\n",
                 "select count (*) from (select lpad(vc, 20, '.'::varchar), rpad(vc, 20, '.'::varchar) from x order by vc) where lpad = null and rpad = null"
@@ -137,7 +148,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
 
     @Test
     public void testStrIsConst() throws SqlException {
-        ddl("create table x as (select rnd_varchar('abc','def','ghi') fill from long_sequence(5))");
+        execute("create table x as (select rnd_varchar('abc','def','ghi') fill from long_sequence(5))");
         assertSql(
                 "lpad\trpad\n" +
                         "abcabcconst\tconstabcabc\n" +
@@ -152,7 +163,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testUtf8() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
+            execute("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
             assertSql(
                     "lpad\trpad\n" +
                             "     вечір\tвечір     \n" +
@@ -169,7 +180,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testUtf8Fill() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
+            execute("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
             assertSql(
                     "lpad\trpad\n" +
                             ".....вечір\tвечір.....\n" +
@@ -185,7 +196,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
 
     @Test
     public void testUtf8Random() throws SqlException {
-        ddl("create table x as (select rnd_varchar(1, 40, 0) vc1, rnd_varchar(1, 4, 0) vc2 from long_sequence(100))");
+        execute("create table x as (select rnd_varchar(1, 40, 0) vc1, rnd_varchar(1, 4, 0) vc2 from long_sequence(100))");
         assertSql(
                 "count\n" +
                         "100\n",
@@ -207,7 +218,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
 
     @Test
     public void testUtf8RandomFill() throws SqlException {
-        ddl("create table x as (select rnd_varchar(1, 40, 0) vc1, rnd_varchar(1, 4, 0) vc2 from long_sequence(100))");
+        execute("create table x as (select rnd_varchar(1, 40, 0) vc1, rnd_varchar(1, 4, 0) vc2 from long_sequence(100))");
         assertSql(
                 "count\n" +
                         "100\n",
@@ -230,7 +241,7 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testUtf8Trim() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
+            execute("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
             final String expected = "lpad\trpad\n" +
                     "вечі\tечір\n" +
                     "вечі\tечір\n" +

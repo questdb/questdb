@@ -47,6 +47,11 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
+        public AtomicBoolean getCancelledFlag() {
+            return null;
+        }
+
+        @Override
         public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
             return null;
         }
@@ -72,11 +77,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void init(SqlExecutionCircuitBreaker circuitBreaker) {
-        }
-
-        @Override
-        public boolean isThreadsafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 
@@ -123,6 +124,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     boolean checkIfTripped(long millis, long fd);
 
+    AtomicBoolean getCancelledFlag();
+
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
 
@@ -152,12 +155,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     long getTimeout();
 
-    /**
-     * Initializes this circuit breaker from the one passed as a parameter by copying its state
-     */
-    void init(SqlExecutionCircuitBreaker circuitBreaker);
-
-    boolean isThreadsafe();
+    boolean isThreadSafe();
 
     /**
      * Checks if timer is due.
