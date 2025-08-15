@@ -32,7 +32,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -77,7 +76,6 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.ArrayList;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -332,7 +330,7 @@ public class ParquetTest extends AbstractTest {
                 int partitionIndex = 0;
                 StringSink partitionName = new StringSink();
                 long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+                PartitionBy.setSinkForPartition(partitionName, ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY, timestamp);
 
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                 PartitionEncoder.encodeWithOptions(
@@ -382,7 +380,7 @@ public class ParquetTest extends AbstractTest {
                         // arr
                         assertNullCount(chunks, 0, 0);
                     }
-                    Assert.assertEquals(rowCount, 3);
+                    Assert.assertEquals(3, rowCount);
 
                     long actualRows = 0;
                     GenericRecord nextParquetRecord;
@@ -430,7 +428,7 @@ public class ParquetTest extends AbstractTest {
                 int partitionIndex = 0;
                 StringSink partitionName = new StringSink();
                 long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+                PartitionBy.setSinkForPartition(partitionName, ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY, timestamp);
 
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                 PartitionEncoder.encodeWithOptions(
@@ -480,7 +478,7 @@ public class ParquetTest extends AbstractTest {
                         // arr
                         assertNullCount(chunks, 0, 0);
                     }
-                    Assert.assertEquals(rowCount, 3);
+                    Assert.assertEquals(3, rowCount);
 
                     long actualRows = 0;
                     GenericRecord nextParquetRecord;
@@ -498,7 +496,6 @@ public class ParquetTest extends AbstractTest {
             }
         }
     }
-
 
 
     private void testPartitionDataConsistency(String tableName, int partitionBy, String designedTimestampType, boolean rawArrayEncoding) throws Exception {
