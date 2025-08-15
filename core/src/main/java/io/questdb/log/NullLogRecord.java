@@ -49,6 +49,7 @@ final class NullLogRecord implements LogRecord {
         return this;
     }
 
+
     @Override
     public LogRecord $(@Nullable Utf8Sequence sequence) {
         return this;

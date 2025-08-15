@@ -121,7 +121,7 @@ public class SerialParquetExporter implements Closeable {
                 try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         if (circuitBreaker.checkIfTripped()) {
-                            LOG.errorW().$("copy was cancelled [copyId=").$(task.getCopyID()).$(']').$();
+                            LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
                             throw CairoException.queryCancelled();
                         }
                         final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);

@@ -136,27 +136,37 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy (generate_series(0, '9999-01-01', '1U')) TO 'very_large_table' WITH FORMAT PARQUET;", sqlExecutionContext);
                 } catch (SqlException e) {
                     throw new RuntimeException(e);
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             Thread finisher = new Thread(() -> {
-                long copyID = engine.getCopyExportContext().getActiveExportID();
-                StringSink sink = new StringSink();
-                Numbers.appendHex(sink, copyID, true);
-                String copyIDStr = sink.toString();
-                sink.clear();
-                sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
                 try {
-                    assertSql("id\tstatus\n" +
-                            copyIDStr + "\tcancelled\n", sink);
-                } catch (SqlException e) {
-                    throw new RuntimeException(e);
+                    long copyID;
+                    do {
+                        copyID = engine.getCopyExportContext().getActiveExportID();
+                    } while (copyID == Long.MIN_VALUE);
+
+                    StringSink sink = new StringSink();
+                    Numbers.appendHex(sink, copyID, true);
+                    String copyIDStr = sink.toString();
+                    sink.clear();
+                    sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
+                    try {
+                        assertSql("id\tstatus\n" +
+                                copyIDStr + "\tcancelled\n", sink);
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             starter.start();
             Thread.sleep(500);
             finisher.start();
-            starter.join();
-            finisher.join();
+            starter.join(30_000);
+            finisher.join(30_000);
         });
     }
 

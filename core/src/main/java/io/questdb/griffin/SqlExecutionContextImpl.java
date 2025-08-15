@@ -320,8 +320,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void setCancelledFlag(AtomicBoolean cancelled) {
-        circuitBreaker.setCancelledFlag(cancelled);
-        simpleCircuitBreaker.setCancelledFlag(cancelled);
+        if (cancelled == null) {
+            circuitBreaker.finish();
+            simpleCircuitBreaker.finish();
+        } else {
+            circuitBreaker.setCancelledFlag(cancelled);
+            simpleCircuitBreaker.setCancelledFlag(cancelled);
+        }
+
     }
 
     @Override

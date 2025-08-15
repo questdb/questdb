@@ -27,7 +27,8 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -36,10 +37,11 @@ import java.util.function.LongSupplier;
 public class CopyExportContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
     private final AtomicLong activeExportID = new AtomicLong(INACTIVE_COPY_ID);
-    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
+    private final AtomicCountedCircuitBreaker circuitBreaker = new AtomicCountedCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final LongSupplier copyIDSupplier;
     private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private ExecutionCircuitBreaker saga;
 
 
     public CopyExportContext(CairoConfiguration configuration) {
@@ -63,7 +65,7 @@ public class CopyExportContext implements Mutable {
         return activeExportID.get();
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+    public AtomicCountedCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
@@ -71,3 +73,5 @@ public class CopyExportContext implements Mutable {
         return exportOriginatorSecurityContext;
     }
 }
+
+

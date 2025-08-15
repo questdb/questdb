@@ -31,7 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -88,6 +88,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private @Nullable SuspendEvent suspendEvent = null;
     private @Nullable String tableName = null;
 
+
     public CopyExportFactory(
             MessageBus messageBus,
             CopyExportContext copyContext,
@@ -114,30 +115,36 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
         final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
-        final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
+        final AtomicCountedCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
         long activeCopyID = copyContext.getActiveExportID();
         if (activeCopyID == CopyImportContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
+                circuitBreaker.reset();
+
+                circuitBreaker.inc();
 
                 try {
                     copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
 
-                    exportIdSink.clear();
-                    exportIdSink.put("copy.");
-                    Numbers.appendHex(exportIdSink, copyID, true);
-                    this.tableName = exportIdSink.toString();
 
                     if (this.selectText != null) {
                         // need to create a temp table which we will use for the export
 
+                        exportIdSink.clear();
+                        exportIdSink.put("copy.");
+                        Numbers.appendHex(exportIdSink, copyID, true);
+                        this.tableName = exportIdSink.toString();
 
                         // we need a new execution context that uses our circuit breaker, so copy cancel will apply
                         // to the query
                         SqlExecutionContextImpl queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
                         assert securityContext != null;
+
+                        // increment for query task
+                        circuitBreaker.inc();
                         queryExecutionContext.with(securityContext, null, null, -1, circuitBreaker);
                         createTempTable(queryExecutionContext);
                     }
@@ -189,7 +196,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     copyContext.clear();
                     throw ex;
                 } finally {
-                    circuitBreaker.reset();
                     copyRequestPubSeq.done(processingCursor);
                 }
             } else {
@@ -260,27 +266,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 impl.execute(executionContext, null);
             }
 
+            ((AtomicCountedCircuitBreaker) executionContext.getCircuitBreaker()).inc();
+
             exportIdSink.clear();
             exportIdSink.put("INSERT INTO '").put(tableName).put("' SELECT * FROM (").put(selectText).put(')');
 
             executionContext.getCairoEngine().execute(exportIdSink, executionContext);
         }
-
-
-        // then create the table
-        // then create a future for an insert into select
-        // this future gets given to the copy job
-
-//        exportIdSink.put("CREATE TABLE 'copy.");
-//        Numbers.appendHex(exportIdSink, copyID, true);
-//        exportIdSink.put("' AS (").put(selectText).put(')');
-//
-//        if (partitionBy != PartitionBy.NONE && partitionBy > -1) {
-//            exportIdSink.put(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
-//        }
-//        exportIdSink.put(';');
-//        CompiledQuery cq = executionContext.getCairoEngine().getSqlCompiler().compile(exportIdSink, executionContext);
-//        OperationFuture fut = cq.execute(null);
     }
 
 
