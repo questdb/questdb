@@ -29,10 +29,10 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 
-use super::util::BinaryMaxMin;
+use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -59,12 +59,11 @@ pub fn binary_to_page(
         };
         len >= 0
     });
-
-    encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
             encode_plain(offsets, data, &mut buffer, &mut stats);
@@ -97,7 +96,12 @@ pub fn binary_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
+fn encode_plain(
+    offsets: &[i64],
+    values: &[u8],
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+) {
     let size_of_header = size_of::<i64>();
 
     for offset in offsets {
@@ -120,7 +124,7 @@ fn encode_delta(
     values: &[u8],
     null_count: usize,
     buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMin,
+    stats: &mut BinaryMaxMinStats,
 ) {
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();

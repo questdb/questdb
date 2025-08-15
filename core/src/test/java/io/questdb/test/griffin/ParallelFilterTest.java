@@ -670,6 +670,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 path,
                                 ParquetCompression.COMPRESSION_UNCOMPRESSED,
                                 true,
+                                true,
                                 PAGE_FRAME_MAX_ROWS,
                                 0,
                                 ParquetVersion.PARQUET_VERSION_V1

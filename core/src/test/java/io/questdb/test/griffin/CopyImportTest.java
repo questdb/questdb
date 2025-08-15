@@ -324,7 +324,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -354,7 +354,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -758,7 +758,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
                 setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
                 String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +

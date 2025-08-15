@@ -138,9 +138,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SecurityContext getSecurityContext();
 
-    default int getSharedWorkerCount() {
-        return getWorkerCount();
-    }
+    int getSharedQueryWorkerCount();
 
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
@@ -170,8 +168,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     WindowContext getWindowContext();
 
-    int getWorkerCount();
-
     void initNow();
 
     boolean isCacheHit();
@@ -191,6 +187,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     boolean isParallelGroupByEnabled();
 
     boolean isParallelReadParquetEnabled();
+
+    boolean isParallelTopKEnabled();
 
     boolean isTimestampRequired();
 
@@ -234,6 +232,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
 
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
+
+    void setParallelTopKEnabled(boolean parallelTopKEnabled);
 
     void setRandom(Rnd rnd);
 

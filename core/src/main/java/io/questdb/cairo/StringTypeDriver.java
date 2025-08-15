@@ -62,7 +62,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
+    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, int opts, int madviseOpts) {
         auxMem.of(
                 ff,
                 fileName,
@@ -82,7 +82,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -105,7 +105,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long rowLo,
             long rowHi,
             int memoryTag,
-            long opts
+            int opts
     ) {
         dataMem.ofOffset(
                 ff,

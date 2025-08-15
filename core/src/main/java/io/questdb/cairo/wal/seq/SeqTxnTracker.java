@@ -39,6 +39,7 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private volatile long dirtyWriterTxn;
+    private boolean dropped;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
@@ -82,16 +83,20 @@ public class SeqTxnTracker {
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
-        Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
+        if (Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1) && isSuspended) {
+            metrics.tableWriterMetrics().incSuspendedTables();
+        }
         // seqTxn has to be initialized before writerTxn since isInitialised() method checks writerTxn
         long stxn = seqTxn;
         while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
+        metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
         long wtxn = writerTxn;
         while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
             wtxn = writerTxn;
         }
+        metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
         return seqTxn > 0 && seqTxn > writerTxn;
     }
 
@@ -131,6 +136,15 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
+    public synchronized void notifyOnDrop() {
+        if (dropped) {
+            return;
+        }
+        dropped = true;
+        metrics.walMetrics().addSeqTxn(-seqTxn);
+        metrics.walMetrics().addWriterTxn(-writerTxn);
+    }
+
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
         this.errorTag = errorTag;
         this.errorMessage = errorMessage;
@@ -154,13 +168,16 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Updates writerTxn and dirtyWriterTxn and returns true if the Apply2Wal job should be notified.
+     * Updates writerTxn and dirtyWriterTxn and returns true if the ApplyWal2Tables job should be notified.
      *
      * @param writerTxn      txn that is available for reading
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
-     * @return true if Apply2Wal job should be notified
+     * @return true if ApplyWal2Tables job should be notified
      */
     public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        if (dropped) {
+            return false;
+        }
         long prevWriterTxn = this.writerTxn;
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;

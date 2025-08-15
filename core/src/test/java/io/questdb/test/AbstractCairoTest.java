@@ -168,7 +168,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static long fdReuseCount;
     private static long memoryUsage = -1;
+    private static long mmapReuseCount;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -527,6 +529,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        fdReuseCount = Files.getFdReuseCount();
+        mmapReuseCount = Files.getMmapReuseCount();
+
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops,
         // which causes memory leak detector to fail should logger be
@@ -571,6 +576,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
+        LOG.info().$("fd reuse count=").$(Files.getFdReuseCount() - fdReuseCount)
+                .$(", mmap resuse count=").$(Files.getMmapReuseCount() - mmapReuseCount).$();
     }
 
     public static Utf8String utf8(CharSequence value) {
@@ -1201,11 +1208,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
             try {
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
-                CLOSEABLES.forEach(Misc::free);
             } catch (Throwable th) {
                 LOG.error().$("Error in test: ").$(th).$();
                 throw th;
             } finally {
+                CLOSEABLES.forEach(Misc::free);
                 forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;
             }
@@ -1512,8 +1519,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.execute(sqlText, sqlExecutionContext);
     }
 
-    protected static void execute(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.execute(dropSql, sqlExecutionContext);
+    protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute(sqlText, sqlExecutionContext);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {

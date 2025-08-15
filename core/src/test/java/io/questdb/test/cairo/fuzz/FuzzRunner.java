@@ -113,6 +113,7 @@ public class FuzzRunner {
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
+    private double symbolAccessValidationProb;
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
@@ -484,6 +485,7 @@ public class FuzzRunner {
                 tableDropProb,
                 setTtlProb,
                 replaceInsertProb,
+                symbolAccessValidationProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()
@@ -594,7 +596,8 @@ public class FuzzRunner {
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
-            double replaceInsertProb
+            double replaceInsertProb,
+            double symbolAccessValidationProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -611,6 +614,7 @@ public class FuzzRunner {
         this.tableDropProb = tableDropProb;
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
+        this.symbolAccessValidationProb = symbolAccessValidationProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -929,7 +933,7 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
@@ -976,7 +980,7 @@ public class FuzzRunner {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
-            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
+            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.getUnsafe().loadFence();
                     while (job.run(0) || checkJob.run(0)) {
@@ -1203,7 +1207,8 @@ public class FuzzRunner {
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.0,
-                            0.05
+                            0.05,
+                            0.1 * rnd.nextDouble()
                     );
                 }
                 if (randomiseCounts) {

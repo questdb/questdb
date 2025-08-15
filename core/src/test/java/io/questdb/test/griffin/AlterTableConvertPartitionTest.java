@@ -92,7 +92,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
-            assertSql("id\tstr\ttimestamp\n" +
+            assertSql(
+                    "id\tstr\ttimestamp\n" +
                             "1\tabc\t2024-06-10T00:00:00.000000Z\n" +
                             "2\tedf\t2024-06-11T00:00:00.000000Z\n" +
                             "3\tabc\t2024-06-12T00:00:00.000000Z\n" +
@@ -150,6 +151,23 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertListZeroSizeArrayData() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x (" +
+                            " an_array double[]," +
+                            " a_ts timestamp" +
+                            ") timestamp(a_ts) partition by month;"
+            );
+
+            execute("insert into x(an_array, a_ts) values(array[], '2024-07');");
+            execute("insert into x(an_array, a_ts) values(array[1.0, 2.0, 3.0], '2024-08');");
+            execute("alter table x convert partition to parquet where a_ts > 0;");
+            assertPartitionExists("x", "2024-07.2");
+        });
+    }
+
+    @Test
     public void testConvertListZeroSizeVarcharData() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
@@ -192,13 +210,18 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " rnd_uuid4() a_uuid," +
                             " rnd_long256() a_long256," +
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
+                            " rnd_double_array(1) an_array," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
                             " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
-            assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06'",
+                    0,
+                    "cannot convert partition to parquet, partition does not exist"
+            );
 
             execute("alter table x convert partition to parquet list '1970-01', '1970-02'");
             assertPartitionExists("x", "1970-01.1");
@@ -270,6 +293,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " rnd_uuid4() a_uuid," +
                             " rnd_long256() a_long256," +
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
+                            " rnd_double_array(1) an_array," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
                             " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
@@ -278,7 +302,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("create table y as (select * from x)", sqlExecutionContext);
 
-            assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06'",
+                    0,
+                    "cannot convert partition to parquet, partition does not exist"
+            );
 
             execute("alter table x convert partition to parquet list '1970-01'");
             assertPartitionExists("x", "1970-01.1");

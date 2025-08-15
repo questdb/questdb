@@ -34,11 +34,25 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.SqlKeywords.*;
@@ -170,7 +184,12 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
                 if (fillIndex == fillValueCount) {
-                    throw SqlException.position(0).put("not enough values");
+                    throw SqlException.position(fillValues.getQuick(fillIndex - 1).position)
+                            .put("insufficient fill values for SAMPLE BY FILL: expected ")
+                            .put(groupByFunctions.size())
+                            .put(" values but only ")
+                            .put(fillValueCount)
+                            .put(" provided");
                 }
                 ExpressionNode fillNode = fillValues.getQuick(fillIndex++);
                 if (isNullKeyword(fillNode.token)) {

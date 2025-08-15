@@ -125,7 +125,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
-                rnd.nextDouble()
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble()
         );
 
         fuzzer.setFuzzCounts(
@@ -194,7 +195,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
-                int size = rnd.nextInt(16 * 1024 * 1024);
+                int size = rnd.nextInt(8 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
@@ -247,12 +248,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
-            double replaceProb
+            double replaceProb,
+            double symbolAccessProb
     ) {
         fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
                 equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
-                replaceProb
+                replaceProb, symbolAccessProb
         );
     }
 

@@ -710,7 +710,7 @@ public class SecurityTest extends AbstractCairoTest {
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false,
-                    true
+                    false
             );
 
             try {

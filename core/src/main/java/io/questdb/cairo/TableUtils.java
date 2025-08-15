@@ -499,7 +499,7 @@ public final class TableUtils {
             int tableId,
             CharSequence txnFileName
     ) {
-        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
@@ -1065,7 +1065,7 @@ public final class TableUtils {
             }
         }
 
-        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        long fd = ff.openRWNoCache(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
                 LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
@@ -1277,7 +1277,7 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("could not open append [file=").put(path).put(']');
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, int opts) {
         return openRW(ff, path, LOG, opts);
     }
 
@@ -1304,7 +1304,20 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+    public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRONoCache(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
+            return fd;
+        }
+        int errno = ff.errno();
+        if (Files.errnoFileCannotRead(errno)) {
+            throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
+        }
+        throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
+    }
+
+    public static long openRW(FilesFacade ff, LPSZ path, Log log, int opts) {
         final long fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();

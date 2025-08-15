@@ -44,6 +44,7 @@ public class PartitionEncoder {
                 destPath,
                 ParquetCompression.COMPRESSION_UNCOMPRESSED,
                 true,
+                false,
                 0, // DEFAULT_ROW_GROUP_SIZE (512 * 512) rows
                 0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
                 ParquetVersion.PARQUET_VERSION_V1
@@ -55,6 +56,7 @@ public class PartitionEncoder {
             Path destPath,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
             int version
@@ -78,6 +80,7 @@ public class PartitionEncoder {
                     destPath.size(),
                     compressionCodec,
                     statisticsEnabled,
+                    rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
                     version
@@ -175,6 +178,7 @@ public class PartitionEncoder {
             int destPathLength,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
             int version

@@ -68,11 +68,11 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
         }
     }
 
-    public static void assignToPool(MessageBus messageBus, WorkerPool pool) {
-        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+    public static void assignToPool(MessageBus messageBus, WorkerPool sharedPoolWrite) {
+        for (int i = 0, n = sharedPoolWrite.getWorkerCount(); i < n; i++) {
             CopyImportJob job = new CopyImportJob(messageBus);
-            pool.assign(i, job);
-            pool.freeOnExit(job);
+            sharedPoolWrite.assign(i, job);
+            sharedPoolWrite.freeOnExit(job);
         }
     }
 
