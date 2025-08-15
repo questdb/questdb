@@ -2481,11 +2481,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getSharedQueryWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
+                    // for these errors we are intentionally **not** rethrowing the exception
+                    // if a JIT filter cannot be used, we will simply use a Java filter
                     Misc.free(compiledFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                             .$(", ex=").$safe(ex.getFlyweightMessage())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                } catch (Throwable t) {
+                    // other errors are fatal -> rethrow them
+                    Misc.free(compiledFilter);
+                    Misc.free(filter);
+                    Misc.free(factory);
+                    throw t;
                 } finally {
                     jitIRSerializer.clear();
                     jitIRMem.truncate();

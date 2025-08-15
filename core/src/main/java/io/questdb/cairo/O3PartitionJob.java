@@ -127,6 +127,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
@@ -137,6 +138,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         timestampIndex,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
+                        rawArrayEncoding,
                         rowGroupSize,
                         dataPageSize
                 );

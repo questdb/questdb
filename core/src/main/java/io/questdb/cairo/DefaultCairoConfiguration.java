@@ -1296,6 +1296,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionEncoderParquetRawArrayEncoding() {
+        return false;
+    }
+
+    @Override
     public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return true;
     }

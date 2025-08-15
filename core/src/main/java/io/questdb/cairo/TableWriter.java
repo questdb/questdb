@@ -1503,6 +1503,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int rowGroupSize = config.getPartitionEncoderParquetRowGroupSize();
                 final int dataPageSize = config.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = config.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = config.isPartitionEncoderParquetRawArrayEncoding();
                 final int parquetVersion = config.getPartitionEncoderParquetVersion();
 
                 PartitionEncoder.encodeWithOptions(
@@ -1510,6 +1511,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         other,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
+                        rawArrayEncoding,
                         rowGroupSize,
                         dataPageSize,
                         parquetVersion
@@ -7661,8 +7663,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.txnApplyBlockError(tableToken);
         }
 
+        // Don't move the line to mmap Wal column inside the following try block,
+        // This call, if failed will close the WAL files correctly on its own
+        // putting it inside the try block will cause the WAL files to be closed twice in the finally block
+        // in case of the exception.
+        segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
         try {
-            segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
             final long timestampAddr;
             final boolean copiedToMemory;
             final long o3Lo;
