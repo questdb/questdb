@@ -27,7 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Mutable;
 
-public class CopyRequestTask implements Mutable {
+public class CopyImportRequestTask implements Mutable {
     private int atomicity;
     private long copyID;
     private byte delimiter;
