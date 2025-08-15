@@ -278,16 +278,19 @@ public final class ColumnType {
     /**
      * Determines the implicit conversion rule from the other columnTypes to the Timestamp type.
      * <p>
-     * This conversion rule is consistent with the implementation of the {@link io.questdb.cairo.sql.Function#getTimestamp(Record)} of functions.
+     * This conversion rule is consistent with the implementation of the
+     * {@link io.questdb.cairo.sql.Function#getTimestamp(Record)} of functions.
+     * <p>
+     * Conversion rules: <ul>
+     * <li> TIMESTAMP types: returned as-is to preserve existing precision
+     * <li> DATE types: converted to {@link #TIMESTAMP_MICRO}
+     * <li> String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO}
+     * for maximum precision when parsing timestamp strings
+     * <li> All other types(Long, Int and so on): converted to {@link #TIMESTAMP_MICRO}
+     * </ul>
      *
      * @param type the input column type to convert
      * @return the appropriate timestamp type for the input column type
-     * <p>
-     * Conversion rules:
-     * - TIMESTAMP types: returned as-is to preserve existing precision
-     * - DATE types: converted to {@link #TIMESTAMP_MICRO}
-     * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO} for maximum precision when parsing timestamp strings
-     * - All other types(Long, Int and so on): converted to {@link #TIMESTAMP_MICRO}
      */
     public static int getTimestampType(int type) {
         switch (tagOf(type)) {
