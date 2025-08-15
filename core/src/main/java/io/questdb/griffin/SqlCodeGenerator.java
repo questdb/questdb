@@ -2412,9 +2412,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                         jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
                         jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
-                    } catch (Throwable e) {
-                        Misc.free(factory);
-                        throw e;
                     }
 
                     compiledFilter = new CompiledFilter();
@@ -2447,11 +2444,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getSharedQueryWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
+                    // for these errors we are intentionally **not** rethrowing the exception
+                    // if a JIT filter cannot be used, we will simply use a Java filter
                     Misc.free(compiledFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                             .$(", ex=").$safe(ex.getFlyweightMessage())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                } catch (Throwable t) {
+                    // other errors are fatal -> rethrow them
+                    Misc.free(compiledFilter);
+                    Misc.free(filter);
+                    Misc.free(factory);
+                    throw t;
                 } finally {
                     jitIRSerializer.clear();
                     jitIRMem.truncate();
