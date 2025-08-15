@@ -363,8 +363,8 @@ public class ServerMain implements Closeable {
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPool.assign(copyImportRequestJob);
-                            sharedPool.freeOnExit(copyImportRequestJob);
+                            sharedPoolWrite.assign(copyImportRequestJob);
+                            sharedPoolWrite.freeOnExit(copyImportRequestJob);
                         }
 
                         if (!Chars.empty(cairoConfig.getSqlCopyExportRoot())) {
