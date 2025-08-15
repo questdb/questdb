@@ -24,9 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
-
 import java.io.Closeable;
 
 public interface HttpRequestProcessorSelector extends Closeable {
@@ -35,7 +32,5 @@ public interface HttpRequestProcessorSelector extends Closeable {
 
     HttpRequestProcessor getDefaultProcessor();
 
-    Utf8Sequence getNormalizedUrl(DirectUtf8String url);
-
-    HttpRequestProcessor select(Utf8Sequence url);
+    HttpRequestProcessor select(HttpRequestHeader requestHeader);
 }

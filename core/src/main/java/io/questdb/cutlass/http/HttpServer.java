@@ -71,15 +71,16 @@ import static io.questdb.network.IODispatcher.DISCONNECT_REASON_PEER_DISCONNECT_
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private static final Log LOG = LogFactory.getLog(HttpServer.class);
+    private final AtomicInteger activeIORequests = new AtomicInteger(0);
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
+    private final HttpRequestProcessorSelectorFactory httpSelectorFactory;
+    private final ConcurrentPool<HttpRequestProcessorSelector> pool = new ConcurrentPool<>();
     private final WaitProcessor rescheduleContext;
     private final AssociativeCache<RecordCursorFactory> selectCache;
-    private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final boolean virtualThreadsEnabled;
-    private final int workerCount;
-    private final ConcurrentPool<HttpRequestProcessorSelector> pool = new ConcurrentPool<>();
 
     // used for min http server only
     public HttpServer(
@@ -103,15 +104,10 @@ public class HttpServer implements Closeable {
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory
     ) {
-        this.workerCount = networkSharedPool.getWorkerCount();
-        this.selectors = new ObjList<>(workerCount);
+        int workerCount = networkSharedPool.getWorkerCount();
+        this.httpSelectorFactory = new HttpRequestProcessorSelectorFactory(workerCount);
 
-        for (int i = 0; i < workerCount; i++) {
-            selectors.add(new HttpRequestProcessorSelectorImpl());
-        }
-
-        if (configuration instanceof HttpFullFatServerConfiguration) {
-            final HttpFullFatServerConfiguration serverConfiguration = (HttpFullFatServerConfiguration) configuration;
+        if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration) {
             if (serverConfiguration.isQueryCacheEnabled()) {
                 this.selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
             } else {
@@ -141,7 +137,7 @@ public class HttpServer implements Closeable {
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     boolean useful = dispatcher.processIOQueue(processor);
-                    var selector = selectors.get(index);
+                    var selector = httpSelectorFactory.getSelectorByWorker(index);
                     useful |= rescheduleContext.runReruns(selector);
                     return useful;
                 }
@@ -304,27 +300,7 @@ public class HttpServer implements Closeable {
     }
 
     public void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
-        final ObjList<String> urls = factory.getUrls();
-        assert urls != null;
-        for (int j = 0, n = urls.size(); j < n; j++) {
-            final String url = urls.getQuick(j);
-            for (int i = 0; i < workerCount; i++) {
-                HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-                if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                    selector.defaultRequestProcessor = factory.newInstance().getDefaultProcessor();
-                } else {
-                    final Utf8String key = new Utf8String(url);
-                    int keyIndex = selector.requestHandlerMap.keyIndex(key);
-                    if (keyIndex > -1) {
-                        final HttpRequestHandler requestHandler = factory.newInstance();
-                        selector.requestHandlerMap.putAt(keyIndex, key, requestHandler);
-                        if (useAsDefault) {
-                            selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
-                        }
-                    }
-                }
-            }
-        }
+        httpSelectorFactory.bind(factory, useAsDefault);
     }
 
     public void clearSelectCache() {
@@ -334,6 +310,7 @@ public class HttpServer implements Closeable {
     @Override
     public void close() {
         LOG.info().$("====== closing HTTP server").$();
+        httpSelectorFactory.disablePooling();
 
         long i = 0;
         while (activeIORequests.get() > 0) {
@@ -347,34 +324,38 @@ public class HttpServer implements Closeable {
 
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
-        Misc.freeObjListAndClear(selectors);
+        Misc.free(httpSelectorFactory);
         Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
         Misc.free(selectCache);
     }
 
-    private static final Log LOG = LogFactory.getLog(HttpServer.class);
-
     public int getPort() {
         return dispatcher.getPort();
     }
-
-    private final AtomicInteger activeIORequests = new AtomicInteger(0);
 
     public void registerClosable(Closeable closeable) {
         closeables.add(closeable);
     }
 
-        private boolean handleClientOperation(HttpConnectionContext context, int operation, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher, int jobIndex) {
+    private HttpRequestProcessorSelector getPooledSelector() {
+        var selector = pool.pop();
+        if (selector == null) {
+            selector = new HttpRequestProcessorSelectorImpl();
+        }
+        return selector;
+    }
+
+    private boolean handleClientOperation(HttpConnectionContext context, int operation, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher, int jobIndex) {
         if (virtualThreadsEnabled) {
-            var selector = getPooledSelector();
             activeIORequests.incrementAndGet();
             try {
                 if (context.isNewConnection()) {
-                    context.startNewConnection();
+                    HttpRequestProcessorSelector selector = httpSelectorFactory.getSelectorFromPool();
+                    context.startNewConnection(selector);
                     Thread.ofVirtual().start(() -> {
                         try {
-                            context.resume(operation, selector, rescheduleContext);
+                            context.resume(operation, rescheduleContext);
                             long fd = context.getFd();
                             LOG.info().$("===== starting virtual thread for fd: ").$(fd).$();
                             while (!context.isClosed()) {
@@ -411,12 +392,13 @@ public class HttpServer implements Closeable {
                             }
                             LOG.info().$("===== connection is closed, exiting virtual thread fd: ").$(fd).$("=============").$();
                         } finally {
+                            httpSelectorFactory.poolSelector(selector);
                             Path.clearThreadLocals();
                         }
                     });
                 } else {
                     LOG.info().$("========= IO event received for virtual thread, fd: ").$(context.getFd()).$("=============").$();
-                    context.resume(operation, selector, rescheduleContext);
+                    context.resume(operation, rescheduleContext);
                 }
             } catch (Throwable e) {
                 activeIORequests.decrementAndGet();
@@ -424,7 +406,7 @@ public class HttpServer implements Closeable {
             }
         } else {
             try {
-                var selector = selectors.get(jobIndex);
+                HttpRequestProcessorSelector selector = httpSelectorFactory.getSelectorByWorker(jobIndex);
                 return context.handleClientOperation(operation, selector, rescheduleContext);
             } catch (HeartBeatException e) {
                 dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -437,14 +419,6 @@ public class HttpServer implements Closeable {
             }
         }
         return false;
-    }
-
-    private HttpRequestProcessorSelector getPooledSelector() {
-        var selector = pool.pop();
-        if (selector == null) {
-            selector = new HttpRequestProcessorSelectorImpl();
-        }
-        return selector;
     }
 
     @FunctionalInterface
@@ -468,8 +442,96 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
+    private static class HttpRequestProcessorSelectorFactory implements Closeable {
+        private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
+        private final ConcurrentPool<HttpRequestProcessorSelector> pool = new ConcurrentPool<>();
+        private final ObjList<HttpRequestProcessorSelector> selectors = new ObjList<>();
+        private volatile boolean poolingEnabled = true;
 
+        public HttpRequestProcessorSelectorFactory(int jobCount) {
+            for (int i = 0; i < jobCount; i++) {
+                selectors.add(null); // preallocate selectors for each job index
+            }
+        }
+
+        @Override
+        public void close() {
+            Misc.freeObjList(selectors);
+            HttpRequestProcessorSelector selector = pool.pop();
+            while (selector != null) {
+                Misc.free(selector);
+                selector = pool.pop();
+            }
+        }
+
+        public void disablePooling() {
+            poolingEnabled = false;
+        }
+
+        public HttpRequestProcessorSelector getSelectorByWorker(int jobIndex) {
+            HttpRequestProcessorSelector jobSelector = selectors.getQuick(jobIndex);
+            if (jobSelector == null) {
+                jobSelector = create();
+                selectors.set(jobIndex, jobSelector);
+            }
+            return jobSelector;
+        }
+
+        public @NotNull HttpRequestProcessorSelector getSelectorFromPool() {
+            HttpRequestProcessorSelector selector = pool.pop();
+            if (selector == null) {
+                selector = create();
+            }
+            return selector;
+        }
+
+        public void poolSelector(HttpRequestProcessorSelector selector) {
+            if (poolingEnabled) {
+                pool.push(selector);
+            } else {
+                Misc.free(selector);
+            }
+        }
+
+        private void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
+            factoryHolders.add(new FactoryHolder(factory, useAsDefault));
+        }
+
+        private @NotNull HttpRequestProcessorSelector create() {
+            HttpRequestProcessorSelectorImpl selector = new HttpRequestProcessorSelectorImpl();
+
+            for (int i = 0, m = factoryHolders.size(); i < m; i++) {
+                FactoryHolder factoryHolder = factoryHolders.getQuick(i);
+                HttpRequestHandlerFactory factory = factoryHolder.factory;
+                boolean useAsDefault = factoryHolder.useAsDefault;
+                final ObjList<String> urls = factory.getUrls();
+                assert urls != null;
+
+                for (int j = 0, n = urls.size(); j < n; j++) {
+                    final String url = urls.getQuick(j);
+                    if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                        selector.defaultRequestProcessor = factory.newInstance().getDefaultProcessor();
+                    } else {
+                        final Utf8String key = new Utf8String(url);
+                        int keyIndex = selector.requestHandlerMap.keyIndex(key);
+                        if (keyIndex > -1) {
+                            final HttpRequestHandler requestHandler = factory.newInstance();
+                            selector.requestHandlerMap.putAt(keyIndex, key, requestHandler);
+                            if (useAsDefault) {
+                                selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
+                            }
+                        }
+                    }
+                }
+            }
+            return selector;
+        }
+
+        private record FactoryHolder(HttpRequestHandlerFactory factory, boolean useAsDefault) {
+        }
+    }
+
+    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
         private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
 

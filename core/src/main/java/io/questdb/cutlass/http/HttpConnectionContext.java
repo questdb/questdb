@@ -103,13 +103,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long authenticationNanos = 0L;
     private AtomicLongGauge connectionCountGauge;
     private boolean connectionCounted;
+    private HttpRequestProcessorSelector contextSelector;
     private boolean ioReady = false;
     private boolean isClean = true;
     private int nCompletedRequests;
     private int pendingOperation;
     private RescheduleContext pendingRescheduleContext;
     private boolean pendingRetry = false;
-    private HttpRequestProcessorSelector pendingSelector;
     private int receivedBytes;
     private long recvBuffer;
     private int recvBufferReadSize;
@@ -228,7 +228,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.authenticator.close();
         if (fd != -1) {
             LOG.info().$("====== resuming connection virtual thread on close [fd=").$(fd).I$();
-            this.resume(0, null, null);
+            this.resume(0, null);
         }
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
@@ -315,7 +315,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing;
-
         switch (operation) {
             case IOOperation.READ:
                 keepGoing = handleClientRecv(selector, rescheduleContext);
@@ -345,7 +344,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public void handleClientOperation() throws PeerIsSlowToReadException, HeartBeatException, ServerDisconnectException, PeerIsSlowToWriteException {
         ioReady = false;
         ThreadingSupport.attachThreadLocals(threadLocalContainer);
-        handleClientOperation(pendingOperation, pendingSelector, pendingRescheduleContext);
+        handleClientOperation(pendingOperation, contextSelector, pendingRescheduleContext);
     }
 
     @Override
@@ -387,11 +386,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         clearSuspendEvent();
     }
 
-    public void resume(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+    public void resume(int operation, RescheduleContext rescheduleContext) {
         var threadLocals = ThreadingSupport.detachThreadLocals();
         synchronized (ioMonitor) {
             this.pendingOperation = operation;
-            this.pendingSelector = selector;
             this.pendingRescheduleContext = rescheduleContext;
             ioReady = true;
             ioMonitor.notify();
@@ -416,8 +414,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.simpleResponse();
     }
 
-    public void startNewConnection() {
+    public void startNewConnection(HttpRequestProcessorSelector selector) {
         isClean = false;
+        this.contextSelector = selector;
     }
 
     @Override
