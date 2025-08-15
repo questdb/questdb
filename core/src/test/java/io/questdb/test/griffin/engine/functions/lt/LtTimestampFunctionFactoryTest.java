@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assume;
 import org.junit.Test;
@@ -42,23 +42,22 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    private final TestTimestampType timestampType;
 
-    private final TimestampDriver driver;
-
-    public LtTimestampFunctionFactoryTest(int timestampType) {
-        this.driver = ColumnType.getTimestampDriver(timestampType);
+    public LtTimestampFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
     @Test
     public void testGreaterOrEqThanNull() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature(">=(NN)", t1, t1).andAssert(true);
         callBySignature(">=(NN)", t1, t2).andAssert(false);
@@ -68,8 +67,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testGreaterThan() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
-        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature(">(NN)", t1, t1).andAssert(false);
         callBySignature(">(NN)", t1, t2).andAssert(false);
         callBySignature(">(NN)", t2, t1).andAssert(true);
@@ -77,7 +76,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testGreaterThanNull() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature(">(NN)", t1, t1).andAssert(false);
         callBySignature(">(NN)", t1, t2).andAssert(false);
@@ -87,8 +86,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testGreaterThanOrEqualTo() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
-        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature(">=(NN)", t1, t1).andAssert(true);
         callBySignature(">=(NN)", t1, t2).andAssert(false);
         callBySignature(">=(NN)", t2, t1).andAssert(true);
@@ -96,7 +95,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testLessOrEqThanNull() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature("<=(NN)", t1, t1).andAssert(true);
         callBySignature("<=(NN)", t1, t2).andAssert(false);
@@ -106,8 +105,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testLessThan() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
-        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature("<(NN)", t1, t1).andAssert(false);
         callBySignature("<(NN)", t1, t2).andAssert(true);
         callBySignature("<(NN)", t2, t1).andAssert(false);
@@ -115,8 +114,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testLessThanOrEqualTo() throws SqlException, NumericException {
-        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
-        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
+        long t1 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = timestampType.getDriver().parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature("<=(NN)", t1, t1).andAssert(true);
         callBySignature("<=(NN)", t1, t2).andAssert(true);
         callBySignature("<=(NN)", t2, t1).andAssert(false);
@@ -124,7 +123,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testMixedMicrosAndNanos() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampNano(driver.getTimestampType()));
+        Assume.assumeTrue(ColumnType.isTimestampNano(timestampType.getTimestampType()));
         assertMemoryLeak(() -> {
             execute("create table x as (" +
                     "select " +

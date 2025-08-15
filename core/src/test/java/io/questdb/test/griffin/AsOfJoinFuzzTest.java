@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -49,23 +50,19 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
-    private final String leftTableTimestampType;
-    private final TimestampDriver leftTimestampDriver;
-    private final String rightTableTimestampType;
-    private final TimestampDriver rightTimestampDriver;
+    private final TestTimestampType leftTableTimestampType;
+    private final TestTimestampType rightTableTimestampType;
 
-    public AsOfJoinFuzzTest(int leftTimestampType, int rightTimestampType) {
-        this.leftTableTimestampType = ColumnType.nameOf(leftTimestampType);
-        this.rightTableTimestampType = ColumnType.nameOf(rightTimestampType);
-        this.leftTimestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
-        this.rightTimestampDriver = ColumnType.getTimestampDriver(rightTimestampType);
+    public AsOfJoinFuzzTest(TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
+        this.leftTableTimestampType = leftTimestampType;
+        this.rightTableTimestampType = rightTimestampType;
     }
 
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO},
-                {ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO, TestTimestampType.MICRO}, {TestTimestampType.MICRO, TestTimestampType.NANO},
+                {TestTimestampType.NANO, TestTimestampType.MICRO}, {TestTimestampType.NANO, TestTimestampType.NANO}
         });
     }
 
@@ -348,7 +345,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
+            final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
@@ -359,7 +357,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
+            final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
@@ -380,7 +379,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", leftTableTimestampType);
+            final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", leftTableTimestampType.getTypeName());
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
@@ -391,7 +391,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", rightTableTimestampType);
+            final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {

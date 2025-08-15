@@ -65,6 +65,7 @@ import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -96,7 +97,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
     protected long timestampTicks;
-    protected int timestampType = ColumnType.TIMESTAMP_MICRO;
+    protected TestTimestampType timestampType = TestTimestampType.MICRO;
     protected boolean useLegacyString;
     protected WorkerPool workerPool;
 
@@ -207,7 +208,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public int getDefaultColumnTypeForTimestamp() {
-                return timestampType;
+                return timestampType.getTimestampType();
             }
 
             @Override

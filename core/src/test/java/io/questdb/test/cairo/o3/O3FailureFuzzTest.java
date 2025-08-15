@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,6 +38,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -92,18 +92,18 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static Rnd rnd;
     private final int workerCount;
 
-    public O3FailureFuzzTest(ParallelMode mode, int columnType) {
-        super(columnType);
+    public O3FailureFuzzTest(ParallelMode mode, TestTimestampType timestampType) {
+        super(timestampType);
         this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
     }
 
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.PARALLEL, ColumnType.TIMESTAMP_MICRO},
-                {ParallelMode.PARALLEL, ColumnType.TIMESTAMP_NANO},
-                {ParallelMode.CONTENDED, ColumnType.TIMESTAMP_MICRO},
-                {ParallelMode.CONTENDED, ColumnType.TIMESTAMP_NANO},
+                {ParallelMode.PARALLEL, TestTimestampType.MICRO},
+                {ParallelMode.PARALLEL, TestTimestampType.NANO},
+                {ParallelMode.CONTENDED, TestTimestampType.MICRO},
+                {ParallelMode.CONTENDED, TestTimestampType.NANO},
         });
     }
 

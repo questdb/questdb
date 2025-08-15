@@ -42,7 +42,6 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
@@ -54,6 +53,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -75,18 +75,16 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 @RunWith(Parameterized.class)
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
-    private final TimestampDriver timestampDriver;
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public MatViewReloadOnRestartTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    public MatViewReloadOnRestartTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -193,6 +191,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             final TestMicroClock testClock = new TestMicroClock(now);
 
             final LongList expectedIntervals = new LongList();
+            final TimestampDriver timestampDriver = timestampType.getDriver();
             expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-11T12:01"), timestampDriver.parseFloorLiteral("2024-09-11T12:02"));
             expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-12T03:01"), timestampDriver.parseFloorLiteral("2024-09-12T23:02"));
 
@@ -1089,13 +1088,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         }
     }
 
-    private void executeWithRewriteTimestamp(TestServerMain serverMain, String sql) throws SqlException {
-        sql = sql.replaceAll("#TIMESTAMP", timestampType);
+    private void executeWithRewriteTimestamp(TestServerMain serverMain, String sql) {
+        sql = sql.replaceAll("#TIMESTAMP", timestampType.getTypeName());
         execute(serverMain, sql);
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return ColumnType.isTimestampMicro(timestampDriver.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     enum Transport {

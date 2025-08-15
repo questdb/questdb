@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,16 +39,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
-    private final String timestampTypeName;
+    private final TestTimestampType timestampType;
 
-    public IntervalSearchOpenPartitionTrackingTest(int timestampType) {
-        this.timestampTypeName = ColumnType.nameOf(timestampType);
+    public IntervalSearchOpenPartitionTrackingTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -67,7 +67,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         "2025-07-11T03:18:00.000000Z\t0.8912587536603974\n" +
                         "2025-07-11T03:12:00.000000Z\t0.6761934857077543\n" +
                         "2025-07-11T03:06:00.000000Z\t0.12026122412833129\n" +
-                        "2025-07-11T03:00:00.000000Z\t0.9038068796506872\n", timestampTypeName),
+                        "2025-07-11T03:00:00.000000Z\t0.9038068796506872\n", timestampType.getTypeName()),
                 sql
         );
         Assert.assertEquals("[3]", partitionList.toString());
@@ -76,7 +76,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         "PageFrame\n" +
                         "    Row backward scan\n" +
                         "    Interval backward scan on: tmp\n" +
-                        (TIMESTAMP_TYPE_NAME.equals(timestampTypeName) ?
+                        (timestampType == TestTimestampType.MICRO ?
                                 "      intervals: [(\"2025-07-11T03:00:00.000000Z\",\"2025-07-11T03:59:59.999999Z\")]\n" :
                                 "      intervals: [(\"2025-07-11T03:00:00.000000000Z\",\"2025-07-11T03:59:59.999999999Z\")]\n"),
                 "explain " + sql
@@ -98,7 +98,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         "2025-07-11T07:18:00.000000Z\t0.2820020716674768\n" +
                         "2025-07-11T07:12:00.000000Z\t0.5811247005631662\n" +
                         "2025-07-11T07:06:00.000000Z\t0.6551335839796312\n" +
-                        "2025-07-11T07:00:00.000000Z\t0.42020442539326086\n", timestampTypeName),
+                        "2025-07-11T07:00:00.000000Z\t0.42020442539326086\n", timestampType.getTypeName()),
                 sql
         );
 
@@ -128,7 +128,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         "2025-07-11T05:36:00.000000Z\t0.05384400312338511\n" +
                         "2025-07-11T05:42:00.000000Z\t0.6821660861001273\n" +
                         "2025-07-11T05:48:00.000000Z\t0.7230015763133606\n" +
-                        "2025-07-11T05:54:00.000000Z\t0.9644183832564398\n", timestampTypeName),
+                        "2025-07-11T05:54:00.000000Z\t0.9644183832564398\n", timestampType.getTypeName()),
                 sql
         );
         Assert.assertEquals("[5]", partitionList.toString());
@@ -137,7 +137,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tmp\n" +
-                        (TIMESTAMP_TYPE_NAME.equals(timestampTypeName) ?
+                        (timestampType == TestTimestampType.MICRO ?
                                 "      intervals: [(\"2025-07-11T05:00:00.000000Z\",\"2025-07-11T05:59:59.999999Z\")]\n" :
                                 "      intervals: [(\"2025-07-11T05:00:00.000000000Z\",\"2025-07-11T05:59:59.999999999Z\")]\n"),
                 "explain " + sql
@@ -169,7 +169,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
                         "2025-07-11T09:36:00.000000Z\t0.8231249461985348\n" +
                         "2025-07-11T09:42:00.000000Z\t0.6697969295620055\n" +
                         "2025-07-11T09:48:00.000000Z\t0.4295631643526773\n" +
-                        "2025-07-11T09:54:00.000000Z\t0.26369335635512836\n", timestampTypeName),
+                        "2025-07-11T09:54:00.000000Z\t0.26369335635512836\n", timestampType.getTypeName()),
                 sql
         );
 
@@ -185,7 +185,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
     }
 
     private @NotNull IntList setupTableAndOpenPartitionList() throws SqlException {
-        execute("create table tmp as (select timestamp_sequence('2025-07-11'::timestamp, 360_000_000)::" + timestampTypeName + " ts, rnd_double() d from long_sequence(100)) timestamp(ts) partition by hour");
+        execute("create table tmp as (select timestamp_sequence('2025-07-11'::timestamp, 360_000_000)::" + timestampType.getTypeName() + " ts, rnd_double() d from long_sequence(100)) timestamp(ts) partition by hour");
         assertSql(
                 "count\n" +
                         "10\n",

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -33,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,18 +44,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class TimestampSamplerFactoryTest {
-    private final TimestampDriver driver;
-    private final int timestampType;
+    private final TestTimestampType timestampType;
 
-    public TimestampSamplerFactoryTest(int timestampType) {
+    public TimestampSamplerFactoryTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-        this.driver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -73,7 +71,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testLongQualifier() {
         try {
-            TimestampSamplerFactory.getInstance(driver, "1sa", 130);
+            TimestampSamplerFactory.getInstance(timestampType.getDriver(), "1sa", 130);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(131, e.getPosition());
@@ -84,6 +82,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testMicros() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
+        final TimestampDriver driver = timestampType.getDriver();
         final long ts = driver.parseFloorLiteral("2022-04-23T10:33:00.123456Z");
         final Rnd rand = new Rnd();
         for (int j = 0; j < 1000; j++) {
@@ -107,6 +106,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testMillis() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
+        final TimestampDriver driver = timestampType.getDriver();
         final long ts = driver.parseFloorLiteral("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 101; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 'T', sink);
@@ -128,6 +128,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testMinutes() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
+        final TimestampDriver driver = timestampType.getDriver();
         final long ts = driver.parseFloorLiteral("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 61; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 'm', sink);
@@ -183,6 +184,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testSeconds() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
+        final TimestampDriver driver = timestampType.getDriver();
         final long ts = driver.parseFloorLiteral("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 61; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 's', sink);
@@ -192,10 +194,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + driver.fromSeconds(i));
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                                    sink, i, driver.toMSecString(expectedTs), driver.toMSecString(actualTs)
-                            )
-                    );
+                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                            sink, i, driver.toMSecString(expectedTs), driver.toMSecString(actualTs)
+                    ));
                 }
             }
         }
@@ -228,6 +229,7 @@ public class TimestampSamplerFactoryTest {
 
     private void assertFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
         try {
+            final TimestampDriver driver = timestampType.getDriver();
             TimestampSamplerFactory.getInstance(driver, sampleBy, position);
             Assert.fail();
         } catch (SqlException e) {
@@ -242,7 +244,8 @@ public class TimestampSamplerFactoryTest {
             sink.put(bucketSize);
         }
         sink.put(units);
-        TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, sink, 120);
+        final TimestampDriver driver = timestampType.getDriver();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, sink, 120);
         Assert.assertNotNull(sampler);
         return sampler;
     }

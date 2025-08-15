@@ -50,6 +50,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
@@ -83,7 +84,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
     private final boolean walEnabled;
 
-    public LineTcpSenderTest(WalMode walMode, int timestampType) {
+    public LineTcpSenderTest(WalMode walMode, TestTimestampType timestampType) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
         this.timestampType = timestampType;
     }
@@ -91,8 +92,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL, ColumnType.TIMESTAMP_MICRO}, {WalMode.NO_WAL, ColumnType.TIMESTAMP_MICRO},
-                {WalMode.WITH_WAL, ColumnType.TIMESTAMP_NANO}, {WalMode.NO_WAL, ColumnType.TIMESTAMP_NANO},
+                {WalMode.WITH_WAL, TestTimestampType.MICRO}, {WalMode.NO_WAL, TestTimestampType.MICRO},
+                {WalMode.WITH_WAL, TestTimestampType.NANO}, {WalMode.NO_WAL, TestTimestampType.NANO},
         });
     }
 
@@ -183,7 +184,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testAuthWrongKey() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             int bufferCapacity = 2048;
@@ -205,7 +206,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testBuilderAuthSuccess() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         authKeyId = AUTH_KEY_ID1;
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
@@ -223,7 +224,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testBuilderAuthSuccess_confString() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         authKeyId = AUTH_KEY_ID1;
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
@@ -237,7 +238,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -253,7 +254,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testBuilderPlainText_addressWithHostnameAndPort() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         String address = "localhost:" + bindPort;
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -269,7 +270,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testBuilderPlainText_addressWithIpAndPort() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -285,7 +286,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         ByteChannel channel = new ByteChannel();
         try (Sender sender = new LineTcpSenderV2(channel, 1000, 127)) {
             sender.table("mytable");
@@ -307,7 +308,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testCloseIdempotent() {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         DummyLineChannel channel = new DummyLineChannel();
         AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1000, 127);
         sender.close();
@@ -331,7 +332,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConfString() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";protocol_version=2;";
@@ -360,7 +361,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConfString_autoFlushBytes() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         String confString = "tcp::addr=localhost:" + bindPort + ";auto_flush_bytes=1;protocol_version=2;"; // the minimal allowed buffer size
         runInContext(r -> {
             try (Sender sender = Sender.fromConfig(confString)) {
@@ -378,13 +379,13 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testControlCharInColumnName() {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         assertControlCharacterException();
     }
 
     @Test
     public void testControlCharInTableName() {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         assertControlCharacterException();
     }
 
@@ -410,7 +411,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, "mytable", 1);
                 try (TableReader reader = getReader("mytable")) {
-                    if (ColumnType.isTimestampMicro(timestampType)) {
+                    if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                         TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
                                 "null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
                     } else {
@@ -464,7 +465,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testInsertLargeArray() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         Assume.assumeTrue(walEnabled);
         String tableName = "arr_large_test";
         runInContext(r -> {
@@ -495,7 +496,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
                     .col("s", ColumnType.STRING)
                     .col("u", ColumnType.UUID);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 model.timestamp();
             } else {
                 model.timestampNs();
@@ -520,7 +521,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "s\tu\ttimestamp\n" +
                         "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n"
                         : "s\tu\ttimestamp\n" +
@@ -544,7 +545,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("u1", ColumnType.UUID)
                     .col("u2", ColumnType.UUID)
                     .col("u3", ColumnType.UUID);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 model.timestamp();
             } else {
                 model.timestampNs();
@@ -570,7 +571,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "u1\tu2\tu3\ttimestamp\n" +
                         "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n"
                         : "u1\tu2\tu3\ttimestamp\n" +
@@ -585,7 +586,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
                     .col("ts_col", ColumnType.TIMESTAMP);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 model.timestamp();
             } else {
                 model.timestampNs();
@@ -608,7 +609,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "ts_col\ttimestamp\n" +
                         "2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000Z\n"
                         : "ts_col\ttimestamp\n" +
@@ -624,7 +625,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
                     .col("unit", ColumnType.STRING)
                     .col("ts", ColumnType.TIMESTAMP);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 model.timestamp();
             } else {
                 model.timestampNs();
@@ -664,7 +665,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 5);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "unit\tts\ttimestamp\n" +
                         "m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000Z\n" +
                         "s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000Z\n" +
@@ -684,7 +685,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testInsertTimestampNanoOverflow() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext(r -> {
             TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
                     .col("ts", ColumnType.TIMESTAMP).timestamp();
@@ -719,7 +720,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
                     .col("unit", ColumnType.STRING)
                     .col("ts", ColumnType.TIMESTAMP);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 model.timestamp();
             } else {
                 model.timestampNs();
@@ -743,7 +744,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "unit\tts\ttimestamp\n" +
                         "ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568Z\n"
                         : "unit\tts\ttimestamp\n" +
@@ -813,7 +814,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
                      RecordCursor cursor = fac.getCursor(sqlExecutionContext)
                 ) {
-                    String expected = ColumnType.isTimestampMicro(timestampType)
+                    String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                             ? "some string:VARCHAR\tanother string:VARCHAR\tyet another string:VARCHAR\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n"
                             : "some string:VARCHAR\tanother string:VARCHAR\tyet another string:VARCHAR\t2024-02-27T00:00:00.000000000Z:TIMESTAMP_NS\n";
                     TestUtils.assertCursor(
@@ -971,7 +972,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
                      RecordCursor cursor = fac.getCursor(sqlExecutionContext)
                 ) {
-                    String expectTs = ColumnType.isTimestampMicro(timestampType)
+                    String expectTs = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                             ? "\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n"
                             : "\t2024-02-27T00:00:00.000000000Z:TIMESTAMP_NS\n";
                     TestUtils.assertCursor(
@@ -1005,7 +1006,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
                         "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n"
                         : "int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
@@ -1037,7 +1038,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, table, 1);
             try (TableReader reader = getReader(table)) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "max\tmin\ttimestamp\n" +
                         "9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z\n"
                         : "max\tmin\ttimestamp\n" +
@@ -1125,7 +1126,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             // create table with UUID column
             TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
                     .col("u1", ColumnType.UUID);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 model.timestamp();
             } else {
                 model.timestampNs();
@@ -1164,7 +1165,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType)
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                         ? "u1\ttimestamp\n" +
                         "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n"
                         : "u1\ttimestamp\n" +

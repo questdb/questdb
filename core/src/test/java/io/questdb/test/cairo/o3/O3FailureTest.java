@@ -50,6 +50,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -74,7 +75,6 @@ import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
 @RunWith(Parameterized.class)
 public class O3FailureTest extends AbstractO3Test {
-
     private final static AtomicInteger counter = new AtomicInteger(0);
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
@@ -135,14 +135,14 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
 
-    public O3FailureTest(int timestampType) {
+    public O3FailureTest(TestTimestampType timestampType) {
         super(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -3782,7 +3782,12 @@ public class O3FailureTest extends AbstractO3Test {
                     return ff;
                 }
             };
-            TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampTypeName), configuration, LOG);
+            TestUtils.execute(
+                    null,
+                    (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampType.getTypeName()),
+                    configuration,
+                    LOG
+            );
         });
     }
 

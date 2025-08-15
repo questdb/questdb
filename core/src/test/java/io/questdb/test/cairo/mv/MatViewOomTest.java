@@ -25,10 +25,10 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -38,17 +38,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class MatViewOomTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
 
-    private final String timestampType;
-
-    public MatViewOomTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public MatViewOomTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -63,7 +62,7 @@ public class MatViewOomTest extends AbstractCairoTest {
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
         engine.execute(sqlText, sqlExecutionContext);
     }
 

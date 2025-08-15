@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -40,24 +40,23 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class MonthTimestampSamplerTest {
-    private final TimestampDriver timestampDriver;
-    private final int timestampType;
+    private final TestTimestampType timestampType;
 
-    public MonthTimestampSamplerTest(int timestampType) {
+    public MonthTimestampSamplerTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
     @Test
     public void testNextTimestamp() throws Exception {
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -80,7 +79,8 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testNextTimestampWithStep() throws Exception {
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -103,7 +103,8 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testPreviousTimestamp() throws Exception {
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -150,6 +151,7 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, rounded.length);
         Assert.assertEquals(src.length, strides.length);
 
+        final TimestampDriver timestampDriver = timestampType.getDriver();
         for (int i = 0; i < src.length; i++) {
             final TimestampSampler sampler = timestampDriver.getTimestampSampler(strides[i], 'M', 0);
             final long ts = timestampDriver.parseFloorLiteral(src[i]);
@@ -160,8 +162,9 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testSimple() throws Exception {
-        StringSink sink = new StringSink();
-        TimestampSampler sampler = timestampDriver.getTimestampSampler(6, 'M', 0);
+        final StringSink sink = new StringSink();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(6, 'M', 0);
 
         long timestamp = timestampDriver.parseFloorLiteral("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
@@ -194,7 +197,9 @@ public class MonthTimestampSamplerTest {
                                 "2027-05-16T15:00:00.000000Z\n" +
                                 "2027-11-16T15:00:00.000000Z\n" +
                                 "2028-05-16T15:00:00.000000Z\n" +
-                                "2028-11-16T15:00:00.000000Z\n", ColumnType.nameOf(timestampType)),
+                                "2028-11-16T15:00:00.000000Z\n",
+                        timestampType.getTypeName()
+                ),
                 sink
         );
     }

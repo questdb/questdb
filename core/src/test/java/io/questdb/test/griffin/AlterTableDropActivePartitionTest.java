@@ -41,6 +41,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -60,20 +61,18 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     private static final String EmptyTableMinMaxCount = MinMaxCountHeader + "\t\t0\n";
     private static final String TableHeader = "id\ttimestamp\n";
 
-    private final TimestampDriver driver;
-    private final int timestampType;
+    private final TestTimestampType timestampType;
     private int txn;
     private WorkerPool workerPool;
 
-    public AlterTableDropActivePartitionTest(int timestampType) {
+    public AlterTableDropActivePartitionTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-        this.driver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -388,7 +387,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                         } catch (CairoException |
                                  SqlException ex) { // the latter is due to an assertion in SqlException.position
                             TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp data in detached partition");
-                            TestUtils.assertContains(ex.getFlyweightMessage(), replaceTimestampSuffix("minTimestamp=1970-01-01T00:00:00.000017Z, maxTimestamp=1970-01-01T00:00:00.000017Z]", ColumnType.nameOf(timestampType)));
+                            TestUtils.assertContains(ex.getFlyweightMessage(), replaceTimestampSuffix("minTimestamp=1970-01-01T00:00:00.000017Z, maxTimestamp=1970-01-01T00:00:00.000017Z]", timestampType.getTypeName()));
                         }
                     } finally {
                         Misc.free(workerPool);
@@ -575,6 +574,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             "6\t2023-10-12T00:00:02.000000Z\n" +
                             "50\t2023-10-12T00:00:03.000000Z\n";
 
+                    TimestampDriver driver = timestampType.getDriver();
                     try (
                             TableReader reader0 = getReader(tableName);
                             TableReader reader1 = getReader(tableName);
@@ -637,6 +637,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
                                 "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                                 "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+                        TimestampDriver driver = timestampType.getDriver();
                         try (TableWriter writer = getWriter(tableName)) {
                             long lastTs = driver.parseFloorLiteral(LastPartitionTs + "T00:00:00.000000Z");
 
@@ -702,6 +703,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 "6\t2023-10-12T00:00:02.000000Z\n" +
                                 "50\t2023-10-12T00:00:03.000000Z\n";
 
+                        TimestampDriver driver = timestampType.getDriver();
                         try (
                                 TableReader reader0 = getReader(tableName);
                                 TableReader reader1 = getReader(tableName);
@@ -879,6 +881,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     final String tableName = "tab";
                     try {
                         createTableX(tableName, TableHeader); // empty table
+                        TimestampDriver driver = timestampType.getDriver();
                         try (TableWriter writer = getWriter(tableName)) {
                             long lastTs = driver.parseFloorLiteral(LastPartitionTs + "T00:00:00.000000Z");
                             long o3Ts = driver.parseFloorLiteral("2023-10-14T23:59:59.999999Z"); // o3 previous day
@@ -913,6 +916,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     final String tableName = "tab";
                     try {
                         createTableX(tableName, TableHeader); // empty table
+                        TimestampDriver driver = timestampType.getDriver();
                         try (TableWriter writer = getWriter(tableName)) {
                             long prevTs = driver.parseFloorLiteral("2023-10-14T23:59:59.999999Z"); // previous day
                             long lastTs = driver.parseFloorLiteral(LastPartitionTs + "T00:00:00.000000Z");
@@ -991,7 +995,9 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     }
 
     private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp(timestampType);
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("id", ColumnType.INT)
+                .timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         txn = 0;
         //noinspection ForLoopReplaceableByForEach
@@ -1022,6 +1028,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return ColumnType.isTimestampNano(timestampType) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n")
+                : expected;
     }
 }

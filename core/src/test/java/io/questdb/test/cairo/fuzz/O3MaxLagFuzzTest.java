@@ -39,6 +39,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.o3.AbstractO3Test;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -56,14 +57,14 @@ import java.util.Collection;
 public class O3MaxLagFuzzTest extends AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3MaxLagFuzzTest.class);
 
-    public O3MaxLagFuzzTest(int timestampType) {
+    public O3MaxLagFuzzTest(TestTimestampType timestampType) {
         super(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 

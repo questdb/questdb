@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
+import io.questdb.test.TestTimestampType;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -39,15 +39,14 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
+// asserts that all type casts that are not possible will throw exception
 @RunWith(Parameterized.class)
 public class TimestampFunctionTest {
-    // assert that all type casts that are not possible will throw exception
-
-    private final TimestampDriver driver;
     private final TimestampFunction function;
+    private final TestTimestampType timestampType;
 
-    public TimestampFunctionTest(int timestampType) {
-        this.function = new TimestampFunction(timestampType) {
+    public TimestampFunctionTest(TestTimestampType timestampType) {
+        this.function = new TimestampFunction(timestampType.getTimestampType()) {
             @Override
             public long getTimestamp(Record rec) {
                 return 145000L;
@@ -58,13 +57,13 @@ public class TimestampFunctionTest {
                 return true;
             }
         };
-        this.driver = ColumnType.getTimestampDriver(timestampType);
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -100,7 +99,7 @@ public class TimestampFunctionTest {
 
     @Test
     public void testGetDate() {
-        Assert.assertEquals(driver.toDate(145000), function.getDate(null));
+        Assert.assertEquals(timestampType.getDriver().toDate(145000), function.getDate(null));
     }
 
     @Test

@@ -51,6 +51,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -76,14 +77,14 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     private final SCSequence scSequence = new SCSequence();
     private SqlException sqlException;
 
-    public AlterWalTableLineTcpReceiverTest(int timestampType) {
+    public AlterWalTableLineTcpReceiverTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -113,7 +114,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "room\twatts\ttimestamp\tlabel2\tlabel\n" +
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tnull\t\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tnull\tLine\n" +
@@ -134,8 +135,8 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterCommandDropAllPartitions() throws Exception {
-        long day1 = ColumnType.isTimestampMicro(timestampType) ? MicrosTimestampDriver.floor("2023-02-27") * 1000 : NanosTimestampDriver.floor("2023-02-27");
-        long day2 = ColumnType.isTimestampMicro(timestampType) ? MicrosTimestampDriver.floor("2023-02-28") * 1000 : NanosTimestampDriver.floor("2023-02-28");
+        long day1 = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? MicrosTimestampDriver.floor("2023-02-27") * 1000 : NanosTimestampDriver.floor("2023-02-27");
+        long day2 = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? MicrosTimestampDriver.floor("2023-02-28") * 1000 : NanosTimestampDriver.floor("2023-02-28");
         runInContext((server) -> {
             final AtomicLong ilpProducerWatts = new AtomicLong(0L);
             final AtomicBoolean keepSending = new AtomicBoolean(true);
@@ -204,7 +205,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
             tm.col("room", ColumnType.SYMBOL);
             tm.col("watts", ColumnType.LONG);
-            if (ColumnType.isTimestampMicro(timestampType)) {
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
                 tm.timestamp();
             } else {
                 tm.timestampNs();
@@ -213,7 +214,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             TableToken ignored = TestUtils.createTable(engine, tm);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
-                TableWriter.Row row = writer.newRow(ColumnType.isTimestampMicro(timestampType) ? day1 / 1000 : day1);
+                TableWriter.Row row = writer.newRow(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? day1 / 1000 : day1);
                 row.putSym(0, "6A");
                 row.putLong(1, 100L);
                 row.append();
@@ -237,7 +238,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             lineData = "plug,room=6A watts=125i " + day1 + "\n";
             send(lineData);
             drainWalQueue();
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "room\twatts\ttimestamp\n" +
                     "6A\t125\t2023-02-27T00:00:00.000000Z\n"
                     : "room\twatts\ttimestamp\n" +
@@ -265,7 +266,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "room\twatts\ttimestamp\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
                     "6C\t333\t1970-03-03T00:00:00.000000Z\n"
@@ -297,7 +298,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send(lineData);
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "label2\troom\twatts\ttimestamp\tlabel\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\tnull\n" +
                     "\t6C\t666\t1970-01-01T00:25:31.817902Z\t1\n" +
@@ -337,7 +338,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send(lineData);
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "label2\troom\twatts\ttimestamp\tlabel\n" +
                     "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\t\n" +
                     "\t6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
@@ -374,7 +375,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             }
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
                     "6A\t1\t1970-01-01T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
@@ -431,7 +432,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             drainWalQueue();
 
             assertTable(
-                    ColumnType.isTimestampMicro(timestampType)
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType())
                             ? "label\troom\twatts\ttimestamp\n" +
                             "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
                             "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
@@ -548,7 +549,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testAlterTableAddIndex() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
@@ -589,7 +590,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send("plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n");
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "room\tpower\ttimestamp\twatts\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "6B\tnull\t1970-01-01T00:27:11.817902Z\t\n" +
@@ -678,7 +679,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             send(lineData);
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "room\tpower\ttimestamp\twatts\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
@@ -699,7 +700,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Test
     public void testRandomColumnAddedDeleted() throws Exception {
-        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((server) -> {
             IntList columnsAdded = new IntList();
 
@@ -817,7 +818,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             );
             drainWalQueue();
 
-            String expected = ColumnType.isTimestampMicro(timestampType)
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? "watts\tpower\ttimestamp\troom\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
                     "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +

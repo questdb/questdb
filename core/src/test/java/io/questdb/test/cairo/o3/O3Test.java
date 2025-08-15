@@ -60,6 +60,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
@@ -92,14 +93,14 @@ import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 public class O3Test extends AbstractO3Test {
     private final StringBuilder tstData = new StringBuilder();
 
-    public O3Test(int timestampType) {
+    public O3Test(TestTimestampType timestampType) {
         super(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -148,7 +149,7 @@ public class O3Test extends AbstractO3Test {
                             .col("productName", ColumnType.STRING)
                             .col("category", ColumnType.SYMBOL)
                             .col("price", ColumnType.DOUBLE)
-                            .timestamp(timestampType)
+                            .timestamp(timestampType.getTimestampType())
                             .col("supplier", ColumnType.SYMBOL);
 
                     TestUtils.createTable(engine, model);
@@ -224,7 +225,7 @@ public class O3Test extends AbstractO3Test {
     public void testBench() throws Exception {
         // On OSX, it's not trivial to increase the open file limit per process
         if (Os.type != Os.DARWIN) {
-            executeVanilla((engine, compiler, context) -> testBench0(engine, compiler, context, timestampTypeName));
+            executeVanilla((engine, compiler, context) -> testBench0(engine, compiler, context, timestampType.getTypeName()));
         }
     }
 
@@ -1126,8 +1127,7 @@ public class O3Test extends AbstractO3Test {
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(
                 0,
-                (engine, compiler, sqlExecutionContext, timestampTypeName
-                ) -> {
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> {
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String strColVal =
@@ -1146,7 +1146,7 @@ public class O3Test extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY", sqlExecutionContext
                     );
 
-                    TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                    TimestampDriver driver = timestampType.getDriver();
                     long maxTimestamp = driver.parseFloorLiteral("2022-02-24") + driver.fromMicros(records * 1000L);
                     CharSequence o3Ts = driver.toMSecString(maxTimestamp - driver.fromMicros(2000));
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
@@ -8674,7 +8674,7 @@ public class O3Test extends AbstractO3Test {
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
-                        " timestamp_sequence('1970-01-01T11:00:00',1000L)::" + timestampTypeName + " ts," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L)::" + timestampType.getTypeName() + " ts," +
                         " x " +
                         " from long_sequence(" + initialCount + ")" +
                         ") timestamp (ts) partition by DAY",
@@ -8686,7 +8686,7 @@ public class O3Test extends AbstractO3Test {
                 "insert into x " +
                         "select" +
                         " 'bb' as str," +
-                        " timestamp_sequence('1970-01-02T11:00:00',1000L)::" + timestampTypeName + " ts," +
+                        " timestamp_sequence('1970-01-02T11:00:00',1000L)::" + timestampType.getTypeName() + " ts," +
                         " x " +
                         " from long_sequence(" + initialCount + ")", sqlExecutionContext
         );
@@ -8705,7 +8705,7 @@ public class O3Test extends AbstractO3Test {
                 "insert into x " +
                         " select" +
                         " 'cc' as str," +
-                        " timestamp_sequence('" + ts1 + "',0L)::" + timestampTypeName + " ts," +
+                        " timestamp_sequence('" + ts1 + "',0L)::" + timestampType.getTypeName() + " ts," +
                         " 11111 as x," +
                         " 'dd' as str2," +
                         " 22222 as y" +
@@ -8713,7 +8713,7 @@ public class O3Test extends AbstractO3Test {
                         "union all " +
                         " select" +
                         " 'cc' as str," +
-                        " timestamp_sequence('" + ts2 + "',0L)::" + timestampTypeName + " ts," +
+                        " timestamp_sequence('" + ts2 + "',0L)::" + timestampType.getTypeName() + " ts," +
                         " 11111 as x," +
                         " 'dd' as str2," +
                         " 22222 as y" +

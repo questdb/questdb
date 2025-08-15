@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -862,7 +863,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertTimestampNS() throws Exception {
-        timestampType = ColumnType.TIMESTAMP_NANO;
+        timestampType = TestTimestampType.NANO;
         assertTimestamp(
                 "value\ttimestamp\n" +
                         "0.0\t2021-09-06T13:12:01.000000000Z\n" +
@@ -876,12 +877,12 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "1630933921000m"
                 }
         );
-        timestampType = ColumnType.TIMESTAMP_MICRO;
+        timestampType = TestTimestampType.MICRO;
     }
 
     @Test
     public void testInsertTimestampNSTableDoesNotExist() throws Exception {
-        timestampType = ColumnType.TIMESTAMP_NANO;
+        timestampType = TestTimestampType.NANO;
         assertTypeNoTable(
                 "value\ttimestamp\n" +
                         "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:01.000000000Z\n" +
@@ -894,12 +895,12 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 },
                 false
         );
-        timestampType = ColumnType.TIMESTAMP_MICRO;
+        timestampType = TestTimestampType.MICRO;
     }
 
     @Test
     public void testInsertTimestampNSTableExists() throws Exception {
-        timestampType = ColumnType.TIMESTAMP_NANO;
+        timestampType = TestTimestampType.NANO;
         assertType(
                 ColumnType.TIMESTAMP_NANO,
                 "value\ttimestamp\n" +
@@ -938,7 +939,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 },
                 false
         );
-        timestampType = ColumnType.TIMESTAMP_MICRO;
+        timestampType = TestTimestampType.MICRO;
     }
 
     @Test

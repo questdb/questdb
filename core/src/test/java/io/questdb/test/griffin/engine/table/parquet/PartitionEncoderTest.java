@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
@@ -34,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -46,16 +46,16 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class PartitionEncoderTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(PartitionEncoderTest.class);
-    private final String timestampTypeName;
+    private final TestTimestampType timestampType;
 
-    public PartitionEncoderTest(int timestampType) {
-        this.timestampTypeName = ColumnType.nameOf(timestampType);
+    public PartitionEncoderTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -65,7 +65,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
-                    " timestamp_sequence(400000000000, 500)::" + timestampTypeName + " designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
@@ -90,7 +90,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
-                    " timestamp_sequence(400000000000, 500)::" + timestampTypeName + " designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
@@ -136,8 +136,8 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " rnd_long256() a_long256," +
                     " to_long128(rnd_long(), rnd_long()) a_long128," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                    " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                    " timestamp_sequence(400000000000, 500)::" + timestampTypeName + " designated_ts" +
+                    " timestamp_sequence(500000000000, 600)::" + timestampType.getTypeName() + " a_ts," +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             try (
@@ -160,7 +160,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             final long rows = 1;
             execute("create table x as (select" +
                     " cast('7c0bd97b-0593-47d2-be17-b8f3f89ca555' as uuid), " +
-                    " timestamp_sequence(400000000000, 500)::" + timestampTypeName + " designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             try (

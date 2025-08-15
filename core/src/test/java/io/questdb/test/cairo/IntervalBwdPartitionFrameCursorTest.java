@@ -33,7 +33,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -50,6 +49,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -67,22 +67,20 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final LongList intervals = new LongList();
-    private final TimestampDriver timestampDriver;
-    private final int timestampType;
+    private final TestTimestampType timestampType;
 
-    public IntervalBwdPartitionFrameCursorTest(boolean convertToParquet, int timestampType) {
+    public IntervalBwdPartitionFrameCursorTest(boolean convertToParquet, TestTimestampType timestampType) {
         this.convertToParquet = convertToParquet;
         this.timestampType = timestampType;
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
-    @Parameterized.Parameters(name = "parquet={0},timestampType={1}")
+    @Parameterized.Parameters(name = "parquet={0},ts={1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {true, ColumnType.TIMESTAMP_MICRO},
-                {true, ColumnType.TIMESTAMP_NANO},
-                {false, ColumnType.TIMESTAMP_MICRO},
-                {false, ColumnType.TIMESTAMP_NANO},
+                {true, TestTimestampType.MICRO},
+                {true, TestTimestampType.NANO},
+                {false, TestTimestampType.MICRO},
+                {false, TestTimestampType.NANO},
         });
     }
 
@@ -90,20 +88,20 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testAllIntervalsAfterTableByDay() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         // single interval spanning all the table
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-01T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-01T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:01.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T14:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-08T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-09T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-08T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.DAY, increment, N, "", 0);
     }
@@ -114,20 +112,20 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-01T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-01T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:01.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T14:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-08T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-09T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-08T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.NONE, increment, N, "", 0);
     }
@@ -136,20 +134,20 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testAllIntervalsBeforeTableByDay() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-01T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-01T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:01.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T14:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-08T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-09T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-08T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.DAY, increment, N, "", 0);
     }
@@ -160,20 +158,20 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         // single interval spanning all the table
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-01T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-01T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T00:00:01.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-06T14:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T00:00:01.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-08T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1979-01-09T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-08T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.NONE, increment, N, "", 0);
     }
@@ -184,24 +182,24 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         intervals.clear();
         // exact date match
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T18:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T20:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T18:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T20:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:30:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:35:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:30:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:35:00.000Z"));
 
-        intervals.add(timestampDriver.parseFloorLiteral("1983-01-05T12:30:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1983-01-05T14:35:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T12:30:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T14:35:00.000Z"));
 
         final String expected = replaceTimestampSuffix1("1983-01-05T14:00:00.000000Z\n" +
                 "1980-01-02T20:00:00.000000Z\n" +
-                "1980-01-02T18:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                "1980-01-02T18:00:00.000000Z\n", timestampType.getTypeName());
 
         testIntervals(PartitionBy.NONE, increment, N, expected, 3);
     }
@@ -237,19 +235,19 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testExactMatch() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         intervals.clear();
         // exact date match
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:00:00.000Z"));
         // this one falls through cracks
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:30:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:35:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:30:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:35:00.000Z"));
 
-        final String expected = replaceTimestampSuffix1("1980-01-02T22:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+        final String expected = replaceTimestampSuffix1("1980-01-02T22:00:00.000000Z\n", timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 1);
     }
@@ -258,33 +256,33 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testFallsBelow() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         intervals.clear();
         // exact date match
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T18:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T20:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T18:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T20:00:00.000Z"));
 
         // interval falls below active partition
         // the previous interval must not be on the edge of partition
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:30:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:35:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:30:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:35:00.000Z"));
 
-        intervals.add(timestampDriver.parseFloorLiteral("1983-01-05T12:30:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1983-01-05T14:35:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T12:30:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T14:35:00.000Z"));
 
         final String expected = replaceTimestampSuffix1("1983-01-05T14:00:00.000000Z\n" +
                 "1980-01-02T20:00:00.000000Z\n" +
-                "1980-01-02T18:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                "1980-01-02T18:00:00.000000Z\n", timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 3);
     }
 
     @Test
     public void testIntervalCursorNoTimestamp() throws Exception {
-        Assume.assumeFalse(convertToParquet && ColumnType.isTimestampNano(timestampType));
+        Assume.assumeFalse(convertToParquet && ColumnType.isTimestampNano(timestampType.getTimestampType()));
         TestUtils.assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
@@ -297,19 +295,19 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testNegativeReloadByDay() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T01:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T16:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T01:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T16:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T21:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T21:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-03T11:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-03T14:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T11:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T14:00:00.000Z"));
 
         final String expected = replaceTimestampSuffix1("1980-01-03T14:00:00.000000Z\n" +
                 "1980-01-03T12:00:00.000000Z\n" +
@@ -321,7 +319,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T08:00:00.000000Z\n" +
                 "1980-01-02T06:00:00.000000Z\n" +
                 "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T02:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                "1980-01-02T02:00:00.000000Z\n", timestampType.getTypeName());
 
         testReload(increment, intervals, N, expected, null);
     }
@@ -330,20 +328,20 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testPartitionCull() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         // single interval spanning all the table
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T01:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T16:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T01:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T16:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T21:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T21:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-03T11:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-03T14:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T11:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T14:00:00.000Z"));
 
         final String expected = replaceTimestampSuffix1("1980-01-03T14:00:00.000000Z\n" +
                 "1980-01-03T12:00:00.000000Z\n" +
@@ -355,7 +353,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T08:00:00.000000Z\n" +
                 "1980-01-02T06:00:00.000000Z\n" +
                 "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T02:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                "1980-01-02T02:00:00.000000Z\n", timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 11);
     }
@@ -364,19 +362,19 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testPositiveReloadByDay() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T01:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T16:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T01:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T16:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T21:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-02T22:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T21:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-02T22:00:00.000Z"));
         //
-        intervals.add(timestampDriver.parseFloorLiteral("1983-01-05T11:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1983-01-05T14:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T11:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T14:00:00.000Z"));
 
         final String expected1 = replaceTimestampSuffix1("1980-01-02T22:00:00.000000Z\n" +
                 "1980-01-02T16:00:00.000000Z\n" +
@@ -386,10 +384,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T08:00:00.000000Z\n" +
                 "1980-01-02T06:00:00.000000Z\n" +
                 "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T02:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                "1980-01-02T02:00:00.000000Z\n", timestampType.getTypeName());
 
         final String expected2 = replaceTimestampSuffix1("1983-01-05T14:00:00.000000Z\n" +
-                "1983-01-05T12:00:00.000000Z\n", ColumnType.nameOf(timestampType)) + expected1;
+                "1983-01-05T12:00:00.000000Z\n", timestampType.getTypeName()) + expected1;
 
         testReload(PartitionBy.DAY, increment, intervals, N, expected1, expected2);
     }
@@ -407,11 +405,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
-                    timestamp(timestampType);
+                    timestamp(timestampType.getTimestampType());
             tableToken = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
-            long timestamp = timestampDriver.parseFloorLiteral("1980-01-01T00:00:00.000Z");
+            long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
 
             GenericRecordMetadata metadata;
             final int timestampIndex;
@@ -456,7 +454,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     Assert.assertTrue(cursor.reload());
                     assertEqualTimestamps(expected1, record, cursor);
 
-                    timestamp = timestampDriver.addYears(timestamp, 3);
+                    timestamp = timestampType.getDriver().addYears(timestamp, 3);
 
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);
@@ -498,14 +496,14 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     public void testSingleIntervalWholeTable() throws Exception {
         // day partition
         // two-hour interval between timestamps
-        long increment = timestampDriver.fromHours(2);
+        long increment = timestampType.getDriver().fromHours(2);
         // 3 days
         int N = 36;
 
         // single interval spanning all the table
         intervals.clear();
-        intervals.add(timestampDriver.parseFloorLiteral("1980-01-01T00:00:00.000Z"));
-        intervals.add(timestampDriver.parseFloorLiteral("1984-01-06T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z"));
+        intervals.add(timestampType.getDriver().parseFloorLiteral("1984-01-06T00:00:00.000Z"));
 
         final String expected = replaceTimestampSuffix1("1983-01-06T22:00:00.000000Z\n" +
                 "1983-01-06T20:00:00.000000Z\n" +
@@ -578,7 +576,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 "1980-01-01T06:00:00.000000Z\n" +
                 "1980-01-01T04:00:00.000000Z\n" +
                 "1980-01-01T02:00:00.000000Z\n" +
-                "1980-01-01T00:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                "1980-01-01T00:00:00.000000Z\n", timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
@@ -639,7 +637,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         ) {
             int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
             parquetColumns.add(timestampIndex);
-            parquetColumns.add(timestampType);
+            parquetColumns.add(timestampType.getTimestampType());
 
             PartitionFrame frame;
             while ((frame = cursor.next()) != null) {
@@ -648,7 +646,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     long limit = frame.getRowLo() - 1;
                     long recordIndex;
                     while ((recordIndex = record.getRecordIndex()) > limit) {
-                        sink.putISODate(timestampDriver, record.getDate(timestampIndex)).put('\n');
+                        sink.putISODate(timestampType.getDriver(), record.getDate(timestampIndex)).put('\n');
                         record.setRecordIndex(recordIndex - 1);
                     }
                     continue;
@@ -663,7 +661,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     parquetDecoder.decodeRowGroup(parquetBuffers, parquetColumns, i, 0, size);
                     long addr = parquetBuffers.getChunkDataPtr(0);
                     for (long r = frame.getRowHi() - 1; r > frame.getRowLo() - 1; r--) {
-                        sink.putISODate(timestampDriver, Unsafe.getUnsafe().getLong(addr + r * Long.BYTES)).put('\n');
+                        sink.putISODate(timestampType.getDriver(), Unsafe.getUnsafe().getLong(addr + r * Long.BYTES)).put('\n');
                     }
                 }
             }
@@ -675,11 +673,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", partitionBy)
                     .col("a", ColumnType.SYMBOL).indexed(true, 4)
                     .col("b", ColumnType.SYMBOL).indexed(true, 4)
-                    .timestamp(timestampType);
+                    .timestamp(timestampType.getTimestampType());
             AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
-            long timestamp = timestampDriver.parseFloorLiteral("1980-01-01T00:00:00.000Z");
+            long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
@@ -690,7 +688,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                timestamp = timestampDriver.addYears(timestamp, 3);
+                timestamp = timestampType.getDriver().addYears(timestamp, 3);
 
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
@@ -748,11 +746,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
-                    timestamp(timestampType);
+                    timestamp(timestampType.getTimestampType());
             tableToken = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
-            long timestamp = timestampDriver.parseFloorLiteral("1980-01-01T00:00:00.000Z");
+            long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
 
             GenericRecordMetadata metadata;
             final int timestampIndex;
@@ -797,7 +795,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     Assert.assertTrue(cursor.reload());
                     assertEqualTimestamps(expected1, record, cursor);
 
-                    timestamp = timestampDriver.addYears(timestamp, 3);
+                    timestamp = timestampType.getDriver().addYears(timestamp, 3);
 
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);

@@ -26,12 +26,12 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,19 +46,16 @@ import static org.junit.Assert.assertNull;
 
 @RunWith(Parameterized.class)
 public class MatViewTelemetryTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
 
-    private final TimestampDriver timestampDriver;
-    private final String timestampType;
-
-    public MatViewTelemetryTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    public MatViewTelemetryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -284,11 +281,11 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
         engine.execute(sqlText, sqlExecutionContext);
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return ColumnType.isTimestampMicro(timestampDriver.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 }

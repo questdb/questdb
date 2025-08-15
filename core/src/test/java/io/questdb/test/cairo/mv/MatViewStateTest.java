@@ -1,6 +1,5 @@
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
@@ -16,6 +15,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -31,17 +31,16 @@ import static org.junit.Assert.*;
 
 @RunWith(Parameterized.class)
 public class MatViewStateTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
 
-    private final String timestampType;
-
-    public MatViewStateTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public MatViewStateTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -233,7 +232,7 @@ public class MatViewStateTest extends AbstractCairoTest {
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
         engine.execute(sqlText, sqlExecutionContext);
     }
 }

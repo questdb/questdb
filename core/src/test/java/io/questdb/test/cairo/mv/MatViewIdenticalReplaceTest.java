@@ -26,11 +26,11 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -41,19 +41,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
 
-    private final TimestampDriver timestampDriver;
-    private final String timestampType;
-
-    public MatViewIdenticalReplaceTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
-        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    public MatViewIdenticalReplaceTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -85,24 +82,24 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             );
 
             try (WalWriter ww = engine.getWalWriter(engine.verifyTableName("test"))) {
-                var row = ww.newRow(timestampDriver.parseFloorLiteral("2022-02-24"));
+                var row = ww.newRow(timestampType.getDriver().parseFloorLiteral("2022-02-24"));
                 row.putInt(1, 1);
                 row.putStr(2, "123");
                 row.append();
 
-                row = ww.newRow(timestampDriver.parseFloorLiteral("2022-02-24T00:55"));
+                row = ww.newRow(timestampType.getDriver().parseFloorLiteral("2022-02-24T00:55"));
                 row.putInt(1, 2);
                 row.putStr(2, null);
                 row.append();
 
-                row = ww.newRow(timestampDriver.parseFloorLiteral("2022-02-24T02"));
+                row = ww.newRow(timestampType.getDriver().parseFloorLiteral("2022-02-24T02"));
                 row.putInt(1, 3);
                 row.putStr(2, "2345567");
                 row.append();
 
                 ww.commitWithParams(
-                        timestampDriver.parseFloorLiteral("2022-02-24"),
-                        timestampDriver.parseFloorLiteral("2022-02-24T02:00:00.000001Z"),
+                        timestampType.getDriver().parseFloorLiteral("2022-02-24"),
+                        timestampType.getDriver().parseFloorLiteral("2022-02-24T02:00:00.000001Z"),
                         WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 );
             }
@@ -164,12 +161,12 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
         engine.execute(sqlText, sqlExecutionContext);
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return ColumnType.isTimestampMicro(timestampDriver.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampType.getDriver().getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated, String mvGroupFunction) throws Exception {

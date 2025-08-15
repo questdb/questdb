@@ -24,9 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -39,16 +39,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public ToUTCTimestampFunctionFactoryTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public ToUTCTimestampFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -217,8 +217,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testVarTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 replaceTimestampSuffix("to_utc\n" +
-                        "2020-03-12T23:10:00.000000Z\n", timestampType),
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as " + timestampType + "), zone) from (select '-07:40' zone)"
+                        "2020-03-12T23:10:00.000000Z\n", timestampType.getTypeName()),
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select '-07:40' zone)"
         ));
     }
 
@@ -237,8 +237,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
             String timestamp,
             String timeZone
     ) throws SqlException {
-        expected = replaceTimestampSuffix(expected, timestampType);
-        timestamp = replaceTimestampSuffix(timestamp, timestampType);
+        expected = replaceTimestampSuffix(expected, timestampType.getTypeName());
+        timestamp = replaceTimestampSuffix(timestamp, timestampType.getTypeName());
         assertSql(
                 expected,
                 "select to_utc('" +

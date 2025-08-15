@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -38,6 +37,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -63,7 +63,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
 
-    public O3SplitPartitionTest(ParallelMode mode, CommitModeParam commitMode, MixedIOParam mixedIO, int timestampType) {
+    public O3SplitPartitionTest(ParallelMode mode, CommitModeParam commitMode, MixedIOParam mixedIO, TestTimestampType timestampType) {
         super(timestampType);
         this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
         AbstractO3Test.commitMode = commitMode == CommitModeParam.SYNC ? CommitMode.SYNC : CommitMode.NOSYNC;
@@ -73,14 +73,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Parameterized.Parameters(name = "{0},{1},{2},{3}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED, ColumnType.TIMESTAMP_MICRO},
-                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO, ColumnType.TIMESTAMP_NANO},
-                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED, ColumnType.TIMESTAMP_MICRO},
-                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO, ColumnType.TIMESTAMP_NANO},
-                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED, ColumnType.TIMESTAMP_MICRO},
-                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO, ColumnType.TIMESTAMP_NANO},
-                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED, ColumnType.TIMESTAMP_MICRO},
-                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO, ColumnType.TIMESTAMP_NANO},
+                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
+                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
+                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
+                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
+                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
+                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
+                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
+                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
         });
     }
 

@@ -52,6 +52,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -79,9 +80,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
-    protected final TimestampDriver driver;
-    protected final int timestampType;
-    protected final String timestampTypeName;
+    protected final TestTimestampType timestampType;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -89,10 +88,8 @@ public class AbstractO3Test extends AbstractTest {
             .build();
     private RecordToRowCopier copier;
 
-    public AbstractO3Test(int timestampType) {
+    public AbstractO3Test(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-        this.timestampTypeName = ColumnType.nameOf(timestampType);
-        this.driver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @BeforeClass
@@ -308,7 +305,11 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected void executeVanilla(CustomisableRunnableWithTimestampType code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, (engine, compiler, context) -> code.run(engine, compiler, context, timestampTypeName), new DefaultTestCairoConfiguration(root), LOG));
+        executeVanilla(() -> TestUtils.execute(
+                null,
+                (engine, compiler, context) -> code.run(engine, compiler, context, timestampType.getTypeName()),
+                new DefaultTestCairoConfiguration(root), LOG
+        ));
     }
 
     protected void executeWithPool(
@@ -386,7 +387,12 @@ public class AbstractO3Test extends AbstractTest {
                     }
                 };
                 WorkerPool pool = new WorkerPool(() -> workerCount);
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampTypeName), configuration, LOG);
+                TestUtils.execute(
+                        pool,
+                        (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampType.getTypeName()),
+                        configuration,
+                        LOG
+                );
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -469,7 +475,12 @@ public class AbstractO3Test extends AbstractTest {
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
-                TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampTypeName), configuration, LOG);
+                TestUtils.execute(
+                        null,
+                        (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampType.getTypeName()),
+                        configuration,
+                        LOG
+                );
             }
         });
     }

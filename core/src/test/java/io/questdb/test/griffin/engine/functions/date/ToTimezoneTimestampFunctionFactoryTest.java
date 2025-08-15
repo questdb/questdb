@@ -24,9 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -39,16 +39,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public ToTimezoneTimestampFunctionFactoryTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public ToTimezoneTimestampFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -208,8 +208,8 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testVarInvalidTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 replaceTimestampSuffix("to_timezone\n" +
-                        "2020-03-12T15:30:00.000000Z\n", timestampType),
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType + "), zone) from (select 'XU' zone)"
+                        "2020-03-12T15:30:00.000000Z\n", timestampType.getTypeName()),
+                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select 'XU' zone)"
         ));
     }
 
@@ -217,9 +217,9 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testVarNullTimezone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertExceptionNoLeakCheck("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType + "), zone) from (select null zone)");
+                assertExceptionNoLeakCheck("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select null zone)");
             } catch (SqlException e) {
-                Assert.assertEquals(timestampType.equals(TIMESTAMP_TYPE_NAME) ? 69 : 72, e.getPosition());
+                Assert.assertEquals(timestampType == TestTimestampType.MICRO ? 69 : 72, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
             }
         });
@@ -229,8 +229,8 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testVarTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 replaceTimestampSuffix("to_timezone\n" +
-                        "2020-03-12T07:50:00.000000Z\n", timestampType),
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType + "), zone) from (select '-07:40' zone)"
+                        "2020-03-12T07:50:00.000000Z\n", timestampType.getTypeName()),
+                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select '-07:40' zone)"
         ));
     }
 
@@ -249,8 +249,8 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
             String timestamp,
             String timeZone
     ) throws SqlException {
-        expected = replaceTimestampSuffix(expected, timestampType);
-        timestamp = replaceTimestampSuffix(timestamp, timestampType);
+        expected = replaceTimestampSuffix(expected, timestampType.getTypeName());
+        timestamp = replaceTimestampSuffix(timestamp, timestampType.getTypeName());
         assertSql(
                 expected,
                 "select to_timezone('" +

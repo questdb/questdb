@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -35,16 +35,16 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class IntervalFilterTest extends AbstractCairoTest {
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public IntervalFilterTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public IntervalFilterTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -56,14 +56,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             "(" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 1000000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 1000000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             String expected = replaceTimestampSuffix("a\tts\n" +
                     "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts between '1970-01-01T00:00:01.000000Z' and '1970-01-01T00:00:02.000000Z'"
@@ -90,14 +90,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:02.000000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:02.000000Z\")]\n", timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts between '1970-01-01T00:00:01.000000000Z' and '1970-01-01T00:00:02.000000000Z'",
                     replaceTimestampSuffix("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:02.000000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:02.000000Z\")]\n", timestampType.getTypeName())
             );
         });
     }
@@ -110,13 +110,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             "(" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType);
+                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts = '1970-01-01T00:00:00.010000Z'"
@@ -141,19 +141,19 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts = '1970-01-01T00:00:00.010000000Z'",
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts != '1970-01-01T00:00:00.010000Z'"
@@ -178,7 +178,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
             );
@@ -187,13 +187,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
             );
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000Z'"
@@ -219,7 +219,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
             );
@@ -228,7 +228,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
             );
@@ -309,14 +309,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             assertSql(
                     replaceTimestampSuffix1("a\tts\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
                     "select * from x where ts = (select max(ts) from x)"
             );
             assertPlanNoLeakCheck(
@@ -324,7 +324,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.020000Z\",\"1970-01-01T00:00:00.020000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.020000Z\",\"1970-01-01T00:00:00.020000Z\")]\n", timestampType.getTypeName())
             );
         });
     }
@@ -337,13 +337,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             "(" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts > '1970-01-01T00:00:00.010000Z'"
@@ -368,7 +368,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
 
@@ -378,7 +378,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
 
@@ -386,7 +386,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType);
+                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts <= '1970-01-01T00:00:00.010000Z'"
@@ -411,19 +411,19 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType)
+                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts <= '1970-01-01T00:00:00.010000000Z'",
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType)
+                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType);
+                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000Z'"
@@ -449,14 +449,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000000Z'",
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
             );
 
             expected = "a\tts\n";
@@ -497,7 +497,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
@@ -505,7 +505,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertSql(
                     replaceTimestampSuffix1("a\tts\n" +
                             "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
                     "select * from x where ts > (select min(ts) from x)"
             );
             assertPlanNoLeakCheck(
@@ -513,7 +513,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"MAX\")]\n")
             );
@@ -522,7 +522,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("a\tts\n" +
                             "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                             "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
                     "select * from x where ts >= (select min(ts) from x)"
             );
             assertPlanNoLeakCheck(
@@ -530,7 +530,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"MAX\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"MAX\")]\n", timestampType.getTypeName())
             );
         });
     }
@@ -542,13 +542,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 1000000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 1000000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             String expected = replaceTimestampSuffix("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n", timestampType);
+                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts in '1970-01-01T00:00:01'"
@@ -564,14 +564,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:01.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n")
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts not in '1970-01-01T00:00:01'"
@@ -587,14 +587,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:02.000000Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"MAX\")]\n")
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:01'"
@@ -611,7 +611,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:02.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
             );
@@ -649,7 +649,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n", timestampType);
+                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:01'"
@@ -666,7 +666,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:01.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n")
             );
@@ -674,14 +674,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertSql(
                     replaceTimestampSuffix1("a\tts\n" +
                             "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName()),
                     "select * from x where ts in ('1970-01-01T00:00:01', '1970-01-01T00:00:02')"
             );
 
             assertSql(
                     replaceTimestampSuffix1("a\tts\n" +
                             "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName()),
                     "select * from x where ts in '1970-01-01T00:00:01' or ts in '1970-01-01T00:00:02'"
             );
 
@@ -694,7 +694,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("a\tts\n" +
                             "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                             "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName()),
                     "select * from x where ts not in null"
             );
 
@@ -712,7 +712,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
@@ -732,7 +732,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
@@ -752,13 +752,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n", timestampType);
+                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts < '1970-01-01T00:00:00.010000Z'"
@@ -783,7 +783,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n")
             );
@@ -792,14 +792,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n")
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts >= '1970-01-01T00:00:00.010000Z'"
@@ -824,19 +824,19 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"MAX\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"MAX\")]\n", timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts >= '1970-01-01T00:00:00.010000000Z'",
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"MAX\")]\n", timestampType)
+                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"MAX\")]\n", timestampType.getTypeName())
             );
 
             expected = replaceTimestampSuffix1("a\tts\n" +
                     "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType);
+                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
                     "select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000Z'"
@@ -862,7 +862,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.010000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
 
@@ -872,7 +872,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.010000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n")
 
@@ -915,7 +915,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
@@ -923,7 +923,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertSql(
                     replaceTimestampSuffix1("a\tts\n" +
                             "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType),
+                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName()),
                     "select * from x where ts < (select max(ts) from x)"
             );
             assertPlanNoLeakCheck(
@@ -931,7 +931,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999Z\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999999Z\")]\n")
             );
@@ -940,7 +940,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("a\tts\n" +
                             "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
                             "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType),
+                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
                     "select * from x where ts <= (select max(ts) from x)"
             );
             assertPlanNoLeakCheck(
@@ -948,7 +948,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     replaceTimestampSuffix1("PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.020000Z\")]\n", timestampType)
+                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.020000Z\")]\n", timestampType.getTypeName())
             );
         });
     }
@@ -960,14 +960,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "create table x as (" +
                             "  select" +
                             "    rnd_double(0)*100 a," +
-                            "    timestamp_sequence(0, 10000)::" + timestampType + " ts" +
+                            "    timestamp_sequence(0, 10000)::" + timestampType.getTypeName() + " ts" +
                             "  from long_sequence(3)" +
                             ") timestamp(ts) partition by day"
             );
 
             assertSql(
                     replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType),
+                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName()),
                     "select * from x where ts > (select min(ts) from x) and ts < (select max(ts) from x)"
             );
             assertPlanNoLeakCheck(
@@ -975,7 +975,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "PageFrame\n" +
                             "    Row forward scan\n" +
                             "    Interval forward scan on: x\n" +
-                            (TIMESTAMP_TYPE_NAME.equals(timestampType) ?
+                            (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.019999Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"1970-01-01T00:00:00.019999999Z\")]\n")
             );

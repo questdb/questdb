@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -56,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -107,22 +107,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
     };
     private static final List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public WindowFunctionTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public WindowFunctionTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
     @Test
     public void testAggregateFunctionInPartitionByFails() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertException(
                 "SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)\n" +
                         "  ORDER BY pickup_datetime\n" +
@@ -145,7 +145,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType);
+            executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());
             execute("insert into nodts_tab values (0, 1)");
             execute("insert into nodts_tab values (0, 2)");
 
@@ -153,7 +153,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000000Z\t1\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1.0\t2\t2\t2\t2\t1.0\t1.0\n" +
                     "1970-01-01T00:00:00.000000Z\t2\t1.3333333333333333\t3\t3\t3\t3\t2.0\t1.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t2\t1.5\t4\t4\t4\t4\t2.0\t1.0\n", timestampType);
+                    "1970-01-01T00:00:00.000000Z\t2\t1.5\t4\t4\t4\t4\t2.0\t1.0\n", timestampType.getTypeName());
 
             assertQueryNoLeakCheck(
                     noDtsResult,
@@ -188,7 +188,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp2() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val int) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val int) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (0, 1)");
             execute("insert into tab values (0, 1)");
             execute("insert into tab values (0, 2)");
@@ -199,7 +199,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000000Z\t1\t1.0\t1\t1.0\t1.0\n" +
                             "1970-01-01T00:00:00.000000Z\t1\t1.0\t2\t1.0\t1.0\n" +
                             "1970-01-01T00:00:00.000000Z\t2\t1.3333333333333333\t3\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t2\t1.5\t4\t2.0\t1.0\n", timestampType),
+                            "1970-01-01T00:00:00.000000Z\t2\t1.5\t4\t2.0\t1.0\n", timestampType.getTypeName()),
                     "SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
                             "count(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
                             "max(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
@@ -215,7 +215,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000000Z\t2\t2.0\t1\t2.0\t2.0\n" +
                             "1970-01-01T00:00:00.000000Z\t2\t2.0\t2\t2.0\t2.0\n" +
                             "1970-01-01T00:00:00.000000Z\t1\t1.6666666666666667\t3\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1.5\t4\t2.0\t1.0\n", timestampType),
+                            "1970-01-01T00:00:00.000000Z\t1\t1.5\t4\t2.0\t1.0\n", timestampType.getTypeName()),
                     "SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
                             "count(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
                             "max(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
@@ -232,7 +232,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionDoesNotAcceptFollowingInNonDefaultFrameDefinition() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
@@ -256,7 +256,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverNonPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             //default buffer size holds 65k entries
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(40000)");
             //trigger removal of rows below lo boundary AND resize of buffer
             execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 30 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
@@ -390,7 +390,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverNonPartitionedRowsWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, (100000+x)%3, case when x % 3 = 0 THEN NULL ELSE 100000 + x END, 'k' || (x%10) ::symbol, x::double, 'k' || x from long_sequence(4*90000)");
@@ -456,7 +456,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverNonPartitionedRowsWithLargeFrameRandomData() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10), 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(1000000)");
@@ -507,7 +507,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             // default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlWindowInitialRangeBufferSize()
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             // trigger per-partition buffers growth and free list usage
             execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");            // trigger removal of rows below lo boundary AND resize of buffer
@@ -529,7 +529,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from (" +
                             "  select data.ts, data.i, data.j, data.s, data.d, data.c" +
                             "  from ( select i, max(ts) as max from tab group by i) cnt " +
-                            (timestampType.equals(TIMESTAMP_TYPE_NAME) ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
+                            (timestampType == TestTimestampType.MICRO ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
                             "  order by data.i, ts " +
                             ") " +
                             "group by i " +
@@ -568,7 +568,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverPartitionedRangeWithLargeFrameRandomData() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab " +
                     "select (100000+x)::timestamp, " +
                     "rnd_long(1,20,10), " +
@@ -612,7 +612,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from (" +
                             "  select data.ts, data.i, data.j, data.s, data.d, data.c" +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            (timestampType.equals(TIMESTAMP_TYPE_NAME) ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
+                            (timestampType == TestTimestampType.MICRO ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
                             "  order by data.i, ts " +
                             ") " +
                             "group by i " +
@@ -666,7 +666,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverPartitionedRowsWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             execute("insert into tab select x::timestamp, x/10000, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(39999)");
             execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, case when x % 3 = 0 THEN NULL ELSE 100000+x END, 'k' || (x%20) ::symbol, x*2::double, 'k' || x from long_sequence(4*90000)");
@@ -721,7 +721,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverRangeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab_big (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab_big (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab_big select (x*1000000)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
                     "'k' || (x%5) ::symbol, x*2::double, 'k' || x  from long_sequence(10)");
 
@@ -854,7 +854,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x::double, " +
                     "'k' || x  from long_sequence(7)");
 
@@ -1318,7 +1318,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // with duplicate timestamp values (but still unique within partition)
 
-            executeWithRewriteTimestamp("create table dups(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year", timestampType);
+            executeWithRewriteTimestamp("create table dups(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year", timestampType.getTypeName());
             execute("insert into dups select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double," +
                     " 'k' || x from long_sequence(10)");
 
@@ -1479,7 +1479,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // with duplicate timestamp values (including ts duplicates within partition)
-            executeWithRewriteTimestamp("create table dups2(ts #TIMESTAMP, i long, j long, n long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year", timestampType);
+            executeWithRewriteTimestamp("create table dups2(ts #TIMESTAMP, i long, j long, n long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year", timestampType.getTypeName());
             execute("insert into dups2 select (x/4)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, x, 'k' || (x%5) ::symbol, x*2::double," +
                     " 'k' || x from long_sequence(10)");
 
@@ -1849,7 +1849,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // table without designated timestamp
-            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR)", timestampType);
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR)", timestampType.getTypeName());
             execute("insert into nodts select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(10)");
             // timestamp ascending order is declared using timestamp(ts) clause
             assertQueryNoLeakCheck(
@@ -1931,10 +1931,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // table without designated timestamp
-            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR)", timestampType);
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR)", timestampType.getTypeName());
 
             //table with designated timestamp
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR, otherTs timestamp) timestamp(ts) partition by month", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR, otherTs timestamp) timestamp(ts) partition by month", timestampType.getTypeName());
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
@@ -2009,7 +2009,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionRejectsExclusionModesOtherThanDefault() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table xyz (a int, b int, c int, ts #TIMESTAMP) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table xyz (a int, b int, c int, ts #TIMESTAMP) timestamp(ts)", timestampType.getTypeName());
 
             for (String function : FRAME_FUNCTIONS) {
                 for (String exclusionMode : new String[]{"GROUP", "TIES"}) {
@@ -2045,7 +2045,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionRejectsFramesThatUseFollowing() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, x%5, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(7)");
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
@@ -2104,7 +2104,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFrameFunctionResolvesSymbolTables() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table  cpu ( hostname symbol, usage_system double )");
             execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
@@ -2143,7 +2143,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFrameFunctionResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, i int);");
             execute("insert into x values ('aaa', NULL);");
@@ -2177,7 +2177,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionResolvesSymbolTablesInPartitionByNonCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table x (sym symbol, i int, ts #TIMESTAMP) timestamp(ts) partition by day;", timestampType);
+            executeWithRewriteTimestamp("create table x (sym symbol, i int, ts #TIMESTAMP) timestamp(ts) partition by day;", timestampType.getTypeName());
             execute("insert into x values ('aaa', NULL, '2023-11-09T00:00:00.000000');");
             execute("insert into x values ('aaa', 1, '2023-11-09T01:00:00.000000');");
             execute("insert into x values ('aaa', 2, '2023-11-09T02:00:00.000000');");
@@ -2209,7 +2209,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionsDontSupportGroupFrames() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, x%5, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(7)");
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
@@ -2228,7 +2228,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionsOverRowsFrame() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
             assertSql(
                     replaceTimestampSuffix("ts\ti\tj\n" +
@@ -3024,7 +3024,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
-            executeWithRewriteTimestamp("create table tab1 (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab1 (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab1 select x::timestamp, x/13, case when x < 6 THEN NULL ELSE 1.0 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(12)");
 
             assertQueryNoLeakCheck(
@@ -3136,7 +3136,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameStartUnfollowingUnsupported() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
@@ -3161,7 +3161,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             " price DOUBLE, " +
                             " amount DOUBLE, " +
                             " timestamp #TIMESTAMP " +
-                            ") timestamp(timestamp) PARTITION BY DAY;", timestampType
+                            ") timestamp(timestamp) PARTITION BY DAY;", timestampType.getTypeName()
             );
             execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');");
 
@@ -3180,7 +3180,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLagException() throws Exception {
-        executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+        executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
         assertExceptionNoLeakCheck(
                 "select lag() over () from tab",
                 7,
@@ -3239,8 +3239,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testLagLeadOver() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR, m date) timestamp(ts)", timestampType);
-            execute("insert into tab select x::" + timestampType + ", x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR, m date) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::" + timestampType.getTypeName() + ", x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
             assertQueryNoLeakCheck(
@@ -3587,8 +3587,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testLagLeadOverPartitionBy() throws Exception {
 
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR, m date) timestamp(ts)", timestampType);
-            execute("insert into tab select x::" + timestampType + ", x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR, m date) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::" + timestampType.getTypeName() + ", x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
             assertQueryNoLeakCheck(
@@ -3901,7 +3901,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLeadException() throws Exception {
-        executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+        executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
         assertExceptionNoLeakCheck(
                 "select lead() over () from tab",
                 7,
@@ -3971,7 +3971,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLeadLagTimestampMixedDefaultValue() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() ->
                 {
                     execute("create table x as (" +
@@ -3998,7 +3998,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("x\trow_number\n" +
                         "1\t1\n" +
@@ -4024,7 +4024,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testPartitionByAndOrderByColumnPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, x%5, x*2::double, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
 
             // row_number()
@@ -4222,7 +4222,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRankFunction() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, s symbol) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, s symbol) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
 
             // rank()/dense_rank() over(partition by)
@@ -4485,8 +4485,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4515,8 +4514,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4545,8 +4543,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " 42 price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4575,8 +4572,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -4605,8 +4601,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4635,8 +4630,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4665,8 +4659,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4695,8 +4688,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4725,8 +4717,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4748,15 +4739,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "1\t1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
                         "1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
                         "1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n", timestampType),
+                        "1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z\n", timestampType.getTypeName()),
                 "select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades",
                 "create table trades as " +
                         "(" +
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4785,8 +4775,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -4798,7 +4787,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRowHiLessThanRowHi() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
 
             assertQueryAndPlan(
@@ -4878,8 +4867,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 7,
@@ -4910,8 +4898,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_symbol('ETH','BTC') sym," +
                         " rnd_symbol('user1','user2') author," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -4922,7 +4909,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndDifferentOrder() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertQuery(
                 "x\ty\trn\n" +
                         "1\t1\t10\n" +
@@ -4963,8 +4950,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -4993,8 +4979,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -5023,8 +5008,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -5051,8 +5035,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "create table tab as " +
                         "(" +
                         "select" +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
                         " rnd_symbol('a','b','c') s" +
                         " from long_sequence(10)" +
                         "), index(s) timestamp(ts) partition by month",
@@ -5080,8 +5063,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "create table tab as " +
                         "(" +
                         "select" +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
                         " rnd_symbol('a','b','c') s" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by month",
@@ -5111,8 +5093,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " 42 price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -5141,8 +5122,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -5171,8 +5151,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -5201,8 +5180,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -5230,8 +5208,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -5251,8 +5228,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " rnd_double(100) price," +
                         " rnd_symbol('XX','YY','ZZ') side," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 0,
@@ -5275,7 +5251,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
         try {
             assertMemoryLeak(() -> {
-                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType);
+                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
                 execute("insert into tab select x::timestamp, 1, x, x*2::double, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(100000)");
 
                 //TODO: improve error message and position
@@ -5370,7 +5346,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFactoryRetainsTimestampMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, c VARCHAR, sym symbol index) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, c VARCHAR, sym symbol index) timestamp(ts)", timestampType.getTypeName());
 
             // table scans
             assertQueryAndPlan(
@@ -5762,8 +5738,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select" +
                     " rnd_int(1,2,3) price," +
                     " rnd_symbol('AA','BB','CC') symbol," +
-                    (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                            " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                    (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by day", sqlExecutionContext);
 
@@ -5807,7 +5782,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionDoesSortIfOrderByIsNotCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, sym symbol index) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, sym symbol index) timestamp(ts)", timestampType.getTypeName());
 
             for (String func : FRAME_FUNCTIONS) {
                 String replace = func.trim().replace("#COLUMN", "1");
@@ -5876,7 +5851,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, sym symbol index) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, sym symbol index) timestamp(ts)", timestampType.getTypeName());
 
             for (String func : FRAME_FUNCTIONS) {
                 String replace = func.trim().replace("#COLUMN", "1");
@@ -5941,7 +5916,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowFunctionFailsInNonWindowContext() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             Class<?>[] factories = new Class<?>[]{
                     RankFunctionFactory.class,
@@ -5994,8 +5969,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_double(42) total_amount," +
-                        (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
-                                " timestamp_sequence(0, 100000000000) pickup_datetime" : " timestamp_sequence(0::timestamp_ns, 100000000000000) pickup_datetime") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) pickup_datetime" : " timestamp_sequence(0::timestamp_ns, 100000000000000) pickup_datetime") +
                         " from long_sequence(10)" +
                         ") timestamp(pickup_datetime) partition by day",
                 56,
@@ -6006,7 +5980,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionReleaseNativeMemory() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x from long_sequence(10)");
 
             final String EXPRESSION = "rnd_str(100,100,100,10)";//chosen because it allocates native memory that needs to be freed
@@ -6075,7 +6049,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionUnsupportNulls() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType);
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
@@ -6103,7 +6077,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowOnNestWithMultiArgsFunction() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE x ( timestamp #TIMESTAMP, ticker SYMBOL, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, true_range DOUBLE ) TIMESTAMP(timestamp) PARTITION BY MONTH;", timestampType);
+            executeWithRewriteTimestamp("CREATE TABLE x ( timestamp #TIMESTAMP, ticker SYMBOL, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, true_range DOUBLE ) TIMESTAMP(timestamp) PARTITION BY MONTH;", timestampType.getTypeName());
             execute("INSERT INTO x VALUES " +
                     "('2021-01-01 09:30:00', 'SPY', 370.00, 370.50, 369.50, 370.25, 100)," +
                     "('2021-01-02 09:30:00', 'SPY', 370.25, 370.75, 369.75, 370.50, 200)," +
@@ -6155,7 +6129,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select" +
                     " rnd_int(1,2,3) price," +
                     " rnd_symbol('AA','BB','CC') symbol," +
-                    (timestampType.equals(TIMESTAMP_TYPE_NAME) ?
+                    (timestampType == TestTimestampType.MICRO ?
                             " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
                     " from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
@@ -6211,15 +6185,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     private String replacePlanTimestamp(String expected) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("10000000", "10000000000") : expected;
+        return timestampType == TestTimestampType.NANO ? expected.replaceAll("10000000", "10000000000") : expected;
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return timestampType == TestTimestampType.NANO ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
     }
 
     private String replaceTimestampSuffix1(String expected) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("0.0000", "0.0000000") : expected;
+        return timestampType == TestTimestampType.NANO ? expected.replaceAll("0.0000", "0.0000000") : expected;
     }
 
     protected void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {

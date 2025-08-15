@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -33,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -43,22 +43,22 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public FirstTimestampGroupByFunctionFactoryTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public FirstTimestampGroupByFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
     @Test
     public void testAllNull() throws SqlException {
-        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType);
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -80,7 +80,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testFirstNull() throws SqlException {
-        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType);
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -106,7 +106,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testNonNull() throws SqlException {
-        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType);
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -129,7 +129,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testSomeNull() throws SqlException {
-        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType);
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {

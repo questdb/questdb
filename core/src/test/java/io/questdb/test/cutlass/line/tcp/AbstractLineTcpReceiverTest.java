@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -58,6 +57,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -113,7 +113,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
-    protected int timestampType = ColumnType.TIMESTAMP_MICRO;
+    protected TestTimestampType timestampType = TestTimestampType.MICRO;
     protected boolean useLegacyStringDefault = true;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
         @Override
@@ -147,7 +147,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
         @Override
         public int getDefaultColumnTypeForTimestamp() {
-            return timestampType;
+            return timestampType.getTimestampType();
         }
 
         @Override

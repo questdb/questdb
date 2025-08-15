@@ -34,6 +34,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -50,19 +51,16 @@ import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
 @RunWith(Parameterized.class)
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
 
-    private final int timestampType;
-    private final String timestampTypeName;
-
-    public AlterTableConvertPartitionTest(int timestampType) {
+    public AlterTableConvertPartitionTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-        this.timestampTypeName = ColumnType.nameOf(timestampType);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
@@ -119,7 +117,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "3\tabc\t2024-06-12T00:00:00.000000Z\n" +
                             "4\tedf\t2024-06-12T00:00:01.000000Z\n" +
                             "6\tedf\t2024-06-12T00:00:02.000000Z\n" +
-                            "5\tabc\t2024-06-15T00:00:00.000000Z\n", timestampTypeName),
+                            "5\tabc\t2024-06-15T00:00:00.000000Z\n", timestampType.getTypeName()),
                     "select * from " + tableName
             );
         });
@@ -134,7 +132,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " x id," +
                             " rnd_boolean() a_boolean," +
                             " rnd_byte() a_byte," +
-                            " timestamp_sequence('2024-06', 500)::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence('2024-06', 500)::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -176,7 +174,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute(
                     "create table x as (select" +
                             " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
-                            " to_timestamp('2024-07', 'yyyy-MM')::" + timestampTypeName + " as a_ts," +
+                            " to_timestamp('2024-07', 'yyyy-MM')::" + timestampType.getTypeName() + " as a_ts," +
                             " from long_sequence(1)) timestamp (a_ts) partition by MONTH"
             );
 
@@ -214,8 +212,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " rnd_long256() a_long256," +
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                            " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(500000000000, 600)::" + timestampType.getTypeName() + " a_ts," +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
@@ -237,7 +235,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS * 5 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS * 5 + ")::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -292,8 +290,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " rnd_long256() a_long256," +
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                            " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(500000000000, 600)::" + timestampType.getTypeName() + " a_ts," +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
@@ -319,7 +317,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, 500)::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -396,7 +394,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "5\t2024-11-05T00:00:00.000000Z\tnull\n" +
                             "5\t2024-11-05T00:00:00.000000Z\t5\n" +
                             "6\t2024-11-06T00:00:00.000000Z\t6\n" +
-                            "7\t2024-11-07T00:00:00.000000Z\t7\n", timestampTypeName),
+                            "7\t2024-11-07T00:00:00.000000Z\t7\n", timestampType.getTypeName()),
                     tableName,
                     "timestamp",
                     true,
@@ -411,7 +409,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute(
                     "create table x as (select" +
                             " x a_long," +
-                            " to_timestamp('2024-07', 'yyyy-MM')::" + timestampTypeName + " as a_ts," +
+                            " to_timestamp('2024-07', 'yyyy-MM')::" + timestampType.getTypeName() + " as a_ts," +
                             " from long_sequence(10)) timestamp (a_ts) partition by MONTH"
             );
 
@@ -457,9 +455,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n" +
                                     "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
                                     "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
-                                    "2\t2024-06-12\tfalse\ttrue\t" + (ColumnType.isTimestampMicro(timestampType) ? 658 : 663) + "\t\t\n" +
+                                    "2\t2024-06-12\tfalse\ttrue\t" + (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? 658 : 663) + "\t\t\n" +
                                     "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
-                            timestampTypeName
+                            timestampType.getTypeName()
                     ),
                     "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     false,
@@ -494,7 +492,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName, String... inserts) throws Exception {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp(timestampType);
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("id", ColumnType.INT)
+                .timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
             execute(inserts[i]);
@@ -502,7 +502,10 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void createTableStr(String tableName, String... inserts) throws Exception {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).col("str", ColumnType.STRING).timestamp(timestampType);
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("id", ColumnType.INT)
+                .col("str", ColumnType.STRING)
+                .timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
             execute(inserts[i]);

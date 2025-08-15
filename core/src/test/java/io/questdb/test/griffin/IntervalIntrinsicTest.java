@@ -24,13 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -42,24 +42,24 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class IntervalIntrinsicTest extends AbstractCairoTest {
-    private final String timestampType;
+    private final TestTimestampType timestampType;
 
-    public IntervalIntrinsicTest(int timestampType) {
-        this.timestampType = ColumnType.nameOf(timestampType);
+    public IntervalIntrinsicTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
 
     @Test
     public void testBasic() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table x (ts #TIMESTAMP) timestamp(ts) partition by day;", timestampType);
-            executeWithRewriteTimestamp("create table oracle (ts #TIMESTAMP);", timestampType);
+            executeWithRewriteTimestamp("create table x (ts #TIMESTAMP) timestamp(ts) partition by day;", timestampType.getTypeName());
+            executeWithRewriteTimestamp("create table oracle (ts #TIMESTAMP);", timestampType.getTypeName());
 
             execute("insert into x values (1)");
             execute("insert into x values (1);");
@@ -77,38 +77,38 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000001Z\n" +
                     "1970-01-01T00:00:00.000003Z\n" +
                     "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n", timestampType);
+                    "1970-01-01T00:00:00.000003Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
-                    "x where ts between 1::" + timestampType + " and 3::" + timestampType + ";"
+                    "x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + ";"
             );
             assertSql(
                     "count\n" +
                             "6\n",
-                    "select count() from x where ts between 1::" + timestampType + " and 3::" + timestampType + ";"
+                    "select count() from x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + ";"
             );
             assertSql(
                     expected,
-                    "oracle where ts between 1::" + timestampType + " and 3::" + timestampType + " order by ts asc;"
+                    "oracle where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts asc;"
             );
 
             // ASC overlapping
             expected = replaceTimestampSuffix("ts\n" +
                     "1970-01-01T00:00:00.000003Z\n" +
                     "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n", timestampType);
+                    "1970-01-01T00:00:00.000003Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
-                    "x where ts between 2::" + timestampType + " and 4::" + timestampType + ";"
+                    "x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + ";"
             );
             assertSql(
                     "count\n" +
                             "3\n",
-                    "select count() from x where ts between 2::" + timestampType + " and 4::" + timestampType + ";"
+                    "select count() from x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + ";"
             );
             assertSql(
                     expected,
-                    "oracle where ts between 2::" + timestampType + " and 4::" + timestampType + " order by ts asc;"
+                    "oracle where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts asc;"
             );
 
             // DESC exact
@@ -118,28 +118,28 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.000003Z\n" +
                     "1970-01-01T00:00:00.000001Z\n" +
                     "1970-01-01T00:00:00.000001Z\n" +
-                    "1970-01-01T00:00:00.000001Z\n", timestampType);
+                    "1970-01-01T00:00:00.000001Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
-                    "x where ts between 1::" + timestampType + " and 3::" + timestampType + " order by ts desc;"
+                    "x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts desc;"
             );
             assertSql(
                     expected,
-                    "oracle where ts between 1::" + timestampType + " and 3::" + timestampType + " order by ts desc;"
+                    "oracle where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts desc;"
             );
 
             // DESC overlapping
             expected = replaceTimestampSuffix("ts\n" +
                     "1970-01-01T00:00:00.000003Z\n" +
                     "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n", timestampType);
+                    "1970-01-01T00:00:00.000003Z\n", timestampType.getTypeName());
             assertSql(
                     expected,
-                    "x where ts between 2::" + timestampType + " and 4::" + timestampType + " order by ts desc;"
+                    "x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts desc;"
             );
             assertSql(
                     expected,
-                    "oracle where ts between 2::" + timestampType + " and 4::" + timestampType + " order by ts desc;"
+                    "oracle where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts desc;"
             );
         });
     }
@@ -162,8 +162,8 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
     private void testFuzz(int rowCount, int duplicatesPerTick) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            int timestampTypeValue = ColumnType.typeOf(timestampType);
-            TimestampDriver driver = ColumnType.getTimestampDriver(timestampTypeValue);
+            int timestampTypeValue = timestampType.getTimestampType();
+            TimestampDriver driver = timestampType.getDriver();
             TableModel oracleModel = new TableModel(configuration, "oracle", PartitionBy.NONE).col("timestamp", timestampTypeValue);
             AbstractCairoTest.create(oracleModel);
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).timestamp(timestampTypeValue);
@@ -202,8 +202,8 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
             StringSink xSink = new StringSink();
             StringSink oracleSink = new StringSink();
 
-            printSql("x where timestamp between " + minTimestamp + "::" + timestampType + " and " + maxTimestamp + "::" + timestampType, xSink);
-            printSql("oracle where timestamp between " + minTimestamp + "::" + timestampType + " and " + maxTimestamp + "::" + timestampType, oracleSink);
+            printSql("x where timestamp between " + minTimestamp + "::" + timestampType.getTypeName() + " and " + maxTimestamp + "::" + timestampType.getTypeName(), xSink);
+            printSql("oracle where timestamp between " + minTimestamp + "::" + timestampType.getTypeName() + " and " + maxTimestamp + "::" + timestampType.getTypeName(), oracleSink);
             TestUtils.assertEquals(oracleSink, xSink);
 
             long minutes = (maxTimestamp - minTimestamp) / driver.fromMinutes(1);
@@ -214,14 +214,14 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
 
                 xSink.clear();
                 oracleSink.clear();
-                printSql("x where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType, xSink);
-                printSql("oracle where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType, oracleSink);
+                printSql("x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), xSink);
+                printSql("oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), oracleSink);
                 TestUtils.assertEquals(oracleSink, xSink);
 
                 xSink.clear();
                 oracleSink.clear();
-                printSql("select count() from x where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType, xSink);
-                printSql("select count() from oracle where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType, oracleSink);
+                printSql("select count() from x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), xSink);
+                printSql("select count() from oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), oracleSink);
                 TestUtils.assertEquals(oracleSink, xSink);
             }
 
@@ -231,14 +231,14 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
 
                 xSink.clear();
                 oracleSink.clear();
-                printSql("x where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType + " order by timestamp desc", xSink);
-                printSql("oracle where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType + " order by timestamp desc", oracleSink);
+                printSql("x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName() + " order by timestamp desc", xSink);
+                printSql("oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName() + " order by timestamp desc", oracleSink);
                 TestUtils.assertEquals(oracleSink, xSink);
 
                 xSink.clear();
                 oracleSink.clear();
-                printSql("select count() from x where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType, xSink);
-                printSql("select count() from oracle where timestamp between " + lo + "::" + timestampType + " and " + hi + "::" + timestampType, oracleSink);
+                printSql("select count() from x where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), xSink);
+                printSql("select count() from oracle where timestamp between " + lo + "::" + timestampType.getTypeName() + " and " + hi + "::" + timestampType.getTypeName(), oracleSink);
                 TestUtils.assertEquals(oracleSink, xSink);
             }
         });
