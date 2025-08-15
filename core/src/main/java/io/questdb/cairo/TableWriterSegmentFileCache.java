@@ -295,14 +295,19 @@ public class TableWriterSegmentFileCache {
             }
         } catch (Throwable th) {
             closeWalFiles(true, walSegmentId, initialSize);
-            walMappedColumns.setPos(initialSize);
+            walMappedColumns.setPos(initialSize); // already done by closeWalFiles(); kept for clarity
+            // Avoid double removal/pool push by the finally block when cached FDs were consumed.
+            fds = null;
             throw th;
         } finally {
-            if (fds != null && fdCacheKey < 0) {
-                // Now that the FDs are used in the column objects, remove them from the cache.
-                // to avoid double close in case of exceptions.
+            // Now that the FDs are used in the column objects, remove them from the cache.
+            // to avoid double close in case of exceptions.
+            if (fdCacheKey < 0) {
                 walFdCache.removeAt(fdCacheKey);
                 walFdCacheSize--;
+            }
+
+            if (fds != null) {
                 fds.clear();
                 walFdCacheListPool.push(fds);
             }
