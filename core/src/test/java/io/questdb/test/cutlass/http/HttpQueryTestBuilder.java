@@ -72,6 +72,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
+    private String copyExportRoot;
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
@@ -145,6 +146,11 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
+                    public CharSequence getSqlCopyExportRoot() {
+                        return copyExportRoot != null ? copyExportRoot : super.getSqlCopyExportRoot();
+                    }
+
+                    @Override
                     public CharSequence getSqlCopyInputRoot() {
                         return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
                     }
@@ -184,7 +190,10 @@ public class HttpQueryTestBuilder {
                     CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(engine, workerCount);
                     workerPool.assign(copyImportRequestJob);
                     workerPool.freeOnExit(copyImportRequestJob);
-                    final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(  // todo: swap to export root
+                }
+
+                if (cairoConfiguration.getSqlCopyExportRoot() != null) {
+                    final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
                             engine
                     );
                     workerPool.assign(copyExportRequestJob);
@@ -310,6 +319,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withAlterTableStartWaitTimeout(long startWriterWaitTimeout) {
         this.startWriterWaitTimeout = startWriterWaitTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withCopyExportRoot(String copyExportRoot) {
+        this.copyExportRoot = copyExportRoot;
         return this;
     }
 

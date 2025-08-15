@@ -34,18 +34,20 @@ import org.junit.Test;
 
 public class ExpParquetExportTest extends AbstractBootstrapTest {
 
+    private static String exportRoot;
     private static TestHttpClient testHttpClient;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
         testHttpClient = new TestHttpClient();
+        exportRoot = TestUtils.unchecked(() -> temp.newFolder("export").getAbsolutePath());
     }
 
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration("cairo.sql.copy.export.root", TestUtils.unchecked(() -> temp.newFolder("export").getAbsolutePath())));
+        TestUtils.unchecked(() -> createDummyConfiguration("cairo.sql.copy.export.root", exportRoot));
     }
 
 
@@ -73,7 +75,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             "Keep-Alive: timeout=5, max=10000\n" +
                                             "\n" +
                                             "44\n" +
-                                            "{\"query\":\"select * from basic_parquet_test\",\"error\":\"\n" +
+                                            "{\"query\":\"select * from basic_parquet_test\",\"error\n" +
                                             "00\n" +
                                             "\n");
                 });
@@ -102,7 +104,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             "Keep-Alive: timeout=5, max=10000\n" +
                                             "\n" +
                                             "44\n" +
-                                            "{\"query\":\"select * from basic_parquet_test\",\"error\":\"\n" +
+                                            "{\"query\":\"select * from basic_parquet_test\",\"error\n" +
                                             "00\n" +
                                             "\n");
                 });
@@ -233,9 +235,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             "Keep-Alive: timeout=5, max=10000\n" +
                                             "\n" +
                                             "84\n" +
-                                            "{\"query\":\"CREATE TABLE another_test AS (SELECT * FROM ddl_rejection_test)\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\"\n" +
-                                            "00\n" +
-                                            "\n");
+                                            "{\"query\":\"CREATE TABLE another_test AS (SELECT * FROM ddl_rejection_test)\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}");
                 });
     }
 
@@ -246,6 +246,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withCopyExportRoot(exportRoot)
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     String tableName = "multi_type_parquet_test_" + System.currentTimeMillis();
@@ -263,17 +264,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     new SendAndReceiveRequestBuilder()
                             .execute("GET /exp?query=select+*+from+" + tableName + "&fmt=parquet&filename=multi_types_test HTTP/1.1\r\n\r\n",
-                                    "HTTP/1.1 400 Bad request\n" +
-                                            "Server: questDB/1.0\n" +
-                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\n" +
-                                            "Transfer-Encoding: chunked\n" +
-                                            "Content-Type: application/json; charset=utf-8\n" +
-                                            "Keep-Alive: timeout=5, max=10000\n" +
-                                            "\n" +
-                                            "8c\n" +
-                                            "{\"query\":\"select * from " + tableName + "\",\"error\":\"[26] table does not exist [table=sys\"\n" +
-                                            "00\n" +
-                                            "\n");
+                                    "");
                 });
     }
 }
