@@ -50,6 +50,7 @@ public class CopyExportRequestTask implements Mutable {
     private int dataPageSize;
     private String fileName;
     private int parquetVersion;
+    private boolean rawArrayEncoding;
     private int rowGroupSize;
     private SecurityContext securityContext;
     private int sizeLimit;
@@ -125,6 +126,10 @@ public class CopyExportRequestTask implements Mutable {
         return tableName;
     }
 
+    public boolean isRawArrayEncoding() {
+        return rawArrayEncoding;
+    }
+
     public boolean isStatisticsEnabled() {
         return statisticsEnabled;
     }
@@ -140,7 +145,8 @@ public class CopyExportRequestTask implements Mutable {
             int rowGroupSize,
             int dataPageSize,
             boolean statisticsEnabled,
-            int parquetVersion
+            int parquetVersion,
+            boolean rawArrayEncoding
     ) {
         this.clear();
         this.securityContext = securityContext;
@@ -154,6 +160,7 @@ public class CopyExportRequestTask implements Mutable {
         this.dataPageSize = dataPageSize;
         this.statisticsEnabled = statisticsEnabled;
         this.parquetVersion = parquetVersion;
+        this.rawArrayEncoding = rawArrayEncoding;
     }
 
     public void of(
@@ -168,10 +175,11 @@ public class CopyExportRequestTask implements Mutable {
             int dataPageSize,
             boolean statisticsEnabled,
             int parquetVersion,
-            @Nullable SuspendEvent suspendEvent
+            @Nullable SuspendEvent suspendEvent,
+            boolean rawArrayEncoding
     ) {
         this.clear();
-        this.of(securityContext, copyID, tableName, fileName, sizeLimit, compressionCodec, compressionLevel, rowGroupSize, dataPageSize, statisticsEnabled, parquetVersion);
+        this.of(securityContext, copyID, tableName, fileName, sizeLimit, compressionCodec, compressionLevel, rowGroupSize, dataPageSize, statisticsEnabled, parquetVersion, rawArrayEncoding);
         this.suspendEvent = suspendEvent;
     }
 

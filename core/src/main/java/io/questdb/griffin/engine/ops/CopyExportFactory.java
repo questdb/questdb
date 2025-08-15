@@ -69,18 +69,19 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(CopyExportFactory.class);
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private final StringSink exportIdSink = new StringSink();
+    private final CopyRecord record = new CopyRecord();
+    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private int compressionCodec;
     private int compressionLevel;
     private CopyExportContext copyContext;
     private long copyID;
     private int dataPageSize;
-    private StringSink exportIdSink = new StringSink();
     private String fileName;
     private MessageBus messageBus;
     private int parquetVersion;
     private int partitionBy;
-    private CopyRecord record = new CopyRecord();
-    private SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
+    private boolean rawArrayEncoding = false;
     private int rowGroupSize;
     private @Nullable SecurityContext securityContext;
     private @Nullable String selectText = null;
@@ -130,7 +131,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 try {
                     copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
 
-
                     if (this.selectText != null) {
                         // need to create a temp table which we will use for the export
 
@@ -174,7 +174,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                             dataPageSize,
                             statisticsEnabled,
                             parquetVersion,
-                            suspendEvent
+                            suspendEvent,
+                            rawArrayEncoding
                     );
 
                     cursor.toTop();
@@ -248,6 +249,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.dataPageSize = model.getDataPageSize();
         this.statisticsEnabled = model.isStatisticsEnabled();
         this.parquetVersion = model.getParquetVersion();
+        this.rawArrayEncoding = model.isRawArrayEncoding();
     }
 
     void createTempTable(SqlExecutionContext executionContext) throws SqlException {

@@ -492,6 +492,17 @@ public class SqlParser {
         }
     }
 
+    private boolean expectBoolean(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "'true' or 'false'");
+        if (isTrueKeyword(tok)) {
+            return true;
+        } else if (isFalseKeyword(tok)) {
+            return false;
+        } else {
+            throw errUnexpected(lexer, tok);
+        }
+    }
+
     private void expectBy(GenericLexer lexer) throws SqlException {
         if (isByKeyword(tok(lexer, "'by'"))) {
             return;
@@ -925,15 +936,10 @@ public class SqlParser {
                             case CopyModel.COPY_OPTION_DATA_PAGE_SIZE:
                                 model.setDataPageSize(expectInt(lexer));
                                 break;
+                            case CopyModel.COPY_OPTION_RAW_ARRAY_ENCODING:
+                                model.setRawArrayEncoding(expectBoolean(lexer));
                             case CopyModel.COPY_OPTION_STATISTICS_ENABLED:
-                                tok = tok(lexer, "'true' or 'false'");
-                                if (isTrueKeyword(tok)) {
-                                    model.setStatisticsEnabled(true);
-                                } else if (isFalseKeyword(tok)) {
-                                    model.setStatisticsEnabled(false);
-                                } else {
-                                    throw errUnexpected(lexer, tok);
-                                }
+                                model.setStatisticsEnabled(expectBoolean(lexer));
                                 break;
                             case CopyModel.COPY_OPTION_PARQUET_VERSION:
                                 model.setParquetVersion(expectInt(lexer));

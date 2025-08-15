@@ -49,6 +49,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final int COPY_OPTION_DATA_PAGE_SIZE = COPY_OPTION_ROW_GROUP_SIZE + 1; // 6
     public static final int COPY_OPTION_STATISTICS_ENABLED = COPY_OPTION_DATA_PAGE_SIZE + 1; // 7
     public static final int COPY_OPTION_PARQUET_VERSION = COPY_OPTION_STATISTICS_ENABLED + 1; // 8
+    public static final int COPY_OPTION_RAW_ARRAY_ENCODING = COPY_OPTION_PARQUET_VERSION + 1; // 9
     public static final int COPY_TYPE_FROM = 1;
     public static final int COPY_TYPE_TO = 2;
     public static final int COPY_TYPE_UNKNOWN = 0;
@@ -56,7 +57,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private static final LowerCaseCharSequenceIntHashMap copyOptionsNameToEnumMap = new LowerCaseCharSequenceIntHashMap();
     public static String[] copyFormatMap = {"unknown", "csv", "parquet"};
     public static String[] copyTypeMap = {"unknown", "from", "to"};
-    @Nullable
     private int atomicity;
     private boolean cancel;
     private int compressionCodec;
@@ -69,6 +69,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private boolean header;
     private int parquetVersion;
     private int partitionBy;
+    private boolean rawArrayEncoding;
     private int rowGroupSize;
     @Nullable
     private String selectText;
@@ -108,6 +109,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         parquetVersion = -1;
         statisticsEnabled = true;
         sizeLimit = -1;
+        rawArrayEncoding = false;
     }
 
     public int getAtomicity() {
@@ -194,6 +196,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return header;
     }
 
+    public boolean isRawArrayEncoding() {
+        return rawArrayEncoding;
+    }
+
     public boolean isStatisticsEnabled() {
         return statisticsEnabled;
     }
@@ -241,6 +247,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
         statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
         parquetVersion = configuration.getPartitionEncoderParquetVersion();
+        rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
     }
 
     public void setParquetVersion(int parquetVersion) {
@@ -249,6 +256,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
+    }
+
+    public void setRawArrayEncoding(boolean rawArrayEncoding) {
+        this.rawArrayEncoding = rawArrayEncoding;
     }
 
     public void setRowGroupSize(int rowGroupSize) {
@@ -297,5 +308,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         copyOptionsNameToEnumMap.put("data_page_size", COPY_OPTION_DATA_PAGE_SIZE);
         copyOptionsNameToEnumMap.put("statistics_enabled", COPY_OPTION_STATISTICS_ENABLED);
         copyOptionsNameToEnumMap.put("parquet_version", COPY_OPTION_PARQUET_VERSION);
+        copyOptionsNameToEnumMap.put("raw_array_encoding", COPY_OPTION_RAW_ARRAY_ENCODING);
     }
 }

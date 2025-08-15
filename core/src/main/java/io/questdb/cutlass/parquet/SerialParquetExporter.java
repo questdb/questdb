@@ -109,6 +109,7 @@ public class SerialParquetExporter implements Closeable {
         final int dataPageSize = task.getDataPageSize();
         final boolean statisticsEnabled = task.isStatisticsEnabled();
         final int parquetVersion = task.getParquetVersion();
+        final boolean rawArrayEncoding = task.isRawArrayEncoding();
 
         try (TableReader reader = cairoEngine.getReader(tableToken)) {
             final int partitionCount = reader.getPartitionCount();
@@ -156,6 +157,7 @@ public class SerialParquetExporter implements Closeable {
                                 toParquet,
                                 ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                                 statisticsEnabled,
+                                rawArrayEncoding,
                                 rowGroupSize,
                                 dataPageSize,
                                 parquetVersion
