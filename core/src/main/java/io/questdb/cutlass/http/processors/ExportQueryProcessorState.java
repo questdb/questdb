@@ -50,7 +50,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     RecordCursor cursor;
     char delimiter = ',';
     String fileName;
-    String format = null;
+    String fmt = null;
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
@@ -74,7 +74,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     public void clear() {
         delimiter = ',';
         fileName = null;
-        format = null;
+        fmt = null;
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);

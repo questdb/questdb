@@ -66,7 +66,6 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_FILENAME = new Utf8String("filename");
     public static final Utf8String URL_PARAM_FMT = new Utf8String("fmt");
     public static final Utf8String URL_PARAM_FORCE_HEADER = new Utf8String("forceHeader");
-    public static final Utf8String URL_PARAM_FORMAT = new Utf8String("format");
     public static final Utf8String URL_PARAM_LIMIT = new Utf8String("limit");
     public static final Utf8String URL_PARAM_MAX_UNCOMMITTED_ROWS = new Utf8String("maxUncommittedRows");
     public static final Utf8String URL_PARAM_NAME = new Utf8String("name");

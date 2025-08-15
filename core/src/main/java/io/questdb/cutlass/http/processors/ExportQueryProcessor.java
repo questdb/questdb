@@ -190,11 +190,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
 
-                    if (isExpRequest && SqlKeywords.isParquetKeyword(state.format)) {
+                    if (isExpRequest && SqlKeywords.isParquetKeyword(state.fmt)) {
                         // todo: make parquet export parkable/resumable
                         handleParquetExport(context);
                     } else {
-                        assert (SqlKeywords.isCsvKeyword(state.format));
+                        assert (SqlKeywords.isCsvKeyword(state.fmt));
                         doResumeSend(context);
                     }
                 } catch (CairoException e) {
@@ -720,11 +720,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.delimiter = (char) delimiter.byteAt(0);
         }
 
-        state.format = "csv"; // default to csv
-        DirectUtf8Sequence format = request.getUrlParam(URL_PARAM_FORMAT);
+        state.fmt = "csv"; // default to csv
+        DirectUtf8Sequence format = request.getUrlParam(URL_PARAM_FMT);
         if (format != null && format.size() > 0) {
             if (SqlKeywords.isParquetKeyword(format.asAsciiCharSequence()) || SqlKeywords.isCsvKeyword(format.asAsciiCharSequence())) {
-                state.format = format.toString();
+                state.fmt = format.toString();
             } else {
                 sendException(response, 0, "unrecognised format [format=" + format + "]", state);
             }
@@ -964,8 +964,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        String contentType = "parquet".equals(state.format) ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
-        String fileExtension = "parquet".equals(state.format) ? ".parquet" : ".csv";
+        String contentType = "parquet".equals(state.fmt) ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
+        String fileExtension = "parquet".equals(state.fmt) ? ".parquet" : ".csv";
 
         response.status(statusCode, contentType);
         if (state.fileName != null && !state.fileName.isEmpty()) {
