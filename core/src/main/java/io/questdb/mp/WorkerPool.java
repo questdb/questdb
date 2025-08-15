@@ -132,6 +132,8 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
+        System.out.println("=========== halting worker pool: " + poolName);
+
         if (closed.compareAndSet(false, true)) {
             if (running.compareAndSet(true, false)) {
                 started.await();

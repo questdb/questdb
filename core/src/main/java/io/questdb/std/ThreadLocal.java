@@ -28,50 +28,78 @@ import io.questdb.ThreadingSupport;
 
 import java.io.Closeable;
 
+//public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
+//    private final ObjectFactory<T> factory;
+//    private final int key;
+//
+//    public ThreadLocal(ObjectFactory<T> factory) {
+//        this.key = ThreadingSupport.getNextThreadLocalKey();
+//        this.factory = factory;
+//    }
+//
+//    public static <TT> ThreadLocal<TT> withInitial(ObjectFactory<TT> factory) {
+//        return new ThreadLocal<>(factory);
+//    }
+//
+//    @Override
+//    public void close() {
+//        Misc.freeIfCloseable(get());
+//        remove();
+//    }
+//
+//    @Override
+//    public T get() {
+//        T val = (T) ThreadingSupport.getVirtualThreadLocal(key);
+//
+//        if (val == null) {
+//            val = factory.newInstance();
+//            ThreadingSupport.putVirtualThreadLocal(key, val);
+//        }
+//        return val;
+//    }
+//
+//    public T getOrDefault() {
+//        return (T) ThreadingSupport.getVirtualThreadLocal(key);
+//    }
+//
+//    @Override
+//    public void remove() {
+//        ThreadingSupport.putVirtualThreadLocal(key, null);
+//    }
+//
+//    public void set(T value) {
+//        if (Thread.currentThread().isVirtual()) {
+//            ThreadingSupport.putVirtualThreadLocal(key, value);
+//        } else {
+//            super.set(value);
+//        }
+//    }
+//}
+
 public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
     private final ObjectFactory<T> factory;
-    private final int key;
 
     public ThreadLocal(ObjectFactory<T> factory) {
-        this.key = ThreadingSupport.getNextThreadLocalKey();
         this.factory = factory;
-    }
-
-    public static <TT> ThreadLocal<TT> withInitial(ObjectFactory<TT> factory) {
-        return new ThreadLocal<>(factory);
     }
 
     @Override
     public void close() {
-        Misc.freeIfCloseable(get());
+        Misc.freeIfCloseable(super.get());
         remove();
     }
 
     @Override
     public T get() {
-        T val = (T) ThreadingSupport.getVirtualThreadLocal(key);
-
+        T val = super.get();
         if (val == null) {
             val = factory.newInstance();
-            ThreadingSupport.putVirtualThreadLocal(key, val);
+            set(val);
         }
         return val;
     }
 
     public T getOrDefault() {
-        return (T) ThreadingSupport.getVirtualThreadLocal(key);
-    }
-
-    @Override
-    public void remove() {
-        ThreadingSupport.putVirtualThreadLocal(key, null);
-    }
-
-    public void set(T value) {
-        if (Thread.currentThread().isVirtual()) {
-            ThreadingSupport.putVirtualThreadLocal(key, value);
-        } else {
-            super.set(value);
-        }
+        return super.get();
     }
 }

@@ -178,6 +178,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(getFd()).I$();
+        isClean = true;
         super.clear();
         reset();
         if (this.pendingRetry) {
@@ -343,7 +344,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public void handleClientOperation() throws PeerIsSlowToReadException, HeartBeatException, ServerDisconnectException, PeerIsSlowToWriteException {
         ioReady = false;
-        ThreadingSupport.useThreadLocalState(threadLocalContainer);
+        ThreadingSupport.attachThreadLocals(threadLocalContainer);
         handleClientOperation(pendingOperation, pendingSelector, pendingRescheduleContext);
     }
 
@@ -356,7 +357,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return this.recvBuffer == 0;
     }
 
-    public boolean isNewRequest() {
+    public boolean isNewConnection() {
         return isClean;
     }
 
@@ -384,10 +385,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvPos = recvBuffer;
         this.rejectProcessor.clear();
         clearSuspendEvent();
-        this.isClean = true;
     }
 
     public void resume(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        var threadLocals = ThreadingSupport.detachThreadLocals();
         synchronized (ioMonitor) {
             this.pendingOperation = operation;
             this.pendingSelector = selector;
@@ -395,6 +396,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             ioReady = true;
             ioMonitor.notify();
         }
+        ThreadingSupport.attachThreadLocals(threadLocals);
     }
 
     public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -414,7 +416,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.simpleResponse();
     }
 
-    public void startNewRequest() {
+    public void startNewConnection() {
         isClean = false;
     }
 
@@ -470,9 +472,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public void waitForIO() {
+        var threadLocals = ThreadingSupport.detachThreadLocals();
         synchronized (ioMonitor) {
-            ThreadingSupport.detachThreadLocals();
-
             while (!ioReady) {
                 try {
                     ioMonitor.wait();
@@ -482,8 +483,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             // Reset the flag for next wait
             ioReady = false;
-            ThreadingSupport.useThreadLocalState(threadLocalContainer);
         }
+        ThreadingSupport.attachThreadLocals(threadLocals);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
@@ -621,6 +622,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int read,
             boolean newRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
+        LOG.info().$("===== consuming content [fd=").$(getFd())
+                .$(", processor=").$(System.identityHashCode(processor))
+                .$(", contentLength=").$(contentLength)
+                .$(", newRequest=").$(newRequest).I$();
+
         if (!newRequest) {
             processor.resumeRecv(this);
         }

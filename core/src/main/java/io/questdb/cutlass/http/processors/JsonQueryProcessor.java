@@ -70,7 +70,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
@@ -91,7 +90,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final NanosecondClock nanosecondClock;
-    private final Path path;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
@@ -114,7 +112,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) {
         try {
             this.configuration = configuration;
-            this.path = new Path();
             this.engine = engine;
             requiredAuthType = configuration.getRequiredAuthType();
 
@@ -169,7 +166,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
     @Override
     public void close() {
-        Misc.free(path);
         Misc.free(circuitBreaker);
     }
 

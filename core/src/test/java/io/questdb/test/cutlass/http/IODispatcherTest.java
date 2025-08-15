@@ -9428,14 +9428,19 @@ public class IODispatcherTest extends AbstractTest {
                 2, (engine, sqlExecutionContext) -> {
                     // create table with all column types
                     createTableX(engine, recordCount);
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            request,
-                            expectedResponse,
-                            requestCount,
-                            0,
-                            false
-                    );
+                    try {
+                        sendAndReceive(
+                                NetworkFacadeImpl.INSTANCE,
+                                request,
+                                expectedResponse,
+                                requestCount,
+                                0,
+                                false
+                        );
+                    } catch (Throwable th) {
+                        LOG.error().$("=========== tests failed, shutting down ===========").$(th).$();
+                        throw th;
+                    }
                 }, telemetry
         );
     }

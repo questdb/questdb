@@ -541,7 +541,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     private @Nullable LogError detectAbandonedLogRecord(CursorHolder h) throws LogError {
         LogError logError = h.abandonedLogRecordError;
-        if (!h.isLogRecordInProgress) {
+        if (!h.isLogRecordInProgress || Thread.currentThread().isVirtual()) {
             h.isLogRecordInProgress = true;
             logError.fillInStackTrace();
             return null;

@@ -29,6 +29,7 @@ open module io.questdb {
     requires jdk.management;
     requires java.desktop;
     requires java.sql;
+    requires io.questdb;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;

@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import com.sun.management.OperatingSystemMXBean;
+import io.questdb.ThreadingSupport;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
@@ -210,9 +211,20 @@ public final class Os {
     }
 
     public static void pause() {
+        ThreadingSupport.ThreadState threadState;
+        if (Thread.currentThread().isVirtual()) {
+            threadState = ThreadingSupport.detachThreadLocals();
+        } else {
+            threadState = null;
+        }
+
         try {
             Thread.sleep(0);
         } catch (InterruptedException ignore) {
+        }
+
+        if (threadState != null) {
+            ThreadingSupport.attachThreadLocals(threadState);
         }
     }
 
@@ -226,6 +238,13 @@ public final class Os {
     }
 
     public static void sleep(long millis) {
+        ThreadingSupport.ThreadState threadState;
+        if (Thread.currentThread().isVirtual()) {
+            threadState = ThreadingSupport.detachThreadLocals();
+        } else {
+            threadState = null;
+        }
+
         long t = System.currentTimeMillis();
         long deadline = millis;
         while (deadline > 0) {
@@ -237,6 +256,10 @@ public final class Os {
                 deadline -= t2 - t;
                 t = t2;
             }
+        }
+
+        if (threadState != null) {
+            ThreadingSupport.attachThreadLocals(threadState);
         }
     }
 

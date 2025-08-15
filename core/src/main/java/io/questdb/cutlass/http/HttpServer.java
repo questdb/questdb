@@ -37,6 +37,7 @@ import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -54,6 +55,7 @@ import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8String;
@@ -63,6 +65,7 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV;
 
@@ -76,6 +79,7 @@ public class HttpServer implements Closeable {
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final boolean virtualThreadsEnabled;
     private final int workerCount;
+    private final ConcurrentPool<HttpRequestProcessorSelector> pool = new ConcurrentPool<>();
 
     // used for min http server only
     public HttpServer(
@@ -130,14 +134,14 @@ public class HttpServer implements Closeable {
 
             networkSharedPool.assign(i, new Job() {
 
-                private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
                         (operation, context, dispatcher)
-                                -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
+                                -> handleClientOperation(context, operation, rescheduleContext, dispatcher, index);
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     boolean useful = dispatcher.processIOQueue(processor);
+                    var selector = selectors.get(index);
                     useful |= rescheduleContext.runReruns(selector);
                     return useful;
                 }
@@ -329,6 +333,18 @@ public class HttpServer implements Closeable {
 
     @Override
     public void close() {
+        LOG.info().$("====== closing HTTP server").$();
+
+        long i = 0;
+        while (activeIORequests.get() > 0) {
+            Os.sleep(1);
+            if (i++ % 1000 == 0) {
+                LOG.info().$("waiting for virtual threads to finish, active: ").$(activeIORequests.get()).$();
+            }
+        }
+
+        LOG.info().$("====== all virtual threads IO requests processed, closing dispatcher ").$();
+
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
         Misc.freeObjListAndClear(selectors);
@@ -343,57 +359,72 @@ public class HttpServer implements Closeable {
         return dispatcher.getPort();
     }
 
+    private final AtomicInteger activeIORequests = new AtomicInteger(0);
+
     public void registerClosable(Closeable closeable) {
         closeables.add(closeable);
     }
 
-        private boolean handleClientOperation(HttpConnectionContext context, int operation, HttpRequestProcessorSelector selector, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher) {
+        private boolean handleClientOperation(HttpConnectionContext context, int operation, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher, int jobIndex) {
         if (virtualThreadsEnabled) {
-            if (context.isNewRequest()) {
-                context.startNewRequest();
-                Thread.ofVirtual().start(() -> {
-                    try {
-                        context.resume(operation, selector, rescheduleContext);
-                        while (!context.isClosed()) {
-                            try {
-                                context.handleClientOperation();
-                            } catch (HeartBeatException e) {
-                                LOG.info().$("============= heartbeat received, rescheduling heartbeat operation =============").$();
-                                dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
-                            } catch (PeerIsSlowToReadException e) {
-                                LOG.info().$("============= peer is slow to read, rescheduling write operation =============").$();
-                                dispatcher.registerChannel(context, IOOperation.WRITE);
-                            } catch (ServerDisconnectException e) {
-                                LOG.info().$("============= disconnect").$();
-                                dispatcher.disconnect(context, context.getDisconnectReason());
-                                // exit the virtual thread loop
-                                return;
-                            } catch (PeerIsSlowToWriteException e) {
-                                LOG.info().$("============= peer is slow to write, rescheduling read operation =============").$();
-                                dispatcher.registerChannel(context, IOOperation.READ);
-                            } catch (Throwable th) {
-                                // unexpected error, we should disconnect the client
-                                dispatcher.disconnect(context, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
-                                // log the error
-                                LOG.critical().$("unhandled exception in virtual http thread, disconnecting: ").$(th).$();
-                                // exit the virtual thread loop
-                                return;
+            var selector = getPooledSelector();
+            activeIORequests.incrementAndGet();
+            try {
+                if (context.isNewConnection()) {
+                    context.startNewConnection();
+                    Thread.ofVirtual().start(() -> {
+                        try {
+                            context.resume(operation, selector, rescheduleContext);
+                            long fd = context.getFd();
+                            LOG.info().$("===== starting virtual thread for fd: ").$(fd).$();
+                            while (!context.isClosed()) {
+                                try {
+                                    context.handleClientOperation();
+                                } catch (HeartBeatException e) {
+                                    LOG.info().$("============= heartbeat received, rescheduling heartbeat operation fd: ").$(fd).$("=============").$();
+                                    dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+                                } catch (PeerIsSlowToReadException e) {
+                                    LOG.info().$("============= peer is slow to read, rescheduling write operation fd: ").$(fd).$("=============").$();
+                                    dispatcher.registerChannel(context, IOOperation.WRITE);
+                                } catch (ServerDisconnectException e) {
+                                    LOG.info().$("============= disconnect").$();
+                                    dispatcher.disconnect(context, context.getDisconnectReason());
+                                    activeIORequests.decrementAndGet();
+                                    // exit the virtual thread loop
+                                    return;
+                                } catch (PeerIsSlowToWriteException e) {
+                                    LOG.info().$("============= peer is slow to write, rescheduling read operation fd: ").$(fd).$("=============").$();
+                                    dispatcher.registerChannel(context, IOOperation.READ);
+                                } catch (Throwable th) {
+                                    // unexpected error, we should disconnect the client
+                                    dispatcher.disconnect(context, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+                                    // log the error
+                                    LOG.critical().$("unhandled exception in virtual http thread, disconnecting: ").$(th).$();
+                                    activeIORequests.decrementAndGet();
+                                    // exit the virtual thread loop
+                                    return;
+                                }
+                                LOG.info().$("===== waiting for IO operation to complete fd: ").$(fd).$("=============").$();
+                                activeIORequests.decrementAndGet();
+                                context.waitForIO();
+                                LOG.info().$("===== resuming virtual thread fd: ").$(fd).$("=============").$();
                             }
-                            LOG.info().$("===== waiting for IO operation to complete =====").$();
-                            context.waitForIO();
-                            LOG.info().$("===== resuming virtual thread =====").$();
+                            LOG.info().$("===== connection is closed, exiting virtual thread fd: ").$(fd).$("=============").$();
+                        } finally {
+                            Path.clearThreadLocals();
                         }
-                        LOG.info().$("===== connection is closed, exiting virtual thread =====").$();
-                    } finally {
-                        Path.clearThreadLocals();
-                    }
-                });
-            } else {
-                LOG.info().$("========= resuming virtual thread, operation: " + operation).$();
-                context.resume(operation, selector, rescheduleContext);
+                    });
+                } else {
+                    LOG.info().$("========= IO event received for virtual thread, fd: ").$(context.getFd()).$("=============").$();
+                    context.resume(operation, selector, rescheduleContext);
+                }
+            } catch (Throwable e) {
+                activeIORequests.decrementAndGet();
+                throw e;
             }
         } else {
             try {
+                var selector = selectors.get(jobIndex);
                 return context.handleClientOperation(operation, selector, rescheduleContext);
             } catch (HeartBeatException e) {
                 dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -406,6 +437,14 @@ public class HttpServer implements Closeable {
             }
         }
         return false;
+    }
+
+    private HttpRequestProcessorSelector getPooledSelector() {
+        var selector = pool.pop();
+        if (selector == null) {
+            selector = new HttpRequestProcessorSelectorImpl();
+        }
+        return selector;
     }
 
     @FunctionalInterface

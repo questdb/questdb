@@ -39,8 +39,11 @@ public class ThreadingSupport {
         return nextKey;
     }
 
-    public static void detachThreadLocals() {
-        threadState.set(null);
+    public static ThreadState detachThreadLocals() {
+//        ThreadState state = threadState.get();
+//        threadState.set(null);
+//        return state;
+        return null;
     }
 
     public static Object getVirtualThreadLocal(int key) {
@@ -60,8 +63,8 @@ public class ThreadingSupport {
         state.threadStatics.extendAndSet(key, value);
     }
 
-    public static void useThreadLocalState(ThreadState container) {
-        threadState.set(container);
+    public static void attachThreadLocals(ThreadState container) {
+//        threadState.set(container);
     }
 
     public static class ThreadState {
