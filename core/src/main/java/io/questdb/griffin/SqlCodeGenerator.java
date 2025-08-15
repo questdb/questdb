@@ -2412,6 +2412,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                         jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
                         jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                    } catch (Throwable e) {
+                        Misc.free(factory);
+                        throw e;
                     }
 
                     compiledFilter = new CompiledFilter();
