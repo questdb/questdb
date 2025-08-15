@@ -96,8 +96,6 @@ public interface SecurityContext extends Mutable {
 
     void authorizeSystemAdmin();
 
-    void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
-
     void authorizeTableCreate();
 
     void authorizeTableDrop(TableToken tableToken);
