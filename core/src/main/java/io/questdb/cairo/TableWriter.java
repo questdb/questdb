@@ -7654,8 +7654,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.txnApplyBlockError(tableToken);
         }
 
+        // Don't move the line to mmap Wal column inside the following try block,
+        // This call, if failed will close the WAL files correctly on its own
+        // putting it inside the try block will cause the WAL files to be closed twice in the finally block
+        // in case of the exception.
+        segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
         try {
-            segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
             final long timestampAddr;
             final boolean copiedToMemory;
             final long o3Lo;
