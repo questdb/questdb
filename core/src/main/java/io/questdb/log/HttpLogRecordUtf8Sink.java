@@ -57,7 +57,7 @@ public class HttpLogRecordUtf8Sink extends LogRecordUtf8Sink {
             int bodyLen = (int) (_wptr - bodyStart);
             long p = contentLengthEnd; // note, we replace # from the lowest significant digit (right to left)
             if (bodyLen == 0) {
-                Unsafe.getUnsafe().putByte(p--, (byte) '0');
+                Unsafe.putByte(p--, (byte) '0');
             } else {
                 // note, we reserved CL_MARKER_LEN (9) positions for the value of
                 // http header attribute Content-Length. With 9 positions, the max
@@ -65,14 +65,14 @@ public class HttpLogRecordUtf8Sink extends LogRecordUtf8Sink {
                 // additional checks for overflow here.
                 int rem = bodyLen % 10;
                 while (bodyLen > 0) {
-                    Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
+                    Unsafe.putByte(p--, (byte) ('0' + rem));
                     bodyLen /= 10;
                     rem = bodyLen % 10;
                 }
             }
             int lpadLen = (int) (CL_MARKER_LEN - contentLengthEnd + p); // remaining # become white space
             for (int lpad = 0; lpad < lpadLen; lpad++) {
-                Unsafe.getUnsafe().putByte(p--, (byte) ' ');
+                Unsafe.putByte(p--, (byte) ' ');
             }
         }
         return size(); // length of the http log record

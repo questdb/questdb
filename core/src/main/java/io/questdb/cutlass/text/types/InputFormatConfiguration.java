@@ -154,7 +154,7 @@ public class InputFormatConfiguration {
                 while ((len = stream.read(heapBuffer)) > 0) {
                     // copy to mem buffer
                     for (int i = 0; i < len; i++) {
-                        Unsafe.getUnsafe().putByte(memBuffer + i, heapBuffer[i]);
+                        Unsafe.putByte(memBuffer + i, heapBuffer[i]);
                     }
                     jsonLexer.parse(memBuffer, memBuffer + len, parser);
                 }

@@ -345,7 +345,11 @@ public final class Files {
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheFd = fdCache.toMmapCacheFd(fd);
-        return mmapCache.cacheMmap(osFd, mmapCacheFd, len, offset, flags, memoryTag);
+        long address = mmapCache.cacheMmap(osFd, mmapCacheFd, len, offset, flags, memoryTag);
+        if (address != -1) {
+            AllocationsTracker.onMalloc(address, len);
+        }
+        return address;
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
@@ -358,15 +362,23 @@ public final class Files {
                     .put(']');
         }
 
+        AllocationsTracker.onFree(address);
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheFd = fdCache.toMmapCacheFd(fd);
 
-        return mmapCache.mremap(osFd, mmapCacheFd, address, previousSize, newSize, offset, flags, memoryTag);
+        long newAddress = mmapCache.mremap(osFd, mmapCacheFd, address, previousSize, newSize, offset, flags, memoryTag);
+        if (newAddress != -1) {
+            AllocationsTracker.onMalloc(newAddress, newSize);
+        }
+        return newAddress;
     }
 
     public static native int msync(long addr, long len, boolean async);
 
     public static void munmap(long address, long len, int memoryTag) {
+        if (address != 0) {
+            AllocationsTracker.onFree(address);
+        }
         mmapCache.unmap(address, len, memoryTag);
     }
 

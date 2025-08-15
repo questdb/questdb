@@ -323,7 +323,7 @@ public class LineTcpParser implements QuietCloseable {
                 // from the result key / value.
                 // shift copy current byte back
                 if (nEscapedChars > 0) {
-                    Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                    Unsafe.putByte(bufAt - nEscapedChars, b);
                 }
                 bufAt++;
             }
@@ -642,7 +642,7 @@ public class LineTcpParser implements QuietCloseable {
                         isQuotedFieldValue = true;
                         nQuoteCharacters--;
                         if (nEscapedChars > 0) {
-                            Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                            Unsafe.putByte(bufAt - nEscapedChars, b);
                         }
                         return true;
                     }
@@ -661,7 +661,7 @@ public class LineTcpParser implements QuietCloseable {
             }
             nextValueCanBeOpenQuote = false;
             if (copyByte && nEscapedChars > 0) {
-                Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                Unsafe.putByte(bufAt - nEscapedChars, b);
             }
             bufAt++;
         }

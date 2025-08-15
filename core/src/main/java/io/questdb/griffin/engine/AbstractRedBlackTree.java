@@ -389,27 +389,27 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected void setColor(int blockOffset, byte colour) {
-        Unsafe.getUnsafe().putByte(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_COLOUR, colour);
+        Unsafe.putByte(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_COLOUR, colour);
     }
 
     protected void setLastRef(int blockOffset, int recRef) {
-        Unsafe.getUnsafe().putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_LAST_REF, recRef);
+        Unsafe.putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_LAST_REF, recRef);
     }
 
     protected void setLeft(int blockOffset, int left) {
-        Unsafe.getUnsafe().putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_LEFT, left);
+        Unsafe.putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_LEFT, left);
     }
 
     protected void setParent(int blockOffset, int parent) {
-        Unsafe.getUnsafe().putInt(keyHeapStart + uncompressKeyOffset(blockOffset), parent);
+        Unsafe.putInt(keyHeapStart + uncompressKeyOffset(blockOffset), parent);
     }
 
     protected void setRef(int blockOffset, int recRef) {
-        Unsafe.getUnsafe().putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_REF, recRef);
+        Unsafe.putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_REF, recRef);
     }
 
     protected void setRight(int blockOffset, int right) {
-        Unsafe.getUnsafe().putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_RIGHT, right);
+        Unsafe.putInt(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_RIGHT, right);
     }
 
     protected int successor(int current) {
