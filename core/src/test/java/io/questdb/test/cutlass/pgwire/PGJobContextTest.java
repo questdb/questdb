@@ -7090,7 +7090,7 @@ nodejs code:
                     Assert.assertNotEquals("cancelled", rs.getString(2));
                 }
             } finally {
-                copyRequestJob.drain(0);
+                copyImportRequestJob.drain(0);
             }
         });
     }

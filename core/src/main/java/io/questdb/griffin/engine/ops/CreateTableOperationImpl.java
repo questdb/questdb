@@ -98,6 +98,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.tableName = tableName;
         this.partitionBy = partitionBy;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
+        this.sqlText = "";
     }
 
     public CreateTableOperationImpl(

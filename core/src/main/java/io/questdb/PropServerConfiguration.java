@@ -871,7 +871,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.cairoSqlCopyExportRoot = configuredCairoSqlCopyExportRoot;
             } else {
                 if (absDbDir) {
-                    this.cairoSqlCopyExportRoot = rootSubdir(this.dbRoot, configuredCairoSqlCopyExportRoot); // ../import
+                    this.cairoSqlCopyExportRoot = rootSubdir(this.dbRoot, configuredCairoSqlCopyExportRoot); // ../export
                 } else {
                     this.cairoSqlCopyExportRoot = new File(installRoot, configuredCairoSqlCopyExportRoot).getAbsolutePath();
                 }

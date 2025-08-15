@@ -359,21 +359,21 @@ public class ServerMain implements Closeable {
                         // text import
                         CopyImportJob.assignToPool(engine.getMessageBus(), sharedPool);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
-                            final CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(
+                            final CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPool.getWorkerCount() - 2)
                             );
-                            sharedPool.assign(copyRequestJob);
-                            sharedPool.freeOnExit(copyRequestJob);
+                            sharedPool.assign(copyImportRequestJob);
+                            sharedPool.freeOnExit(copyImportRequestJob);
                         }
 
-                        if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
-                            final CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(
+                        if (!Chars.empty(cairoConfig.getSqlCopyExportRoot())) {
+                            final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
                                     engine
                             );
-                            sharedPool.assign(copyRequestJob);
-                            sharedPool.freeOnExit(copyRequestJob);
+                            sharedPool.assign(copyExportRequestJob);
+                            sharedPool.freeOnExit(copyExportRequestJob);
                         }
 
                         if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {

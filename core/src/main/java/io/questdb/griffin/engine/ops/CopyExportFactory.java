@@ -41,6 +41,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -252,26 +253,28 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     void createTempTable(SqlExecutionContext executionContext) throws SqlException {
         // compile the select to get the metadata
         CairoEngine engine = executionContext.getCairoEngine();
-        CompiledQuery selectQuery = engine.getSqlCompiler().compile(selectText, executionContext);
-        try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
-            RecordMetadata metadata = rcf.getMetadata();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery selectQuery = compiler.compile(selectText, executionContext);
+            try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
+                RecordMetadata metadata = rcf.getMetadata();
 
-            try (CreateTableOperationImpl impl = new CreateTableOperationImpl(
-                    selectText,
-                    tableName,
-                    partitionBy,
-                    executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity())) {
-                impl.validateAndUpdateMetadataFromSelect(metadata);
-                impl.setSelectText(null);
-                impl.execute(executionContext, null);
+                try (CreateTableOperationImpl impl = new CreateTableOperationImpl(
+                        selectText,
+                        tableName,
+                        partitionBy,
+                        executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity())) {
+                    impl.validateAndUpdateMetadataFromSelect(metadata);
+                    impl.setSelectText(null);
+                    impl.execute(executionContext, null);
+                }
+
+                ((AtomicCountedCircuitBreaker) executionContext.getCircuitBreaker()).inc();
+
+                exportIdSink.clear();
+                exportIdSink.put("INSERT INTO '").put(tableName).put("' SELECT * FROM (").put(selectText).put(')');
+
+                executionContext.getCairoEngine().execute(exportIdSink, executionContext);
             }
-
-            ((AtomicCountedCircuitBreaker) executionContext.getCircuitBreaker()).inc();
-
-            exportIdSink.clear();
-            exportIdSink.put("INSERT INTO '").put(tableName).put("' SELECT * FROM (").put(selectText).put(')');
-
-            executionContext.getCairoEngine().execute(exportIdSink, executionContext);
         }
     }
 

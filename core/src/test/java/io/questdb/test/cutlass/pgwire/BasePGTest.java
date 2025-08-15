@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
@@ -91,7 +92,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     public static final long CONN_AWARE_SIMPLE = 2;
     public static final long CONN_AWARE_ALL = CONN_AWARE_SIMPLE | CONN_AWARE_EXTENDED;
     protected final boolean legacyMode;
-    protected CopyImportRequestJob copyRequestJob = null;
+    protected CopyExportRequestJob copyExportRequestJob = null;
+    protected CopyImportRequestJob copyImportRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected long maxQueryTime = Long.MAX_VALUE;
@@ -556,10 +558,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
             ((Port0PGWireConfiguration) configuration).isLegacyMode = legacyMode;
         }
         TestWorkerPool workerPool = new TestWorkerPool(configuration);
-        copyRequestJob = new CopyImportRequestJob(engine, configuration.getWorkerCount());
+        copyImportRequestJob = new CopyImportRequestJob(engine, configuration.getWorkerCount());
+        workerPool.assign(copyImportRequestJob);
+        workerPool.freeOnExit(copyImportRequestJob);
 
-        workerPool.assign(copyRequestJob);
-        workerPool.freeOnExit(copyRequestJob);
+        copyExportRequestJob = new CopyExportRequestJob(engine);
+        workerPool.assign(copyExportRequestJob);
+        workerPool.freeOnExit(copyExportRequestJob);
 
         return createPGWireServer(
                 configuration,

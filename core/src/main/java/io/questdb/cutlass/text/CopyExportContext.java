@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,7 +40,6 @@ public class CopyExportContext implements Mutable {
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final LongSupplier copyIDSupplier;
     private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
-    private ExecutionCircuitBreaker saga;
 
 
     public CopyExportContext(CairoConfiguration configuration) {

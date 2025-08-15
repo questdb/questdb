@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -56,7 +55,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private final MicrosecondClock clock;
     private final CopyExportContext copyContext;
     private final CairoEngine engine;
-    private final int logRetentionDays;
     private final RingQueue<CopyExportRequestTask> requestQueue;
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
@@ -65,7 +63,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private SerialParquetExporter serialExporter;
     private SqlExecutionContextImpl sqlExecutionContext;
     private CopyExportRequestTask task;
-    private WalWriter writer;
+    private TableWriter writer;
 
     public CopyExportRequestJob(final CairoEngine engine) throws SqlException {
         try {
@@ -80,7 +78,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
             this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
-            this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
+            int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 this.statusTableToken = compiler.query()
                         .$("CREATE TABLE IF NOT EXISTS \"")
@@ -95,12 +93,12 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                                 "message VARCHAR, " + // 6
                                 "errors LONG" + // 7
                                 ") timestamp(ts) PARTITION BY DAY\n" +
-                                "TTL " + logRetentionDays + " DAYS WAL;"
+                                "TTL " + logRetentionDays + " DAYS BYPASS WAL;"
                         )
                         .createTable(sqlExecutionContext);
             }
 
-            this.writer = engine.getWalWriter(statusTableToken);
+            this.writer = engine.getWriter(statusTableToken, "QuestDB system");
             this.copyContext = engine.getCopyExportContext();
             this.engine = engine;
         } catch (Throwable t) {
@@ -115,7 +113,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         this.writer = Misc.free(this.writer);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.path = Misc.free(path);
-        this.copyContext.clear();
     }
 
     // todo: improve outputs so that they make more sense for parquet export
@@ -160,7 +157,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
             // if we closed the writer, we need to reopen it again
             if (writer == null) {
                 try {
-                    writer = engine.getWalWriter(statusTableToken);
+                    writer = engine.getWriter(statusTableToken, "QuestDB system");
                 } catch (Throwable e) {
                     LOG.error()
                             .$("could not re-open writer [table=").$(statusTableToken)
