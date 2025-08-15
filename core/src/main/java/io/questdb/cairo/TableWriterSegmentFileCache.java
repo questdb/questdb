@@ -329,7 +329,7 @@ public class TableWriterSegmentFileCache {
             path.concat(WalUtils.WAL_NAME_BASE);
             int walBaseLen = path.size();
             try {
-                for (int i = 0; i < segmentCopyInfo.getSegmentCount(); i++) {
+                for (int i = 0, n = segmentCopyInfo.getSegmentCount(); i < n; i++) {
                     int walId = segmentCopyInfo.getWalId(i);
                     int segmentId = segmentCopyInfo.getSegmentId(i);
                     path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
@@ -340,8 +340,7 @@ public class TableWriterSegmentFileCache {
                 }
             } catch (Throwable th) {
                 // Close all the columns without placing into the cache.
-                Misc.freeObjList(walMappedColumns);
-                walMappedColumns.clear();
+                Misc.freeObjListAndClear(walMappedColumns);
                 closeWalFiles();
                 throw th;
             }
