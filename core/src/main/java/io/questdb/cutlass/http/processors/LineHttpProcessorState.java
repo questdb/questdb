@@ -237,7 +237,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (CommitFailedException ex) {
             if (ex.isTableDropped()) {
                 tud.setIsDropped();
-                return Status.OK;
+                return Status.TABLE_DROPPED;
             } else {
                 ilpTudCache.setDistressed();
                 return handleCommitError(ex.getReason());
@@ -245,7 +245,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (CairoException e) {
             if (e.isTableDropped()) {
                 tud.setIsDropped();
-                return Status.OK;
+                return Status.TABLE_DROPPED;
             }
             ilpTudCache.setDistressed();
             throw e;
@@ -461,6 +461,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         INTERNAL_ERROR("internal error", 500),
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
+        TABLE_DROPPED("table dropped", 410),
         COMMITTED(null, 204);
 
         private final String codeStr;
