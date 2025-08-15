@@ -169,26 +169,29 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                     startBarrier.await();
 
                     Rnd rnd = new Rnd(seed0, seed1);
-                    while (!stopFlag.get() && errorCount.get() == 0) {
-                        try {
-                            int randomId = rnd.nextInt(MAX_ID);
-                            String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                    // Create thread-local SqlExecutionContext to avoid concurrency issues
+                    try (var threadLocalContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        while (!stopFlag.get() && errorCount.get() == 0) {
+                            try {
+                                int randomId = rnd.nextInt(MAX_ID);
+                                String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
 
-                            String updateSql = String.format(
-                                    "UPDATE trades SET symbol = '%s' WHERE id = %d",
-                                    randomSymbol, randomId
-                            );
+                                String updateSql = String.format(
+                                        "UPDATE trades SET symbol = '%s' WHERE id = %d",
+                                        randomSymbol, randomId
+                                );
 
-                            execute(updateSql);
-                            drainWalQueue();
-                            totalUpdates.incrementAndGet();
+                                engine.execute(updateSql, threadLocalContext);
+                                drainWalQueue();
+                                totalUpdates.incrementAndGet();
 
-                            // UPDATE is slow, we cannot do it too frequently
-                            Os.sleep(rnd.nextInt(100) + 1);
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                            firstError.compareAndSet(null, e);
-                            e.printStackTrace();
+                                // UPDATE is slow, we cannot do it too frequently
+                                Os.sleep(rnd.nextInt(100) + 1);
+                            } catch (Exception e) {
+                                errorCount.incrementAndGet();
+                                firstError.compareAndSet(null, e);
+                                e.printStackTrace();
+                            }
                         }
                     }
                 } catch (Exception e) {
@@ -275,7 +278,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
         Assert.assertTrue("Threads did not complete in time", completed);
 
         executor.shutdown();
-        executor.awaitTermination(5, TimeUnit.SECONDS);
+        Assert.assertTrue("failed to terminate threads within 60s", executor.awaitTermination(60, TimeUnit.SECONDS));
 
         System.out.println("Test completed: " + totalInserts.get() + " inserts, " + totalUpdates.get() + " updates, " + totalQueries.get() + " queries");
         if (errorCount.get() > 0) {
