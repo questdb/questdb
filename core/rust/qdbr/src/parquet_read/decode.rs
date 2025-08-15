@@ -1802,7 +1802,7 @@ mod tests {
         let value_size = N;
         let mut buff = AcVec::new_in(allocator);
         buff.extend_with(row_count * value_size, 0u8).unwrap();
-        for i in 0..((row_count + 1) / 2) {
+        for i in 0..row_count.div_ceil(2) {
             let value = T::from(i as i16);
             let offset = 2 * i * value_size;
             buff[offset..offset + value_size].copy_from_slice(&to_le_bytes(value));
