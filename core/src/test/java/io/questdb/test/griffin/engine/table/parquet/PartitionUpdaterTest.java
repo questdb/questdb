@@ -50,10 +50,11 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
 
-            try (Path path = new Path();
-                 PartitionDescriptor descriptor = new PartitionDescriptor();
-                 TableReader reader = engine.getReader(tableName);
-                 PartitionUpdater updater = new PartitionUpdater(ff)
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater(ff)
             ) {
                 // Initial partition dir created.
                 final TableToken table = engine.getTableTokenIfExists(tableName);
@@ -96,8 +97,10 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         1,  // index of the timestamp column
                         0, // uncompressed
                         false,
+                        false,
                         0,
-                        0);
+                        0
+                );
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
 
