@@ -152,7 +152,7 @@ public class ColumnTypeConverter {
             case ColumnType.DATE:
                 return converterStr2Date;
             case ColumnType.TIMESTAMP:
-                return ColumnType.getTimestampDriver(dstColumnType)::appendToMem;
+                return ColumnType.getTimestampDriver(dstColumnType).getConverterStr2Timestamp();
             case ColumnType.BOOLEAN:
                 return converterStr2Boolean;
             default:
@@ -880,7 +880,7 @@ public class ColumnTypeConverter {
             case ColumnType.DATE:
                 return converterFromDate2String;
             case ColumnType.TIMESTAMP:
-                return ColumnType.getTimestampDriver(srcColumnType)::append;
+                return ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
             case ColumnType.BOOLEAN:
                 return converterFromBoolean2String;
             default:
@@ -1094,7 +1094,7 @@ public class ColumnTypeConverter {
     }
 
     @FunctionalInterface
-    private interface Fixed2VarConverter {
+    public interface Fixed2VarConverter {
         boolean convert(long fixedAddr, CharSink<?> stringSink);
     }
 

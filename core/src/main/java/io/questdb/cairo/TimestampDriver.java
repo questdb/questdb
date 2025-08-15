@@ -248,6 +248,10 @@ public interface TimestampDriver {
 
     int getCentury(long timestamp);
 
+    ColumnTypeConverter.Var2FixedConverter<CharSequence> getConverterStr2Timestamp();
+
+    ColumnTypeConverter.Fixed2VarConverter getConverterTimestamp2Str();
+
     /**
      * Extracts the day of month from a timestamp value.
      * This method handles the driver-specific timestamp format and precision.

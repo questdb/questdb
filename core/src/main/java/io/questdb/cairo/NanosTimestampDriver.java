@@ -93,6 +93,9 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(Nanos::floorMM, NanosFormatUtils.MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(Nanos::floorYYYY, NanosFormatUtils.YEAR_FORMAT);
+
+    private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
+    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
     private NanosTimestampDriver() {
@@ -376,6 +379,16 @@ public class NanosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Nanos.getCentury(timestamp);
+    }
+
+    @Override
+    public ColumnTypeConverter.Var2FixedConverter<CharSequence> getConverterStr2Timestamp() {
+        return converterStr2Timestamp;
+    }
+
+    @Override
+    public ColumnTypeConverter.Fixed2VarConverter getConverterTimestamp2Str() {
+        return converterTimestamp2Str;
     }
 
     @Override
