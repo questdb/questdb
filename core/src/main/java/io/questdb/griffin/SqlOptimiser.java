@@ -3358,6 +3358,18 @@ public class SqlOptimiser implements Mutable {
         if (model == null)
             return;
 
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
+        }
+
+        QueryModel temporayModel = model;
+        while (temporayModel != null) {
+            optimiseModelsWithASOFJoins(executionContext, temporayModel.getNestedModel());
+            optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
+            temporayModel = temporayModel.getNestedModel();
+        }
+
         QueryModel targetModel = model.getNestedModel();
         QueryModel parentModel = model;
         /*
@@ -3371,14 +3383,6 @@ public class SqlOptimiser implements Mutable {
 
         if (!isModelEligibleForASOFJoinOptimisation(executionContext, targetModel, parentModel))
             return;
-
-        ObjList<QueryModel> joinModels = model.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
-        }
-
-        optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
-
 
         QueryModel baseTableModel = model;
         while (baseTableModel.getNestedModel() != null) {

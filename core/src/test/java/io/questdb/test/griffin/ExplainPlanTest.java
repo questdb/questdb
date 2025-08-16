@@ -722,6 +722,136 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShouldWorkWithNestedJoinClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select * from trades cross join (\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 5) cross join\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 7));",
+                    "SelectedRecord\n" +
+                            "    Cross Join\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                Sort\n" +
+                            "                  keys: [size]\n" +
+                            "                    SelectedRecord\n" +
+                            "                        AsOf Join Fast Scan\n" +
+                            "                            Radix sort light\n" +
+                            "                              keys: [timestamp]\n" +
+                            "                                Async Top K lo: 5 workers: 1\n" +
+                            "                                  filter: null\n" +
+                            "                                  keys: [size]\n" +
+                            "                                    PageFrame\n" +
+                            "                                        Row forward scan\n" +
+                            "                                        Frame forward scan on: trades\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: order_book\n" +
+                            "                Sort\n" +
+                            "                  keys: [size]\n" +
+                            "                    SelectedRecord\n" +
+                            "                        AsOf Join Fast Scan\n" +
+                            "                            Radix sort light\n" +
+                            "                              keys: [timestamp]\n" +
+                            "                                Async Top K lo: 7 workers: 1\n" +
+                            "                                  filter: null\n" +
+                            "                                  keys: [size]\n" +
+                            "                                    PageFrame\n" +
+                            "                                        Row forward scan\n" +
+                            "                                        Frame forward scan on: trades\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithNestedUnionClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select * from trades union (\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 5) union\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 7));",
+                    "Union\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    Union\n" +
+                            "        Sort\n" +
+                            "          keys: [size]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    Radix sort light\n" +
+                            "                      keys: [timestamp]\n" +
+                            "                        Async Top K lo: 5 workers: 1\n" +
+                            "                          filter: null\n" +
+                            "                          keys: [size]\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n" +
+                            "        Sort\n" +
+                            "          keys: [size]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    Radix sort light\n" +
+                            "                      keys: [timestamp]\n" +
+                            "                        Async Top K lo: 7 workers: 1\n" +
+                            "                          filter: null\n" +
+                            "                          keys: [size]\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
     public void testAsofJoinOptimisationShouldWorkWithWhereClauseColumnFromMasterTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 't1' ( \n" +
