@@ -61,6 +61,8 @@ public class Decimal128DivideBenchmark {
     private Decimal128 decimal128Dividend;
     private Decimal128 decimal128Divisor;
     private Decimal128 decimal128Result;
+    // Add at the class level:
+    private Decimal128 largeDividend128;
     private MathContext mathContext;
     // Test data for different scenarios
     @Param({"SIMPLE", "LARGE_DIVIDEND", "LARGE_DIVISOR", "HIGH_PRECISION", "POWER_OF_10"})
@@ -94,15 +96,12 @@ public class Decimal128DivideBenchmark {
         return decimal128Result;
     }
 
-// Add at the class level:
-private Decimal128 largeDividend128;
-
-@Benchmark
-public void decimal128Divide128By64() {
-    // This scenario uses a 128-bit dividend divided by a 64-bit divisor
-    decimal128Result.copyFrom(largeDividend128);
-    decimal128Result.divide(decimal128Divisor, 6, RoundingMode.HALF_UP);
-}
+    @Benchmark
+    public void decimal128Divide128By64() {
+        // This scenario uses a 128-bit dividend divided by a 64-bit divisor
+        decimal128Result.copyFrom(largeDividend128);
+        decimal128Result.divide(decimal128Divisor, 6, RoundingMode.HALF_UP);
+    }
 
     @Setup
     public void setup() {
