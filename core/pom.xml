@@ -192,7 +192,6 @@
                 <configuration>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useModulePath>true</useModulePath>
-                    <moduleResolution>true</moduleResolution>
                     <includes>
                         <include>${test.include}</include>
                     </includes>
