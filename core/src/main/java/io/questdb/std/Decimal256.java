@@ -124,6 +124,7 @@ public class Decimal256 implements Sinkable {
             5789604L, 578960L, 57896L, 5789L, 578L,
             57L, 5L,
     };
+    private static final BigDecimal[] ZERO_SCALED = new BigDecimal[32];
     // holders for in-place mutations that doesn't have a mutable structure available
     private static final ThreadLocal<Decimal256> tl = new ThreadLocal<>(Decimal256::new);
     private long hh; // Highest 64 bits (bits 192-255)
@@ -146,19 +147,19 @@ public class Decimal256 implements Sinkable {
     /**
      * Constructor with initial values.
      *
-     * @param highest the highest 64 bits of the decimal value (bits 192-255)
-     * @param high    the high 64 bits of the decimal value (bits 128-191)
-     * @param mid     the mid 64 bits of the decimal value (bits 64-127)
-     * @param low     the low 64 bits of the decimal value (bits 0-63)
-     * @param scale   the number of decimal places
+     * @param hh    the highest 64 bits of the decimal value (bits 192-255)
+     * @param hl    the high 64 bits of the decimal value (bits 128-191)
+     * @param lh    the mid 64 bits of the decimal value (bits 64-127)
+     * @param ll    the low 64 bits of the decimal value (bits 0-63)
+     * @param scale the number of decimal places
      * @throws IllegalArgumentException if scale is invalid
      */
-    public Decimal256(long highest, long high, long mid, long low, int scale) {
+    public Decimal256(long hh, long hl, long lh, long ll, int scale) {
         validateScale(scale);
-        this.hh = highest;
-        this.hl = high;
-        this.lh = mid;
-        this.ll = low;
+        this.hh = hh;
+        this.hl = hl;
+        this.lh = lh;
+        this.ll = ll;
         this.scale = scale;
     }
 
@@ -391,6 +392,19 @@ public class Decimal256 implements Sinkable {
     public static void subtract(Decimal256 a, Decimal256 b, Decimal256 result) {
         result.copyFrom(a);
         result.subtract(b);
+    }
+
+    public static @NotNull BigDecimal toBigDecimal(long hh, long hl, long lh, long ll, int scale) {
+        // Convert 256-bit value to BigInteger
+        byte[] bytes = new byte[32]; // 256 bits = 32 bytes
+        // Fill bytes in big-endian order
+        putLongIntoBytes(bytes, 0, hh);
+        putLongIntoBytes(bytes, 8, hl);
+        putLongIntoBytes(bytes, 16, lh);
+        putLongIntoBytes(bytes, 24, ll);
+
+        BigInteger unscaledValue = new BigInteger(bytes);
+        return new BigDecimal(unscaledValue, scale);
     }
 
     /**
@@ -878,21 +892,10 @@ public class Decimal256 implements Sinkable {
      * @return BigDecimal representation
      */
     public BigDecimal toBigDecimal() {
-        if (isZero()) {
-            return BigDecimal.ZERO;
+        if (isZero() && scale < ZERO_SCALED.length) {
+            return ZERO_SCALED[scale];
         }
-
-        // Convert 256-bit value to BigInteger
-        byte[] bytes = new byte[32]; // 256 bits = 32 bytes
-
-        // Fill bytes in big-endian order
-        putLongIntoBytes(bytes, 0, hh);
-        putLongIntoBytes(bytes, 8, hl);
-        putLongIntoBytes(bytes, 16, lh);
-        putLongIntoBytes(bytes, 24, ll);
-
-        BigInteger unscaledValue = new BigInteger(bytes);
-        return new BigDecimal(unscaledValue, scale);
+        return toBigDecimal(hh, hl, lh, ll, scale);
     }
 
     /**
@@ -975,6 +978,12 @@ public class Decimal256 implements Sinkable {
             throw NumericException.instance().put("Overflow");
         }
         result.hh = r;
+    }
+
+    private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
+        for (int i = 0; i < 8; i++) {
+            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
+        }
     }
 
     /**
@@ -1708,12 +1717,6 @@ public class Decimal256 implements Sinkable {
         }
     }
 
-    private void putLongIntoBytes(byte[] bytes, int offset, long value) {
-        for (int i = 0; i < 8; i++) {
-            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
-        }
-    }
-
     /**
      * Set this Decimal256 from a byte array representation.
      *
@@ -1761,5 +1764,11 @@ public class Decimal256 implements Sinkable {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
         return Long.compareUnsigned(sum, a) < 0;
+    }
+
+    static {
+        for (int i = 0; i < ZERO_SCALED.length; i++) {
+            ZERO_SCALED[i] = toBigDecimal(0, 0, 0, 0, i);
+        }
     }
 }

@@ -571,16 +571,7 @@ public class Decimal128 implements Sinkable {
 
         // Handle scale adjustment
         if (this.scale != resultScale) {
-            int scaleUp = resultScale - this.scale;
-            boolean isNegative = isNegative();
-            if (isNegative) {
-                negate();
-            }
-            multiplyByPowerOf10InPlace(scaleUp);
-            if (isNegative) {
-                negate();
-            }
-            this.scale = resultScale;
+            rescale0(resultScale);
         }
     }
 
@@ -613,6 +604,19 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
+    }
+
+    /**
+     * Rescale this Decimal128 in place
+     *
+     * @param newScale The new scale (must be >= current scale)
+     */
+    public void rescale(int newScale) {
+        validateScale(newScale);
+        if (newScale < this.scale) {
+            throw new IllegalArgumentException("New scale must be >= current scale");
+        }
+        rescale0(newScale);
     }
 
     /**
@@ -1087,32 +1091,17 @@ public class Decimal128 implements Sinkable {
         updateCompact();
     }
 
-    /**
-     * Rescale this Decimal128 in place
-     *
-     * @param newScale The new scale (must be >= current scale)
-     */
-    public void rescale(int newScale) {
-        validateScale(newScale);
-        if (newScale < this.scale) {
-            throw new IllegalArgumentException("New scale must be >= current scale");
-        }
-
-        int scaleDiff = newScale - this.scale;
-
+    private void rescale0(int resultScale) {
+        int scaleUp = resultScale - this.scale;
         boolean isNegative = isNegative();
         if (isNegative) {
             negate();
         }
-
-        // Multiply by 10^scaleDiff
-        multiplyByPowerOf10InPlace(scaleDiff);
-
+        multiplyByPowerOf10InPlace(scaleUp);
         if (isNegative) {
             negate();
         }
-
-        this.scale = newScale;
+        this.scale = resultScale;
     }
 
     private void updateCompact() {
