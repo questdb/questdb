@@ -664,6 +664,18 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    private void addOrderByClausesToModel(QueryModel originalModel, QueryModel targetModel) {
+        for (int i = 0; i < originalModel.getOrderBy().size(); i++) {
+            ExpressionNode aliasNode = expressionNodePool.next();
+            CharSequence truncateAlias = originalModel.getTableNameExpr() != null ?
+                    originalModel.getTableNameExpr().token + "." : originalModel.getAlias().token + ".";
+            String originalAlias = originalModel.getOrderBy().get(i).token.toString();
+            aliasNode.token = originalAlias.replace(truncateAlias, "");
+            targetModel.addOrderBy(aliasNode, originalModel.getOrderByDirection().getQuick(i));
+        }
+    }
+
+
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
         // add dependency to prevent previous model reordering (left joins are not symmetric)
@@ -1386,6 +1398,26 @@ public class SqlOptimiser implements Mutable {
             } else if (!ColumnType.isTimestamp(m.getColumnType(index))) {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
+        }
+    }
+
+    private void createAndAddTimestampColumn(QueryModel baseTableModel, QueryModel targetModel) {
+        if (baseTableModel.getTimestamp() == null)
+            return;
+
+        for (int i = 0; i < targetModel.getColumns().size(); i++) {
+            QueryColumn qc = targetModel.getColumns().getQuick(i);
+            if (Chars.equalsIgnoreCase(qc.getAlias(), baseTableModel.getTimestamp().token)) {
+                // timestamp column already exists, no need to add it again
+                return;
+            }
+
+        }
+        QueryColumn qc = baseTableModel.getAliasToColumnMap().get(baseTableModel.getTimestamp().token);
+        if (qc != null) {
+            QueryColumn newQc = queryColumnPool.next();
+            newQc.of(qc.getAlias(), qc.getAst());
+            targetModel.getAliasToColumnMap().put(qc.getAlias(), qc);
         }
     }
 
@@ -2309,6 +2341,14 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    private boolean findIfnodeExpressionContainsChildTableRef(ExpressionNode node, QueryModel targetModel) throws SqlException {
+        ChildTableColumnFinder childTableColumnFinder = new ChildTableColumnFinder(targetModel, false);
+        childTableColumnFinder.targetModel = targetModel;
+        childTableColumnFinder.found = false;
+        traversalAlgo.traverse(node, childTableColumnFinder);
+        return childTableColumnFinder.found;
+    }
+
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -2580,6 +2620,35 @@ public class SqlOptimiser implements Mutable {
         } catch (NumericException ne) {
             return false;
         }
+    }
+
+    /*
+     Eligibility check for ASOF join optimisation.
+      1- If order-by and limit clause are present, order-by should be on master table columns only.
+      2- If where clause is present, it should be on master table columns only.
+     */
+    private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) throws SqlException {
+        boolean isOrderByPresent = false;
+        boolean isLimitPresent = false;
+        if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
+                targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
+
+            for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
+                isOrderByPresent = true;
+                boolean found = findIfnodeExpressionContainsChildTableRef(targetModel.getOrderBy().get(i), targetModel);
+                if (found)
+                    return false;
+            }
+
+            if (targetModel.getWhereClause() != null) {
+                boolean found = findIfnodeExpressionContainsChildTableRef(targetModel.getWhereClause(), targetModel);
+                if (found)
+                    return false;
+            }
+            isLimitPresent = parent.getLimitLo() != null;
+            return isOrderByPresent && isLimitPresent;
+        }
+        return false;
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
@@ -3277,6 +3346,141 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Optimises models with ASOF joins, to push up .
+     * <p>
+     * This method traverses the query model and optimises it by restructuring
+     * the nested models to facilitate ASOF joins.
+     *
+     * @param model the query model to optimise
+     */
+    private void optimiseModelsWithASOFJoins(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
+        if (model == null)
+            return;
+
+        QueryModel targetModel = model.getNestedModel();
+        QueryModel parentModel = model;
+        /*
+         target-model is the model containing asof join, where-clause, limit-clause, order-by-clause.
+         parent-model is the parent of target-model
+         */
+        while (targetModel != null && targetModel.getJoinModels().size() != 2) {
+            parentModel = targetModel;
+            targetModel = targetModel.getNestedModel();
+        }
+
+        if (!isModelEligibleForASOFJoinOptimisation(executionContext, targetModel, parentModel))
+            return;
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
+        }
+
+        optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
+
+
+        QueryModel baseTableModel = model;
+        while (baseTableModel.getNestedModel() != null) {
+            baseTableModel = baseTableModel.getNestedModel();
+        }
+
+        /*
+          level-0 model which contains everything inside target model
+        */
+        QueryModel level0 = targetModel.getNestedModel();
+        QueryModel copyModel = level0 == null ? targetModel : level0;
+
+        /*
+          nested of target model is null, construct level-0 using base table
+         */
+        if (level0 == null) {
+            level0 = QueryModel.FACTORY.newInstance();
+            level0.setTimestamp(baseTableModel.getTimestamp());
+            level0.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
+            //if target model has both table name and alias.
+            level0.setTableNameExpr(copyModel.getTableNameExpr() == null ? null : copyModel.getTableNameExpr());
+            level0.setAlias(copyModel.getAlias() == null ? null : copyModel.getAlias());
+            for (int i = 0; i < copyModel.getModelAliasIndexes().keys().size(); i++) {
+                CharSequence alias = copyModel.getModelAliasIndexes().keys().getQuick(i);
+                ExpressionNode aliasNode = expressionNodePool.next();
+                aliasNode.token = alias;
+                level0.addModelAliasIndex(aliasNode, i);
+            }
+        }
+        propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, level0);
+
+        /*
+           level 1 is select-model-choose over level-0 model
+         */
+        QueryModel level1 = QueryModel.FACTORY.newInstance();
+        level1.setSelectModelType(SELECT_MODEL_CHOOSE);
+        propagateColumnsFromLowerToHigherModel(level0, level1, true);
+        level1.setNestedModel(level0);
+
+        /*
+           level 2 is select model none over level-1 model with order-by clauses
+         */
+        QueryModel level2 = QueryModel.FACTORY.newInstance();
+        level2.setSelectModelType(SELECT_MODEL_NONE);
+        addOrderByClausesToModel(targetModel, level2);
+        propagateColumnsFromLowerToHigherModel(level1, level2, false);
+        level2.setNestedModel(level1);
+        level2.setWhereClause(targetModel.getWhereClause());
+        if (targetModel.getAlias() == null) {
+            level2.getModelAliasIndexes().put(targetModel.getTableNameExpr().token, 0);
+        } else {
+            level2.getModelAliasIndexes().put(targetModel.getAlias().token, 0);
+        }
+
+        /*
+           level 3 is select model choose over level-2 model with limit clause
+         */
+        QueryModel level3 = QueryModel.FACTORY.newInstance();
+        level3.setSelectModelType(SELECT_MODEL_CHOOSE);
+        level3.setLimit(parentModel.getLimitLo(), null);
+        propagateColumnsFromLowerToHigherModel(level2, level3, true);
+        level3.setNestedModel(level2);
+        /*
+          level 4 is select model none over level-3 model with order by timestamp ASC
+        */
+        QueryModel level4 = QueryModel.FACTORY.newInstance();
+        level4.setSelectModelType(SELECT_MODEL_NONE);
+        if (baseTableModel.getTimestamp() != null) {
+            final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
+            final ExpressionNode timestampNode = expressionNodePool.next();
+            timestampNode.token = timestampColumn;
+            level4.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+        }
+        propagateColumnsFromLowerToHigherModel(level3, level4, false);
+        level4.setNestedModel(level3);
+
+         /*
+          level 5 is select model choose over level-4 model
+        */
+        QueryModel level5 = QueryModel.FACTORY.newInstance();
+        level5.setSelectModelType(SELECT_MODEL_CHOOSE);
+        propagateColumnsFromLowerToHigherModel(level4, level5, true);
+        level5.setNestedModel(level4);
+
+        /*
+        changes in target model
+         */
+        targetModel.setNestedModel(level5);
+        targetModel.setWhereClause(null);
+        if (targetModel.getTableNameExpr() != null) {
+            ExpressionNode aliasNode = expressionNodePool.next();
+            aliasNode.token = targetModel.getTableNameExpr().token;
+            if (targetModel.getAlias() == null) {
+                targetModel.setAlias(aliasNode);
+            }
+            targetModel.setTableNameExpr(null);
+            targetModel.setTimestamp(null);
+        }
+        model.setLimit(null, null);
+
+    }
+
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
     private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) {
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
@@ -3513,6 +3717,23 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void propagateColumnsFromLowerToHigherModel(QueryModel lower, QueryModel higher, boolean addBottomUpColumns) {
+        higher.copyColumnsFrom(lower, queryColumnPool, expressionNodePool);
+        if (addBottomUpColumns) {
+            final ObjList<CharSequence> aliases = lower.getAliasToColumnMap().keys();
+            for (int i = 0, n = aliases.size(); i < n; i++) {
+                final CharSequence alias = aliases.getQuick(i);
+                QueryColumn qc = lower.getAliasToColumnMap().get(alias);
+                if (qc != null) {
+                    QueryColumn newQc = queryColumnPool.next();
+                    newQc.of(alias, qc.getAst());
+                    higher.getBottomUpColumns().add(newQc);
+                }
+            }
+
+        }
+    }
+
     private void propagateHintsTo(QueryModel targetModel, LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
         if (targetModel == null) {
             return;
@@ -3529,6 +3750,14 @@ public class SqlOptimiser implements Mutable {
         }
         // propagate to union model
         propagateHintsTo(targetModel.getUnionModel(), h);
+    }
+
+    private void propagateTimestampColumnFromBaseModelToLevel0(QueryModel baseTableModel, QueryModel targetModel) {
+        if (targetModel.getNestedModel() == null || targetModel == baseTableModel || baseTableModel.getTimestamp() == null)
+            return;
+        targetModel = targetModel.getNestedModel();
+        propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, targetModel);
+        createAndAddTimestampColumn(baseTableModel, targetModel);
     }
 
     private void propagateTopDownColumns(QueryModel model, boolean allowColumnChange) {
@@ -4176,9 +4405,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Rewrite:
-    // sum(x*10) into sum(x) * 10, etc.
-    // sum(x+10) into sum(x) + count(x)*10
-    // sum(x-10) into sum(x) - count(x)*10
+// sum(x*10) into sum(x) * 10, etc.
+// sum(x+10) into sum(x) + count(x)*10
+// sum(x-10) into sum(x) - count(x)*10
     private ExpressionNode rewriteAggregate(ExpressionNode agg, QueryModel model) {
         if (agg == null) {
             return null;
@@ -4215,8 +4444,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     // This rewrite should be invoked before the select rewrite!
-    // Rewrites the following:
-    // select count(constant) ... -> select count() ...
+// Rewrites the following:
+// select count(constant) ... -> select count() ...
     private void rewriteCount(QueryModel model) {
         if (model == null) {
             return;
@@ -4420,7 +4649,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
-    // raise error if raw column usage doesn't match one of expressions on group by list
+// raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
             final @Transient ExpressionNode topLevelNode,
             QueryModel groupByModel,
@@ -6555,7 +6784,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
-    // if columns do not exist
+// if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
         final QueryModel nested = model.getNestedModel();
         if (nested != null) {
@@ -6990,6 +7219,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
@@ -7146,6 +7376,34 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
+    }
+
+    private class ChildTableColumnFinder implements PostOrderTreeTraversalAlgo.Visitor {
+        private boolean found;
+        private QueryModel targetModel;
+
+        public ChildTableColumnFinder(QueryModel targetModel, boolean found) {
+            this.targetModel = targetModel;
+            this.found = found;
+        }
+
+        @Override
+        public void visit(ExpressionNode node) throws SqlException {
+            if (node.type == LITERAL) {
+                CharSequence clauseColumn = node.token;
+                int dot = Chars.indexOfLastUnquoted(clauseColumn, '.');
+                String clauseColumnName = Chars.toString(clauseColumn, dot + 1, clauseColumn.length());
+                //check with column in between clause should be of master table
+                if (dot != -1) {
+                    String whereClauseAlias = Chars.toString(clauseColumn, 0, dot);
+                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                            targetModel.getTableNameExpr().token;
+                    if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
+                            !targetModel.getAliasToColumnMap().contains(clauseColumnName))
+                        found = true;
+                }
+            }
+        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
