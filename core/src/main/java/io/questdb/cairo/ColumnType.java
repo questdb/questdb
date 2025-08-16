@@ -263,9 +263,9 @@ public final class ColumnType {
         if (type == NULL || type == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
+        assert type == TIMESTAMP;
 
-        assert tagOf(timestampType) == TIMESTAMP;
-        switch (timestampType & TIMESTAMP_TYPE_MASK) {
+        switch (timestampType) {
             case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
             case TIMESTAMP_NANO:
