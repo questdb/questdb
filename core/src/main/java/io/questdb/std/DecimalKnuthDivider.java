@@ -318,24 +318,23 @@ class DecimalKnuthDivider {
             throw NumericException.instance().put("Division by zero");
         }
 
-        int r = 0;
+        long r = 0;
         long rLong = 0L;
         for (int j = m - 1; j >= 0; j--) {
             long qhat = rLong << 32 | (u[j] & 0xFFFFFFFFL);
-            int quo;
+            long quo;
             if (qhat >= 0L) {
-                quo = (int) (qhat / divisor);
-                r = (int) (qhat - (long) quo * divisor);
+                quo = (qhat / divisor);
+                r = (qhat - quo * divisor);
             } else {
-                long tmp = divWord(qhat, divisor);
-                quo = (int) (tmp & 0xFFFFFFFFL);
-                r = (int) (tmp >>> 32);
+                quo = divWord(qhat, divisor);
+                r = (quo >>> 32);
             }
-            rLong = (r & 0xFFFFFFFFL);
-            q[j] = quo;
+            rLong = r;
+            q[j] = (int) quo;
             u[j] = 0;
         }
-        u[0] = r;
+        u[0] = (int) r;
     }
 
     /**
@@ -398,19 +397,9 @@ class DecimalKnuthDivider {
                 break;
 
             default: // Some kind of half-way rounding
-                int cmp = compareDivisorHalfRemainder();
-                if (cmp > 0) {
-                    increment = true;
-                } else if (cmp == 0) {
-                    switch (roundingMode) {
-                        case HALF_UP:
-                            increment = true;
-                            break;
-                        case HALF_EVEN:
-                            increment = (q[0] & 0x1) == 1;
-                            break;
-                        default:
-                    }
+                final int cmp = compareDivisorHalfRemainder();
+                if (cmp > -1) {
+                    increment = cmp > 0 || roundingMode == RoundingMode.HALF_UP || (roundingMode == RoundingMode.HALF_EVEN && (q[0] & 0x1) == 1);
                 }
         }
 
