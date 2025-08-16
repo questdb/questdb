@@ -2341,71 +2341,12 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
-    private boolean findIfValidWhereClauseForASOFJoinOptimisation(ExpressionNode whereClause, QueryModel targetModel) {
-        if (whereClause == null || whereClause.type == LITERAL || whereClause.type == CONSTANT) {
-            return true;
-        }
-
-        boolean evaluateLhs = findIfValidWhereClauseForASOFJoinOptimisation(whereClause.lhs, targetModel);
-        boolean evaluateRhs = findIfValidWhereClauseForASOFJoinOptimisation(whereClause.rhs, targetModel);
-        CharSequence clauseType = whereClause.token;
-        if (Chars.equals(clauseType, "between")) {
-            ObjList<ExpressionNode> whereClauseArgs = whereClause.args;
-            //if between clause is present, then both the values should be constant
-            if (whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
-                return false;
-            }
-            CharSequence whereClauseColumn = whereClauseArgs.get(2).token;
-            int dot = Chars.indexOf(whereClauseArgs.get(2).token, '.');
-            String whereClauseColumnName = Chars.toString(whereClauseColumn, dot + 1, whereClauseColumn.length());
-            //check with column in between clause should be of master table
-            if (dot != -1) {
-                String whereClauseAlias = Chars.toString(whereClauseColumn, 0, dot);
-                CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                        targetModel.getTableNameExpr().token;
-                if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
-                        !targetModel.getAliasToColumnMap().contains(whereClauseColumnName))
-                    return false;
-            }
-        } else if (Chars.equals(clauseType, "and") || Chars.equals(clauseType, "or")) {
-            return evaluateLhs && evaluateRhs;
-        } else {
-            ExpressionNode lhs = whereClause.lhs;
-            ExpressionNode rhs = whereClause.rhs;
-            if (rhs.type == CONSTANT) {
-                //if rhs is constant, then lhs should be of master table
-                CharSequence lhsColumn = lhs.token;
-                int dotIndex = Chars.indexOf(lhsColumn, '.');
-                String lhsColumnName = Chars.toString(lhsColumn, dotIndex + 1, lhsColumn.length());
-                if (dotIndex != -1) {
-                    String lhsAlias = Chars.toString(lhsColumn, 0, dotIndex);
-                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                            targetModel.getTableNameExpr().token;
-                    if (!Chars.equals(lhsAlias, masterTableAlias) ||
-                            !targetModel.getAliasToColumnMap().contains(lhsColumnName)) {
-                        return false;
-                    }
-                }
-            } else if (lhs.type == CONSTANT) {
-                //if lhs is constant, then rhs should be of master table
-                CharSequence rhsColumn = rhs.token;
-                int dotIndex = Chars.indexOf(rhsColumn, '.');
-                String rhsColumnName = Chars.toString(rhsColumn, dotIndex + 1, rhsColumn.length());
-                if (dotIndex != -1) {
-                    String rhsAlias = Chars.toString(rhsColumn, 0, dotIndex);
-                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                            targetModel.getTableNameExpr().token;
-                    if (!Chars.equals(rhsAlias, masterTableAlias) ||
-                            !targetModel.getAliasToColumnMap().contains(rhsColumnName)) {
-                        return false;
-                    }
-                }
-            }
-            //if both lhs and rhs are not constant, then it is not eligible for ASOF join optimisation
-            else
-                return false;
-        }
-        return true;
+    private boolean findIfnodeExpressionContainsChildTableRef(ExpressionNode node, QueryModel targetModel) throws SqlException {
+        ChildTableColumnFinder childTableColumnFinder = new ChildTableColumnFinder(targetModel, false);
+        childTableColumnFinder.targetModel = targetModel;
+        childTableColumnFinder.found = false;
+        traversalAlgo.traverse(node, childTableColumnFinder);
+        return childTableColumnFinder.found;
     }
 
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -2686,7 +2627,7 @@ public class SqlOptimiser implements Mutable {
       1- If order-by and limit clause are present, order-by should be on master table columns only.
       2- If where clause is present, it should be on master table columns only.
      */
-    private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) {
+    private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) throws SqlException {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
         if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
@@ -2694,27 +2635,15 @@ public class SqlOptimiser implements Mutable {
 
             for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
                 isOrderByPresent = true;
-                CharSequence orderByColumn = targetModel.getOrderBy().get(i).token;
-                int dot = Chars.indexOf(orderByColumn, '.');
-                if (dot != -1) {
-                    String orderByAlias = Chars.toString(orderByColumn, 0, dot);
-                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                            targetModel.getTableNameExpr().token;
-                    if (!Chars.equals(orderByAlias, masterTableAlias))
-                        return false;
-                }
-                String orderByColumnName = Chars.toString(orderByColumn, dot + 1, orderByColumn.length());
-                //if any order by column is from slave table, then order optimisation will not be applied
-                if (!targetModel.getAliasToColumnMap().contains(orderByColumnName)) {
+                boolean found = findIfnodeExpressionContainsChildTableRef(targetModel.getOrderBy().get(i), targetModel);
+                if (found)
                     return false;
-                }
             }
 
             if (targetModel.getWhereClause() != null) {
-                boolean isValidWhereClause = findIfValidWhereClauseForASOFJoinOptimisation(targetModel.getWhereClause(), targetModel);
-                if (!isValidWhereClause) {
+                boolean found = findIfnodeExpressionContainsChildTableRef(targetModel.getWhereClause(), targetModel);
+                if (found)
                     return false;
-                }
             }
             isLimitPresent = parent.getLimitLo() != null;
             return isOrderByPresent && isLimitPresent;
@@ -7308,7 +7237,6 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-//            System.out.println("*****" + rewrittenModel.toString0() + "*****");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
@@ -7448,6 +7376,34 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
+    }
+
+    private class ChildTableColumnFinder implements PostOrderTreeTraversalAlgo.Visitor {
+        private boolean found;
+        private QueryModel targetModel;
+
+        public ChildTableColumnFinder(QueryModel targetModel, boolean found) {
+            this.targetModel = targetModel;
+            this.found = found;
+        }
+
+        @Override
+        public void visit(ExpressionNode node) throws SqlException {
+            if (node.type == LITERAL) {
+                CharSequence clauseColumn = node.token;
+                int dot = Chars.indexOfLastUnquoted(clauseColumn, '.');
+                String clauseColumnName = Chars.toString(clauseColumn, dot + 1, clauseColumn.length());
+                //check with column in between clause should be of master table
+                if (dot != -1) {
+                    String whereClauseAlias = Chars.toString(clauseColumn, 0, dot);
+                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                            targetModel.getTableNameExpr().token;
+                    if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
+                            !targetModel.getAliasToColumnMap().contains(clauseColumnName))
+                        found = true;
+                }
+            }
+        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
