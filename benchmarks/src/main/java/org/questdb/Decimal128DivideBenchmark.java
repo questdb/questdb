@@ -94,16 +94,26 @@ public class Decimal128DivideBenchmark {
         return decimal128Result;
     }
 
-    // Benchmark that tests 128-bit by 64-bit division specifically
-    @Benchmark
-    public void decimal128Divide128By64() {
-        // This scenario uses a 128-bit dividend divided by a 64-bit divisor
-        Decimal128 largeDividend = new Decimal128();
-        largeDividend.set(123456789L, 987654321098765432L, 6);
+// Add at the class level:
+private Decimal128 largeDividend128;
 
-        decimal128Result.copyFrom(largeDividend);
-        decimal128Result.divide(decimal128Divisor, 6, RoundingMode.HALF_UP);
-    }
+@Setup
+public void setup() {
+    // Initialize result containers
+    decimal128Result = new Decimal128();
+    largeDividend128 = new Decimal128();
+    largeDividend128.set(123456789L, 987654321098765432L, 6);
+    mathContext = new MathContext(16, RoundingMode.HALF_UP);
+    
+    // ... rest of setup
+}
+
+@Benchmark
+public void decimal128Divide128By64() {
+    // This scenario uses a 128-bit dividend divided by a 64-bit divisor
+    decimal128Result.copyFrom(largeDividend128);
+    decimal128Result.divide(decimal128Divisor, 6, RoundingMode.HALF_UP);
+}
 
     @Setup
     public void setup() {
