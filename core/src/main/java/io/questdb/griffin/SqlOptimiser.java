@@ -666,12 +666,12 @@ public class SqlOptimiser implements Mutable {
 
     private void addOrderByClausesToModel(QueryModel originalModel, QueryModel targetModel) {
         for (int i = 0; i < originalModel.getOrderBy().size(); i++) {
-            ExpressionNode aliasNode = expressionNodePool.next();
-            CharSequence truncateAlias = originalModel.getTableNameExpr() != null ?
-                    originalModel.getTableNameExpr().token + "." : originalModel.getAlias().token + ".";
-            String originalAlias = originalModel.getOrderBy().get(i).token.toString();
-            aliasNode.token = originalAlias.replace(truncateAlias, "");
-            targetModel.addOrderBy(aliasNode, originalModel.getOrderByDirection().getQuick(i));
+//            ExpressionNode aliasNode = expressionNodePool.next();
+//            CharSequence truncateAlias = originalModel.getTableNameExpr() != null ?
+//                    originalModel.getTableNameExpr().token + "." : originalModel.getAlias().token + ".";
+//            String originalAlias = originalModel.getOrderBy().get(i).token.toString();
+//            aliasNode.token = originalAlias.replace(truncateAlias, "");
+            targetModel.addOrderBy(originalModel.getOrderBy().get(i), originalModel.getOrderByDirection().getQuick(i));
         }
     }
 
@@ -7241,6 +7241,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
