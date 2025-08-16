@@ -436,22 +436,15 @@ class DecimalKnuthDivider {
 //        }
 //        r[n - 1] = u[n - 1] >>> s;
 //    }
-    static long divWord(long n, long d) {
-        long q = Long.divideUnsigned(n, d);
-        long r = Long.remainderUnsigned(n, d);
-        return r << 32 | q & 0xFFFFFFFFL;
-//
-//        long q = (n >>> 1) / (d >>> 1);
-//        long r;
-//        for (r = n - q * d; r < 0L; --q) {
-//            r += d;
-//        }
-//
-//        while (r >= d) {
-//            r -= d;
-//            ++q;
-//        }
-//
-//        return r << 32 | q & 0xFFFFFFFFL;
+    static long divWord(long dividend, long divisor) {
+        if (divisor >= 0L) {
+            long q = (dividend >>> 1) / divisor << 1;
+            long r = dividend - q * divisor;
+            long d = ~(r - divisor);
+            return (r - (d >> 63 & divisor)) << 32 | (q + ((r | d) >>> 63)) & 0xFFFFFFFFL;
+        } else {
+            long d = dividend & ~(dividend - divisor);
+            return dividend - (d >> 63 & divisor) << 32 | (d >>> 63) & 0xFFFFFFFFL;
+        }
     }
 }
