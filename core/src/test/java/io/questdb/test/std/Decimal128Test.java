@@ -1700,8 +1700,9 @@ public class Decimal128Test {
             Decimal128.subtract(a, b, staticResult);
 
             // Verify operands unchanged
-            Assert.assertEquals("Subtract modified first operand at iteration " + iteration, a.toBigDecimal(), a.toBigDecimal());
-            Assert.assertEquals("Subtract modified second operand at iteration " + iteration, b.toBigDecimal(), b.toBigDecimal());
+            // Verify operands unchanged
+            Assert.assertEquals("Subtract modified first operand at iteration " + iteration, bigA, a.toBigDecimal());
+            Assert.assertEquals("Subtract modified second operand at iteration " + iteration, bigB, b.toBigDecimal());
 
             Decimal128 result = new Decimal128();
             result.copyFrom(a);
