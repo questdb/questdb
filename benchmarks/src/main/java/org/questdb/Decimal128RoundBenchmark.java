@@ -101,7 +101,7 @@ public class Decimal128RoundBenchmark {
         } else {
             decimal128Result.round(targetScale, javaRoundingMode);
         }
-        
+
         return decimal128Result;
     }
 
