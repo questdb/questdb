@@ -1090,7 +1090,9 @@ public class ColumnTypeConverter {
     }
 
     private static CairoException unsupportedConversion(int srcColumnType, int dstColumnType) {
-        return CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+        return CairoException.critical(0)
+                .put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType))
+                .put(" to ").put(ColumnType.nameOf(dstColumnType));
     }
 
     @FunctionalInterface
