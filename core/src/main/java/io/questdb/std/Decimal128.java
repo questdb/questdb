@@ -29,7 +29,6 @@ public class Decimal128 implements Sinkable {
     public static final Decimal128 MAX_VALUE = new Decimal128(Long.MAX_VALUE, Long.MIN_VALUE, 0);
     public static final Decimal128 MIN_VALUE = new Decimal128(Long.MIN_VALUE, Long.MIN_VALUE, 0);
     static final long LONG_MASK = 0xffffffffL;
-    private static final long B = (long) 1 << Integer.SIZE;
     private static final long INFLATED = Long.MIN_VALUE;
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
@@ -626,15 +625,16 @@ public class Decimal128 implements Sinkable {
      * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
+        if (targetScale == this.scale) {
+            // No rounding needed
+            return;
+        }
+
         validateScale(targetScale);
 
         // UNNECESSARY mode should be a complete no-op
         if (roundingMode == RoundingMode.UNNECESSARY) {
             return;
-        }
-
-        if (targetScale == this.scale) {
-            // No rounding needed
         }
 
         // Handle zero specially
@@ -870,8 +870,7 @@ public class Decimal128 implements Sinkable {
         if (negative) {
             // Negate result
             this.low = ~this.low + 1;
-            long newHigh = ~this.high + (this.low == 0 ? 1 : 0);
-            this.high = newHigh;
+            this.high = ~this.high + (this.low == 0 ? 1 : 0);
         }
 
         this.scale = resultScale;
@@ -1127,7 +1126,7 @@ public class Decimal128 implements Sinkable {
      * - No carry: sum = a + b, so sum >= a and sum >= b
      * - Carry: sum = a + b - 2^64, so sum < a and sum < b
      */
-    static boolean hasCarry(long a, long b, long sum) {
+    static boolean hasCarry(long a, @SuppressWarnings("unused") long b, long sum) {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
         return Long.compareUnsigned(sum, a) < 0;

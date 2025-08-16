@@ -591,10 +591,10 @@ public class Decimal256 implements Sinkable {
      */
     @Override
     public int hashCode() {
-        int result = (int) (hh ^ (hh >>> 32));
-        result = 31 * result + (int) (hl ^ (hl >>> 32));
-        result = 31 * result + (int) (lh ^ (lh >>> 32));
-        result = 31 * result + (int) (ll ^ (ll >>> 32));
+        int result = Long.hashCode(hh);
+        result = 31 * result + Long.hashCode(hl);
+        result = 31 * result + Long.hashCode(lh);
+        result = 31 * result + Long.hashCode(ll);
         result = 31 * result + scale;
         return result;
     }
@@ -784,15 +784,16 @@ public class Decimal256 implements Sinkable {
      * @throws IllegalArgumentException if target scale is invalid
      */
     public void round(int targetScale, RoundingMode roundingMode) {
+        if (targetScale == this.scale) {
+            // No rounding needed
+            return;
+        }
+
         validateScale(targetScale);
 
         if (roundingMode == RoundingMode.UNNECESSARY) {
             // UNNECESSARY mode is a no-op in this implementation
             return;
-        }
-
-        if (targetScale == this.scale) {
-            // No rounding needed
         }
 
         if (isZero()) {
@@ -878,7 +879,7 @@ public class Decimal256 implements Sinkable {
      */
     public BigDecimal toBigDecimal() {
         if (isZero()) {
-            return BigDecimal.ZERO.setScale(scale);
+            return BigDecimal.ZERO;
         }
 
         // Convert 256-bit value to BigInteger
@@ -910,7 +911,7 @@ public class Decimal256 implements Sinkable {
      * @param sink the CharSink to write to
      */
     @Override
-    public void toSink(@NotNull CharSink sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         BigDecimal bd = toBigDecimal();
         sink.put(bd.toPlainString());
     }
@@ -980,7 +981,7 @@ public class Decimal256 implements Sinkable {
      * Validates that the scale is within the allowed range.
      *
      * @param scale the scale to validate
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     private static void validateScale(int scale) {
         if (scale < 0 || scale > MAX_SCALE) {

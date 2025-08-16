@@ -52,7 +52,7 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 5, time = 100, timeUnit = TimeUnit.MILLISECONDS)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal256DivideBenchmark {
+public class Decimal256ModuloBenchmark {
 
     private BigDecimal bigDecimalDividend;
     private BigDecimal bigDecimalDivisor;
@@ -61,12 +61,12 @@ public class Decimal256DivideBenchmark {
     private Decimal256 decimal256Result;
     private MathContext mathContext;
     @SuppressWarnings("unused")
-    @Param({"SIMPLE", "LARGE_NUMBERS", "HIGH_PRECISION", "DIFFERENT_SCALES", "REPEATING_DECIMAL", "INTEGER_DIVISION", "MIXED_256_128", "PURE_128_BIT", "SMALL_DIVISOR"})
+    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "NEAR_DIVISOR", "FRACTIONAL", "MIXED_256_128", "PURE_128_BIT", "HIGH_PRECISION", "INTEGER_MODULO"})
     private String scenario;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Decimal256DivideBenchmark.class.getSimpleName())
+                .include(Decimal256ModuloBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(10)
                 .forks(1)
@@ -76,19 +76,19 @@ public class Decimal256DivideBenchmark {
     }
 
     @Benchmark
-    public BigDecimal bigDecimalDivide() {
-        return bigDecimalDividend.divide(bigDecimalDivisor, 10, RoundingMode.HALF_UP);
+    public BigDecimal bigDecimalModulo() {
+        return bigDecimalDividend.remainder(bigDecimalDivisor);
     }
 
     @Benchmark
-    public BigDecimal bigDecimalDivideWithContext() {
-        return bigDecimalDividend.divide(bigDecimalDivisor, mathContext);
+    public BigDecimal bigDecimalModuloWithContext() {
+        return bigDecimalDividend.remainder(bigDecimalDivisor, mathContext);
     }
 
     @Benchmark
-    public Decimal256 decimal256Divide() {
+    public Decimal256 decimal256Modulo() {
         decimal256Result.copyFrom(decimal256Dividend);
-        decimal256Result.divide(decimal256Divisor, 10, RoundingMode.HALF_UP);
+        decimal256Result.modulo(decimal256Divisor);
         return decimal256Result;
     }
 
@@ -99,76 +99,84 @@ public class Decimal256DivideBenchmark {
 
         switch (scenario) {
             case "SIMPLE":
-                // Simple division: 100.0 / 4.0
-                decimal256Dividend = Decimal256.fromDouble(100.0, 1);
-                decimal256Divisor = Decimal256.fromDouble(4.0, 1);
-                bigDecimalDividend = new BigDecimal("100.0");
-                bigDecimalDivisor = new BigDecimal("4.0");
+                // Simple modulo: 789.123 % 12.34
+                decimal256Dividend = Decimal256.fromDouble(789.123, 3);
+                decimal256Divisor = Decimal256.fromDouble(12.34, 2);
+                bigDecimalDividend = new BigDecimal("789.123");
+                bigDecimalDivisor = new BigDecimal("12.34");
                 break;
 
             case "LARGE_NUMBERS":
-                // Large number division: 987654321.123 / 123.456
+                // Large number modulo: 987654321.123 % 123456.789
                 decimal256Dividend = Decimal256.fromDouble(987654321.123, 3);
-                decimal256Divisor = Decimal256.fromDouble(123.456, 3);
+                decimal256Divisor = Decimal256.fromDouble(123456.789, 3);
                 bigDecimalDividend = new BigDecimal("987654321.123");
-                bigDecimalDivisor = new BigDecimal("123.456");
+                bigDecimalDivisor = new BigDecimal("123456.789");
                 break;
 
-            case "HIGH_PRECISION":
-                // High precision division
-                decimal256Dividend = Decimal256.fromBigDecimal(new BigDecimal("123456789012345.123456789"));
-                decimal256Divisor = Decimal256.fromBigDecimal(new BigDecimal("987.654321098765"));
-                bigDecimalDividend = new BigDecimal("123456789012345.123456789");
-                bigDecimalDivisor = new BigDecimal("987.654321098765");
+            case "SMALL_NUMBERS":
+                // Small number modulo: 0.00789 % 0.00123
+                decimal256Dividend = Decimal256.fromDouble(0.00789, 5);
+                decimal256Divisor = Decimal256.fromDouble(0.00123, 5);
+                bigDecimalDividend = new BigDecimal("0.00789");
+                bigDecimalDivisor = new BigDecimal("0.00123");
                 break;
 
             case "DIFFERENT_SCALES":
-                // Different scales: 123.456 / 7.89
+                // Different scales: 123.456 % 7.8901234
                 decimal256Dividend = Decimal256.fromDouble(123.456, 3);
-                decimal256Divisor = Decimal256.fromDouble(7.89, 2);
+                decimal256Divisor = Decimal256.fromDouble(7.8901234, 7);
                 bigDecimalDividend = new BigDecimal("123.456");
-                bigDecimalDivisor = new BigDecimal("7.89");
+                bigDecimalDivisor = new BigDecimal("7.8901234");
                 break;
 
-            case "REPEATING_DECIMAL":
-                // Division that results in repeating decimal: 10 / 3
-                decimal256Dividend = Decimal256.fromLong(10, 0);
-                decimal256Divisor = Decimal256.fromLong(3, 0);
-                bigDecimalDividend = new BigDecimal("10");
-                bigDecimalDivisor = new BigDecimal("3");
+            case "NEAR_DIVISOR":
+                // Dividend near divisor: 123.456 % 123.123
+                decimal256Dividend = Decimal256.fromDouble(123.456, 3);
+                decimal256Divisor = Decimal256.fromDouble(123.123, 3);
+                bigDecimalDividend = new BigDecimal("123.456");
+                bigDecimalDivisor = new BigDecimal("123.123");
                 break;
 
-            case "INTEGER_DIVISION":
-                // Integer division: 1000000 / 7
-                decimal256Dividend = Decimal256.fromLong(1000000, 0);
-                decimal256Divisor = Decimal256.fromLong(7, 0);
-                bigDecimalDividend = new BigDecimal("1000000");
-                bigDecimalDivisor = new BigDecimal("7");
+            case "FRACTIONAL":
+                // Fractional modulo: 3.14159 % 2.71828
+                decimal256Dividend = Decimal256.fromDouble(3.14159, 5);
+                decimal256Divisor = Decimal256.fromDouble(2.71828, 5);
+                bigDecimalDividend = new BigDecimal("3.14159");
+                bigDecimalDivisor = new BigDecimal("2.71828");
                 break;
 
             case "MIXED_256_128":
-                // Division of 256-bit by 128-bit value: large 256-bit / normal 128-bit
+                // Modulo of 256-bit by 128-bit value: large 256-bit % normal 128-bit
                 decimal256Dividend = new Decimal256();
                 decimal256Dividend.setFromLong(123456789098765432L, 6);
-                decimal256Divisor = Decimal256.fromDouble(123.456, 3);
+                decimal256Divisor = Decimal256.fromDouble(12345.678, 3);
                 bigDecimalDividend = new BigDecimal("123456789098.765432");
-                bigDecimalDivisor = new BigDecimal("123.456");
+                bigDecimalDivisor = new BigDecimal("12345.678");
                 break;
 
             case "PURE_128_BIT":
-                // Division of two 128-bit values within Decimal256
+                // Modulo of two 128-bit values within Decimal256
                 decimal256Dividend = Decimal256.fromDouble(987654.321, 3);
                 decimal256Divisor = Decimal256.fromDouble(123.456, 3);
                 bigDecimalDividend = new BigDecimal("987654.321");
                 bigDecimalDivisor = new BigDecimal("123.456");
                 break;
 
-            case "SMALL_DIVISOR":
-                // Division by small divisor: 123456.789 / 0.001
-                decimal256Dividend = Decimal256.fromDouble(123456.789, 3);
-                decimal256Divisor = Decimal256.fromDouble(0.001, 3);
-                bigDecimalDividend = new BigDecimal("123456.789");
-                bigDecimalDivisor = new BigDecimal("0.001");
+            case "HIGH_PRECISION":
+                // High precision modulo with very large numbers
+                decimal256Dividend = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234.123456789"));
+                decimal256Divisor = Decimal256.fromBigDecimal(new BigDecimal("987654321098.765432"));
+                bigDecimalDividend = new BigDecimal("123456789012345678901234.123456789");
+                bigDecimalDivisor = new BigDecimal("987654321098.765432");
+                break;
+
+            case "INTEGER_MODULO":
+                // Integer modulo: 1000000 % 7
+                decimal256Dividend = Decimal256.fromLong(1000000, 0);
+                decimal256Divisor = Decimal256.fromLong(7, 0);
+                bigDecimalDividend = new BigDecimal("1000000");
+                bigDecimalDivisor = new BigDecimal("7");
                 break;
         }
     }

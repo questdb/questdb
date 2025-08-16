@@ -60,7 +60,8 @@ public class Decimal128SubtractBenchmark {
     private Decimal128 decimal128Result;
     private Decimal128 decimal128Subtrahend;
     private MathContext mathContext;
-    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "NEAR_EQUAL", "SIGN_CHANGE"})
+    @SuppressWarnings("unused")
+    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "NEAR_EQUAL", "SIGN_CHANGE", "MIXED_128_64", "PURE_64_BIT", "NEAR_ZERO", "NEGATIVE"})
     private String scenario;
 
     public static void main(String[] args) throws RunnerException {
@@ -91,50 +92,12 @@ public class Decimal128SubtractBenchmark {
         return decimal128Result;
     }
 
-    @Benchmark
-    public void decimal128Subtract128By64() {
-        // Test subtraction of 128-bit minus 64-bit value
-        Decimal128 largeMinuend = new Decimal128();
-        largeMinuend.set(123456789L, 987654321098765432L, 6);
-
-        decimal128Result.copyFrom(largeMinuend);
-        decimal128Result.subtract(decimal128Subtrahend);
-    }
-
-    @Benchmark
-    public void decimal128Subtract64Bit() {
-        // Test subtraction of two 64-bit values
-        Decimal128 val1 = Decimal128.fromDouble(987654.321, 3);
-        Decimal128 val2 = Decimal128.fromDouble(123456.789, 3);
-
-        decimal128Result.copyFrom(val1);
-        decimal128Result.subtract(val2);
-    }
-
-    @Benchmark
-    public void decimal128SubtractNearZero() {
-        // Test subtraction resulting in near-zero: 123.456001 - 123.456000
-        Decimal128 val1 = Decimal128.fromDouble(123.456001, 6);
-        Decimal128 val2 = Decimal128.fromDouble(123.456000, 6);
-
-        decimal128Result.copyFrom(val1);
-        decimal128Result.subtract(val2);
-    }
-
-    @Benchmark
-    public void decimal128SubtractNegative() {
-        // Test subtraction with negative values: -123.456 - 789.123
-        Decimal128 val1 = Decimal128.fromDouble(-123.456, 3);
-        Decimal128 val2 = Decimal128.fromDouble(789.123, 3);
-
-        decimal128Result.copyFrom(val1);
-        decimal128Result.subtract(val2);
-    }
 
     @Setup
     public void setup() {
         decimal128Result = new Decimal128();
         mathContext = new MathContext(16, RoundingMode.HALF_UP);
+
 
         switch (scenario) {
             case "SIMPLE":
@@ -182,6 +145,39 @@ public class Decimal128SubtractBenchmark {
                 decimal128Minuend = Decimal128.fromDouble(123.456, 3);
                 decimal128Subtrahend = Decimal128.fromDouble(789.123, 3);
                 bigDecimalMinuend = new BigDecimal("123.456");
+                bigDecimalSubtrahend = new BigDecimal("789.123");
+                break;
+
+            case "MIXED_128_64":
+                // Subtraction of 128-bit minus 64-bit value: large 128-bit - normal 64-bit
+                decimal128Minuend = new Decimal128();
+                decimal128Minuend.set(123456789L, 987654321098765432L, 6);
+                decimal128Subtrahend = Decimal128.fromDouble(789.123, 3);
+                bigDecimalMinuend = new BigDecimal("123456789987654321098.765432");
+                bigDecimalSubtrahend = new BigDecimal("789.123");
+                break;
+
+            case "PURE_64_BIT":
+                // Subtraction of two 64-bit values within Decimal128
+                decimal128Minuend = Decimal128.fromDouble(987654.321, 3);
+                decimal128Subtrahend = Decimal128.fromDouble(123456.789, 3);
+                bigDecimalMinuend = new BigDecimal("987654.321");
+                bigDecimalSubtrahend = new BigDecimal("123456.789");
+                break;
+
+            case "NEAR_ZERO":
+                // Subtraction resulting in near-zero: 123.456001 - 123.456000
+                decimal128Minuend = Decimal128.fromDouble(123.456001, 6);
+                decimal128Subtrahend = Decimal128.fromDouble(123.456000, 6);
+                bigDecimalMinuend = new BigDecimal("123.456001");
+                bigDecimalSubtrahend = new BigDecimal("123.456000");
+                break;
+
+            case "NEGATIVE":
+                // Subtraction with negative values: -123.456 - 789.123
+                decimal128Minuend = Decimal128.fromDouble(-123.456, 3);
+                decimal128Subtrahend = Decimal128.fromDouble(789.123, 3);
+                bigDecimalMinuend = new BigDecimal("-123.456");
                 bigDecimalSubtrahend = new BigDecimal("789.123");
                 break;
         }

@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal64;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -48,26 +48,26 @@ import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-@Warmup(iterations = 5, time = 1)
-@Measurement(iterations = 5, time = 1)
+@Warmup(iterations = 5, time = 100, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 5, time = 100, timeUnit = TimeUnit.MILLISECONDS)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal128MultiplyBenchmark {
+public class Decimal64MultiplyBenchmark {
 
     private BigDecimal bigDecimalFactor1;
     private BigDecimal bigDecimalFactor2;
-    private Decimal128 decimal128Factor1;
-    private Decimal128 decimal128Factor2;
-    private Decimal128 decimal128Result;
+    private Decimal64 decimal64Factor1;
+    private Decimal64 decimal64Factor2;
+    private Decimal64 decimal64Result;
     private MathContext mathContext;
     @SuppressWarnings("unused")
-    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "HIGH_PRECISION", "POWER_OF_10", "MIXED_SCALE", "MIXED_128_64", "PURE_64_BIT"})
+    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "HIGH_PRECISION", "POWER_OF_10", "MIXED_SCALE"})
     private String scenario;
 
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Decimal128MultiplyBenchmark.class.getSimpleName())
+                .include(Decimal64MultiplyBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(10)
                 .forks(1)
@@ -78,7 +78,7 @@ public class Decimal128MultiplyBenchmark {
 
     @Benchmark
     public BigDecimal bigDecimalMultiply() {
-        return bigDecimalFactor1.multiply(bigDecimalFactor2).setScale(6, RoundingMode.HALF_UP);
+        return bigDecimalFactor1.multiply(bigDecimalFactor2);
     }
 
     @Benchmark
@@ -87,84 +87,65 @@ public class Decimal128MultiplyBenchmark {
     }
 
     @Benchmark
-    public Decimal128 decimal128Multiply() {
-        decimal128Result.copyFrom(decimal128Factor1);
-        decimal128Result.multiply(decimal128Factor2);
-        decimal128Result.round(6, RoundingMode.HALF_UP);
-        return decimal128Result;
+    public Decimal64 decimal64Multiply() {
+        decimal64Result.copyFrom(decimal64Factor1);
+        decimal64Result.multiply(decimal64Factor2);
+        return decimal64Result;
     }
-
 
     @Setup
     public void setup() {
-        decimal128Result = new Decimal128();
-        mathContext = new MathContext(16, RoundingMode.HALF_UP);
+        decimal64Result = new Decimal64();
+        mathContext = new MathContext(18, RoundingMode.HALF_UP);
 
 
         switch (scenario) {
             case "SIMPLE":
                 // Simple multiplication: 123.456 * 7.89
-                decimal128Factor1 = Decimal128.fromDouble(123.456, 3);
-                decimal128Factor2 = Decimal128.fromDouble(7.89, 2);
+                decimal64Factor1 = Decimal64.fromLong(123456L, 3);
+                decimal64Factor2 = Decimal64.fromLong(789L, 2);
                 bigDecimalFactor1 = new BigDecimal("123.456");
                 bigDecimalFactor2 = new BigDecimal("7.89");
                 break;
 
             case "LARGE_NUMBERS":
-                // Large number multiplication: 987654321.123 * 123456789.456
-                decimal128Factor1 = Decimal128.fromDouble(987654321.123, 3);
-                decimal128Factor2 = Decimal128.fromDouble(123456789.456, 3);
-                bigDecimalFactor1 = new BigDecimal("987654321.123");
-                bigDecimalFactor2 = new BigDecimal("123456789.456");
+                // Large number multiplication: 123456.789 * 9876.543
+                decimal64Factor1 = Decimal64.fromLong(123456789L, 3);
+                decimal64Factor2 = Decimal64.fromLong(9876543L, 3);
+                bigDecimalFactor1 = new BigDecimal("123456.789");
+                bigDecimalFactor2 = new BigDecimal("9876.543");
                 break;
 
             case "SMALL_NUMBERS":
                 // Small number multiplication: 0.00123 * 0.00456
-                decimal128Factor1 = Decimal128.fromDouble(0.00123, 5);
-                decimal128Factor2 = Decimal128.fromDouble(0.00456, 5);
+                decimal64Factor1 = Decimal64.fromLong(123L, 5);
+                decimal64Factor2 = Decimal64.fromLong(456L, 5);
                 bigDecimalFactor1 = new BigDecimal("0.00123");
                 bigDecimalFactor2 = new BigDecimal("0.00456");
                 break;
 
             case "HIGH_PRECISION":
                 // High precision: PI * E with many decimal places
-                decimal128Factor1 = Decimal128.fromDouble(3.141592653589793, 15);
-                decimal128Factor2 = Decimal128.fromDouble(2.718281828459045, 15);
-                bigDecimalFactor1 = new BigDecimal("3.141592653589793");
-                bigDecimalFactor2 = new BigDecimal("2.718281828459045");
+                decimal64Factor1 = Decimal64.fromLong(31415926536L, 10);
+                decimal64Factor2 = Decimal64.fromLong(27182818285L, 10);
+                bigDecimalFactor1 = new BigDecimal("3.1415926536");
+                bigDecimalFactor2 = new BigDecimal("2.7182818285");
                 break;
 
             case "POWER_OF_10":
                 // Multiplication by power of 10: 123.456 * 100
-                decimal128Factor1 = Decimal128.fromDouble(123.456, 3);
-                decimal128Factor2 = Decimal128.fromDouble(100.0, 0);
+                decimal64Factor1 = Decimal64.fromLong(123456L, 3);
+                decimal64Factor2 = Decimal64.fromLong(100L, 0);
                 bigDecimalFactor1 = new BigDecimal("123.456");
                 bigDecimalFactor2 = new BigDecimal("100");
                 break;
 
             case "MIXED_SCALE":
                 // Mixed scales: 1234567.89 * 0.001234
-                decimal128Factor1 = Decimal128.fromDouble(1234567.89, 2);
-                decimal128Factor2 = Decimal128.fromDouble(0.001234, 6);
+                decimal64Factor1 = Decimal64.fromLong(123456789L, 2);
+                decimal64Factor2 = Decimal64.fromLong(1234L, 6);
                 bigDecimalFactor1 = new BigDecimal("1234567.89");
                 bigDecimalFactor2 = new BigDecimal("0.001234");
-                break;
-
-            case "MIXED_128_64":
-                // Multiplication of 128-bit by 64-bit value: large 128-bit * normal 64-bit
-                decimal128Factor1 = new Decimal128();
-                decimal128Factor1.set(123456789L, 987654321098765432L, 6);
-                decimal128Factor2 = Decimal128.fromDouble(7.89, 2);
-                bigDecimalFactor1 = new BigDecimal("123456789987654321098.765432");
-                bigDecimalFactor2 = new BigDecimal("7.89");
-                break;
-
-            case "PURE_64_BIT":
-                // Multiplication of two 64-bit values within Decimal128
-                decimal128Factor1 = Decimal128.fromDouble(123456.789, 3);
-                decimal128Factor2 = Decimal128.fromDouble(987.654, 3);
-                bigDecimalFactor1 = new BigDecimal("123456.789");
-                bigDecimalFactor2 = new BigDecimal("987.654");
                 break;
         }
     }

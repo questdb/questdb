@@ -57,9 +57,14 @@ public class Decimal256RoundBenchmark {
     private BigDecimal bigDecimalValue;
     private Decimal256 decimal256Value;
     private Decimal256 decimal256Result;
-    private MathContext mathContext;
-    @Param({"SIMPLE", "LARGE_NUMBER", "SMALL_NUMBER", "HIGH_PRECISION", "SCALE_INCREASE", "SCALE_DECREASE"})
+    private RoundingMode javaRoundingMode;
+    @SuppressWarnings("unused")
+    @Param({"HALF_UP", "HALF_DOWN", "HALF_EVEN", "UP", "DOWN", "CEILING", "FLOOR"})
+    private String roundingMode;
+    @SuppressWarnings("unused")
+    @Param({"SIMPLE", "LARGE_NUMBER", "SMALL_NUMBER", "HIGH_PRECISION", "SCALE_INCREASE", "SCALE_DECREASE", "VERY_LARGE", "VERY_SMALL", "MULTIPLE_ROUNDS", "TO_INTEGER", "TO_TENS"})
     private String scenario;
+    private int targetScale;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -74,98 +79,112 @@ public class Decimal256RoundBenchmark {
 
     @Benchmark
     public BigDecimal bigDecimalRound() {
-        return bigDecimalValue.setScale(5, RoundingMode.HALF_UP);
+        return bigDecimalValue.setScale(targetScale, javaRoundingMode);
     }
 
     @Benchmark
     public BigDecimal bigDecimalRoundWithContext() {
-        return bigDecimalValue.round(mathContext);
+        MathContext mc = new MathContext(targetScale + 3, javaRoundingMode);
+        return bigDecimalValue.round(mc);
     }
 
     @Benchmark
     public Decimal256 decimal256Round() {
         decimal256Result.copyFrom(decimal256Value);
-        decimal256Result.round(5, RoundingMode.HALF_UP);
+
+        if ("MULTIPLE_ROUNDS".equals(scenario)) {
+            // Multiple consecutive rounding operations
+            decimal256Result.round(targetScale, javaRoundingMode);
+            decimal256Result.round(targetScale - 2, javaRoundingMode);
+            decimal256Result.round(targetScale - 4, javaRoundingMode);
+        } else {
+            decimal256Result.round(targetScale, javaRoundingMode);
+        }
+        
         return decimal256Result;
-    }
-
-    @Benchmark
-    public void decimal256RoundLargeNumber() {
-        // Test rounding of very large numbers
-        Decimal256 largeValue = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234.123456789"));
-        largeValue.round(10, RoundingMode.HALF_UP);
-    }
-
-    @Benchmark
-    public void decimal256RoundSmallNumber() {
-        // Test rounding of very small numbers
-        Decimal256 smallValue = Decimal256.fromBigDecimal(new BigDecimal("0.000000123456789"));
-        smallValue.round(8, RoundingMode.HALF_UP);
-    }
-
-    @Benchmark
-    public void decimal256RoundMultiple() {
-        // Test multiple rounding operations
-        Decimal256 value = Decimal256.fromDouble(123.456789, 6);
-        value.round(4, RoundingMode.HALF_UP);
-        value.round(2, RoundingMode.HALF_UP);
-        value.round(0, RoundingMode.HALF_UP);
-    }
-
-    @Benchmark
-    public void decimal256RoundToTens() {
-        // Test rounding to tens place (scale -1)
-        Decimal256 value = Decimal256.fromDouble(12345.67, 2);
-        value.round(0, RoundingMode.HALF_UP);
-    }
-
-    @Benchmark
-    public void decimal256RoundToZero() {
-        // Test rounding to zero decimal places
-        Decimal256 value = Decimal256.fromDouble(123.456, 3);
-        value.round(0, RoundingMode.HALF_UP);
     }
 
     @Setup
     public void setup() {
         decimal256Result = new Decimal256();
-        mathContext = new MathContext(20, RoundingMode.HALF_UP);
+        javaRoundingMode = RoundingMode.valueOf(roundingMode);
 
         switch (scenario) {
             case "SIMPLE":
                 // Simple rounding: 123.456789 -> 5 decimal places
                 decimal256Value = Decimal256.fromDouble(123.456789, 6);
                 bigDecimalValue = new BigDecimal("123.456789");
+                targetScale = 5;
                 break;
 
             case "LARGE_NUMBER":
                 // Large number rounding
                 decimal256Value = Decimal256.fromBigDecimal(new BigDecimal("987654321012345.123456789"));
                 bigDecimalValue = new BigDecimal("987654321012345.123456789");
+                targetScale = 6;
                 break;
 
             case "SMALL_NUMBER":
                 // Small number rounding
                 decimal256Value = Decimal256.fromDouble(0.123456789, 9);
                 bigDecimalValue = new BigDecimal("0.123456789");
+                targetScale = 6;
                 break;
 
             case "HIGH_PRECISION":
                 // High precision rounding
                 decimal256Value = Decimal256.fromBigDecimal(new BigDecimal("123456789.123456789012345678901234567890"));
                 bigDecimalValue = new BigDecimal("123456789.123456789012345678901234567890");
+                targetScale = 15;
                 break;
 
             case "SCALE_INCREASE":
                 // Scale increase (adding zeros)
                 decimal256Value = Decimal256.fromDouble(123.45, 2);
                 bigDecimalValue = new BigDecimal("123.45");
+                targetScale = 5;
                 break;
 
             case "SCALE_DECREASE":
                 // Scale decrease (removing digits)
                 decimal256Value = Decimal256.fromDouble(123.456789, 6);
                 bigDecimalValue = new BigDecimal("123.456789");
+                targetScale = 3;
+                break;
+
+            case "VERY_LARGE":
+                // Very large number rounding: large 256-bit value
+                decimal256Value = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234.123456789"));
+                bigDecimalValue = new BigDecimal("123456789012345678901234.123456789");
+                targetScale = 6;
+                break;
+
+            case "VERY_SMALL":
+                // Very small number rounding: 0.000000123456789
+                decimal256Value = Decimal256.fromBigDecimal(new BigDecimal("0.000000123456789"));
+                bigDecimalValue = new BigDecimal("0.000000123456789");
+                targetScale = 10;
+                break;
+
+            case "MULTIPLE_ROUNDS":
+                // Multiple consecutive rounding operations: start with high precision
+                decimal256Value = Decimal256.fromDouble(123.456789012345, 12);
+                bigDecimalValue = new BigDecimal("123.456789012345");
+                targetScale = 8; // Will be rounded multiple times in benchmark
+                break;
+
+            case "TO_INTEGER":
+                // Round to integer (scale 0): 123.456 -> 123
+                decimal256Value = Decimal256.fromDouble(123.456, 3);
+                bigDecimalValue = new BigDecimal("123.456");
+                targetScale = 0;
+                break;
+
+            case "TO_TENS":
+                // Round to tens place (scale -1): 123.456 -> 120
+                decimal256Value = Decimal256.fromDouble(123.456, 3);
+                bigDecimalValue = new BigDecimal("123.456");
+                targetScale = -1;
                 break;
         }
     }

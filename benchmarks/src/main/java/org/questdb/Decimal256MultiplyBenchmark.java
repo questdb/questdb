@@ -60,7 +60,8 @@ public class Decimal256MultiplyBenchmark {
     private Decimal256 decimal256Multiplier;
     private Decimal256 decimal256Result;
     private MathContext mathContext;
-    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "PRECISION_INTENSIVE", "INTEGER_MULTIPLICATION"})
+    @SuppressWarnings("unused")
+    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "PRECISION_INTENSIVE", "INTEGER_MULTIPLICATION", "MIXED_256_128", "PURE_128_BIT", "VERY_LARGE"})
     private String scenario;
 
     public static void main(String[] args) throws RunnerException {
@@ -91,40 +92,12 @@ public class Decimal256MultiplyBenchmark {
         return decimal256Result;
     }
 
-    @Benchmark
-    public void decimal256Multiply256By128() {
-        // Test multiplication of 256-bit and 128-bit values
-        Decimal256 largeMultiplicand = new Decimal256();
-        largeMultiplicand.setFromLong(123456789098765432L, 6);
-
-        decimal256Result.copyFrom(largeMultiplicand);
-        decimal256Result.multiply(decimal256Multiplier);
-    }
-
-    @Benchmark
-    public void decimal256Multiply128Bit() {
-        // Test multiplication of two 128-bit values
-        Decimal256 val1 = Decimal256.fromDouble(12345.678, 3);
-        Decimal256 val2 = Decimal256.fromDouble(9876.543, 3);
-
-        decimal256Result.copyFrom(val1);
-        decimal256Result.multiply(val2);
-    }
-
-    @Benchmark
-    public void decimal256MultiplyLargePrecision() {
-        // Test multiplication requiring high precision
-        Decimal256 val1 = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234.123456789"));
-        Decimal256 val2 = Decimal256.fromBigDecimal(new BigDecimal("987654321098765432.987654321"));
-
-        decimal256Result.copyFrom(val1);
-        decimal256Result.multiply(val2);
-    }
 
     @Setup
     public void setup() {
         decimal256Result = new Decimal256();
         mathContext = new MathContext(32, RoundingMode.HALF_UP);
+
 
         switch (scenario) {
             case "SIMPLE":
@@ -173,6 +146,31 @@ public class Decimal256MultiplyBenchmark {
                 decimal256Multiplier = Decimal256.fromLong(789012, 0);
                 bigDecimalMultiplicand = new BigDecimal("123456");
                 bigDecimalMultiplier = new BigDecimal("789012");
+                break;
+
+            case "MIXED_256_128":
+                // Multiplication of 256-bit and 128-bit values: large 256-bit * normal 128-bit
+                decimal256Multiplicand = new Decimal256();
+                decimal256Multiplicand.setFromLong(123456789098765432L, 6);
+                decimal256Multiplier = Decimal256.fromDouble(7.89, 2);
+                bigDecimalMultiplicand = new BigDecimal("123456789098.765432");
+                bigDecimalMultiplier = new BigDecimal("7.89");
+                break;
+
+            case "PURE_128_BIT":
+                // Multiplication of two 128-bit values within Decimal256
+                decimal256Multiplicand = Decimal256.fromDouble(12345.678, 3);
+                decimal256Multiplier = Decimal256.fromDouble(9876.543, 3);
+                bigDecimalMultiplicand = new BigDecimal("12345.678");
+                bigDecimalMultiplier = new BigDecimal("9876.543");
+                break;
+
+            case "VERY_LARGE":
+                // Multiplication requiring very high precision
+                decimal256Multiplicand = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234.123456789"));
+                decimal256Multiplier = Decimal256.fromBigDecimal(new BigDecimal("987654321098765432.987654321"));
+                bigDecimalMultiplicand = new BigDecimal("123456789012345678901234.123456789");
+                bigDecimalMultiplier = new BigDecimal("987654321098765432.987654321");
                 break;
         }
     }

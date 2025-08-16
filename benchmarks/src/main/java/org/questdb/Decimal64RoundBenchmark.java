@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal64;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -48,28 +48,27 @@ import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-@Warmup(iterations = 5, time = 1)
-@Measurement(iterations = 5, time = 1)
+@Warmup(iterations = 5, time = 100, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 5, time = 100, timeUnit = TimeUnit.MILLISECONDS)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal128RoundBenchmark {
+public class Decimal64RoundBenchmark {
 
     private BigDecimal bigDecimalValue;
-    private Decimal128 decimal128Result;
-    private Decimal128 decimal128Value;
+    private Decimal64 decimal64Result;
+    private Decimal64 decimal64Value;
     private RoundingMode javaRoundingMode;
     @SuppressWarnings("unused")
     @Param({"HALF_UP", "HALF_DOWN", "HALF_EVEN", "UP", "DOWN", "CEILING", "FLOOR"})
     private String roundingMode;
     @SuppressWarnings("unused")
-    @Param({"ROUND_DOWN", "ROUND_UP", "ROUND_HALFWAY", "ROUND_PRECISION", "ROUND_TRAILING_ZEROS", "ROUND_NEGATIVE", "ROUND_LARGE", "ROUND_SMALL", "ROUND_TO_TENS", "ROUND_TO_INTEGER", "ROUND_MULTIPLE"})
+    @Param({"ROUND_DOWN", "ROUND_UP", "ROUND_HALFWAY", "ROUND_PRECISION", "ROUND_TRAILING_ZEROS", "ROUND_NEGATIVE"})
     private String scenario;
     private int targetScale;
 
-
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Decimal128RoundBenchmark.class.getSimpleName())
+                .include(Decimal64RoundBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(10)
                 .forks(1)
@@ -90,105 +89,58 @@ public class Decimal128RoundBenchmark {
     }
 
     @Benchmark
-    public Decimal128 decimal128Round() {
-        decimal128Result.copyFrom(decimal128Value);
-
-        if ("ROUND_MULTIPLE".equals(scenario)) {
-            // Multiple consecutive rounding operations
-            decimal128Result.round(targetScale, javaRoundingMode);
-            decimal128Result.round(targetScale - 2, javaRoundingMode);
-            decimal128Result.round(targetScale - 4, javaRoundingMode);
-        } else {
-            decimal128Result.round(targetScale, javaRoundingMode);
-        }
-        
-        return decimal128Result;
+    public Decimal64 decimal64Round() {
+        decimal64Result.copyFrom(decimal64Value);
+        decimal64Result.round(targetScale, javaRoundingMode);
+        return decimal64Result;
     }
-
 
     @Setup
     public void setup() {
-        decimal128Result = new Decimal128();
+        decimal64Result = new Decimal64();
         javaRoundingMode = RoundingMode.valueOf(roundingMode);
-
 
         switch (scenario) {
             case "ROUND_DOWN":
                 // Value that needs rounding down: 123.456789 -> 123.457 (scale 3)
-                decimal128Value = Decimal128.fromDouble(123.456789, 6);
+                decimal64Value = Decimal64.fromLong(123456789L, 6);
                 bigDecimalValue = new BigDecimal("123.456789");
                 targetScale = 3;
                 break;
 
             case "ROUND_UP":
                 // Value that needs rounding up: 123.456789 -> 123.46 (scale 2)
-                decimal128Value = Decimal128.fromDouble(123.456789, 6);
+                decimal64Value = Decimal64.fromLong(123456789L, 6);
                 bigDecimalValue = new BigDecimal("123.456789");
                 targetScale = 2;
                 break;
 
             case "ROUND_HALFWAY":
                 // Halfway case: 123.4565 -> depends on rounding mode
-                decimal128Value = Decimal128.fromDouble(123.4565, 4);
+                decimal64Value = Decimal64.fromLong(1234565L, 4);
                 bigDecimalValue = new BigDecimal("123.4565");
                 targetScale = 3;
                 break;
 
             case "ROUND_PRECISION":
                 // High precision rounding: PI to 10 decimal places
-                decimal128Value = Decimal128.fromDouble(3.141592653589793, 15);
-                bigDecimalValue = new BigDecimal("3.141592653589793");
+                decimal64Value = Decimal64.fromLong(31415926535898L, 13);
+                bigDecimalValue = new BigDecimal("3.1415926535898");
                 targetScale = 10;
                 break;
 
             case "ROUND_TRAILING_ZEROS":
                 // Value with trailing zeros: 123.450000 -> 123.45
-                decimal128Value = Decimal128.fromDouble(123.450000, 6);
+                decimal64Value = Decimal64.fromLong(123450000L, 6);
                 bigDecimalValue = new BigDecimal("123.450000");
                 targetScale = 2;
                 break;
 
             case "ROUND_NEGATIVE":
                 // Negative value rounding: -123.456789 -> -123.46
-                decimal128Value = Decimal128.fromDouble(-123.456789, 6);
+                decimal64Value = Decimal64.fromLong(-123456789L, 6);
                 bigDecimalValue = new BigDecimal("-123.456789");
                 targetScale = 2;
-                break;
-
-            case "ROUND_LARGE":
-                // Large number rounding: large 128-bit value
-                decimal128Value = new Decimal128();
-                decimal128Value.set(123456789L, 987654321098765432L, 9);
-                bigDecimalValue = new BigDecimal("123456789987654321098.765432100");
-                targetScale = 6;
-                break;
-
-            case "ROUND_SMALL":
-                // Very small number rounding: 0.000000123456789
-                decimal128Value = Decimal128.fromDouble(0.000000123456789, 15);
-                bigDecimalValue = new BigDecimal("0.000000123456789");
-                targetScale = 10;
-                break;
-
-            case "ROUND_TO_TENS":
-                // Round to tens place (scale -1): 123.456 -> 120
-                decimal128Value = Decimal128.fromDouble(123.456, 3);
-                bigDecimalValue = new BigDecimal("123.456");
-                targetScale = -1;
-                break;
-
-            case "ROUND_TO_INTEGER":
-                // Round to integer (scale 0): 123.456 -> 123
-                decimal128Value = Decimal128.fromDouble(123.456, 3);
-                bigDecimalValue = new BigDecimal("123.456");
-                targetScale = 0;
-                break;
-
-            case "ROUND_MULTIPLE":
-                // Multiple consecutive rounding operations: start with high precision
-                decimal128Value = Decimal128.fromDouble(123.456789012345, 12);
-                bigDecimalValue = new BigDecimal("123.456789012345");
-                targetScale = 8; // Will be rounded multiple times in benchmark
                 break;
         }
     }

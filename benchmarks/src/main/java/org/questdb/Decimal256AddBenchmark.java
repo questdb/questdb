@@ -60,7 +60,8 @@ public class Decimal256AddBenchmark {
     private Decimal256 decimal256Addend2;
     private Decimal256 decimal256Result;
     private MathContext mathContext;
-    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "SAME_MAGNITUDE", "NEGATIVE_POSITIVE"})
+    @SuppressWarnings("unused")
+    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "SAME_MAGNITUDE", "NEGATIVE_POSITIVE", "NEAR_CANCEL", "MIXED_256_128", "PURE_128_BIT", "VERY_LARGE"})
     private String scenario;
 
     public static void main(String[] args) throws RunnerException {
@@ -91,50 +92,12 @@ public class Decimal256AddBenchmark {
         return decimal256Result;
     }
 
-    @Benchmark
-    public void decimal256Add256By128() {
-        // Test addition of 256-bit and 128-bit values
-        Decimal256 largeAddend = new Decimal256();
-        largeAddend.setFromLong(123456789098765432L, 6);
-
-        decimal256Result.copyFrom(largeAddend);
-        decimal256Result.add(decimal256Addend2);
-    }
-
-    @Benchmark
-    public void decimal256Add128Bit() {
-        // Test addition of two 128-bit values
-        Decimal256 val1 = Decimal256.fromDouble(123456.789, 3);
-        Decimal256 val2 = Decimal256.fromDouble(987654.321, 3);
-
-        decimal256Result.copyFrom(val1);
-        decimal256Result.add(val2);
-    }
-
-    @Benchmark
-    public void decimal256AddNearCancel() {
-        // Test addition that nearly cancels out: 123.456 + (-123.455)
-        Decimal256 val1 = Decimal256.fromDouble(123.456, 3);
-        Decimal256 val2 = Decimal256.fromDouble(-123.455, 3);
-
-        decimal256Result.copyFrom(val1);
-        decimal256Result.add(val2);
-    }
-
-    @Benchmark
-    public void decimal256AddVeryLarge() {
-        // Test addition with very large numbers that would benefit from 256-bit precision
-        Decimal256 val1 = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234567890.123456789"));
-        Decimal256 val2 = Decimal256.fromBigDecimal(new BigDecimal("987654321098765432109876543210.987654321"));
-
-        decimal256Result.copyFrom(val1);
-        decimal256Result.add(val2);
-    }
 
     @Setup
     public void setup() {
         decimal256Result = new Decimal256();
         mathContext = new MathContext(32, RoundingMode.HALF_UP);
+
 
         switch (scenario) {
             case "SIMPLE":
@@ -183,6 +146,39 @@ public class Decimal256AddBenchmark {
                 decimal256Addend2 = Decimal256.fromDouble(789.123, 3);
                 bigDecimalAddend1 = new BigDecimal("-123.456");
                 bigDecimalAddend2 = new BigDecimal("789.123");
+                break;
+
+            case "NEAR_CANCEL":
+                // Addition that nearly cancels out: 123.456 + (-123.455) = 0.001
+                decimal256Addend1 = Decimal256.fromDouble(123.456, 3);
+                decimal256Addend2 = Decimal256.fromDouble(-123.455, 3);
+                bigDecimalAddend1 = new BigDecimal("123.456");
+                bigDecimalAddend2 = new BigDecimal("-123.455");
+                break;
+
+            case "MIXED_256_128":
+                // Addition of 256-bit and 128-bit values: large 256-bit + normal 128-bit
+                decimal256Addend1 = new Decimal256();
+                decimal256Addend1.setFromLong(123456789098765432L, 6);
+                decimal256Addend2 = Decimal256.fromDouble(789.123, 3);
+                bigDecimalAddend1 = new BigDecimal("123456789098.765432");
+                bigDecimalAddend2 = new BigDecimal("789.123");
+                break;
+
+            case "PURE_128_BIT":
+                // Addition of two 128-bit values within Decimal256
+                decimal256Addend1 = Decimal256.fromDouble(123456.789, 3);
+                decimal256Addend2 = Decimal256.fromDouble(987654.321, 3);
+                bigDecimalAddend1 = new BigDecimal("123456.789");
+                bigDecimalAddend2 = new BigDecimal("987654.321");
+                break;
+
+            case "VERY_LARGE":
+                // Addition with very large numbers that benefit from 256-bit precision
+                decimal256Addend1 = Decimal256.fromBigDecimal(new BigDecimal("123456789012345678901234567890.123456789"));
+                decimal256Addend2 = Decimal256.fromBigDecimal(new BigDecimal("987654321098765432109876543210.987654321"));
+                bigDecimalAddend1 = new BigDecimal("123456789012345678901234567890.123456789");
+                bigDecimalAddend2 = new BigDecimal("987654321098765432109876543210.987654321");
                 break;
         }
     }
