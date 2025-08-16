@@ -60,7 +60,8 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0.0,
-                0.1
+                0.1,
+                0
         );
 
         // Basic load to keep the test lite, we just want to fuzz different transaction types, not intensive inserting

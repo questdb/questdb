@@ -187,6 +187,26 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            String host,
+            int port,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            toSink0(host, port, url, sql, sink, username, password, token, null, null);
+            TestUtils.assertContains(sink.asAsciiCharSequence(), expectedResponse);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
     public void assertGetRegexp(
             CharSequence url,
             String expectedResponseRegexp,

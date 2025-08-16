@@ -39,6 +39,7 @@ pub struct ParquetUpdater {
     compression_options: CompressionOptions,
     row_group_size: Option<usize>,
     data_page_size: Option<usize>,
+    raw_array_encoding: bool,
 }
 
 impl ParquetUpdater {
@@ -49,6 +50,7 @@ impl ParquetUpdater {
         file_size: u64,
         sorting_columns: Option<Vec<SortingColumn>>,
         write_statistics: bool,
+        raw_array_encoding: bool,
         compression_options: CompressionOptions,
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
@@ -57,7 +59,7 @@ impl ParquetUpdater {
             match value {
                 1 => Version::V1,
                 2 => Version::V2,
-                _ => panic!("Invalid version number: {}", value),
+                _ => panic!("Invalid version number: {value}"),
             }
         }
 
@@ -80,6 +82,7 @@ impl ParquetUpdater {
             allocator,
             parquet_file,
             compression_options,
+            raw_array_encoding,
             row_group_size,
             data_page_size,
         })
@@ -103,7 +106,7 @@ impl ParquetUpdater {
 
         self.parquet_file
             .replace(row_group, Some(row_group_id))
-            .with_context(|_| format!("Failed to replace row group {}", row_group_id))
+            .with_context(|_| format!("Failed to replace row group {row_group_id}"))
     }
 
     pub fn append_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
@@ -139,6 +142,7 @@ impl ParquetUpdater {
             version: self.parquet_file.options().version,
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
+            raw_array_encoding: self.raw_array_encoding,
         }
     }
 }
@@ -187,6 +191,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
         )
         .unwrap()
     }
@@ -227,7 +232,7 @@ mod tests {
         let orig_offset = buf.position();
         let metadata = read_metadata_with_size(&mut buf, orig_offset)?;
 
-        let (schema, _) = to_parquet_schema(&new_partition)?;
+        let (schema, _) = to_parquet_schema(&new_partition, false)?;
 
         let foptions = WriteOptions {
             write_statistics: true,
@@ -235,6 +240,7 @@ mod tests {
             version: Version::V1,
             row_group_size: None,
             data_page_size: None,
+            raw_array_encoding: false,
         };
 
         let options = write::WriteOptions { write_statistics: true, version: Version::V1 };

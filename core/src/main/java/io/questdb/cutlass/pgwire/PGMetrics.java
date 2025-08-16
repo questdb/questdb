@@ -30,7 +30,7 @@ import io.questdb.metrics.MetricsRegistry;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.TestOnly;
 
-public class PGWireMetrics implements Mutable {
+public class PGMetrics implements Mutable {
     private final LongGauge cachedSelectsGauge;
     private final LongGauge cachedUpdatesGauge;
     private final Counter completedQueriesCounter;
@@ -41,7 +41,7 @@ public class PGWireMetrics implements Mutable {
     private final Counter selectCacheMissCounter;
     private final Counter startedQueriesCounter;
 
-    public PGWireMetrics(MetricsRegistry metricsRegistry) {
+    public PGMetrics(MetricsRegistry metricsRegistry) {
         this.connectionCountGauge = metricsRegistry.newLongGauge("pg_wire_connections");
         this.cachedSelectsGauge = metricsRegistry.newLongGauge("pg_wire_select_queries_cached");
         this.completedQueriesCounter = metricsRegistry.newCounter("pg_wire_queries_completed");
@@ -55,10 +55,6 @@ public class PGWireMetrics implements Mutable {
 
     public LongGauge cachedSelectsGauge() {
         return cachedSelectsGauge;
-    }
-
-    public LongGauge cachedUpdatesGauge() {
-        return cachedUpdatesGauge;
     }
 
     @Override

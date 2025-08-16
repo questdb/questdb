@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+// must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
+pub const ARRAY_NDIMS_LIMIT: usize = 32;
 
-@FunctionalInterface
-interface PGResumeCallback {
-    void resume() throws Exception;
+#[inline]
+pub fn align8b(v: usize) -> usize {
+    v.checked_add(7).expect("align8b overflow") & !0x7
 }

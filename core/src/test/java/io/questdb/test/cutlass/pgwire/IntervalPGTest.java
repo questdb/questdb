@@ -24,29 +24,11 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import org.checkerframework.checker.nullness.qual.NonNull;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.sql.PreparedStatement;
-import java.util.Arrays;
-import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class IntervalPGTest extends BasePGTest {
-
-    public IntervalPGTest(@NonNull LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}, {1}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {LegacyMode.MODERN},
-                {LegacyMode.LEGACY},
-        });
-    }
 
     @Test
     public void testIntervalSelect() throws Exception {

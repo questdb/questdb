@@ -34,10 +34,6 @@ import java.sql.Timestamp;
 
 public class PGInsertErrorTest extends BasePGTest {
 
-    public PGInsertErrorTest() {
-        super(LegacyMode.MODERN);
-    }
-
     @Test
     public void testInsertComputeFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

@@ -46,8 +46,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
+    private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
+    private long partitionTxn;
     private long valueMemSize = -1;
 
     @Override
@@ -62,6 +64,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return columnTop;
     }
 
+    @Override
+    public long getColumnTxn() {
+        return columnTxn;
+    }
+
     public long getKeyBaseAddress() {
         return keyMem.addressOf(0);
     }
@@ -73,6 +80,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     public long getKeyMemorySize() {
         return keyMem.size();
+    }
+
+    @Override
+    public long getPartitionTxn() {
+        return partitionTxn;
     }
 
     public long getValueBaseAddress() {
@@ -93,8 +105,17 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long columnTop) {
+    public void of(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop
+    ) {
         this.columnTop = columnTop;
+        this.columnTxn = columnNameTxn;
+        this.partitionTxn = partitionTxn;
         final int plen = path.size();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
 

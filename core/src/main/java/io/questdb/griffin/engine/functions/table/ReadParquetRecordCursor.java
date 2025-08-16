@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -50,12 +52,14 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -118,6 +122,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         Misc.free(decoder);
         Misc.free(rowGroupBuffers);
         Misc.free(columns);
+        Misc.free(record);
         if (fd != -1) {
             ff.close(fd);
             fd = -1;
@@ -210,7 +215,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
-    private class ParquetRecord implements Record {
+    private class ParquetRecord implements Record, QuietCloseable {
+        private final ObjList<BorrowedArray> arrayBuffers;
         private final ObjList<DirectBinarySequence> bsViews;
         private final ObjList<DirectString> csViewsA;
         private final ObjList<DirectString> csViewsB;
@@ -227,16 +233,42 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.longs256B = new ObjList<>(columnCount);
             this.utf8ViewsA = new ObjList<>(columnCount);
             this.utf8ViewsB = new ObjList<>(columnCount);
+            this.arrayBuffers = new ObjList<>(columnCount);
+        }
+
+        @Override
+        public void close() {
+            Misc.freeObjList(arrayBuffers);
+        }
+
+        @Override
+        public ArrayView getArray(int col, int colType) {
+            final BorrowedArray array = borrowedArray(col);
+            final long auxPageAddress = auxPtrs.getQuick(col);
+            if (auxPageAddress != 0) {
+                final long dataPageAddress = dataPtrs.getQuick(col);
+                array.of(
+                        colType,
+                        auxPageAddress,
+                        Long.MAX_VALUE,
+                        dataPageAddress,
+                        Long.MAX_VALUE,
+                        currentRowInRowGroup
+                );
+            } else {
+                array.ofNull();
+            }
+            return array;
         }
 
         @Override
         public BinarySequence getBin(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long len = Unsafe.getUnsafe().getLong(dataPtr + data_offset);
+            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            long len = Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
             if (len != TableUtils.NULL_LEN) {
-                return bsView(col).of(dataPtr + data_offset + 8L, len);
+                return bsView(col).of(dataPtr + dataOffset + 8L, len);
             }
             return null;
         }
@@ -245,8 +277,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public long getBinLen(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return Unsafe.getUnsafe().getLong(dataPtr + data_offset);
+            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
         }
 
         @Override
@@ -387,6 +419,15 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public int getVarcharSize(int col) {
             long auxPtr = auxPtrs.get(col);
             return VarcharTypeDriver.getValueSize(auxPtr, currentRowInRowGroup);
+        }
+
+        private @NotNull BorrowedArray borrowedArray(int col) {
+            BorrowedArray array = arrayBuffers.getQuiet(col);
+            if (array != null) {
+                return array;
+            }
+            arrayBuffers.extendAndSet(col, array = new BorrowedArray());
+            return array;
         }
 
         private DirectBinarySequence bsView(int columnIndex) {

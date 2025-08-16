@@ -31,7 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class BitmapIndexFwdNullReaderTest {
-    private static final BitmapIndexFwdNullReader reader = new BitmapIndexFwdNullReader();
+    private static final BitmapIndexFwdNullReader reader = new BitmapIndexFwdNullReader(-1, -1);
 
     @Test
     public void testAlwaysOpen() {

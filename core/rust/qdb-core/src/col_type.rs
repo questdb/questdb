@@ -26,6 +26,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
 
+// Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnTypeTag {
@@ -55,6 +56,33 @@ pub enum ColumnTypeTag {
 }
 
 impl ColumnTypeTag {
+    #[cfg(test)]
+    const VALUES: [Self; 23] = [
+        Self::Boolean,
+        Self::Byte,
+        Self::Short,
+        Self::Char,
+        Self::Int,
+        Self::Long,
+        Self::Date,
+        Self::Timestamp,
+        Self::Float,
+        Self::Double,
+        Self::String,
+        Self::Symbol,
+        Self::Long256,
+        Self::GeoByte,
+        Self::GeoShort,
+        Self::GeoInt,
+        Self::GeoLong,
+        Self::Binary,
+        Self::Uuid,
+        Self::Long128,
+        Self::IPv4,
+        Self::Varchar,
+        Self::Array,
+    ];
+
     /// If true, the column is encoded with both data and aux vectors.
     pub const fn is_var_size(self) -> bool {
         self.fixed_size().is_none()
@@ -172,6 +200,11 @@ fn tag_of(col_type: i32) -> u8 {
 }
 
 const TYPE_FLAG_DESIGNATED_TIMESTAMP: i32 = 1i32 << 17;
+const ARRAY_ELEMTYPE_FIELD_MASK: i32 = 0x3F;
+const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
+const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
+const ARRAY_NDIMS_FIELD_MASK: i32 = ARRAY_NDIMS_LIMIT - 1;
+const ARRAY_NDIMS_FIELD_POS: i32 = 14;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
@@ -216,6 +249,31 @@ impl ColumnType {
         col_tag_num
             .try_into()
             .expect("invalid column type tag, should already be validated")
+    }
+
+    pub fn array_dimensionality(&self) -> CoreResult<i32> {
+        if self.tag() != ColumnTypeTag::Array {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only array columns have dimensionality",
+                self
+            ));
+        }
+        let dim = ((self.code() >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+        Ok(dim)
+    }
+
+    pub fn array_element_type(&self) -> CoreResult<ColumnTypeTag> {
+        if self.tag() != ColumnTypeTag::Array {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only array columns have element type",
+                self
+            ));
+        }
+        let tag = (self.code() >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK;
+        let tag = ColumnTypeTag::try_from(tag as u8)?;
+        Ok(tag)
     }
 }
 
@@ -262,6 +320,23 @@ impl<'de> Deserialize<'de> for ColumnType {
     }
 }
 
+pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<ColumnType> {
+    if !(1..=ARRAY_NDIMS_LIMIT).contains(&dim) {
+        return Err(fmt_err!(InvalidType, "invalid array dimensionality {dim}",));
+    }
+    if elem_type != ColumnTypeTag::Double {
+        return Err(fmt_err!(
+            InvalidType,
+            "unsupported array element type {}",
+            elem_type.name()
+        ));
+    }
+    let extra = ((dim - 1) & ARRAY_NDIMS_FIELD_MASK)
+        << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
+        | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
+    Ok(ColumnType::new(ColumnTypeTag::Array, extra))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +380,7 @@ mod tests {
         assert!(ColumnTypeTag::Binary.is_var_size());
         assert!(ColumnTypeTag::String.is_var_size());
         assert!(ColumnTypeTag::Varchar.is_var_size());
+        assert!(ColumnTypeTag::Array.is_var_size());
     }
 
     #[test]
@@ -318,5 +394,51 @@ mod tests {
         assert_eq!(ColumnTypeTag::Binary.fixed_size(), None);
         assert_eq!(ColumnTypeTag::String.fixed_size(), None);
         assert_eq!(ColumnTypeTag::Varchar.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::Array.fixed_size(), None);
+    }
+
+    #[test]
+    fn test_array_dimensionality() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Array {
+                assert!(ColumnType::new(tag, 0).array_dimensionality().is_err());
+            }
+        }
+
+        let typ = encode_array_type(ColumnTypeTag::Double, 3);
+        assert!(typ.is_ok());
+        let dim = typ.unwrap().array_dimensionality();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), 3);
+    }
+
+    #[test]
+    fn test_array_element_type() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Array {
+                assert!(ColumnType::new(tag, 0).array_element_type().is_err());
+            }
+        }
+
+        let typ = encode_array_type(ColumnTypeTag::Double, 3);
+        assert!(typ.is_ok());
+        let dim = typ.unwrap().array_element_type();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), ColumnTypeTag::Double);
+    }
+
+    #[test]
+    fn test_encode_array_type() {
+        let typ = encode_array_type(ColumnTypeTag::Double, 11);
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+
+        let elem_typ = typ.array_element_type();
+        assert!(elem_typ.is_ok());
+        assert_eq!(elem_typ.unwrap(), ColumnTypeTag::Double);
+
+        let dim = typ.array_dimensionality();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), 11);
     }
 }

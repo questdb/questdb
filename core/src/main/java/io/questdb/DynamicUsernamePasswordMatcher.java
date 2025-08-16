@@ -25,7 +25,7 @@
 package io.questdb;
 
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -40,7 +40,7 @@ import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
     private final DirectUtf8Sink defaultPassword;
     private final SimpleReadWriteLock lock;
-    private final PGWireConfiguration pgWireConfig;
+    private final PGConfiguration pgWireConfig;
     private final DirectUtf8Sink readOnlyPassword;
     private final ServerConfiguration serverConfig;
     private long serverConfigVersion;
@@ -54,7 +54,7 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
      *                     username and password are not reloaded.
      * @param pgWireConfig the PG wire configuration instance.
      */
-    public DynamicUsernamePasswordMatcher(@Nullable ServerConfiguration serverConfig, PGWireConfiguration pgWireConfig) {
+    public DynamicUsernamePasswordMatcher(@Nullable ServerConfiguration serverConfig, PGConfiguration pgWireConfig) {
         this.serverConfig = serverConfig;
         this.serverConfigVersion = serverConfig != null ? serverConfig.getVersion() : 0;
         this.pgWireConfig = pgWireConfig;

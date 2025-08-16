@@ -36,7 +36,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.Job;
@@ -267,7 +267,7 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public PGWireConfiguration getPGWireConfiguration() {
+            public PGConfiguration getPGWireConfiguration() {
                 return null;
             }
 

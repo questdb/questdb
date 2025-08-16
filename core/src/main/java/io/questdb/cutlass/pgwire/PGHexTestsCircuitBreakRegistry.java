@@ -31,12 +31,12 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
  * <p>
  * It does not support cancellation of queries since hex tests do not need it. At least for now.
  */
-public final class HexTestsCircuitBreakRegistry implements CircuitBreakerRegistry {
-    public static final HexTestsCircuitBreakRegistry INSTANCE = new HexTestsCircuitBreakRegistry();
+public final class PGHexTestsCircuitBreakRegistry implements PGCircuitBreakerRegistry {
+    public static final PGHexTestsCircuitBreakRegistry INSTANCE = new PGHexTestsCircuitBreakRegistry();
     private static final int CLIENT_ID = 63;
     private static final int SECRET = -1148479920;
 
-    private HexTestsCircuitBreakRegistry() {
+    private PGHexTestsCircuitBreakRegistry() {
         // private
     }
 

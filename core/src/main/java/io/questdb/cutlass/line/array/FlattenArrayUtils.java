@@ -41,6 +41,9 @@ public class FlattenArrayUtils {
     }
 
     public static void putDataToBuf(ArrayBufferAppender mem, double[][] array) {
+        if (array.length == 0) {
+            return;
+        }
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             double[] subArr = array[i];
@@ -52,6 +55,9 @@ public class FlattenArrayUtils {
     }
 
     public static void putDataToBuf(ArrayBufferAppender mem, double[][][] array) {
+        if (array.length == 0) {
+            return;
+        }
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             double[][] v = array[i];
@@ -70,6 +76,9 @@ public class FlattenArrayUtils {
     }
 
     public static void putDataToBuf(ArrayBufferAppender mem, long[][] array) {
+        if (array.length == 0) {
+            return;
+        }
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             long[] v = array[i];
@@ -81,6 +90,9 @@ public class FlattenArrayUtils {
     }
 
     public static void putDataToBuf(ArrayBufferAppender mem, long[][][] array) {
+        if (array.length == 0) {
+            return;
+        }
         final int dim1Len = array[0].length;
         for (int n = array.length, i = 0; i < n; i++) {
             long[][] v = array[i];
@@ -92,48 +104,48 @@ public class FlattenArrayUtils {
     }
 
     public static void putShapeToBuf(ArrayBufferAppender mem, double[] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
         mem.putInt(array.length);
     }
 
     public static void putShapeToBuf(ArrayBufferAppender mem, double[][] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
         mem.putInt(array.length);
-        putShapeToBuf(mem, array[0]);
+        if (array.length == 0) {
+            mem.putInt(0);
+        } else {
+            putShapeToBuf(mem, array[0]);
+        }
     }
 
     public static void putShapeToBuf(ArrayBufferAppender mem, double[][][] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
         mem.putInt(array.length);
-        putShapeToBuf(mem, array[0]);
+        if (array.length == 0) {
+            mem.putInt(0);
+            mem.putInt(0);
+        } else {
+            putShapeToBuf(mem, array[0]);
+        }
     }
 
     public static void putShapeToBuf(ArrayBufferAppender mem, long[] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
         mem.putInt(array.length);
     }
 
     public static void putShapeToBuf(ArrayBufferAppender mem, long[][] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
         mem.putInt(array.length);
-        putShapeToBuf(mem, array[0]);
+        if (array.length == 0) {
+            mem.putInt(0);
+        } else {
+            putShapeToBuf(mem, array[0]);
+        }
     }
 
     public static void putShapeToBuf(ArrayBufferAppender mem, long[][][] array) {
-        if (array.length == 0) {
-            throw new LineSenderException("zero length array not supported");
-        }
         mem.putInt(array.length);
-        putShapeToBuf(mem, array[0]);
+        if (array.length == 0) {
+            mem.putInt(0);
+            mem.putInt(0);
+        } else {
+            putShapeToBuf(mem, array[0]);
+        }
     }
 }

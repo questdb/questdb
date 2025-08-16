@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.modern.PGPipelineEntry;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Sinkable;
@@ -33,18 +32,18 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class BadProtocolException extends Exception implements FlyweightMessageContainer {
-    public static final BadProtocolException INSTANCE = new BadProtocolException();
+public class PGMessageProcessingException extends Exception implements FlyweightMessageContainer {
+    public static final PGMessageProcessingException INSTANCE = new PGMessageProcessingException();
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final io.questdb.std.ThreadLocal<BadProtocolException> tlException = new ThreadLocal<>(BadProtocolException::new);
+    private static final io.questdb.std.ThreadLocal<PGMessageProcessingException> tlException = new ThreadLocal<>(PGMessageProcessingException::new);
     private StringSink message;
     private PGPipelineEntry pe;
 
-    public static BadProtocolException instance(@NotNull PGPipelineEntry pe) {
-        BadProtocolException ex = tlException.get();
+    public static PGMessageProcessingException instance(@NotNull PGPipelineEntry pe) {
+        PGMessageProcessingException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new BadProtocolException()) != null;
+        assert (ex = new PGMessageProcessingException()) != null;
         ex.message = pe.getErrorMessageSink();
         ex.pe = pe;
         return ex;
@@ -63,7 +62,7 @@ public class BadProtocolException extends Exception implements FlyweightMessageC
         return result;
     }
 
-    public BadProtocolException put(Throwable e) {
+    public PGMessageProcessingException put(Throwable e) {
         if (e instanceof FlyweightMessageContainer) {
             message.put(((FlyweightMessageContainer) e).getFlyweightMessage());
             pe.setErrorMessagePosition(((FlyweightMessageContainer) e).getPosition());
@@ -73,37 +72,37 @@ public class BadProtocolException extends Exception implements FlyweightMessageC
         return this;
     }
 
-    public BadProtocolException put(long value) {
+    public PGMessageProcessingException put(long value) {
         message.put(value);
         return this;
     }
 
-    public BadProtocolException put(double value) {
+    public PGMessageProcessingException put(double value) {
         message.put(value);
         return this;
     }
 
-    public BadProtocolException put(@Nullable CharSequence cs) {
+    public PGMessageProcessingException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
     }
 
-    public BadProtocolException put(@Nullable Utf8Sequence us) {
+    public PGMessageProcessingException put(@Nullable Utf8Sequence us) {
         message.put(us);
         return this;
     }
 
-    public BadProtocolException put(Sinkable sinkable) {
+    public PGMessageProcessingException put(Sinkable sinkable) {
         sinkable.toSink(message);
         return this;
     }
 
-    public BadProtocolException put(char c) {
+    public PGMessageProcessingException put(char c) {
         message.put(c);
         return this;
     }
 
-    public BadProtocolException put(boolean value) {
+    public PGMessageProcessingException put(boolean value) {
         message.put(value);
         return this;
     }

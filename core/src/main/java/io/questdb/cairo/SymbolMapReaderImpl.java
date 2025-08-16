@@ -184,7 +184,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index reader is used to identify attempts to store duplicate symbol value
-            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, 0);
+            // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
+            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0);
 
             // this is the place where symbol values are stored
             charMem.wholeFile(ff, charFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
@@ -229,7 +230,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         // Refresh contains null flag.
         this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
         // Refresh index reader to avoid memory remapping on keyOf() calls.
-        indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0);
+        // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
+        indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0);
     }
 
     @Override

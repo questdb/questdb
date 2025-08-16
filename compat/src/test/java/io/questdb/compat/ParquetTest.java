@@ -26,9 +26,12 @@ package io.questdb.compat;
 
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -43,7 +46,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -71,6 +76,7 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.List;
 
 public class ParquetTest extends AbstractTest {
@@ -83,19 +89,60 @@ public class ParquetTest extends AbstractTest {
     private final static long UPDATE_ROWS = ROW_GROUP_SIZE * 4;
 
     @Test
+    public void test1dArrayV1() throws Exception {
+        test1dArray(ParquetVersion.PARQUET_VERSION_V1);
+    }
+
+    @Test
+    public void test1dArrayV2() throws Exception {
+        test1dArray(ParquetVersion.PARQUET_VERSION_V2);
+    }
+
+    @Test
+    public void test2dArrayV1() throws Exception {
+        test2dArray(ParquetVersion.PARQUET_VERSION_V1);
+    }
+
+    @Test
+    public void test2dArrayV2() throws Exception {
+        test2dArray(ParquetVersion.PARQUET_VERSION_V2);
+    }
+
+    @Test
     public void testAllTypesColTopMiddlePartition() throws Exception {
-        final String tableName = "y";
-        final int partitionBy = PartitionBy.MONTH;
-        // column tops placed in the middle of the partition.
-        testPartitionDataConsistency(tableName, partitionBy);
+        // column tops placed in the middle of the partition
+        testPartitionDataConsistency("y", PartitionBy.MONTH, false);
+    }
+
+    @Test
+    public void testAllTypesColTopMiddlePartition_rawArrayEncoding() throws Exception {
+        // column tops placed in the middle of the partition
+        testPartitionDataConsistency("y", PartitionBy.MONTH, true);
     }
 
     @Test
     public void testAllTypesColTopNextPartition() throws Exception {
-        final String tableName = "x";
-        final int partitionBy = PartitionBy.DAY;
-        // column tops added to the next partition.
-        testPartitionDataConsistency(tableName, partitionBy);
+        // column tops added to the next partition
+        testPartitionDataConsistency("x", PartitionBy.DAY, false);
+    }
+
+    @Test
+    public void testAllTypesColTopNextPartition_rawArrayEncoding() throws Exception {
+        // column tops added to the next partition
+        testPartitionDataConsistency("x", PartitionBy.DAY, true);
+    }
+
+    private static void assertArray(ArrayView expected, Object actual) {
+        if (expected.isNull()) {
+            Assert.assertNull(actual);
+            return;
+        }
+        ArrayList<?> actualList = (ArrayList<?>) actual;
+        Assert.assertEquals(expected.getFlatViewLength(), actualList.size());
+        for (int i = 0, n = actualList.size(); i < n; i++) {
+            GenericRecord record = (GenericRecord) actualList.get(i);
+            Assert.assertEquals(expected.getDouble(i), (Double) record.get("element"), 0.0000001);
+        }
     }
 
     private static void assertBinary(BinarySequence expected, Object actual) {
@@ -157,6 +204,11 @@ public class ParquetTest extends AbstractTest {
         Assert.assertTrue(statistics.compareMaxToValue(max) <= 0);
     }
 
+    private static <T extends Comparable<T>> void assertNullCount(List<ColumnChunkMetaData> chunks, int index, long nullCount) {
+        Statistics<T> statistics = chunks.get(index).getStatistics();
+        Assert.assertEquals(nullCount, statistics.getNumNulls());
+    }
+
     private static void assertNullableString(Object expected, Object actual) {
         if (expected == null) {
             Assert.assertNull(actual);
@@ -173,11 +225,47 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
+    private static void assertRawArray(ArrayView expected, Object actual) {
+        if (expected.isNull()) {
+            Assert.assertNull(actual);
+            return;
+        }
+
+        ByteBuffer buffer = (ByteBuffer) actual;
+        byte[] arr = buffer.array();
+
+        long ptr = Unsafe.malloc(arr.length, MemoryTag.NATIVE_DEFAULT);
+        try (BorrowedArray borrowedArray = new BorrowedArray()) {
+            for (int i = 0; i < arr.length; i++) {
+                Unsafe.getUnsafe().putByte(ptr + i, arr[i]);
+            }
+
+            // the shape is padded to 8 bytes, hence Long.BYTES
+            borrowedArray.of(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), ptr, ptr + Long.BYTES, arr.length - Long.BYTES);
+
+            Assert.assertEquals(1, expected.getDimCount());
+            Assert.assertEquals(1, borrowedArray.getDimCount());
+            Assert.assertEquals(expected.getDimLen(0), borrowedArray.getDimLen(0));
+            for (int i = 0, n = borrowedArray.getDimLen(0); i < n; i++) {
+                Assert.assertEquals(expected.getDouble(i), borrowedArray.getDouble(i), 0.0000001);
+            }
+        } finally {
+            Unsafe.free(ptr, arr.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private static void assertSchema(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType, int maxDefinitionLevel) {
-        Assert.assertEquals(descriptor.getPath()[0], expectedName);
-        Assert.assertEquals(descriptor.getPrimitiveType().getPrimitiveTypeName(), expectedType);
+        Assert.assertEquals(expectedName, descriptor.getPath()[0]);
+        Assert.assertEquals(expectedType, descriptor.getPrimitiveType().getPrimitiveTypeName());
         Assert.assertEquals(0, descriptor.getMaxRepetitionLevel());
         Assert.assertEquals(maxDefinitionLevel, descriptor.getMaxDefinitionLevel());
+    }
+
+    private static void assertSchemaArray(ColumnDescriptor descriptor, String expectedName, int maxRepLevel, int maxDefLevel) {
+        Assert.assertEquals(expectedName, descriptor.getPath()[0]);
+        Assert.assertEquals(PrimitiveType.PrimitiveTypeName.DOUBLE, descriptor.getPrimitiveType().getPrimitiveTypeName());
+        Assert.assertEquals(maxRepLevel, descriptor.getMaxRepetitionLevel());
+        Assert.assertEquals(maxDefLevel, descriptor.getMaxDefinitionLevel());
     }
 
     private static void assertSchemaNonNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
@@ -208,7 +296,203 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private void testPartitionDataConsistency(String tableName, int partitionBy) throws Exception {
+    private void test1dArray(int parquetVersion) throws Exception {
+        final String ddl = "create table x as (select " +
+                " array[1, 2, 3] arr, " +
+                " timestamp_sequence(400000000000, 1000000000) ts" +
+                " from long_sequence(3)) timestamp(ts) partition by day";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+
+            // create new active partition
+            final String insert = "insert into x values (null, '1970-02-02T02:02:02.020202Z')";
+            serverMain.getEngine().execute(insert); // txn 2
+
+            serverMain.awaitTxn("x", 2);
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = serverMain.getEngine().getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                parquetPathStr = path.toString();
+                long start = System.nanoTime();
+
+                int partitionIndex = 0;
+                StringSink partitionName = new StringSink();
+                long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        10,
+                        DATA_PAGE_SIZE,
+                        parquetVersion
+                );
+
+                LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (
+                        ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
+                        ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()
+                ) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    FileMetaData fileMetaData = metadata.getFileMetaData();
+                    Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
+
+                    MessageType schema = fileMetaData.getSchema();
+                    List<ColumnDescriptor> columns = schema.getColumns();
+                    Assert.assertEquals(2, schema.getColumns().size());
+
+                    assertSchemaArray(columns.get(0), "arr", 1, 3);
+                    // designated ts is non-nullable
+                    assertSchemaNonNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
+
+                    long rowCount = 0;
+                    List<BlockMetaData> rowGroups = metadata.getBlocks();
+                    for (int i = 0; i < rowGroups.size(); i++) {
+                        BlockMetaData blockMetaData = rowGroups.get(i);
+                        long blockRowCount = blockMetaData.getRowCount();
+                        if (i == rowGroups.size() - 1) {
+                            Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
+                        } else {
+                            Assert.assertEquals(ROW_GROUP_SIZE, blockRowCount);
+                        }
+                        rowCount += blockRowCount;
+                        List<ColumnChunkMetaData> chunks = blockMetaData.getColumns();
+                        // arr
+                        assertNullCount(chunks, 0, 0);
+                    }
+                    Assert.assertEquals(rowCount, 3);
+
+                    long actualRows = 0;
+                    GenericRecord nextParquetRecord;
+                    while ((nextParquetRecord = parquetReader.read()) != null) {
+                        final Object arr = nextParquetRecord.get("arr");
+                        Assert.assertNotNull(arr);
+                        Assert.assertEquals(
+                                "[{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]",
+                                arr.toString()
+                        );
+                        actualRows++;
+                    }
+                    Assert.assertEquals(3, actualRows);
+                }
+            }
+        }
+    }
+
+    private void test2dArray(int parquetVersion) throws Exception {
+        final String ddl = "create table x as (select " +
+                " array[[1, 2, 3], [4, 5, 6], [7, 8, 9]] arr, " +
+                " timestamp_sequence(400000000000, 1000000000) ts" +
+                " from long_sequence(3)) timestamp(ts) partition by day";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+
+            // create new active partition
+            final String insert = "insert into x values (null, '1970-02-02T02:02:02.020202Z')";
+            serverMain.getEngine().execute(insert); // txn 2
+
+            serverMain.awaitTxn("x", 2);
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = serverMain.getEngine().getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                parquetPathStr = path.toString();
+                long start = System.nanoTime();
+
+                int partitionIndex = 0;
+                StringSink partitionName = new StringSink();
+                long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        10,
+                        DATA_PAGE_SIZE,
+                        parquetVersion
+                );
+
+                LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (
+                        ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
+                        ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()
+                ) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    FileMetaData fileMetaData = metadata.getFileMetaData();
+                    Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
+
+                    MessageType schema = fileMetaData.getSchema();
+                    List<ColumnDescriptor> columns = schema.getColumns();
+                    Assert.assertEquals(2, schema.getColumns().size());
+
+                    assertSchemaArray(columns.get(0), "arr", 2, 4);
+                    // designated ts is non-nullable
+                    assertSchemaNonNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
+
+                    long rowCount = 0;
+                    List<BlockMetaData> rowGroups = metadata.getBlocks();
+                    for (int i = 0; i < rowGroups.size(); i++) {
+                        BlockMetaData blockMetaData = rowGroups.get(i);
+                        long blockRowCount = blockMetaData.getRowCount();
+                        if (i == rowGroups.size() - 1) {
+                            Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
+                        } else {
+                            Assert.assertEquals(ROW_GROUP_SIZE, blockRowCount);
+                        }
+                        rowCount += blockRowCount;
+                        List<ColumnChunkMetaData> chunks = blockMetaData.getColumns();
+                        // arr
+                        assertNullCount(chunks, 0, 0);
+                    }
+                    Assert.assertEquals(rowCount, 3);
+
+                    long actualRows = 0;
+                    GenericRecord nextParquetRecord;
+                    while ((nextParquetRecord = parquetReader.read()) != null) {
+                        final Object arr = nextParquetRecord.get("arr");
+                        Assert.assertNotNull(arr);
+                        Assert.assertEquals(
+                                "[{\"list\": [{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]}, {\"list\": [{\"element\": 4.0}, {\"element\": 5.0}, {\"element\": 6.0}]}, {\"list\": [{\"element\": 7.0}, {\"element\": 8.0}, {\"element\": 9.0}]}]",
+                                arr.toString()
+                        );
+                        actualRows++;
+                    }
+                    Assert.assertEquals(3, actualRows);
+                }
+            }
+        }
+    }
+
+    private void testPartitionDataConsistency(String tableName, int partitionBy, boolean rawArrayEncoding) throws Exception {
         String ddl = "create table " + tableName + " as (select" +
                 " x id," +
                 " rnd_boolean() a_boolean," +
@@ -227,6 +511,7 @@ public class ParquetTest extends AbstractTest {
                 " rnd_str('hello', 'world', '!') a_string," +
                 " rnd_bin(1, 8, 0) a_bin," +
                 " rnd_varchar('ганьба','слава','добрий','вечір') a_varchar," +
+                " rnd_double_array(1) an_array," +
                 " rnd_ipv4() a_ip," +
                 " rnd_uuid4() a_uuid," +
                 " rnd_long256() a_long256," +
@@ -256,17 +541,18 @@ public class ParquetTest extends AbstractTest {
             serverMain.getEngine().execute("alter table " + tableName + " add column a_string_top string"); // txn 15
             serverMain.getEngine().execute("alter table " + tableName + " add column a_bin_top binary"); // txn 16
             serverMain.getEngine().execute("alter table " + tableName + " add column a_varchar_top varchar"); // txn 17
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_ip_top ipv4"); // txn 18
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_uuid_top uuid"); // txn 19
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_long128_top long128"); // txn 20
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_long256_top long256"); // txn 21
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_date_top date"); //  txn 22
-            serverMain.getEngine().execute("alter table " + tableName + " add column a_ts_top timestamp"); // txn 23
+            serverMain.getEngine().execute("alter table " + tableName + " add column an_array_top double[]"); // txn 18
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ip_top ipv4"); // txn 19
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_uuid_top uuid"); // txn 20
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long128_top long128"); // txn 21
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long256_top long256"); // txn 22
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_date_top date"); //  txn 23
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ts_top timestamp"); // txn 24
 
             String insert = "insert into " + tableName + "(id, a_boolean_top, a_byte_top, a_short_top, a_char_top," +
                     " an_int_top, a_long_top, a_float_top, a_double_top,\n" +
                     " a_symbol_top, a_geo_byte_top, a_geo_short_top, a_geo_int_top, a_geo_long_top,\n" +
-                    " a_string_top, a_bin_top, a_varchar_top, a_ip_top, a_uuid_top, a_long128_top, a_long256_top,\n" +
+                    " a_string_top, a_bin_top, a_varchar_top, an_array_top, a_ip_top, a_uuid_top, a_long128_top, a_long256_top,\n" +
                     " a_date_top, a_ts_top, designated_ts) select\n" +
                     " " + INITIAL_ROWS + " + x," +
                     " rnd_boolean()," +
@@ -285,6 +571,7 @@ public class ParquetTest extends AbstractTest {
                     " rnd_str('hello', 'world', '!', null)," +
                     " rnd_bin(1, 8, 2)," +
                     " rnd_varchar('ганьба','слава','добрий','вечір', null)," +
+                    " rnd_double_array(1)," +
                     " rnd_ipv4('192.168.88.0/24', 2)," +
                     " rnd_uuid4()," +
                     " to_long128(rnd_long(0,10, 2), null)," +
@@ -300,9 +587,9 @@ public class ParquetTest extends AbstractTest {
                     " timestamp_sequence(1600000000000, 500)" +
                     " from long_sequence(" + UPDATE_ROWS + ");";
 
-            serverMain.getEngine().execute(insert); // txn 24
+            serverMain.getEngine().execute(insert); // txn 25
 
-            serverMain.awaitTxn(tableName, 24);
+            serverMain.awaitTxn(tableName, 25);
 
             final String parquetPathStr;
             try (
@@ -325,6 +612,7 @@ public class ParquetTest extends AbstractTest {
                         path,
                         (5L << 32) | ParquetCompression.COMPRESSION_ZSTD,
                         true,
+                        rawArrayEncoding,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
                         ParquetVersion.PARQUET_VERSION_V1
@@ -335,13 +623,13 @@ public class ParquetTest extends AbstractTest {
                 Configuration configuration = new Configuration();
                 final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
                 final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
-                validateParquetData(inputFile, serverMain.getEngine(), reader.getTableToken(), partitionRowCount, partitionName.toString());
-                validateParquetMetadata(inputFile, partitionRowCount);
+                validateParquetData(inputFile, serverMain.getEngine(), reader.getTableToken(), partitionRowCount, partitionName.toString(), rawArrayEncoding);
+                validateParquetMetadata(inputFile, partitionRowCount, rawArrayEncoding);
             }
         }
     }
 
-    private void validateParquetData(InputFile inputFile, CairoEngine engine, TableToken tableToken, long rows, final String partition) throws Exception {
+    private void validateParquetData(InputFile inputFile, CairoEngine engine, TableToken tableToken, long rows, String partition, boolean rawArrayEncoding) throws Exception {
         final SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
                         engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -353,8 +641,7 @@ public class ParquetTest extends AbstractTest {
                 final RecordCursorFactory factory = engine.select(
                         "select * from " +
                                 tableToken.getTableName() +
-                                " where designated_ts in '" + partition + "'"
-                        ,
+                                " where designated_ts in '" + partition + "'",
                         executionContext
                 );
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -391,59 +678,69 @@ public class ParquetTest extends AbstractTest {
                 assertNullableString(tableReaderRecord.getStrA(14), nextParquetRecord.get("a_string"));
                 assertBinary(tableReaderRecord.getBin(15), nextParquetRecord.get("a_bin"));
                 assertVarchar(tableReaderRecord.getVarcharA(16), nextParquetRecord.get("a_varchar"));
-                assertPrimitiveValue(tableReaderRecord.getIPv4(17), nextParquetRecord.get("a_ip"), Numbers.IPv4_NULL);
+                if (rawArrayEncoding) {
+                    assertRawArray(tableReaderRecord.getArray(17, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array"));
+                } else {
+                    assertArray(tableReaderRecord.getArray(17, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array"));
+                }
+                assertPrimitiveValue(tableReaderRecord.getIPv4(18), nextParquetRecord.get("a_ip"), Numbers.IPv4_NULL);
 
-                long uuidLo = tableReaderRecord.getLong128Lo(18);
-                long uuidHi = tableReaderRecord.getLong128Hi(18);
+                long uuidLo = tableReaderRecord.getLong128Lo(19);
+                long uuidHi = tableReaderRecord.getLong128Hi(19);
                 assertUuid(sink, uuidLo, uuidHi, nextParquetRecord.get("a_uuid"));
 
-                assertLong256(tableReaderRecord.getLong256A(19), nextParquetRecord.get("a_long256"));
+                assertLong256(tableReaderRecord.getLong256A(20), nextParquetRecord.get("a_long256"));
 
-                assertLong128(tableReaderRecord.getLong128Lo(20), tableReaderRecord.getLong128Hi(20), nextParquetRecord.get("a_long128"));
+                assertLong128(tableReaderRecord.getLong128Lo(21), tableReaderRecord.getLong128Hi(21), nextParquetRecord.get("a_long128"));
 
-                assertPrimitiveValue(tableReaderRecord.getDate(21), nextParquetRecord.get("a_date"), Long.MIN_VALUE);
-                assertPrimitiveValue(tableReaderRecord.getTimestamp(22), nextParquetRecord.get("a_ts"), Long.MIN_VALUE);
-                assertPrimitiveValue(tableReaderRecord.getTimestamp(23), nextParquetRecord.get("designated_ts"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getDate(22), nextParquetRecord.get("a_date"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getTimestamp(23), nextParquetRecord.get("a_ts"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getTimestamp(24), nextParquetRecord.get("designated_ts"), Long.MIN_VALUE);
 
                 // column tops
 
-                Assert.assertEquals(tableReaderRecord.getBool(24), nextParquetRecord.get("a_boolean_top"));
-                Assert.assertEquals((int) tableReaderRecord.getByte(25), nextParquetRecord.get("a_byte_top"));
-                Assert.assertEquals((int) tableReaderRecord.getShort(26), nextParquetRecord.get("a_short_top"));
-                Assert.assertEquals((int) tableReaderRecord.getChar(27), nextParquetRecord.get("a_char_top"));
+                Assert.assertEquals(tableReaderRecord.getBool(25), nextParquetRecord.get("a_boolean_top"));
+                Assert.assertEquals((int) tableReaderRecord.getByte(26), nextParquetRecord.get("a_byte_top"));
+                Assert.assertEquals((int) tableReaderRecord.getShort(27), nextParquetRecord.get("a_short_top"));
+                Assert.assertEquals((int) tableReaderRecord.getChar(28), nextParquetRecord.get("a_char_top"));
 
-                assertPrimitiveValue(tableReaderRecord.getInt(28), nextParquetRecord.get("an_int_top"), Integer.MIN_VALUE);
-                assertPrimitiveValue(tableReaderRecord.getLong(29), nextParquetRecord.get("a_long_top"), Long.MIN_VALUE);
-                assertPrimitiveValue(tableReaderRecord.getFloat(30), nextParquetRecord.get("a_float_top"), Float.NaN);
-                assertPrimitiveValue(tableReaderRecord.getDouble(31), nextParquetRecord.get("a_double_top"), Double.NaN);
-                assertNullableString(tableReaderRecord.getSymA(32), nextParquetRecord.get("a_symbol_top"));
-                assertGeoHash(tableReaderRecord.getGeoByte(33), nextParquetRecord.get("a_geo_byte_top"));
-                assertGeoHash(tableReaderRecord.getGeoShort(34), nextParquetRecord.get("a_geo_short_top"));
-                assertGeoHash(tableReaderRecord.getGeoInt(35), nextParquetRecord.get("a_geo_int_top"));
-                assertGeoHash(tableReaderRecord.getGeoLong(36), nextParquetRecord.get("a_geo_long_top"));
-                assertNullableString(tableReaderRecord.getStrA(37), nextParquetRecord.get("a_string_top"));
-                assertBinary(tableReaderRecord.getBin(38), nextParquetRecord.get("a_bin_top"));
-                assertVarchar(tableReaderRecord.getVarcharA(39), nextParquetRecord.get("a_varchar_top"));
-                assertPrimitiveValue(tableReaderRecord.getIPv4(40), nextParquetRecord.get("a_ip_top"), Numbers.IPv4_NULL);
-                assertUuid(sink, tableReaderRecord.getLong128Lo(41), tableReaderRecord.getLong128Hi(41), nextParquetRecord.get("a_uuid_top"));
-                assertLong128(tableReaderRecord.getLong128Lo(42), tableReaderRecord.getLong128Hi(42), nextParquetRecord.get("a_long128_top"));
-                assertLong256(tableReaderRecord.getLong256A(43), nextParquetRecord.get("a_long256_top"));
-                assertPrimitiveValue(tableReaderRecord.getDate(44), nextParquetRecord.get("a_date_top"), Long.MIN_VALUE);
-                assertPrimitiveValue(tableReaderRecord.getTimestamp(45), nextParquetRecord.get("a_ts_top"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getInt(29), nextParquetRecord.get("an_int_top"), Integer.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getLong(30), nextParquetRecord.get("a_long_top"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getFloat(31), nextParquetRecord.get("a_float_top"), Float.NaN);
+                assertPrimitiveValue(tableReaderRecord.getDouble(32), nextParquetRecord.get("a_double_top"), Double.NaN);
+                assertNullableString(tableReaderRecord.getSymA(33), nextParquetRecord.get("a_symbol_top"));
+                assertGeoHash(tableReaderRecord.getGeoByte(34), nextParquetRecord.get("a_geo_byte_top"));
+                assertGeoHash(tableReaderRecord.getGeoShort(35), nextParquetRecord.get("a_geo_short_top"));
+                assertGeoHash(tableReaderRecord.getGeoInt(36), nextParquetRecord.get("a_geo_int_top"));
+                assertGeoHash(tableReaderRecord.getGeoLong(37), nextParquetRecord.get("a_geo_long_top"));
+                assertNullableString(tableReaderRecord.getStrA(38), nextParquetRecord.get("a_string_top"));
+                assertBinary(tableReaderRecord.getBin(39), nextParquetRecord.get("a_bin_top"));
+                assertVarchar(tableReaderRecord.getVarcharA(40), nextParquetRecord.get("a_varchar_top"));
+                if (rawArrayEncoding) {
+                    assertRawArray(tableReaderRecord.getArray(41, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array_top"));
+                } else {
+                    assertArray(tableReaderRecord.getArray(41, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array_top"));
+                }
+                assertPrimitiveValue(tableReaderRecord.getIPv4(42), nextParquetRecord.get("a_ip_top"), Numbers.IPv4_NULL);
+                assertUuid(sink, tableReaderRecord.getLong128Lo(43), tableReaderRecord.getLong128Hi(43), nextParquetRecord.get("a_uuid_top"));
+                assertLong128(tableReaderRecord.getLong128Lo(44), tableReaderRecord.getLong128Hi(44), nextParquetRecord.get("a_long128_top"));
+                assertLong256(tableReaderRecord.getLong256A(45), nextParquetRecord.get("a_long256_top"));
+                assertPrimitiveValue(tableReaderRecord.getDate(46), nextParquetRecord.get("a_date_top"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getTimestamp(47), nextParquetRecord.get("a_ts_top"), Long.MIN_VALUE);
             }
             Assert.assertEquals(rows, actualRows);
         }
     }
 
-    private void validateParquetMetadata(InputFile inputFile, long rows) throws IOException {
+    private void validateParquetMetadata(InputFile inputFile, long rows, boolean rawArrayEncoding) throws IOException {
         try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
             ParquetMetadata metadata = parquetFileReader.getFooter();
             FileMetaData fileMetaData = metadata.getFileMetaData();
-            Assert.assertEquals("QuestDB version 8.0", fileMetaData.getCreatedBy());
+            Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
 
             MessageType schema = fileMetaData.getSchema();
             List<ColumnDescriptor> columns = schema.getColumns();
-            Assert.assertEquals(46, schema.getColumns().size());
+            Assert.assertEquals(48, schema.getColumns().size());
 
             assertSchemaNullable(columns.get(0), "id", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNonNullable(columns.get(1), "a_boolean", PrimitiveType.PrimitiveTypeName.BOOLEAN);
@@ -462,37 +759,46 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(14), "a_string", PrimitiveType.PrimitiveTypeName.BINARY);
             assertSchemaNullable(columns.get(15), "a_bin", PrimitiveType.PrimitiveTypeName.BINARY);
             assertSchemaNullable(columns.get(16), "a_varchar", PrimitiveType.PrimitiveTypeName.BINARY);
-            assertSchemaNullable(columns.get(17), "a_ip", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNullable(columns.get(18), "a_uuid", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
-            assertSchemaNullable(columns.get(19), "a_long256", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
-            assertSchemaNullable(columns.get(20), "a_long128", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
-            assertSchemaNullable(columns.get(21), "a_date", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(22), "a_ts", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(23), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
+            if (rawArrayEncoding) {
+                assertSchemaNullable(columns.get(17), "an_array", PrimitiveType.PrimitiveTypeName.BINARY);
+            }
+            assertSchemaNullable(columns.get(18), "a_ip", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(19), "a_uuid", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertSchemaNullable(columns.get(20), "a_long256", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertSchemaNullable(columns.get(21), "a_long128", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertSchemaNullable(columns.get(22), "a_date", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(23), "a_ts", PrimitiveType.PrimitiveTypeName.INT64);
+            // designated ts is non-nullable
+            assertSchemaNonNullable(columns.get(24), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
 
-            assertSchemaNonNullable(columns.get(24), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
-            assertSchemaNonNullable(columns.get(25), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNonNullable(columns.get(26), "a_short_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNonNullable(columns.get(27), "a_char_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNonNullable(columns.get(25), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
+            assertSchemaNonNullable(columns.get(26), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNonNullable(columns.get(27), "a_short_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNonNullable(columns.get(28), "a_char_top", PrimitiveType.PrimitiveTypeName.INT32);
 
-            assertSchemaNullable(columns.get(28), "an_int_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNullable(columns.get(29), "a_long_top", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(30), "a_float_top", PrimitiveType.PrimitiveTypeName.FLOAT);
-            assertSchemaNullable(columns.get(31), "a_double_top", PrimitiveType.PrimitiveTypeName.DOUBLE);
-            assertSchemaNullable(columns.get(32), "a_symbol_top", PrimitiveType.PrimitiveTypeName.BINARY);
-            assertSchemaNullable(columns.get(33), "a_geo_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNullable(columns.get(34), "a_geo_short_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNullable(columns.get(35), "a_geo_int_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNullable(columns.get(36), "a_geo_long_top", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(37), "a_string_top", PrimitiveType.PrimitiveTypeName.BINARY);
-            assertSchemaNullable(columns.get(38), "a_bin_top", PrimitiveType.PrimitiveTypeName.BINARY);
-            assertSchemaNullable(columns.get(39), "a_varchar_top", PrimitiveType.PrimitiveTypeName.BINARY);
-            assertSchemaNullable(columns.get(40), "a_ip_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNullable(columns.get(41), "a_uuid_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
-            assertSchemaNullable(columns.get(42), "a_long128_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
-            assertSchemaNullable(columns.get(43), "a_long256_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
-            assertSchemaNullable(columns.get(44), "a_date_top", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(45), "a_ts_top", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(29), "an_int_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(30), "a_long_top", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(31), "a_float_top", PrimitiveType.PrimitiveTypeName.FLOAT);
+            assertSchemaNullable(columns.get(32), "a_double_top", PrimitiveType.PrimitiveTypeName.DOUBLE);
+            assertSchemaNullable(columns.get(33), "a_symbol_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            assertSchemaNullable(columns.get(34), "a_geo_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(35), "a_geo_short_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(36), "a_geo_int_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(37), "a_geo_long_top", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(38), "a_string_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            assertSchemaNullable(columns.get(39), "a_bin_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            assertSchemaNullable(columns.get(40), "a_varchar_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            if (rawArrayEncoding) {
+                assertSchemaNullable(columns.get(41), "an_array_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            } else {
+                assertSchemaArray(columns.get(41), "an_array_top", 1, 3);
+            }
+            assertSchemaNullable(columns.get(42), "a_ip_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(43), "a_uuid_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertSchemaNullable(columns.get(44), "a_long128_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertSchemaNullable(columns.get(45), "a_long256_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertSchemaNullable(columns.get(46), "a_date_top", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(47), "a_ts_top", PrimitiveType.PrimitiveTypeName.INT64);
 
             long rowCount = 0;
             List<BlockMetaData> rowGroups = metadata.getBlocks();
@@ -515,13 +821,13 @@ public class ParquetTest extends AbstractTest {
                 // a_double
                 assertMinMaxRange(chunks, 8, 0.0d, 1.0d);
                 // an_int_top
-                assertMinMaxRange(chunks, 28, NUMERIC_MIN, NUMERIC_MAX);
+                assertMinMaxRange(chunks, 29, NUMERIC_MIN, NUMERIC_MAX);
                 // a_long_top
-                assertMinMaxRange(chunks, 29, (long) NUMERIC_MIN, (long) NUMERIC_MAX);
+                assertMinMaxRange(chunks, 30, (long) NUMERIC_MIN, (long) NUMERIC_MAX);
                 // a_float_top
-                assertMinMaxRange(chunks, 30, 0.0f, 1.0f);
+                assertMinMaxRange(chunks, 31, 0.0f, 1.0f);
                 // a_double_top
-                assertMinMaxRange(chunks, 31, 0.0d, 1.0d);
+                assertMinMaxRange(chunks, 32, 0.0d, 1.0d);
             }
             Assert.assertEquals(rowCount, rows);
         }

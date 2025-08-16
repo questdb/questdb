@@ -40,9 +40,10 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             Path path,
             CharSequence name,
             long columnNameTxn,
-            long unIndexedNullCount
+            long partitionTxn,
+            long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, unIndexedNullCount);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
     }
 
     @Override
@@ -56,7 +57,8 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             // we need to return the whole set of actual index values and then some nulls
             final NullCursor nullCursor = getNullCursor(cachedInstance);
-            nullCursor.nullCount = Math.min(columnTop, maxValue + 1);
+            final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+            nullCursor.nullCount = Math.min(columnTop, hi);
             nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }

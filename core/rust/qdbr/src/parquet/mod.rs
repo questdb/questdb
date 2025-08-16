@@ -24,6 +24,7 @@
 pub(crate) mod error;
 pub(crate) mod io;
 pub(crate) mod qdb_metadata;
+pub(crate) mod util;
 
 // Don't expose this in the general API, as it heightens the risk
 // of constructing an invalid `ColumnType`, e.g. one without the appropriate

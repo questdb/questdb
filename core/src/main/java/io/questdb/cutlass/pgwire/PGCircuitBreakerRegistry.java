@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 
 import java.io.Closeable;
 
-public interface CircuitBreakerRegistry extends Closeable {
+public interface PGCircuitBreakerRegistry extends Closeable {
     int add(NetworkSqlExecutionCircuitBreaker cb);
 
     void cancel(int circuitBreakerIdx, int secret);

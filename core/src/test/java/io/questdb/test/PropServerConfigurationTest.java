@@ -44,7 +44,7 @@ import io.questdb.cutlass.line.LineMilliTimestampAdapter;
 import io.questdb.cutlass.line.LineMinuteTimestampAdapter;
 import io.questdb.cutlass.line.LineNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineSecondTimestampAdapter;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -1363,7 +1363,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
-            Assert.assertEquals(new DefaultPGWireConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
+            Assert.assertEquals(new DefaultPGConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
             Assert.assertEquals(10, configuration.getPGWireConfiguration().getNamedStatementLimit());
             Assert.assertEquals(250, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
 
