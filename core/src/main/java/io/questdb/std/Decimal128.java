@@ -439,7 +439,7 @@ public class Decimal128 implements Sinkable {
 
         // We cannot do the same for divisor, so we must reuse negate logic directly in our code to avoid
         // allocations.
-        if (divisorHigh < 0 && divisorLow != 0) {
+        if (divisorHigh < 0) {
             divisorLow = ~divisorLow + 1;
             divisorHigh = ~divisorHigh + (divisorLow == 0 ? 1 : 0);
         }
