@@ -50,6 +50,7 @@ public class NumericExceptionTest {
     }
 
     @Test
+    @Test
     public void testInstanceUniquePerThread() {
         NumericException e1 = NumericException.instance();
         Thread t1 = new Thread(() -> {
@@ -57,6 +58,7 @@ public class NumericExceptionTest {
             Assert.assertNotEquals(e1, e2);
         });
         try {
+            t1.start();
             t1.join();
         } catch (InterruptedException ignored) {
             Assert.fail("interrupted");
