@@ -101,14 +101,25 @@ public class Decimal128AddBenchmark {
         decimal128Result.add(decimal128Addend2);
     }
 
+    // class-level fields for preallocated values
+    private Decimal128 val64_1;
+    private Decimal128 val64_2;
+
+    @Setup
+    public void setup() {
+        decimal128Result = new Decimal128();
+        // move allocations here
+        val64_1 = Decimal128.fromDouble(123456.789, 3);
+        val64_2 = Decimal128.fromDouble(987654.321, 3);
+        mathContext = new MathContext(16, RoundingMode.HALF_UP);
+        // ... rest of setup
+    }
+
     @Benchmark
     public void decimal128Add64Bit() {
-        // Test addition of two 64-bit values
-        Decimal128 val1 = Decimal128.fromDouble(123456.789, 3);
-        Decimal128 val2 = Decimal128.fromDouble(987654.321, 3);
-
-        decimal128Result.copyFrom(val1);
-        decimal128Result.add(val2);
+        // Test addition of two 64-bit values without per-invocation allocation
+        decimal128Result.copyFrom(val64_1);
+        decimal128Result.add(val64_2);
     }
 
     @Benchmark
