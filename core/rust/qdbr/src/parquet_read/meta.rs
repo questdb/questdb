@@ -10,7 +10,7 @@ use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::schema::Repetition;
-use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use std::io::{Read, Seek};
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
@@ -109,7 +109,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_index) {
             return Some(col_type);
         }
-        let mut extra_type_info = 0;
+
         match (
             column.descriptor.primitive_type.physical_type,
             column.descriptor.primitive_type.logical_type,
@@ -118,25 +118,18 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                    unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: _,
-                }),
+                         unit: TimeUnit::Microseconds,
+                         is_adjusted_to_utc: _,
+                     })
+                | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (
                 PhysicalType::Int64,
-                Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
-                _,
-            ) => {
-                extra_type_info = QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG; // TIMESTAMP_NS flag
-                Some(ColumnTypeTag::Timestamp)
-            }
-            (
-                PhysicalType::Int64,
                 Some(Timestamp {
-                    unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: _,
-                }),
+                         unit: TimeUnit::Milliseconds,
+                         is_adjusted_to_utc: _,
+                     }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
             (PhysicalType::Int64, None, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
@@ -195,9 +188,9 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             (PhysicalType::ByteArray, None, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
             (PhysicalType::Int96, None, None) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (_, _, _) => None,
-        };
-        column_type_tag.map(|tag| ColumnType::new(tag, extra_type_info))
+        }
     }
+}
 
     // The expected layout is described here:
     // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
@@ -280,7 +273,7 @@ mod tests {
         let mut buffers_columns = Vec::new();
         let mut columns = Vec::new();
 
-        let cols: Vec<_> = ([
+        let cols: Vec<_> = [
             (ColumnTypeTag::Long128, size_of::<i64>() * 2, "col_long128"),
             (ColumnTypeTag::Long256, size_of::<i64>() * 4, "col_long256"),
             (ColumnTypeTag::Timestamp, size_of::<i64>(), "col_ts"),
@@ -299,7 +292,7 @@ mod tests {
             (ColumnTypeTag::GeoLong, size_of::<i64>(), "col_geo_long"),
             (ColumnTypeTag::IPv4, size_of::<i32>(), "col_geo_ipv4"),
             (ColumnTypeTag::Char, size_of::<u16>(), "col_char"),
-        ])
+        ]
         .iter()
         .map(|(tag, value_size, name)| (ColumnType::new(*tag, 0), *value_size, *name))
         .collect();
