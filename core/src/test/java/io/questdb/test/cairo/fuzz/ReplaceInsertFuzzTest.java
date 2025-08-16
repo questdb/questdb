@@ -46,7 +46,8 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.01,
                 0.8,
-                0.9
+                0.9,
+                0.05
         );
         setFuzzCounts(
                 rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
@@ -73,6 +74,7 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.01,
                 0.8,
+                0.05,
                 0.05
         );
         setFuzzCounts(

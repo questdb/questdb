@@ -35,8 +35,8 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationWrapper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfigurationWrapper;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfigurationWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -110,7 +110,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final HttpMinServerConfigurationWrapper minHttpServerConfig;
-    private final PGWireConfigurationWrapper pgWireConfig;
+    private final PGConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final AtomicReference<PropServerConfiguration> serverConfig;
@@ -155,7 +155,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
         this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
         this.memoryConfig = new MemoryConfigurationWrapper();
-        this.pgWireConfig = new PGWireConfigurationWrapper(this.metrics);
+        this.pgWireConfig = new PGConfigurationWrapper(this.metrics);
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
@@ -328,7 +328,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
+    public PGConfiguration getPGWireConfiguration() {
         return pgWireConfig;
     }
 
