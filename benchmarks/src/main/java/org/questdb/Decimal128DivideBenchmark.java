@@ -97,17 +97,6 @@ public class Decimal128DivideBenchmark {
 // Add at the class level:
 private Decimal128 largeDividend128;
 
-@Setup
-public void setup() {
-    // Initialize result containers
-    decimal128Result = new Decimal128();
-    largeDividend128 = new Decimal128();
-    largeDividend128.set(123456789L, 987654321098765432L, 6);
-    mathContext = new MathContext(16, RoundingMode.HALF_UP);
-    
-    // ... rest of setup
-}
-
 @Benchmark
 public void decimal128Divide128By64() {
     // This scenario uses a 128-bit dividend divided by a 64-bit divisor
@@ -117,8 +106,9 @@ public void decimal128Divide128By64() {
 
     @Setup
     public void setup() {
-        // Initialize result containers
         decimal128Result = new Decimal128();
+        largeDividend128 = new Decimal128();
+        largeDividend128.set(123456789L, 987654321098765432L, 6);
         mathContext = new MathContext(16, RoundingMode.HALF_UP);
 
         // Setup test data based on scenario

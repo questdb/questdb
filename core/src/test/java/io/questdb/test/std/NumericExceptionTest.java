@@ -50,7 +50,6 @@ public class NumericExceptionTest {
     }
 
     @Test
-    @Test
     public void testInstanceUniquePerThread() {
         NumericException e1 = NumericException.instance();
         Thread t1 = new Thread(() -> {

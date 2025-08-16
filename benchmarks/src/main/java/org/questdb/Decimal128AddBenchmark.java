@@ -105,16 +105,6 @@ public class Decimal128AddBenchmark {
     private Decimal128 val64_1;
     private Decimal128 val64_2;
 
-    @Setup
-    public void setup() {
-        decimal128Result = new Decimal128();
-        // move allocations here
-        val64_1 = Decimal128.fromDouble(123456.789, 3);
-        val64_2 = Decimal128.fromDouble(987654.321, 3);
-        mathContext = new MathContext(16, RoundingMode.HALF_UP);
-        // ... rest of setup
-    }
-
     @Benchmark
     public void decimal128Add64Bit() {
         // Test addition of two 64-bit values without per-invocation allocation
@@ -135,6 +125,9 @@ public class Decimal128AddBenchmark {
     @Setup
     public void setup() {
         decimal128Result = new Decimal128();
+        // move allocations here
+        val64_1 = Decimal128.fromDouble(123456.789, 3);
+        val64_2 = Decimal128.fromDouble(987654.321, 3);
         mathContext = new MathContext(16, RoundingMode.HALF_UP);
 
         switch (scenario) {

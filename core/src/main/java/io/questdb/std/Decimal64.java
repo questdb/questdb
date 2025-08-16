@@ -396,6 +396,11 @@ public class Decimal64 implements Sinkable {
         }
     }
 
+    public void of(long value, int scale) {
+        this.value = value;
+        this.scale = scale;
+    }
+
     /**
      * Round this Decimal128 to the specified scale using the given rounding mode.
      * This method performs in-place rounding without requiring a divisor.
@@ -406,15 +411,16 @@ public class Decimal64 implements Sinkable {
      * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
+        if (targetScale == this.scale) {
+            // No rounding needed
+            return;
+        }
+
         validateScale(targetScale);
 
         // UNNECESSARY mode should be a complete no-op
         if (roundingMode == RoundingMode.UNNECESSARY) {
             return;
-        }
-
-        if (targetScale == this.scale) {
-            // No rounding needed
         }
 
         // Handle zero specially
