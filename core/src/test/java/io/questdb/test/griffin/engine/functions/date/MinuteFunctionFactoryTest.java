@@ -52,6 +52,15 @@ public class MinuteFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
+        assertQuery(
+                "minute\n" +
+                        "11\n",
+                "select minute('1901-07-11T22:11:21.555998123Z'::timestamp_ns)",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -60,6 +69,15 @@ public class MinuteFunctionFactoryTest extends AbstractCairoTest {
                 "minute\n" +
                         "8\n",
                 "select minute('1997-04-11T22:08:30.555555Z'::timestamp)",
+                null,
+                null,
+                true,
+                true
+        );
+        assertQuery(
+                "minute\n" +
+                        "8\n",
+                "select minute('1997-04-11T22:08:30.555555123Z'::timestamp_ns)",
                 null,
                 null,
                 true,

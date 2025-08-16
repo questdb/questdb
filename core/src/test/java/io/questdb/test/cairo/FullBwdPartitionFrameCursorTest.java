@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
@@ -100,7 +100,7 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                         // now add some more rows
 
-                        timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
+                        timestamp = MicrosFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
                         for (int i = 0; i < N; i++) {
                             TableWriter.Row row = writer.newRow(timestamp);
                             row.putInt(0, rnd.nextInt());

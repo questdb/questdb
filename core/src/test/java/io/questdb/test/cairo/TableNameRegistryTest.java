@@ -54,6 +54,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1103,7 +1104,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         final int loopCounter = 8;
         final Rnd rnd = new Rnd(seed1, seed2);
 
-        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, () -> 0)) {
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, (MicrosecondClock) () -> 0)) {
 
             for (int j = 0; j < loopCounter; j++) {
 

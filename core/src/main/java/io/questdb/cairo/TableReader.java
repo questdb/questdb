@@ -79,6 +79,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final Path path;
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
+    private final int timestampType;
     private final MemoryMR todoMem = Vm.getCMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
@@ -131,16 +132,20 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.concat(tableToken.getDirName());
             this.rootLen = path.size();
             path.trimTo(rootLen);
-
             metadata = openMetaFile();
+            timestampType = metadata.getTimestampType();
             partitionBy = metadata.getPartitionBy();
-            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), timestampType);
             txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(tableToken)
                     .I$();
-            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            txFile = new TxReader(ff).ofRO(
+                    path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
+                    timestampType,
+                    partitionBy
+            );
             path.trimTo(rootLen);
             reloadSlow(false);
             init();
@@ -179,17 +184,21 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.concat(tableToken.getDirName());
             this.rootLen = path.size();
             path.trimTo(rootLen);
-
             metadata = copyMeta(srcReader.metadata);
+            timestampType = metadata.getTimestampType();
             partitionBy = metadata.getPartitionBy();
-            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), timestampType);
             txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open as copy [id=").$(metadata.getTableId())
                     .$(", table=").$(tableToken)
                     .$(", srcTxn=").$(srcReader.getTxn())
                     .I$();
-            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            txFile = new TxReader(ff).ofRO(
+                    path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
+                    timestampType,
+                    partitionBy
+            );
             path.trimTo(rootLen);
             reloadAtTxn(srcReader, false);
             txPartitionVersion = txFile.getPartitionTableVersion();
@@ -710,7 +719,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
                 // The last lock for this txn is released, and this is not the latest txn number
                 // Schedule a job to clean up partition versions this reader may hold
-                if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
+                if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
                     return;
                 }
 
@@ -749,7 +758,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
-                .$(", ts=").$ts(partitionTimestamp)
+                .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                 .$(", partitionIndex=").$(partitionIndex)
                 .I$();
         partitionCount--;
@@ -774,7 +783,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
         closePartitionResources(partitionIndex, offset);
-        LOG.infoW().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
+        LOG.infoW().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp).I$();
         if (partitionSize > -1) {
             openPartitionCount--;
         }
@@ -818,7 +827,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debug().$("close outdated partition files [table=").$safe(tableToken.getTableName()).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
+            LOG.debug().$("close outdated partition files [table=").$safe(tableToken.getTableName()).$(", ts=")
+                    .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             if (getPartitionFormat(partitionIndex) == PartitionFormat.NATIVE) {
                 for (int i = 0; i < columnCount; i++) {
@@ -963,6 +973,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
         TableUtils.setSinkForNativePartition(
                 sink,
+                timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 -1
@@ -972,6 +983,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void formatNativePartitionDirName(int partitionIndex, Path sink, long nameTxn) {
         TableUtils.setPathForNativePartition(
                 sink,
+                timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 nameTxn
@@ -981,6 +993,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void formatParquetPartitionFileName(int partitionIndex, Path sink, long nameTxn) {
         TableUtils.setPathForParquetPartition(
                 sink,
+                timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 nameTxn
@@ -1077,7 +1090,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         partitionCount++;
-        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken).$(", timestamp=").$ts(timestamp).I$();
+        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
+                .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
     }
 
     // this method is not thread safe
@@ -1098,7 +1112,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private TableReaderMetadata openMetaFile() {
         TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
         try {
-            metadata.load();
+            metadata.loadMetadata();
             return metadata;
         } catch (Throwable th) {
             metadata.close();
@@ -1279,7 +1293,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", maxTimestamp=").$ts(ColumnType.getTimestampDriver(timestampType), txFile.getMaxTimestamp())
                             .$(", attempts=").$(count)
                             .$(", thread=").$(Thread.currentThread().getName())
                             .I$();

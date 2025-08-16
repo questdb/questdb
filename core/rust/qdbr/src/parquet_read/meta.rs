@@ -118,18 +118,18 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                    unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: _,
-                })
+                         unit: TimeUnit::Microseconds,
+                         is_adjusted_to_utc: _,
+                     })
                 | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                    unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: _,
-                }),
+                         unit: TimeUnit::Milliseconds,
+                         is_adjusted_to_utc: _,
+                     }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
             (PhysicalType::Int64, None, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
@@ -192,57 +192,57 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     }
 }
 
-// The expected layout is described here:
-// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
-// Yet, some software derives from the above layout, so the actual check can't be strict.
-// Known to work with DuckDB's list of doubles.
-fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
-    let mut cur_type;
-    // First check the root field.
-    match base_type {
-        ParquetType::GroupType {
-            field_info: _,
-            logical_type,
-            converted_type,
-            fields,
-        } => {
-            let is_list = *converted_type == Some(GroupConvertedType::List)
-                || *logical_type == Some(GroupLogicalType::List);
-            if !is_list || fields.len() != 1 {
-                return None;
-            }
-            cur_type = &fields[0];
-        }
-        ParquetType::PrimitiveType(_) => {
-            return None;
-        }
-    };
-
-    // Next, count repeated LIST sub-types.
-    let mut dim = 0;
-    loop {
-        match cur_type {
-            ParquetType::PrimitiveType(_) => {
-                break;
-            }
+    // The expected layout is described here:
+    // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
+    // Yet, some software derives from the above layout, so the actual check can't be strict.
+    // Known to work with DuckDB's list of doubles.
+    fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
+        let mut cur_type;
+        // First check the root field.
+        match base_type {
             ParquetType::GroupType {
-                field_info,
-                logical_type: _,
-                converted_type: _,
+                field_info: _,
+                logical_type,
+                converted_type,
                 fields,
             } => {
-                if fields.len() != 1 {
+                let is_list = *converted_type == Some(GroupConvertedType::List)
+                    || *logical_type == Some(GroupLogicalType::List);
+                if !is_list || fields.len() != 1 {
                     return None;
-                }
-                if field_info.repetition == Repetition::Repeated {
-                    dim += 1;
                 }
                 cur_type = &fields[0];
             }
-        }
-    }
+            ParquetType::PrimitiveType(_) => {
+                return None;
+            }
+        };
 
-    encode_array_type(ColumnTypeTag::Double, dim).ok()
+        // Next, count repeated LIST sub-types.
+        let mut dim = 0;
+        loop {
+            match cur_type {
+                ParquetType::PrimitiveType(_) => {
+                    break;
+                }
+                ParquetType::GroupType {
+                    field_info,
+                    logical_type: _,
+                    converted_type: _,
+                    fields,
+                } => {
+                    if fields.len() != 1 {
+                        return None;
+                    }
+                    if field_info.repetition == Repetition::Repeated {
+                        dim += 1;
+                    }
+                    cur_type = &fields[0];
+                }
+            }
+        }
+
+        encode_array_type(ColumnTypeTag::Double, dim).ok()
 }
 
 #[cfg(test)]
@@ -273,7 +273,7 @@ mod tests {
         let mut buffers_columns = Vec::new();
         let mut columns = Vec::new();
 
-        let cols: Vec<_> = ([
+        let cols: Vec<_> = [
             (ColumnTypeTag::Long128, size_of::<i64>() * 2, "col_long128"),
             (ColumnTypeTag::Long256, size_of::<i64>() * 4, "col_long256"),
             (ColumnTypeTag::Timestamp, size_of::<i64>(), "col_ts"),
@@ -292,7 +292,7 @@ mod tests {
             (ColumnTypeTag::GeoLong, size_of::<i64>(), "col_geo_long"),
             (ColumnTypeTag::IPv4, size_of::<i32>(), "col_geo_ipv4"),
             (ColumnTypeTag::Char, size_of::<u16>(), "col_char"),
-        ])
+        ]
         .iter()
         .map(|(tag, value_size, name)| (ColumnType::new(*tag, 0), *value_size, *name))
         .collect();

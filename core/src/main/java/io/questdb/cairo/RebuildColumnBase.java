@@ -73,26 +73,28 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         return this;
     }
 
-    public void rebuildAll() {
-        reindex(configuration.getFilesFacade(), null, null);
+    public void rebuildAll(int timestampType) {
+        reindex(configuration.getFilesFacade(), null, null, timestampType);
     }
 
     public void reindex(
             @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName
+            @Nullable CharSequence columnName,
+            int timestampType
     ) {
-        reindex(configuration.getFilesFacade(), partitionName, columnName);
+        reindex(configuration.getFilesFacade(), partitionName, columnName, timestampType);
     }
 
     public void reindex(
             FilesFacade ff,
             @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName
+            @Nullable CharSequence columnName,
+            int timestampType
     ) {
         try {
             lock(ff);
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$())) {
+            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$(), timestampType)) {
                 final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
                 columnVersionReader.readSafe(clock, deadline);
                 path.trimTo(rootLen);
@@ -104,7 +106,12 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    public void reindexAfterUpdate(FilesFacade ff, long partitionTimestamp, CharSequence columnName, TableWriter tableWriter) {
+    public void reindexAfterUpdate(
+            FilesFacade ff,
+            long partitionTimestamp,
+            CharSequence columnName,
+            TableWriter tableWriter
+    ) {
         TxReader txReader = tableWriter.getTxReader();
         int partitionIndex = txReader.getPartitionIndex(partitionTimestamp);
         assert partitionIndex > -1L;
@@ -130,21 +137,22 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionNameTxn,
                 partitionSize,
                 partitionTimestamp,
+                tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 indexValueBlockCapacity
         );
     }
 
-    public void reindexAllInPartition(CharSequence partitionName) {
-        reindex(partitionName, null);
+    public void reindexAllInPartition(CharSequence partitionName, int timestampType) {
+        reindex(partitionName, null, timestampType);
     }
 
-    public void reindexColumn(CharSequence columnName) {
-        reindex(null, columnName);
+    public void reindexColumn(CharSequence columnName, int timestampType) {
+        reindex(null, columnName, timestampType);
     }
 
-    public void reindexColumn(FilesFacade ff, CharSequence columnName) {
-        reindex(ff, null, columnName);
+    public void reindexColumn(FilesFacade ff, CharSequence columnName, int timestampType) {
+        reindex(ff, null, columnName, timestampType);
     }
 
     public void reindexColumn(
@@ -165,6 +173,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionNameTxn,
                 partitionSize,
                 partitionTimestamp,
+                metadata.getTimestampType(),
                 partitionBy,
                 metadata.getIndexValueBlockCapacity(columnIndex)
         );
@@ -192,7 +201,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     ) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-            metadata.load(path.$());
+            metadata.loadMetadata(path.$());
             // Resolve column id if the column name specified
             final int columnIndex;
             if (columnName != null) {
@@ -204,14 +213,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             path.trimTo(rootLen);
             final int partitionBy = metadata.getPartitionBy();
 
-            try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
+            try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), metadata.getTimestampType(), partitionBy)) {
                 txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
 
                 if (PartitionBy.isPartitioned(partitionBy)) {
                     // Resolve partition timestamp if partition name specified
                     if (partitionName != null) {
-                        final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+                        final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, metadata.getTimestampType(), partitionBy);
                         int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1L) {
                             reindexPartition(
@@ -354,6 +363,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             int indexValueBlockCapacity
     );

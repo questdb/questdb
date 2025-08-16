@@ -43,7 +43,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -996,7 +996,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withFilesFacade(ff)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.execute("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
+                    engine.execute("create table xyz as (select x, timestamp_sequence(0, " + Micros.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
 
                     // Cache query plan
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -1008,7 +1008,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     );
 
                     // Add new commit
-                    engine.execute("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
+                    engine.execute("insert into xyz select x, timestamp_sequence(" + Micros.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
 
                     // Here fail expected
                     new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders(

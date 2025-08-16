@@ -26,15 +26,25 @@ package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -201,6 +211,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
                         fileName,
                         inputWorkRoot,
                         0,
+                        ColumnType.TIMESTAMP,
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,
@@ -231,9 +242,9 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
     private TimestampAdapter getAdapter(DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
-        DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
+        DateFormat dateFormat = TypeManager.adaptiveGetTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSZ");
         return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                configuration.getTextConfiguration().getDefaultDateLocale()
+                configuration.getTextConfiguration().getDefaultDateLocale(), "yyyy-MM-ddTHH:mm:ss.SSSZ"
         );
     }
 }

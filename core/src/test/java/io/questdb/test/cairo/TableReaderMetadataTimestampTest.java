@@ -31,16 +31,35 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public TableReaderMetadataTimestampTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testReAddColumn() throws Exception {
         TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE);
-        model.timestamp();
+        model.timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -53,7 +72,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
-                "timestamp:TIMESTAMP\n" +
+                "timestamp:" + timestampType.getTypeName() + "\n" +
                 "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n";
 
         assertThatTimestampRemains((w) -> {
@@ -70,7 +89,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("byte", ColumnType.BYTE)
                 .col("double", ColumnType.DOUBLE)
                 .col("float", ColumnType.FLOAT)
-                .timestamp()
+                .timestamp(timestampType.getTimestampType())
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
                 .col("sym", ColumnType.SYMBOL)
@@ -86,7 +105,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "byte:BYTE\n" +
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
-                "timestamp:TIMESTAMP\n" +
+                "timestamp:" + timestampType.getTypeName() + "\n" +
                 "long:LONG\n" +
                 "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                 "sym:SYMBOL\n" +
@@ -99,7 +118,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnBeforeTimestamp() throws Exception {
         TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE);
-        model.timestamp();
+        model.timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -112,14 +131,14 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
-                "timestamp:TIMESTAMP\n";
+                "timestamp:" + timestampType.getTypeName() + "\n";
         assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 12, 11, 12);
     }
 
     @Test
     public void testRemoveFirstTimestamp() throws Exception {
         TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
-                .timestamp()
+                .timestamp(timestampType.getTimestampType())
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
                 .col("byte", ColumnType.BYTE)
@@ -144,7 +163,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("byte", ColumnType.BYTE)
                 .col("double", ColumnType.DOUBLE)
                 .col("float", ColumnType.FLOAT)
-                .timestamp()
+                .timestamp(timestampType.getTimestampType())
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
                 .col("sym", ColumnType.SYMBOL)
@@ -159,7 +178,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
     @Test
     public void testRemoveTailTimestamp() throws Exception {
         TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)
-                .timestamp();
+                .timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         assertThat(12);
     }
@@ -169,7 +188,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "all";
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
-                metadata.load();
+                metadata.loadMetadata();
                 Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structureVersion;
@@ -213,7 +232,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "all";
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
-                metadata.load();
+                metadata.loadMetadata();
                 Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structVersion;

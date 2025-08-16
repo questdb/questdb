@@ -35,7 +35,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Files;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -81,7 +82,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
                     " case when x % 2 = 0 then rnd_long() end as a_long," +
                     " case when x % 2 = 0 then rnd_int() end as an_int," +
-                    " rnd_timestamp('2015','2016',2) as a_ts" +
+                    " rnd_timestamp('2015','2016',2) as a_ts," +
+                    " rnd_timestamp('2015'::timestamp_ns,'2016',2) as a_ns" +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -139,6 +141,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " rnd_geohash(32) a_geo_long," +
                     " rnd_bin(10, 20, 2) a_bin," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
+                    " rnd_timestamp('2015'::timestamp_ns,'2016',2) as a_ns," +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -165,6 +168,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
             execute("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
+                    " rnd_timestamp('2015'::timestamp_ns,'2016',2) as a_ns," +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -216,14 +220,16 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
             execute(
                     "create table x as (select" +
                             " x id," +
-                            " timestamp_sequence(0,10000) as ts" +
-                            " from long_sequence(1))"
+                            " timestamp_sequence(0,10000) as ts," +
+                            " timestamp_sequence(0,10000)::timestamp_ns as ns" +
+                    " from long_sequence(1))"
             );
             execute(
                     "create table y as (select" +
                             " x id," +
                             " 'foobar' str," +
-                            " timestamp_sequence(0,10000) as ts" +
+                            " timestamp_sequence(0,10000) as ts," +
+                    " timestamp_sequence(0,10000)::timestamp_ns as ns" +
                             " from long_sequence(1))"
             );
 
@@ -282,6 +288,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " rnd_uuid4() a_uuid," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                     " timestamp_sequence(500000000000, 600) a_ts," +
+                    " timestamp_sequence(500000000000000::timestamp_ns, 600000) a_ns," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
@@ -377,7 +384,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             " rnd_geohash(16) a_geo_int," +
                             " rnd_geohash(32) a_geo_long," +
                             " rnd_bin(10, 20, 2) a_bin," +
-                            " timestamp_sequence('2015', " + Timestamps.DAY_MICROS + ") as a_ts," +
+                            " timestamp_sequence('2015', " + (Micros.AVG_YEAR_MICROS / 4) + ") as a_ts," +
+                            " timestamp_sequence('2015'::timestamp_ns, " + (Nanos.AVG_YEAR_NANOS / 4 + 123) + ") as a_ns," +
                             " from long_sequence(" + rows + ")) timestamp (a_ts) partition by YEAR"
             );
             // create a newer partition, so that 2015 partition is no longer the active one

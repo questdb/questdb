@@ -53,6 +53,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.Files.DT_DIR;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
@@ -71,6 +72,7 @@ public class VacuumColumnVersions implements Closeable {
     private int tablePathLen;
     private TableReader tableReader;
     private final FindVisitor visitTableFiles = this::visitTableFiles;
+    private int timestampType;
     private final FindVisitor visitTablePartition = this::visitTablePartition;
 
     public VacuumColumnVersions(CairoEngine engine) {
@@ -109,6 +111,7 @@ public class VacuumColumnVersions implements Closeable {
         path2 = Path.getThreadLocal2(configuration.getDbRoot()).concat(tableToken);
 
         this.tableReader = reader;
+        timestampType = reader.getMetadata().getTimestampType();
         partitionBy = reader.getPartitionedBy();
 
         tableFiles.clear();
@@ -154,7 +157,16 @@ public class VacuumColumnVersions implements Closeable {
                             rogueColumns.keys().get(-newReaderIndex - 1).toString();
 
                     int columnType = newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
-                    purgeTask.of(reader.getTableToken(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+                    purgeTask.of(
+                            reader.getTableToken(),
+                            columnName,
+                            tableId,
+                            truncateVersion,
+                            columnType,
+                            timestampType,
+                            partitionBy,
+                            updateTxn
+                    );
                 }
             }
 
@@ -285,7 +297,7 @@ public class VacuumColumnVersions implements Closeable {
             }
 
             try {
-                partitionTimestamp = getPartitionDirFormatMethod(partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, DateFormatUtils.EN_LOCALE);
+                partitionTimestamp = getPartitionDirFormatMethod(timestampType, partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, EN_LOCALE);
             } catch (NumericException ex) {
                 // Directory is an invalid partition name, continue
                 LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)

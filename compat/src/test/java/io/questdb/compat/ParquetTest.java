@@ -110,26 +110,31 @@ public class ParquetTest extends AbstractTest {
 
     @Test
     public void testAllTypesColTopMiddlePartition() throws Exception {
-        // column tops placed in the middle of the partition
-        testPartitionDataConsistency("y", PartitionBy.MONTH, false);
+        final String tableName = "y";
+        final int partitionBy = PartitionBy.MONTH;
+        // column tops placed in the middle of the partition.
+        testPartitionDataConsistency(tableName, partitionBy, "timestamp", false); // false
     }
 
     @Test
     public void testAllTypesColTopMiddlePartition_rawArrayEncoding() throws Exception {
         // column tops placed in the middle of the partition
-        testPartitionDataConsistency("y", PartitionBy.MONTH, true);
+        testPartitionDataConsistency("y", PartitionBy.MONTH, "timestamp", true);
     }
+
 
     @Test
     public void testAllTypesColTopNextPartition() throws Exception {
-        // column tops added to the next partition
-        testPartitionDataConsistency("x", PartitionBy.DAY, false);
+        final String tableName = "x";
+        final int partitionBy = PartitionBy.DAY;
+        // column tops added to the next partition.
+        testPartitionDataConsistency(tableName, partitionBy, "timestamp_ns", false);
     }
 
     @Test
     public void testAllTypesColTopNextPartition_rawArrayEncoding() throws Exception {
         // column tops added to the next partition
-        testPartitionDataConsistency("x", PartitionBy.DAY, true);
+        testPartitionDataConsistency("x", PartitionBy.DAY, "timestamp_ns", true);
     }
 
     private static void assertArray(ArrayView expected, Object actual) {
@@ -325,7 +330,7 @@ public class ParquetTest extends AbstractTest {
                 int partitionIndex = 0;
                 StringSink partitionName = new StringSink();
                 long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+                PartitionBy.setSinkForPartition(partitionName, ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY, timestamp);
 
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                 PartitionEncoder.encodeWithOptions(
@@ -375,7 +380,7 @@ public class ParquetTest extends AbstractTest {
                         // arr
                         assertNullCount(chunks, 0, 0);
                     }
-                    Assert.assertEquals(rowCount, 3);
+                    Assert.assertEquals(3, rowCount);
 
                     long actualRows = 0;
                     GenericRecord nextParquetRecord;
@@ -423,7 +428,7 @@ public class ParquetTest extends AbstractTest {
                 int partitionIndex = 0;
                 StringSink partitionName = new StringSink();
                 long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+                PartitionBy.setSinkForPartition(partitionName, ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY, timestamp);
 
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                 PartitionEncoder.encodeWithOptions(
@@ -473,7 +478,7 @@ public class ParquetTest extends AbstractTest {
                         // arr
                         assertNullCount(chunks, 0, 0);
                     }
-                    Assert.assertEquals(rowCount, 3);
+                    Assert.assertEquals(3, rowCount);
 
                     long actualRows = 0;
                     GenericRecord nextParquetRecord;
@@ -492,7 +497,8 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private void testPartitionDataConsistency(String tableName, int partitionBy, boolean rawArrayEncoding) throws Exception {
+
+    private void testPartitionDataConsistency(String tableName, int partitionBy, String designedTimestampType, boolean rawArrayEncoding) throws Exception {
         String ddl = "create table " + tableName + " as (select" +
                 " x id," +
                 " rnd_boolean() a_boolean," +
@@ -518,7 +524,8 @@ public class ParquetTest extends AbstractTest {
                 " to_long128(rnd_long(), rnd_long()) a_long128," +
                 " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                 " timestamp_sequence(500000000000, 600) a_ts," +
-                " timestamp_sequence(400000000000, 500) designated_ts" +
+                " timestamp_sequence(500000000000000, 600000) a_ns," +
+                " timestamp_sequence(400000000000, 500)::" + designedTimestampType + " designated_ts" +
                 " from long_sequence(" + INITIAL_ROWS + ")) timestamp(designated_ts) partition by " + PartitionBy.toString(partitionBy) + ";";
 
         try (final ServerMain serverMain = ServerMain.create(root)) {
@@ -548,12 +555,13 @@ public class ParquetTest extends AbstractTest {
             serverMain.getEngine().execute("alter table " + tableName + " add column a_long256_top long256"); // txn 22
             serverMain.getEngine().execute("alter table " + tableName + " add column a_date_top date"); //  txn 23
             serverMain.getEngine().execute("alter table " + tableName + " add column a_ts_top timestamp"); // txn 24
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ns_top timestamp_ns"); // txn 25
 
             String insert = "insert into " + tableName + "(id, a_boolean_top, a_byte_top, a_short_top, a_char_top," +
                     " an_int_top, a_long_top, a_float_top, a_double_top,\n" +
                     " a_symbol_top, a_geo_byte_top, a_geo_short_top, a_geo_int_top, a_geo_long_top,\n" +
                     " a_string_top, a_bin_top, a_varchar_top, an_array_top, a_ip_top, a_uuid_top, a_long128_top, a_long256_top,\n" +
-                    " a_date_top, a_ts_top, designated_ts) select\n" +
+                    " a_date_top, a_ts_top, a_ns_top, designated_ts) select\n" +
                     " " + INITIAL_ROWS + " + x," +
                     " rnd_boolean()," +
                     " rnd_byte()," +
@@ -584,6 +592,10 @@ public class ParquetTest extends AbstractTest {
                     "    to_timestamp('2022', 'yyyy')," +
                     "    to_timestamp('2027', 'yyyy')," +
                     "    2) a_ts_top," +
+                    " rnd_timestamp(" +
+                    "    to_timestamp_ns('2022', 'yyyy')," +
+                    "    to_timestamp_ns('2027', 'yyyy')," +
+                    "    2) a_ns_top," +
                     " timestamp_sequence(1600000000000, 500)" +
                     " from long_sequence(" + UPDATE_ROWS + ");";
 
@@ -604,7 +616,7 @@ public class ParquetTest extends AbstractTest {
                 int partitionIndex = 0;
                 StringSink partitionName = new StringSink();
                 long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
+                PartitionBy.setSinkForPartition(partitionName, reader.getMetadata().getTimestampType(), partitionBy, timestamp);
 
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                 PartitionEncoder.encodeWithOptions(
@@ -695,6 +707,7 @@ public class ParquetTest extends AbstractTest {
 
                 assertPrimitiveValue(tableReaderRecord.getDate(22), nextParquetRecord.get("a_date"), Long.MIN_VALUE);
                 assertPrimitiveValue(tableReaderRecord.getTimestamp(23), nextParquetRecord.get("a_ts"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getTimestamp(24), nextParquetRecord.get("a_ns"), Long.MIN_VALUE);
                 assertPrimitiveValue(tableReaderRecord.getTimestamp(24), nextParquetRecord.get("designated_ts"), Long.MIN_VALUE);
 
                 // column tops
@@ -722,11 +735,12 @@ public class ParquetTest extends AbstractTest {
                     assertArray(tableReaderRecord.getArray(41, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array_top"));
                 }
                 assertPrimitiveValue(tableReaderRecord.getIPv4(42), nextParquetRecord.get("a_ip_top"), Numbers.IPv4_NULL);
-                assertUuid(sink, tableReaderRecord.getLong128Lo(43), tableReaderRecord.getLong128Hi(43), nextParquetRecord.get("a_uuid_top"));
-                assertLong128(tableReaderRecord.getLong128Lo(44), tableReaderRecord.getLong128Hi(44), nextParquetRecord.get("a_long128_top"));
+                assertUuid(sink, tableReaderRecord.getLong128Lo(43), tableReaderRecord.getLong128Hi(42), nextParquetRecord.get("a_uuid_top"));
+                assertLong128(tableReaderRecord.getLong128Lo(44), tableReaderRecord.getLong128Hi(43), nextParquetRecord.get("a_long128_top"));
                 assertLong256(tableReaderRecord.getLong256A(45), nextParquetRecord.get("a_long256_top"));
                 assertPrimitiveValue(tableReaderRecord.getDate(46), nextParquetRecord.get("a_date_top"), Long.MIN_VALUE);
                 assertPrimitiveValue(tableReaderRecord.getTimestamp(47), nextParquetRecord.get("a_ts_top"), Long.MIN_VALUE);
+                assertPrimitiveValue(tableReaderRecord.getTimestamp(48), nextParquetRecord.get("a_ns_top"), Long.MIN_VALUE);
             }
             Assert.assertEquals(rows, actualRows);
         }
@@ -769,7 +783,8 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(22), "a_date", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNullable(columns.get(23), "a_ts", PrimitiveType.PrimitiveTypeName.INT64);
             // designated ts is non-nullable
-            assertSchemaNonNullable(columns.get(24), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNonNullable(columns.get(24), "a_ns", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(24), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
 
             assertSchemaNonNullable(columns.get(25), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
             assertSchemaNonNullable(columns.get(26), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
@@ -799,6 +814,7 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(45), "a_long256_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(46), "a_date_top", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNullable(columns.get(47), "a_ts_top", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(48), "a_ns_top", PrimitiveType.PrimitiveTypeName.INT64);
 
             long rowCount = 0;
             List<BlockMetaData> rowGroups = metadata.getBlocks();

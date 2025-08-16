@@ -25,15 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rows;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -110,7 +112,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -166,7 +168,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -181,7 +183,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -237,7 +239,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
-                                TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
                             }
                         }
@@ -289,7 +291,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             actualSink.put('\t');
                             actualSink.put(record.getBool(1));
                             actualSink.put('\t');
-                            TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
+                            MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                             actualSink.put('\n');
                         }
                     }
@@ -363,7 +365,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
             assertMemoryLeak(() -> {
                 execute(
                         "create table x as (select" +
-                                " timestamp_sequence(100000000, " + 365 * Timestamps.DAY_MICROS + ") t" +
+                                " timestamp_sequence(100000000, " + 365 * Micros.DAY_MICROS + ") t" +
                                 " from long_sequence(3)" +
                                 ") timestamp (t) partition by " + PartitionBy.toString(partitionBy)
                 );
@@ -381,8 +383,8 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                             long tsLo = record.getTimestamp(0);
 
-                            PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-                            PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+                            TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
+                            TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
 
                             long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
                             long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;
@@ -448,8 +450,8 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                         timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                         long tsLo = record.getTimestamp(0);
 
-                        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(PartitionBy.DAY);
-                        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(PartitionBy.DAY);
+                        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
+                        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
 
                         long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
                         long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;

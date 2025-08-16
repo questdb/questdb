@@ -1286,6 +1286,35 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'n';
     }
 
+    public static boolean isNanosecondKeyword(CharSequence tok) {
+        return tok.length() == 10
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'n'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 'e'
+                && (tok.charAt(6) | 32) == 'c'
+                && (tok.charAt(7) | 32) == 'o'
+                && (tok.charAt(8) | 32) == 'n'
+                && (tok.charAt(9) | 32) == 'd';
+    }
+
+    public static boolean isNanosecondsKeyword(CharSequence tok) {
+        return tok.length() == 11
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'n'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 'e'
+                && (tok.charAt(6) | 32) == 'c'
+                && (tok.charAt(7) | 32) == 'o'
+                && (tok.charAt(8) | 32) == 'n'
+                && (tok.charAt(9) | 32) == 'd'
+                && (tok.charAt(10) | 32) == 's';
+    }
+
     public static boolean isNativeKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'n'

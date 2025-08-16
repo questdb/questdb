@@ -181,7 +181,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         timestampIdAndType.reopen();
         timestampIdAndType.clear();
         timestampIdAndType.add(parquetTimestampIndex);
-        timestampIdAndType.add(ColumnType.TIMESTAMP);
+        timestampIdAndType.add(reader.getMetadata().getColumnType(timestampIndex));
     }
 
     @Override

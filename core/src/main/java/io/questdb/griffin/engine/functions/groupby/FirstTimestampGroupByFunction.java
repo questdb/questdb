@@ -39,7 +39,8 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     protected final Function arg;
     protected int valueIndex;
 
-    public FirstTimestampGroupByFunction(@NotNull Function arg) {
+    public FirstTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
+        super(timestampType);
         this.arg = arg;
     }
 
@@ -88,7 +89,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);      // row id
-        columnTypes.add(ColumnType.TIMESTAMP); // value
+        columnTypes.add(timestampType); // value
     }
 
     @Override

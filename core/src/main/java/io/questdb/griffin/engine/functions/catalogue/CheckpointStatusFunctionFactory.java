@@ -172,7 +172,7 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("in_progress", ColumnType.BOOLEAN));
         inProgressColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("started_at", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("started_at", ColumnType.TIMESTAMP_MICRO));
         startedAtColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
