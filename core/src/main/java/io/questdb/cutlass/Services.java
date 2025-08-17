@@ -46,11 +46,11 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
@@ -243,9 +243,8 @@ public class Services {
         return server;
     }
 
-    @Nullable
-    public IPGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+    public PGServer createPGWireServer(
+            PGConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
@@ -261,9 +260,10 @@ public class Services {
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? HexTestsCircuitBreakRegistry.INSTANCE : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        PGCircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? PGHexTestsCircuitBreakRegistry.INSTANCE :
+                new DefaultPGCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return IPGWireServer.newInstance(
+        return new PGServer(
                 configuration,
                 cairoEngine,
                 networkSharedPool,
@@ -271,7 +271,6 @@ public class Services {
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
                         workerPoolManager.getSharedQueryWorkerCount()
-                )
-        );
+                ));
     }
 }
