@@ -573,7 +573,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.insert.cache.block.count\tQDB_PG_INSERT_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.insert.cache.enabled\tQDB_PG_INSERT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.insert.cache.row.count\tQDB_PG_INSERT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
-                                    "pg.legacy.mode.enabled\tQDB_PG_LEGACY_MODE_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.max.blob.size.on.query\tQDB_PG_MAX_BLOB_SIZE_ON_QUERY\t524288\tdefault\tfalse\tfalse\n" +
                                     "pg.named.statement.cache.capacity\tQDB_PG_NAMED_STATEMENT_CACHE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "pg.named.statement.pool.capacity\tQDB_PG_NAMED_STATEMENT_POOL_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
@@ -643,6 +642,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.sql.query.progress.exe\tQDB_LOG_SQL_QUERY_PROGRESS_EXE\ttrue\tdefault\tfalse\tfalse\n" +
                                     "log.level.verbose\tQDB_LOG_LEVEL_VERBOSE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.statistics.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.raw.array.encoding.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.version\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
