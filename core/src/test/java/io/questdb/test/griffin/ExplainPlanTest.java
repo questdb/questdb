@@ -937,7 +937,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsofJoinWithOptimisationInNestedQuery() throws Exception {
+    public void testAsofJoinWithOptimisationInNestedQueryWithAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
                     "\ttimestamp TIMESTAMP,\n" +
@@ -955,10 +955,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
 
             assertPlanNoLeakCheck(
-                    "  select * from (select price,size, timestamp from trades order by trades.timestamp) a \n" +
+                    "select * from (select price,size, timestamp from trades order by trades.timestamp) a \n" +
                             "  asof join (select bid_price,bid_size,ask_price from order_book where bid_price = 189.4 order by timestamp) b \n" +
-                            "  where price = 184.0\n" +
-                            "  order by size, price asc limit 6",
+                            "  where a.price = 184.0\n" +
+                            "  order by a.size, a.price asc limit 6",
                     "Sort\n" +
                             "  keys: [size, price]\n" +
                             "    SelectedRecord\n" +
