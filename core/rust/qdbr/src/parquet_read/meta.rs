@@ -13,6 +13,8 @@ use parquet2::schema::Repetition;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use std::io::{Read, Seek};
 
+const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
+
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
 /// Returns `None` if the metadata is not present.
@@ -118,18 +120,25 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                         unit: TimeUnit::Microseconds,
-                         is_adjusted_to_utc: _,
-                     })
-                | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                    unit: TimeUnit::Microseconds,
+                    is_adjusted_to_utc: _,
+                }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (
                 PhysicalType::Int64,
+                Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                _,
+            ) => Some(ColumnType::new(
+                ColumnTypeTag::Timestamp,
+                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+            )),
+            (
+                PhysicalType::Int64,
                 Some(Timestamp {
-                         unit: TimeUnit::Milliseconds,
-                         is_adjusted_to_utc: _,
-                     }),
+                    unit: TimeUnit::Milliseconds,
+                    is_adjusted_to_utc: _,
+                }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
             (PhysicalType::Int64, None, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
@@ -192,57 +201,57 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     }
 }
 
-    // The expected layout is described here:
-    // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
-    // Yet, some software derives from the above layout, so the actual check can't be strict.
-    // Known to work with DuckDB's list of doubles.
-    fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
-        let mut cur_type;
-        // First check the root field.
-        match base_type {
+// The expected layout is described here:
+// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
+// Yet, some software derives from the above layout, so the actual check can't be strict.
+// Known to work with DuckDB's list of doubles.
+fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
+    let mut cur_type;
+    // First check the root field.
+    match base_type {
+        ParquetType::GroupType {
+            field_info: _,
+            logical_type,
+            converted_type,
+            fields,
+        } => {
+            let is_list = *converted_type == Some(GroupConvertedType::List)
+                || *logical_type == Some(GroupLogicalType::List);
+            if !is_list || fields.len() != 1 {
+                return None;
+            }
+            cur_type = &fields[0];
+        }
+        ParquetType::PrimitiveType(_) => {
+            return None;
+        }
+    };
+
+    // Next, count repeated LIST sub-types.
+    let mut dim = 0;
+    loop {
+        match cur_type {
+            ParquetType::PrimitiveType(_) => {
+                break;
+            }
             ParquetType::GroupType {
-                field_info: _,
-                logical_type,
-                converted_type,
+                field_info,
+                logical_type: _,
+                converted_type: _,
                 fields,
             } => {
-                let is_list = *converted_type == Some(GroupConvertedType::List)
-                    || *logical_type == Some(GroupLogicalType::List);
-                if !is_list || fields.len() != 1 {
+                if fields.len() != 1 {
                     return None;
+                }
+                if field_info.repetition == Repetition::Repeated {
+                    dim += 1;
                 }
                 cur_type = &fields[0];
             }
-            ParquetType::PrimitiveType(_) => {
-                return None;
-            }
-        };
-
-        // Next, count repeated LIST sub-types.
-        let mut dim = 0;
-        loop {
-            match cur_type {
-                ParquetType::PrimitiveType(_) => {
-                    break;
-                }
-                ParquetType::GroupType {
-                    field_info,
-                    logical_type: _,
-                    converted_type: _,
-                    fields,
-                } => {
-                    if fields.len() != 1 {
-                        return None;
-                    }
-                    if field_info.repetition == Repetition::Repeated {
-                        dim += 1;
-                    }
-                    cur_type = &fields[0];
-                }
-            }
         }
+    }
 
-        encode_array_type(ColumnTypeTag::Double, dim).ok()
+    encode_array_type(ColumnTypeTag::Double, dim).ok()
 }
 
 #[cfg(test)]

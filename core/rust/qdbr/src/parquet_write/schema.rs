@@ -103,10 +103,10 @@ pub fn column_type_to_parquet_type(
                     name,
                     PhysicalType::Int64,
                     if designated_timestamp {
-                Repetition::Required
-            } else {
-                Repetition::Optional
-            },
+                        Repetition::Required
+                    } else {
+                        Repetition::Optional
+                    },
                     Some(PrimitiveConvertedType::TimestampMicros),
                     Some(PrimitiveLogicalType::Timestamp {
                         unit: TimeUnit::Microseconds,
