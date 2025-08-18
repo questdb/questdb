@@ -712,9 +712,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
                                     throw CairoException.nonCritical()
-                                            .put("timestamp out of replace range [expected=").ts(driver.getTimestampType(), replacementTimestampLo)
-                                            .put(", ").ts(driver.getTimestampType(), replacementTimestampHi)
-                                            .put(", actual=").ts(driver.getTimestampType(), timestamp)
+                                            .put("timestamp out of replace range [expected=").ts(driver, replacementTimestampLo)
+                                            .put(", ").ts(driver, replacementTimestampHi)
+                                            .put(", actual=").ts(driver, timestamp)
                                             .put(']');
                                 }
                                 final TableWriter.Row row = walWriter.newRow(timestamp);

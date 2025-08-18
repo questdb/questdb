@@ -135,7 +135,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata = openMetaFile();
             timestampType = metadata.getTimestampType();
             partitionBy = metadata.getPartitionBy();
-            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), timestampType);
+            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
@@ -187,7 +187,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata = copyMeta(srcReader.metadata);
             timestampType = metadata.getTimestampType();
             partitionBy = metadata.getPartitionBy();
-            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), timestampType);
+            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open as copy [id=").$(metadata.getTableId())

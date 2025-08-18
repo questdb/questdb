@@ -1545,7 +1545,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             // Assert _cv contents.
                             path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
                             try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
-                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path.$(), ColumnType.TIMESTAMP)) {
+                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path.$())) {
                                     cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());

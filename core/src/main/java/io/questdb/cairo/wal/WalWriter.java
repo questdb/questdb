@@ -1226,7 +1226,7 @@ public class WalWriter implements TableWriterAPI {
                         // WAL tables must be partitioned
                         txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
                         path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
-                        columnVersionReader.ofRO(ff, path.$(), metadata.getTimestampType());
+                        columnVersionReader.ofRO(ff, path.$());
 
                         initialized = true;
                         long structureVersion = getMetadataVersion();

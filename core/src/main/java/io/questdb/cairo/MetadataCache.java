@@ -312,7 +312,7 @@ public class MetadataCache implements QuietCloseable {
             final long columnNameTxn;
             final FilesFacade ff = configuration.getFilesFacade();
             try (columnVersionReader) {
-                columnVersionReader.ofRO(ff, path.$(), timestampType);
+                columnVersionReader.ofRO(ff, path.$());
                 columnVersionReader.readUnsafe();
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }

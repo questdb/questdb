@@ -64,7 +64,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
     protected final LongList cachedColumnVersionList = new LongList();
     private MemoryCMR mem;
     private boolean ownMem;
-    private int timestampType;
     private long version;
 
     @Override
@@ -222,24 +221,22 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return version;
     }
 
-    public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName, int timestampType) {
+    public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         version = -1;
         if (this.mem == null || !ownMem) {
             this.mem = Vm.getCMRInstance();
         }
         this.mem.of(ff, fileName, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
         ownMem = true;
-        this.timestampType = timestampType;
         return this;
     }
 
-    public void ofRO(MemoryCMR mem, int timestampType) {
+    public void ofRO(MemoryCMR mem) {
         if (this.mem != null && ownMem) {
             this.mem.close();
         }
         this.mem = mem;
         ownMem = false;
-        this.timestampType = timestampType;
         version = -1;
     }
 
@@ -310,7 +307,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public String toString() {
         // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
         StringSink sink = new StringSink();
-        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         sink.put("{[");
         for (int i = 0; i < cachedColumnVersionList.size(); i += BLOCK_SIZE) {
             long timestamp = cachedColumnVersionList.getQuick(i);
@@ -326,12 +322,12 @@ public class ColumnVersionReader implements Closeable, Mutable {
             if (isDefaultPartition) {
                 sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
                 sink.put("addedPartition: '");
-                timestampDriver.append(sink, columnTop);
+                sink.put(columnTop);
                 sink.put("'}");
             } else {
                 sink.put("nameTxn: ").put(columnNameTxn).put(", ");
                 sink.put("partition: '");
-                timestampDriver.append(sink, timestamp);
+                sink.put(timestamp);
                 sink.put("', ");
                 sink.put("columnTop: ").put(columnTop).put("}");
             }

@@ -363,6 +363,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException ts(TimestampDriver driver, long timestamp) {
+        driver.append(message, timestamp);
+        return this;
+    }
+
     private static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option

@@ -139,9 +139,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -3175,7 +3175,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         path.concat(COLUMN_VERSION_FILE_NAME);
         try {
-            return new ColumnVersionWriter(configuration, path.$(), timestampType, partitioned);
+            return new ColumnVersionWriter(configuration, path.$(), partitioned);
         } finally {
             path.trimTo(rootLen);
         }
@@ -3605,7 +3605,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     attachColumnVersionReader = new ColumnVersionReader();
                 }
                 // attach partition is only possible on partitioned table
-                attachColumnVersionReader.ofRO(ff, detachedPath.$(), timestampType);
+                attachColumnVersionReader.ofRO(ff, detachedPath.$());
                 attachColumnVersionReader.readUnsafe();
             }
 
@@ -7174,7 +7174,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 pressureControl.updateInflightPartitions(--inflightPartitions);
                                 throw CairoException.critical(0)
                                         .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
-                                        .put(", partition=").ts(timestampType, partitionTimestamp).put(']');
+                                        .put(", partition=").ts(timestampDriver, partitionTimestamp).put(']');
                             }
                             o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
                             o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
@@ -8699,8 +8699,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || txWriter.getPartitionTimestampByTimestamp(attachMaxTimestamp) != partitionTimestamp) {
             throw CairoException.critical(0)
                     .put("invalid timestamp data in detached partition, data does not match partition directory name [path=").put(path)
-                    .put(", minTimestamp=").ts(timestampType, attachMinTimestamp)
-                    .put(", maxTimestamp=").ts(timestampType, attachMaxTimestamp)
+                    .put(", minTimestamp=").ts(timestampDriver, attachMinTimestamp)
+                    .put(", maxTimestamp=").ts(timestampDriver, attachMaxTimestamp)
                     .put(']');
         }
     }

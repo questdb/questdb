@@ -259,7 +259,7 @@ public final class ColumnType {
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short type = tagOf(timestampType);
-        // todo null and UNDEFINED use MicrosTimestamp
+        // null and UNDEFINED use MicrosTimestamp
         if (type == NULL || type == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
