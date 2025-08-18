@@ -1271,7 +1271,7 @@ public class Decimal256Test {
     }
 
     @Test
-    public void testSubstractionFuzz() {
+    public void testSubtractionFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
 
         // Number of test iterations
