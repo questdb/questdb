@@ -732,7 +732,7 @@ public class Decimal256 implements Sinkable {
             if (hh != 0 || hl < 0) {
                 multiply64(otherLL);
             } else if (hl != 0 || lh < 0) {
-                multiply192x64(otherLL);
+                multiply192By64(otherLL);
             } else if (lh != 0 || ll < 0) {
                 multiply128By64(otherLL);
             } else {
@@ -1453,7 +1453,7 @@ public class Decimal256 implements Sinkable {
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
 
-    private void multiply192x64(long multiplier) {
+    private void multiply192By64(long multiplier) {
         // Perform 192-bit × 64-bit multiplication
 
         // Split this into 32-bit parts
