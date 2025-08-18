@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class BitmapIndexConcurrentTest extends AbstractCairoTest {
+public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
     private static final int MAX_ID = 100;
 
     @Test
@@ -217,45 +217,47 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                     startBarrier.await(); // Wait for all threads to be ready
 
                     Rnd rnd = new Rnd(seed0, seed1); // Unique deterministic seeds per thread
-                    while (!stopFlag.get() && errorCount.get() == 0) {
-                        try {
-                            String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
-                            String querySql = String.format(
-                                    "SELECT symbol, count(*) FROM trades WHERE symbol = '%s' GROUP BY symbol",
-                                    randomSymbol
-                            );
+                    try (var threadLocalContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        while (!stopFlag.get() && errorCount.get() == 0) {
+                            try {
+                                String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                                String querySql = String.format(
+                                        "SELECT symbol, count(*) FROM trades WHERE symbol = '%s' GROUP BY symbol",
+                                        randomSymbol
+                                );
 
-                            try (RecordCursorFactory factory = select(querySql)) {
-                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    int rowCount = 0;
-                                    CharSequence foundSymbol = null;
+                                try (RecordCursorFactory factory = select(querySql, threadLocalContext)) {
+                                    try (RecordCursor cursor = factory.getCursor(threadLocalContext)) {
+                                        int rowCount = 0;
+                                        CharSequence foundSymbol = null;
 
-                                    while (cursor.hasNext()) {
-                                        rowCount++;
-                                        if (rowCount > 1) {
+                                        while (cursor.hasNext()) {
+                                            rowCount++;
+                                            if (rowCount > 1) {
+                                                errorCount.incrementAndGet();
+                                                firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Multiple rows for symbol " + randomSymbol));
+                                                return;
+                                            }
+                                            foundSymbol = cursor.getRecord().getSymA(0);
+                                        }
+
+                                        if (rowCount == 1 && !Chars.equals(foundSymbol, randomSymbol)) {
                                             errorCount.incrementAndGet();
-                                            firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Multiple rows for symbol " + randomSymbol));
+                                            firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Expected " + randomSymbol + " but got " + foundSymbol));
                                             return;
                                         }
-                                        foundSymbol = cursor.getRecord().getSymA(0);
-                                    }
 
-                                    if (rowCount == 1 && !Chars.equals(foundSymbol, randomSymbol)) {
-                                        errorCount.incrementAndGet();
-                                        firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Expected " + randomSymbol + " but got " + foundSymbol));
-                                        return;
+                                        // It's OK if rowCount is 0 or 1 (symbol might not exist yet or might exist)
+                                        totalQueries.incrementAndGet();
                                     }
-
-                                    // It's OK if rowCount is 0 or 1 (symbol might not exist yet or might exist)
-                                    totalQueries.incrementAndGet();
                                 }
-                            }
 
-                            Os.sleep(rnd.nextInt(5) + 1);
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                            firstError.compareAndSet(null, e);
-                            e.printStackTrace();
+                                Os.sleep(rnd.nextInt(5) + 1);
+                            } catch (Exception e) {
+                                errorCount.incrementAndGet();
+                                firstError.compareAndSet(null, e);
+                                e.printStackTrace();
+                            }
                         }
                     }
                 } catch (Exception e) {
