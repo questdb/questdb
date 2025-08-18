@@ -750,7 +750,7 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Writes the string representation of this Decimal256 to the specified CharSink.
+     * Writes the string representation of this Decimal128 to the specified CharSink.
      * The output format is a plain decimal string without scientific notation.
      *
      * @param sink the CharSink to write to
@@ -762,7 +762,7 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Returns the string representation of this Decimal256.
+     * Returns the string representation of this Decimal128.
      * The output format is a plain decimal string without scientific notation.
      *
      * @return string representation of this decimal number
