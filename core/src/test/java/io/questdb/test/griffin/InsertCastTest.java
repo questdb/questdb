@@ -1342,12 +1342,12 @@ public class InsertCastTest extends AbstractCairoTest {
             // bar array
             assertException("insert into tab values ('not array'::varchar)",
                     0,
-                    "inconvertible value: `not array` [STRING -> DOUBLE[][]]");
+                    "inconvertible value: `not array` [VARCHAR -> DOUBLE[][]]");
 
             // bad non-ascii array (😀)
             assertException("insert into tab values ('{{1.0, 2.0}, {3.0, 4.0, \uD83D\uDE00}}'::varchar)",
                     0,
-                    "inconvertible value: `{{1.0, 2.0}, {3.0, 4.0, \uD83D\uDE00}}` [STRING -> DOUBLE[][]]");
+                    "inconvertible value: `{{1.0, 2.0}, {3.0, 4.0, \uD83D\uDE00}}` [VARCHAR -> DOUBLE[][]]");
         });
     }
 
