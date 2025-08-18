@@ -5508,9 +5508,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asm,
                     chainTypes,
                     listColumnFilterA,
+                    null,
                     listColumnFilterB,
-                    null
-            );
+                    null,
+                    null);
 
             return new CachedWindowRecordCursorFactory(
                     configuration,

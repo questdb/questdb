@@ -91,27 +91,6 @@ public class RecordSinkFactory {
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, null, skewIndex, writeSymbolAsString, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
