@@ -96,17 +96,28 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
-        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base) && (
-                Chars.indexOf(base, '.') > -1 || disallowedAliases.contains(base)
-        );
+        final int indexOfDot = Chars.indexOf(base, '.');
+        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base)
+                && (indexOfDot > -1 || disallowedAliases.contains(base));
 
         int len = base.length();
         // early exit for simple cases
-        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ') {
+        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ' && indexOfDot == -1) {
             return base;
         }
-
+        // special case for table.column expressions
         final CharacterStoreEntry entry = store.newEntry();
+        if (!nonLiteral && indexOfDot > -1) {
+            entry.put(base, indexOfDot + 1, base.length());
+            return createExprColumnAlias(
+                    store,
+                    entry.toImmutable(),
+                    aliasToColumnMap,
+                    maxLength,
+                    false
+            );
+        }
+
         final int entryLen = entry.length();
         if (quote) {
             entry.put('"');

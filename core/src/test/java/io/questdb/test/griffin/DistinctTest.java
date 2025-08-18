@@ -34,6 +34,16 @@ import org.junit.Test;
 public class DistinctTest extends AbstractCairoTest {
 
     @Test
+    public void testAliases_columnAliasExprDisabled() throws Exception {
+        testColumnPrefixes(false);
+    }
+
+    @Test
+    public void testColumnPrefixes() throws Exception {
+        testColumnPrefixes(true);
+    }
+
+    @Test
     public void testDistinctImplementsLimitLoPositive() throws Exception {
         execute(
                 "create table x as (" +
@@ -300,5 +310,114 @@ public class DistinctTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testInnerJoinAliases1() throws Exception {
+        testInnerJoinAliases1(true);
+    }
+
+    @Test
+    public void testInnerJoinAliases1_columnAliasExprDisabled() throws Exception {
+        testInnerJoinAliases1(false);
+    }
+
+    @Test
+    public void testInnerJoinAliases2() throws Exception {
+        testInnerJoinAliases2(true);
+    }
+
+    @Test
+    public void testInnerJoinAliases2_columnAliasExprDisabled() throws Exception {
+        testInnerJoinAliases2(false);
+    }
+
+    private void testColumnPrefixes(boolean columnAliasExprEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(columnAliasExprEnabled));
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table sensors (" +
+                            "  sensor_id SYMBOL," +
+                            "  apptype INT," +
+                            "  ts TIMESTAMP" +
+                            ") timestamp (ts) partition by day;"
+            );
+
+            execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
+            execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
+
+            assertQueryNoLeakCheck(
+                    "sensor_id\tapptype\n" +
+                            "air\t1\n",
+                    "select distinct sensors.sensor_id, sensors.apptype " +
+                            "from sensors"
+            );
+        });
+    }
+
+    private void testInnerJoinAliases1(boolean columnAliasExprEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(columnAliasExprEnabled));
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table sensors (" +
+                            "  sensor_id SYMBOL," +
+                            "  apptype INT," +
+                            "  ts TIMESTAMP" +
+                            ") timestamp (ts) partition by day;"
+            );
+            execute(
+                    "create table samples (" +
+                            "  sensor_id SYMBOL," +
+                            "  ts TIMESTAMP" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
+            execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
+            execute("insert into samples values ('air', '1970-02-02T10:10:00');");
+
+            assertQueryNoLeakCheck(
+                    "sensor_id\tapptype\n" +
+                            "air\t1\n",
+                    "select distinct samples.sensor_id, sensors.apptype " +
+                            "from samples " +
+                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
+            );
+        });
+    }
+
+    private void testInnerJoinAliases2(boolean columnAliasExprEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(columnAliasExprEnabled));
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table sensors (" +
+                            "  sensor_id SYMBOL," +
+                            "  apptype INT," +
+                            "  ts TIMESTAMP" +
+                            ") timestamp (ts) partition by day;"
+            );
+            execute(
+                    "create table samples (" +
+                            "  sensor_id SYMBOL," +
+                            "  apptype INT," +
+                            "  ts TIMESTAMP" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
+            execute("insert into sensors values ('air', 2, '1970-02-02T10:10:01');");
+            execute("insert into samples values ('air', 1, '1970-02-02T10:10:00');");
+            execute("insert into samples values ('air', 1, '1970-02-02T10:10:01');");
+
+            final String secondAlias = columnAliasExprEnabled ? "apptype_2" : "apptype1";
+            assertQueryNoLeakCheck(
+                    "sensor_id\tapptype\t" + secondAlias + "\n" +
+                            "air\t2\t1\n" +
+                            "air\t1\t1\n",
+                    "select distinct samples.sensor_id, sensors.apptype, samples.apptype " +
+                            "from samples " +
+                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
+            );
+        });
     }
 }
