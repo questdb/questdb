@@ -126,9 +126,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
-                final long opts = cairoConfiguration.getWriterFileOpenOpts();
+                final int opts = cairoConfiguration.getWriterFileOpenOpts();
                 partitionUpdater.of(
                         path.$(),
                         opts,
@@ -136,6 +137,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         timestampIndex,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
+                        rawArrayEncoding,
                         rowGroupSize,
                         dataPageSize
                 );
@@ -782,6 +784,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (tableWriter.isCommitReplaceMode()) {
                     if (prefixHi < prefixLo) {
                         prefixType = O3_BLOCK_NONE;
+                        // prefixType == O3_BLOCK_NONE and prefixHi >= also is used
+                        // to indicate split partition. To avoid that, set prefixHi to -1.
+                        prefixLo = 0;
+                        prefixHi = -1;
                     }
                     if (suffixHi < suffixLo) {
                         suffixType = O3_BLOCK_NONE;
@@ -907,6 +913,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // srcOooLo > srcOooHi means that O3 data is empty
                         if (prefixType == O3_BLOCK_O3) {
                             prefixType = O3_BLOCK_NONE;
+                            // prefixType == O3_BLOCK_NONE and prefixHi >= also is used
+                            // to indicate split partition. To avoid that, set prefixHi to -1.
+                            prefixLo = 0;
+                            prefixHi = -1;
                         }
 
                         // srcOooLo > srcOooHi means that O3 data is empty

@@ -26,7 +26,8 @@ fn unzip_option(array: &[Option<Vec<u8>>]) -> Result<(Vec<u8>, Vec<u8>)> {
             false
         }
     });
-    encode_bool(&mut validity, iter)?;
+    let len = iter.size_hint().1.unwrap();
+    encode_bool(&mut validity, iter, len)?;
 
     // write the length, now that it is known
     let mut validity = validity.into_inner();

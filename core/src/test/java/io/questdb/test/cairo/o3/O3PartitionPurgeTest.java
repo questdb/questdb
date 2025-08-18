@@ -679,7 +679,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     public void testRollbackWithActiveReaders() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "1970-01-09.3")) {
                     return -1;
                 }

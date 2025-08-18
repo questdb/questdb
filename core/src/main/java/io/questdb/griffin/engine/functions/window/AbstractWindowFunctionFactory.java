@@ -31,19 +31,12 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
-    protected long rowsHi;
-    protected long rowsLo;
-    protected WindowContext windowContext;
 
     @Override
     public boolean isWindow() {
@@ -85,55 +78,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
 
         desc.startOffset = newAddress - memory.getPageAddress(0);
-    }
-
-    protected void checkWindowParameter(int position, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        windowContext = sqlExecutionContext.getWindowContext();
-        if (windowContext.isEmpty()) {
-            throw SqlException.emptyWindowContext(position);
-        }
-
-        if (windowContext.getNullsDescPos() > 0 && !this.supportNullsDesc()) {
-            throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
-        }
-
-        rowsLo = windowContext.getRowsLo();
-        rowsHi = windowContext.getRowsHi();
-
-        if (!windowContext.isDefaultFrame()) {
-            if (rowsLo > 0) {
-                throw SqlException.$(windowContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
-            }
-            if (rowsHi > 0) {
-                if (rowsHi != Long.MAX_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
-                } else if (rowsLo != Long.MIN_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
-                }
-            }
-        }
-
-        int exclusionKind = windowContext.getExclusionKind();
-        int exclusionKindPos = windowContext.getExclusionKindPos();
-        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
-                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
-            throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
-        }
-
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
-            // assumes frame doesn't use 'following'
-            if (rowsHi == Long.MAX_VALUE) {
-                throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
-            }
-
-            if (rowsHi == 0) {
-                rowsHi = -1;
-            }
-        }
-
-        if (windowContext.getFramingMode() == WindowColumn.FRAMING_GROUPS) {
-            throw SqlException.$(position, "function not implemented for given window parameters");
-        }
     }
 
     protected boolean supportNullsDesc() {
@@ -249,7 +193,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class RingBufferDesc {
+    protected static class RingBufferDesc {
         long capacity;
         long firstIdx;
         LongList freeList;

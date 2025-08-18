@@ -224,6 +224,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
@@ -305,8 +306,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -2443,11 +2444,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getSharedQueryWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
+                    // for these errors we are intentionally **not** rethrowing the exception
+                    // if a JIT filter cannot be used, we will simply use a Java filter
                     Misc.free(compiledFilter);
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                             .$(", ex=").$safe(ex.getFlyweightMessage())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                } catch (Throwable t) {
+                    // other errors are fatal -> rethrow them
+                    Misc.free(compiledFilter);
+                    Misc.free(filter);
+                    Misc.free(factory);
+                    throw t;
                 } finally {
                     jitIRSerializer.clear();
                     jitIRMem.truncate();
@@ -2790,7 +2799,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 // that includes the timestamp index.
                                                 assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
 
-
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
 
@@ -2798,7 +2806,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Misc.free(slave.getBindVarMemory());
                                                 Misc.freeObjList(slave.getBindVarFunctions());
                                                 slave.halfClose();
-
 
                                                 master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -3594,32 +3601,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         model.setLimitImplemented(true);
-                        int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
-                        if (
-                                !preSortedByTs
-                                        && loFunc.isConstant()
-                                        && hiFunc == null
-                                        && listColumnFilterA.size() == 1
-                                        && recordCursorFactory.recordCursorSupportsLongTopK()
-                        ) {
+                        if (!preSortedByTs && loFunc.isConstant() && hiFunc == null) {
                             final long lo = loFunc.getLong(null);
-                            final int index = listColumnFilterA.getQuick(0);
-                            final int columnIndex = (index > 0 ? index : -index) - 1;
-                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
-                                return new LongTopKRecordCursorFactory(
-                                        orderedMetadata,
-                                        recordCursorFactory,
-                                        columnIndex,
-                                        (int) lo,
-                                        index > 0
-                                );
+                            if (lo > 0 && lo <= Integer.MAX_VALUE) {
+                                // Long top K has decent performance even though being single-threaded,
+                                // so we try to go with it before the parallel top K factory.
+                                if (listColumnFilterA.size() == 1 && recordCursorFactory.recordCursorSupportsLongTopK()) {
+                                    final int index = listColumnFilterA.getQuick(0);
+                                    final int columnIndex = (index > 0 ? index : -index) - 1;
+                                    if (metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                                        return new LongTopKRecordCursorFactory(
+                                                orderedMetadata,
+                                                recordCursorFactory,
+                                                columnIndex,
+                                                (int) lo,
+                                                index > 0
+                                        );
+                                    }
+                                }
+
+                                final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
+                                if (parallelTopKEnabled && (recordCursorFactory.supportsPageFrameCursor() || recordCursorFactory.supportsFilterStealing())) {
+                                    QueryModel.restoreWhereClause(expressionNodePool, model);
+
+                                    RecordCursorFactory baseFactory = recordCursorFactory;
+                                    CompiledFilter compiledFilter = null;
+                                    MemoryCARW bindVarMemory = null;
+                                    ObjList<Function> bindVarFunctions = null;
+                                    Function filter = null;
+                                    if (recordCursorFactory.supportsFilterStealing()) {
+                                        baseFactory = recordCursorFactory.getBaseFactory();
+                                        compiledFilter = recordCursorFactory.getCompiledFilter();
+                                        bindVarMemory = recordCursorFactory.getBindVarMemory();
+                                        bindVarFunctions = recordCursorFactory.getBindVarFunctions();
+                                        filter = recordCursorFactory.getFilter();
+                                        recordCursorFactory.halfClose();
+                                    }
+
+                                    final QueryModel nested = model.getNestedModel();
+                                    assert nested != null;
+
+                                    return new AsyncTopKRecordCursorFactory(
+                                            configuration,
+                                            executionContext.getMessageBus(),
+                                            orderedMetadata,
+                                            baseFactory,
+                                            reduceTaskFactory,
+                                            filter,
+                                            compileWorkerFilterConditionally(
+                                                    executionContext,
+                                                    filter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    locatePotentiallyFurtherNestedWhereClause(nested),
+                                                    baseFactory.getMetadata()
+                                            ),
+                                            compiledFilter,
+                                            bindVarMemory,
+                                            bindVarFunctions,
+                                            recordComparatorCompiler,
+                                            listColumnFilterA.copy(),
+                                            metadata,
+                                            lo,
+                                            executionContext.getSharedQueryWorkerCount()
+                                    );
+                                }
                             }
                         }
+
+                        final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
                                 recordCursorFactory,
-                                recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                                recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 loFunc,
                                 hiFunc,
                                 listColumnFilterA.copy(),
@@ -3644,7 +3698,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 orderedMetadata,
                                 recordCursorFactory,
-                                recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                                recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 listColumnFilterA.copy()
                         );
                     }
@@ -3659,7 +3713,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         orderedMetadata,
                         recordCursorFactory,
                         RecordSinkFactory.getInstance(asm, orderedMetadata, entityColumnFilter),
-                        recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                        recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
             }
@@ -5374,7 +5428,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
+                windowComparators.add(recordComparatorCompiler.newInstance(chainTypes, e.key));
                 functionGroups.add(e.value);
                 keys.add(e.key);
             }

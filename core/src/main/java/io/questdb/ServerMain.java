@@ -47,8 +47,8 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -79,7 +79,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected IPGWireServer pgWireServer;
+    protected PGServer pgServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
@@ -168,12 +168,12 @@ public class ServerMain implements Closeable {
         if (readOnlyInstance) {
             return ReadOnlySecurityContextFactory.INSTANCE;
         } else {
-            PGWireConfiguration pgWireConfiguration = configuration.getPGWireConfiguration();
+            PGConfiguration pgConfiguration = configuration.getPGWireConfiguration();
             HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
             boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
-            boolean pgWireReadOnlyContext = pgWireConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgWireConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgWireConfiguration.getReadOnlyUsername() : null;
+            boolean pgWireReadOnlyContext = pgConfiguration.readOnlySecurityContext();
+            boolean pgWireReadOnlyUserEnabled = pgConfiguration.isReadOnlyUserEnabled();
+            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgConfiguration.getReadOnlyUsername() : null;
             boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
             return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
         }
@@ -254,8 +254,8 @@ public class ServerMain implements Closeable {
     }
 
     public int getPgWireServerPort() {
-        if (pgWireServer != null) {
-            return pgWireServer.getPort();
+        if (pgServer != null) {
+            return pgServer.getPort();
         }
         throw CairoException.nonCritical().put("pgwire server is not running");
     }
@@ -277,7 +277,7 @@ public class ServerMain implements Closeable {
 
     @TestOnly
     public void resetQueryCache() {
-        pgWireServer.resetQueryCache();
+        pgServer.resetQueryCache();
     }
 
     public void start() {
@@ -426,7 +426,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit.register(pgWireServer = services().createPGWireServer(
+        freeOnExit.register(pgServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager
@@ -435,7 +435,7 @@ public class ServerMain implements Closeable {
         workerPoolManager.getSharedPoolNetwork().assign(new FlushQueryCacheJob(
                 engine.getMessageBus(),
                 httpServer,
-                pgWireServer
+                pgServer
         ));
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {

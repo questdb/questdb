@@ -54,7 +54,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private long minMappedMemorySize = -1;
 
-    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
@@ -203,12 +203,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, -1, memoryTag, opts);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
         this.madviseOpts = madviseOpts;
@@ -373,7 +373,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
     }
 
-    private void openFile(FilesFacade ff, LPSZ name, long opts) {
+    private void openFile(FilesFacade ff, LPSZ name, int opts) {
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name, opts);

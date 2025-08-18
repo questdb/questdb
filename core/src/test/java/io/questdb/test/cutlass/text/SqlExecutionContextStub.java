@@ -183,6 +183,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelTopKEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -246,6 +251,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
+    public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
     }
 
     @Override

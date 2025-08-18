@@ -12,7 +12,7 @@ use super::utils;
 pub type Casted<'a, T> = std::iter::Map<std::slice::ChunksExact<'a, u8>, fn(&'a [u8]) -> T>;
 
 /// Views the values of the data page as [`Casted`] to [`NativeType`].
-pub fn native_cast<T: NativeType>(page: &DataPage) -> Result<Casted<T>, Error> {
+pub fn native_cast<T: NativeType>(page: &DataPage) -> Result<Casted<'_, T>, Error> {
     let (_, _, values) = split_buffer(page)?;
     if values.len() % std::mem::size_of::<T>() != 0 {
         return Err(Error::oos(
