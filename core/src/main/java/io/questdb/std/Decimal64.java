@@ -408,7 +408,7 @@ public class Decimal64 implements Sinkable {
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
      * @throws NumericException if targetScale is invalid
-     * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
+     * @throws NumericException if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
         if (targetScale == this.scale) {

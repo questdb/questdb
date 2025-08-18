@@ -29,7 +29,6 @@ public class Decimal128 implements Sinkable {
     public static final Decimal128 MAX_VALUE = new Decimal128(Long.MAX_VALUE, Long.MIN_VALUE, 0);
     public static final Decimal128 MIN_VALUE = new Decimal128(Long.MIN_VALUE, Long.MIN_VALUE, 0);
     static final long LONG_MASK = 0xffffffffL;
-    private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private static final long INFLATED = Long.MIN_VALUE;
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
@@ -159,6 +158,7 @@ public class Decimal128 implements Sinkable {
     };
     // holders for in-place mutations that doesn't have a mutable structure available
     private static final ThreadLocal<Decimal128> tl = new ThreadLocal<>(Decimal128::new);
+    private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
     private int scale;  // Number of decimal places
@@ -619,7 +619,7 @@ public class Decimal128 implements Sinkable {
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
      * @throws NumericException if targetScale is invalid
-     * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
+     * @throws NumericException if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
         if (targetScale == this.scale) {
@@ -875,6 +875,36 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Multiply this unsigned 64-bit value by an unsigned 64-bit value in place
+     */
+    private void multiply64By64Bit(long multiplier) {
+        // Perform 128-bit × 64-bit multiplication
+        // Result is at most 192 bits, but we keep only the lower 128 bits
+
+        // Split multiplier into two 32-bit parts
+        long m1 = multiplier >>> 32;
+        long m0 = multiplier & 0xFFFFFFFFL;
+
+        // Split this into four 32-bit parts
+        long a1 = low >>> 32;
+        long a0 = low & 0xFFFFFFFFL;
+
+        // Compute partial products
+        long p0 = a0 * m0;
+        long p1 = a0 * m1 + a1 * m0;
+        long p2 = a1 * m1;
+
+        // Accumulate results
+        long r0 = p0 & 0xFFFFFFFFL;
+        long r1 = (p0 >>> 32) + (p1 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p1 >>> 32) + (p2 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p2 >>> 32);
+
+        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+    }
+
+    /**
      * Multiply this unsigned 128-bit value by an unsigned 128-bit value in place
      */
     private void multiplyBy128Bit(long multiplierHigh, long multiplierLow) {
@@ -965,36 +995,6 @@ public class Decimal128 implements Sinkable {
                 (p02 & LONG_MASK) + (p11 & LONG_MASK) + (p20 & LONG_MASK);
         long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
                 (p03 & LONG_MASK) + (p12 & LONG_MASK) + (p21 & LONG_MASK) + (p30 & LONG_MASK);
-
-        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-    }
-
-    /**
-     * Multiply this unsigned 64-bit value by an unsigned 64-bit value in place
-     */
-    private void multiply64By64Bit(long multiplier) {
-        // Perform 128-bit × 64-bit multiplication
-        // Result is at most 192 bits, but we keep only the lower 128 bits
-
-        // Split multiplier into two 32-bit parts
-        long m1 = multiplier >>> 32;
-        long m0 = multiplier & 0xFFFFFFFFL;
-
-        // Split this into four 32-bit parts
-        long a1 = low >>> 32;
-        long a0 = low & 0xFFFFFFFFL;
-
-        // Compute partial products
-        long p0 = a0 * m0;
-        long p1 = a0 * m1 + a1 * m0;
-        long p2 = a1 * m1;
-
-        // Accumulate results
-        long r0 = p0 & 0xFFFFFFFFL;
-        long r1 = (p0 >>> 32) + (p1 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p1 >>> 32) + (p2 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p2 >>> 32);
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);

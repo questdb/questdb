@@ -1375,6 +1375,55 @@ public class Decimal256 implements Sinkable {
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
 
+    private void multiply192By64(long multiplier) {
+        // Perform 192-bit × 64-bit multiplication
+
+        // Split this into 32-bit parts
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >>> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p51 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p51 >>> 32);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
     private void multiply192Unchecked(long h, long m, long l) {
         // Perform 256-bit × 192-bit multiplication
         // Result is at most 448 bits, but we keep only the lower 256 bits
@@ -1446,55 +1495,6 @@ public class Decimal256 implements Sinkable {
                 (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
         long r7 = (r6 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
                 (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
-
-        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
-        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
-    }
-
-    private void multiply192By64(long multiplier) {
-        // Perform 192-bit × 64-bit multiplication
-
-        // Split this into 32-bit parts
-        long a5 = hl >>> 32;
-        long a4 = hl & 0xFFFFFFFFL;
-        long a3 = lh >>> 32;
-        long a2 = lh & 0xFFFFFFFFL;
-        long a1 = ll >>> 32;
-        long a0 = ll & 0xFFFFFFFFL;
-
-        long b1 = multiplier >>> 32;
-        long b0 = multiplier & 0xFFFFFFFFL;
-
-        // Compute all partial products
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p10 = a1 * b0;
-        long p11 = a1 * b1;
-        long p20 = a2 * b0;
-        long p21 = a2 * b1;
-        long p30 = a3 * b0;
-        long p31 = a3 * b1;
-        long p40 = a4 * b0;
-        long p41 = a4 * b1;
-        long p50 = a5 * b0;
-        long p51 = a5 * b1;
-
-        // Gather results into 256-bit result
-        long r0 = (p00 & 0xFFFFFFFFL);
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
-                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
-        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
-                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
-        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
-                (p51 & 0xFFFFFFFFL);
-        long r7 = (r6 >>> 32) + (p51 >>> 32);
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
