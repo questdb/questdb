@@ -507,7 +507,7 @@ public class Decimal128Test {
         Assert.assertEquals(2, a.getScale());
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testInvalidScale() {
         new Decimal128(0, 0, 100);
     }
@@ -696,7 +696,7 @@ public class Decimal128Test {
         Assert.assertEquals(21.0, c.toDouble(), 0.01);
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testNullBigDecimal() {
         Decimal128.fromBigDecimal(null);
     }
@@ -742,7 +742,7 @@ public class Decimal128Test {
         Assert.assertEquals("1.0000000000", a.toString());
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testRescaleLess() {
         Decimal128 a = new Decimal128(0, 100, 10);
         a.rescale(5);
@@ -970,7 +970,7 @@ public class Decimal128Test {
         }
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testRoundNegativeScale() {
         Decimal128 a = Decimal128.fromDouble(1.23, 2);
         a.round(-1, java.math.RoundingMode.HALF_UP);

@@ -562,7 +562,7 @@ public class Decimal64Test {
         Assert.assertTrue(negative.isNegative());
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testNullBigDecimal() {
         Decimal64.fromBigDecimal(null);
     }
@@ -765,15 +765,15 @@ public class Decimal64Test {
     public void testScaleValidation() {
         try {
             new Decimal64(123, -1);
-            Assert.fail("Should have thrown IllegalArgumentException");
-        } catch (IllegalArgumentException e) {
+            Assert.fail("Should have thrown NumericException");
+        } catch (NumericException e) {
             // Expected
         }
 
         try {
             new Decimal64(123, Decimal64.MAX_SCALE + 1);
-            Assert.fail("Should have thrown IllegalArgumentException");
-        } catch (IllegalArgumentException e) {
+            Assert.fail("Should have thrown NumericException");
+        } catch (NumericException e) {
             // Expected
         }
     }

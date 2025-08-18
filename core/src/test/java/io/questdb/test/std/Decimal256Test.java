@@ -864,7 +864,7 @@ public class Decimal256Test {
         Assert.assertEquals(21.0, c.toDouble(), 0.01);
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testNullBigDecimal() {
         Decimal256.fromBigDecimal(null);
     }
@@ -924,7 +924,7 @@ public class Decimal256Test {
         Assert.assertEquals("1.0000000000", a.toString());
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = NumericException.class)
     public void testRescaleLess() {
         Decimal256 a = new Decimal256(0, 0, 0, 100, 10);
         a.rescale(5);
