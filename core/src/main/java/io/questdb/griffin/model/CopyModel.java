@@ -96,7 +96,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         cancel = false;
         timestampFormat = null;
         timestampColumnName = null;
-        partitionBy = PartitionBy.NONE;
+        partitionBy = -1;
         delimiter = -1;
         atomicity = -1;
         type = COPY_TYPE_UNKNOWN;
@@ -248,6 +248,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
         parquetVersion = configuration.getPartitionEncoderParquetVersion();
         rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
+        partitionBy = PartitionBy.NONE;
     }
 
     public void setParquetVersion(int parquetVersion) {

@@ -74,7 +74,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             "Content-Type: application/json; charset=utf-8\n" +
                                             "Keep-Alive: timeout=5, max=10000\n" +
                                             "\n" +
-                                            "44\n" +
+                                            "79\n" +
                                             "{\"query\":\"select * from basic_parquet_test\",\"error\n" +
                                             "00\n" +
                                             "\n");
@@ -103,7 +103,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             "Content-Type: application/json; charset=utf-8\n" +
                                             "Keep-Alive: timeout=5, max=10000\n" +
                                             "\n" +
-                                            "44\n" +
+                                            "79\n" +
                                             "{\"query\":\"select * from basic_parquet_test\",\"error\n" +
                                             "00\n" +
                                             "\n");

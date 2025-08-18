@@ -2227,25 +2227,49 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
         }
 
-        return new CopyCancelFactory(
-                engine.getCopyImportContext(),
-                engine.getCopyExportContext(),
-                cancelCopyID,
-                cancelCopyIDStr,
-                query()
+        RecordCursorFactory _import = null, _export = null;
+
+        if (configuration.getSqlCopyInputRoot() != null) {
+            try {
+                _import = query()
                         .$("select * from '")
                         .$(engine.getConfiguration().getSystemTableNamePrefix())
                         .$("text_import_log' where id = '")
                         .$(cancelCopyIDStr)
                         .$("' limit -1")
-                        .compile(executionContext).getRecordCursorFactory(),
-                query()
+                        .compile(executionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                if (!e.isTableDoesNotExist()) {
+                    throw e;
+                }
+            }
+        }
+
+        if (configuration.getSqlCopyExportRoot() != null) {
+            try {
+                _export = query()
                         .$("select * from '")
                         .$(engine.getConfiguration().getSystemTableNamePrefix())
                         .$("copy_export_log' where id = '")
                         .$(cancelCopyIDStr)
                         .$("' limit -1")
-                        .compile(executionContext).getRecordCursorFactory()
+                        .compile(executionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                if (!e.isTableDoesNotExist()) {
+                    throw e;
+                }
+            }
+
+        }
+
+        return new CopyCancelFactory(
+                engine.getCopyImportContext(),
+                engine.getCopyExportContext(),
+                cancelCopyID,
+                cancelCopyIDStr,
+                _import,
+                _export,
+                engine.getConfiguration()
         );
     }
 

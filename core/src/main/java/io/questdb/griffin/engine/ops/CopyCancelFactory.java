@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -39,6 +40,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
+import io.questdb.std.Misc;
 
 /**
  * Executes COPY CANCEL statement lazily, i.e. on record cursor initialization, to play
@@ -51,6 +53,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final long cancelCopyID;
     private final String cancelCopyIDStr;
+    private final CairoConfiguration configuration;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
     private final RecordCursorFactory exportBaseFactory;
@@ -65,7 +68,8 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             long cancelCopyID,
             String cancelCopyIDStr,
             RecordCursorFactory importBaseFactory,
-            RecordCursorFactory exportBaseFactory
+            RecordCursorFactory exportBaseFactory,
+            CairoConfiguration configuration
     ) {
         super(METADATA);
         this.copyImportContext = copyImportContext;
@@ -74,6 +78,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
         this.cancelCopyIDStr = cancelCopyIDStr;
         this.importBaseFactory = importBaseFactory;
         this.exportBaseFactory = exportBaseFactory;
+        this.configuration = configuration;
     }
 
     @Override
@@ -100,22 +105,29 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             // be updated.
             status = "cancelled";
         } else {
-            try (RecordCursor importCursor = importBaseFactory.getCursor(executionContext)) {
-                Record rec = importCursor.getRecord();
-                // should be one row
-                if (importCursor.hasNext()) {
-                    status = rec.getSymA(IMPORT_STATUS_INDEX);
-                } else {
-                    try (RecordCursor exportCursor = exportBaseFactory.getCursor(executionContext)) {
-                        rec = exportCursor.getRecord();
-                        // should be one row
-                        if (exportCursor.hasNext()) {
-                            status = rec.getSymA(EXPORT_STATUS_INDEX);
-                        } else {
-                            status = "unknown";
-                        }
+            status = null;
+            if (importBaseFactory != null) {
+                try (RecordCursor importCursor = importBaseFactory.getCursor(executionContext)) {
+                    Record rec = importCursor.getRecord();
+                    // should be one row
+                    if (importCursor.hasNext()) {
+                        status = rec.getSymA(IMPORT_STATUS_INDEX);
                     }
                 }
+            }
+
+            if (exportBaseFactory != null && status == null) {
+                try (RecordCursor exportCursor = exportBaseFactory.getCursor(executionContext)) {
+                    Record rec = exportCursor.getRecord();
+                    // should be one row
+                    if (exportCursor.hasNext()) {
+                        status = rec.getSymA(EXPORT_STATUS_INDEX);
+                    }
+                }
+            }
+
+            if (status == null) {
+                status = "unknown";
             }
         }
         cursor.toTop();
@@ -134,8 +146,8 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        importBaseFactory.close();
-        exportBaseFactory.close();
+        Misc.free(importBaseFactory);
+        Misc.free(exportBaseFactory);
         super._close();
     }
 
