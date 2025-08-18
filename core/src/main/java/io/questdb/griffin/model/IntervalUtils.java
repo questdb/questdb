@@ -299,18 +299,40 @@ public final class IntervalUtils {
     }
 
     /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1.
      *
      * @param intervals collection of intervals
+     * @see #invert(LongList, int)
      */
     public static void invert(LongList intervals) {
         invert(intervals, 0);
     }
 
     /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     * Calculates the complement for a list of sorted, non-overlapping intervals. This operation
+     * finds all the "gaps" between the given intervals, covering the full range from
+     * {@code Long.MIN_VALUE} to {@code Long.MAX_VALUE}.
+     * <p>
+     * The calculation is performed <strong>in-place</strong>, overwriting the original list
+     * content starting from {@code startIndex} with the resulting inverted intervals. The list's
+     * logical size is adjusted to reflect the result.
+     * <p>
+     * <strong>Precondition:</strong> For the result to be correct, the source intervals in the list must be
+     * sorted in ascending order and must not overlap.
+     * <p>
+     * <b>Example:</b>
+     * <pre>
+     * // Source intervals: [100, 200], [500, 600]
+     * LongList list = new LongList(new long[]{100, 200, 500, 600});
+     * invert(list, 0);
+     * // After inversion, list contains: [Long.MIN_VALUE, 99, 201, 499, 601, Long.MAX_VALUE]
+     * </pre>
      *
-     * @param intervals collection of intervals
+     * @param intervals  A {@code LongList} containing a flat sequence of sorted, non-overlapping,
+     *                   inclusive intervals (e.g., {@code [start1, end1, start2, end2, ...]}).
+     *                   This list will be modified directly.
+     * @param startIndex The index in the list from which to start processing. Elements
+     *                   before this index are ignored and preserved.
      */
     public static void invert(LongList intervals, int startIndex) {
         long last = Long.MIN_VALUE;
