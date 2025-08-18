@@ -723,9 +723,21 @@ public class Decimal256 implements Sinkable {
         } else if (otherHL != 0 || otherLH < 0) {
             multiply192(otherHL, otherLH, otherLL);
         } else if (otherLH != 0 || otherLL < 0) {
-            multiply128(otherLH, otherLL);
+            if (hh == 0 && hl == 0 && lh >= 0) {
+                multiply128By128(otherLH, otherLL);
+            } else {
+                multiply128(otherLH, otherLL);
+            }
         } else {
-            multiply64(otherLL);
+            if (hh != 0 || hl < 0) {
+                multiply64(otherLL);
+            } else if (hl != 0 || lh < 0) {
+                multiply192x64(otherLL);
+            } else if (lh != 0 || ll < 0) {
+                multiply128By64(otherLL);
+            } else {
+                multiply64By64(otherLL);
+            }
         }
 
         if (isNegative) {
@@ -1098,6 +1110,100 @@ public class Decimal256 implements Sinkable {
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
 
+
+    private void multiply128By128(long h, long l) {
+        // Perform 256-bit × 128-bit multiplication
+        // Result is at most 384 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b3 = h >>> 32;
+        long b2 = h & 0xFFFFFFFFL;
+        long b1 = l >>> 32;
+        long b0 = l & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) +
+                (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) +
+                (p33 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p33 >>> 32);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply128By64(long multiplier) {
+        // Perform 128-bit × 64-bit multiplication
+
+        // Split this into 32-bit parts
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >>> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p31 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p31 >>> 32);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = 0;
+    }
+
     private void multiply128Unchecked(long h, long l) {
         // Perform 256-bit × 128-bit multiplication
         // Result is at most 384 bits, but we keep only the lower 256 bits
@@ -1340,6 +1446,55 @@ public class Decimal256 implements Sinkable {
                 (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
         long r7 = (r6 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
                 (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply192x64(long multiplier) {
+        // Perform 192-bit × 64-bit multiplication
+
+        // Split this into 32-bit parts
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >>> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p51 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p51 >>> 32);
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
@@ -1613,6 +1768,35 @@ public class Decimal256 implements Sinkable {
         this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
         this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply64By64(long multiplier) {
+        // Perform 64-bit × 64-bit multiplication
+
+        // Split this into 32-bit parts
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >>> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = 0;
+        this.hh = 0;
     }
 
     private void multiply64Unchecked(long multiplier) {
