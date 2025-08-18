@@ -6739,7 +6739,7 @@ public class SqlOptimiser implements Mutable {
      *                          reference to the base model.
      * @param position          literal position in the SQL text to aid SQL error reporting
      * @param groupByCall       flag indicating that the return value is required, which is in turn asking to ignore projection lookup.
-     *                          This lookup will be unhandled when the return value is needed to disambigute the column name.
+     *                          This lookup will be unhandled when the return value is needed to disambiguate the column name.
      * @return -1 if literal was matched to the projection, otherwise 0-based index of the join model where it was matched.
      * @throws SqlException exception is throw when literal could not be matched, or it matches several models at the same time (ambiguous).
      */
