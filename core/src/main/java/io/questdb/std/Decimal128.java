@@ -29,7 +29,6 @@ public class Decimal128 implements Sinkable {
     public static final Decimal128 MAX_VALUE = new Decimal128(Long.MAX_VALUE, Long.MIN_VALUE, 0);
     public static final Decimal128 MIN_VALUE = new Decimal128(Long.MIN_VALUE, Long.MIN_VALUE, 0);
     static final long LONG_MASK = 0xffffffffL;
-    private static final long INFLATED = Long.MIN_VALUE;
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
             54L, // 10^21
