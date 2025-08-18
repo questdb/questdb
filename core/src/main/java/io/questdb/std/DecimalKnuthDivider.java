@@ -194,10 +194,10 @@ class DecimalKnuthDivider {
      * Converts the 256-bit positive value into an array of 32-bit integers
      * stored in little-endian order for the Knuth division algorithm.
      *
-     * @param hh the most significant 64 bits of the dividend
-     * @param hl the high-middle 64 bits of the dividend
-     * @param lh the low-middle 64 bits of the dividend
-     * @param ll the least significant 64 bits of the dividend
+     * @param hh the most significant 64 bits of the divisor
+     * @param hl the high-middle 64 bits of the divisor
+     * @param lh the low-middle 64 bits of the divisor
+     * @param ll the least significant 64 bits of the divisor
      */
     public void ofDivisor(long hh, long hl, long lh, long ll) {
         v[7] = (int) (hh >>> 32);
