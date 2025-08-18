@@ -1339,7 +1339,7 @@ public class InsertCastTest extends AbstractCairoTest {
                     "select * from tab",
                     true);
 
-            // bar array
+            // bad array
             assertException("insert into tab values ('not array'::varchar)",
                     0,
                     "inconvertible value: `not array` [VARCHAR -> DOUBLE[][]]");
