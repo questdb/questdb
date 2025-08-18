@@ -420,22 +420,6 @@ class DecimalKnuthDivider {
         return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
     }
 
-    /**
-     * Step D8: Unnormalize
-     * Build the reminder unnormalized.
-     */
-// Not needed yet, commenting it out to avoid having to allocate r
-//    private void unnormalize(int s) {
-//        if (s == 0) {
-//            // No need to unnormalize, just copy the remainder.
-//            System.arraycopy(u, 0, r, 0, n);
-//            return;
-//        }
-//        for (int i = 0; i < n - 1; i++) {
-//            r[i] = (u[i] >>> s) | (u[i + 1] << (32 & -s));
-//        }
-//        r[n - 1] = u[n - 1] >>> s;
-//    }
     static long divWord(long dividend, long divisor) {
         if (divisor >= 0L) {
             long q = (dividend >>> 1) / divisor << 1;
