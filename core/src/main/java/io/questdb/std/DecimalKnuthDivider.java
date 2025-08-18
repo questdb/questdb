@@ -36,17 +36,17 @@ import java.util.Arrays;
  * such that u = q * v + r, where 0 <= r < v.
  */
 class DecimalKnuthDivider {
-    private static final ThreadLocal<DecimalKnuthDivider> tl = new ThreadLocal<>(DecimalKnuthDivider::new);
     private final int[] q = new int[8];
     private final int[] u = new int[9];
     private final int[] v = new int[8];
     private int m = 0;
     private int n = 0;
 
-    public static DecimalKnuthDivider instance() {
-        DecimalKnuthDivider instance = tl.get();
-        instance.clear();
-        return instance;
+    public void clear() {
+        m = 0;
+        n = 0;
+        // We don't need to clear u and v as they are bounded by m and n.
+        Arrays.fill(q, 0);
     }
 
     /**
@@ -145,28 +145,6 @@ class DecimalKnuthDivider {
 
     /**
      * Initializes the dividend for the division operation.
-     * Converts the 256-bit positive value into an array of 32-bit integers
-     * stored in little-endian order for the Knuth division algorithm.
-     *
-     * @param hh the most significant 64 bits of the dividend
-     * @param hl the high-middle 64 bits of the dividend
-     * @param lh the low-middle 64 bits of the dividend
-     * @param ll the least significant 64 bits of the dividend
-     */
-    public void ofDividend(long hh, long hl, long lh, long ll) {
-        u[7] = (int) (hh >>> 32);
-        u[6] = (int) hh;
-        u[5] = (int) (hl >>> 32);
-        u[4] = (int) hl;
-        u[3] = (int) (lh >>> 32);
-        u[2] = (int) lh;
-        u[1] = (int) (ll >>> 32);
-        u[0] = (int) ll;
-        m = countSignificantInts(u);
-    }
-
-    /**
-     * Initializes the dividend for the division operation.
      * Converts the 128-bit positive value into an array of 32-bit integers
      * stored in little-endian order for the Knuth division algorithm.
      *
@@ -190,25 +168,25 @@ class DecimalKnuthDivider {
     }
 
     /**
-     * Initializes the divisor for the division operation.
+     * Initializes the dividend for the division operation.
      * Converts the 256-bit positive value into an array of 32-bit integers
      * stored in little-endian order for the Knuth division algorithm.
      *
-     * @param hh the most significant 64 bits of the divisor
-     * @param hl the high-middle 64 bits of the divisor
-     * @param lh the low-middle 64 bits of the divisor
-     * @param ll the least significant 64 bits of the divisor
+     * @param hh the most significant 64 bits of the dividend
+     * @param hl the high-middle 64 bits of the dividend
+     * @param lh the low-middle 64 bits of the dividend
+     * @param ll the least significant 64 bits of the dividend
      */
-    public void ofDivisor(long hh, long hl, long lh, long ll) {
-        v[7] = (int) (hh >>> 32);
-        v[6] = (int) hh;
-        v[5] = (int) (hl >>> 32);
-        v[4] = (int) hl;
-        v[3] = (int) (lh >>> 32);
-        v[2] = (int) lh;
-        v[1] = (int) (ll >>> 32);
-        v[0] = (int) ll;
-        n = countSignificantInts(v);
+    public void ofDividend(long hh, long hl, long lh, long ll) {
+        u[7] = (int) (hh >>> 32);
+        u[6] = (int) hh;
+        u[5] = (int) (hl >>> 32);
+        u[4] = (int) hl;
+        u[3] = (int) (lh >>> 32);
+        u[2] = (int) lh;
+        u[1] = (int) (ll >>> 32);
+        u[0] = (int) ll;
+        m = countSignificantInts(u);
     }
 
     /**
@@ -236,16 +214,25 @@ class DecimalKnuthDivider {
     }
 
     /**
-     * Store the result from the division operation into a Decimal256.
+     * Initializes the divisor for the division operation.
+     * Converts the 256-bit positive value into an array of 32-bit integers
+     * stored in little-endian order for the Knuth division algorithm.
      *
-     * @param quotient the Decimal256 to store the result in
+     * @param hh the most significant 64 bits of the divisor
+     * @param hl the high-middle 64 bits of the divisor
+     * @param lh the low-middle 64 bits of the divisor
+     * @param ll the least significant 64 bits of the divisor
      */
-    public void sink(Decimal256 quotient, int scale) {
-        long hh = (q[6] & 0xFFFFFFFFL) | ((long) q[7] << 32);
-        long hl = (q[4] & 0xFFFFFFFFL) | ((long) q[5] << 32);
-        long lh = (q[2] & 0xFFFFFFFFL) | ((long) q[3] << 32);
-        long ll = (q[0] & 0xFFFFFFFFL) | ((long) q[1] << 32);
-        quotient.of(hh, hl, lh, ll, scale);
+    public void ofDivisor(long hh, long hl, long lh, long ll) {
+        v[7] = (int) (hh >>> 32);
+        v[6] = (int) hh;
+        v[5] = (int) (hl >>> 32);
+        v[4] = (int) hl;
+        v[3] = (int) (lh >>> 32);
+        v[2] = (int) lh;
+        v[1] = (int) (ll >>> 32);
+        v[0] = (int) ll;
+        n = countSignificantInts(v);
     }
 
     /**
@@ -257,6 +244,19 @@ class DecimalKnuthDivider {
         long high = (q[2] & 0xFFFFFFFFL) | ((long) q[3] << 32);
         long low = (q[0] & 0xFFFFFFFFL) | ((long) q[1] << 32);
         quotient.of(high, low, scale);
+    }
+
+    /**
+     * Store the result from the division operation into a Decimal256.
+     *
+     * @param quotient the Decimal256 to store the result in
+     */
+    public void sink(Decimal256 quotient, int scale) {
+        long hh = (q[6] & 0xFFFFFFFFL) | ((long) q[7] << 32);
+        long hl = (q[4] & 0xFFFFFFFFL) | ((long) q[5] << 32);
+        long lh = (q[2] & 0xFFFFFFFFL) | ((long) q[3] << 32);
+        long ll = (q[0] & 0xFFFFFFFFL) | ((long) q[1] << 32);
+        quotient.of(hh, hl, lh, ll, scale);
     }
 
     /**
@@ -290,13 +290,6 @@ class DecimalKnuthDivider {
             return 2;
         }
         return 1;
-    }
-
-    public void clear() {
-        m = 0;
-        n = 0;
-        // We don't need to clear u and v as they are bounded by m and n.
-        Arrays.fill(q, 0);
     }
 
     /**

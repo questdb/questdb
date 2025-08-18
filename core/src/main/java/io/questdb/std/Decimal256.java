@@ -127,6 +127,7 @@ public class Decimal256 implements Sinkable {
     private static final BigDecimal[] ZERO_SCALED = new BigDecimal[32];
     // holders for in-place mutations that doesn't have a mutable structure available
     private static final ThreadLocal<Decimal256> tl = new ThreadLocal<>(Decimal256::new);
+    private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long hh; // Highest 64 bits (bits 192-255)
     private long hl;    // High 64 bits (bits 128-191)
     private long lh;     // Mid 64 bits (bits 64-127)
@@ -188,6 +189,7 @@ public class Decimal256 implements Sinkable {
      */
     public static void divide(Decimal256 dividend, Decimal256 divisor, Decimal256 result, int scale, RoundingMode roundingMode) {
         divide(
+                result.divider,
                 dividend.hh, dividend.hl, dividend.lh, dividend.ll, dividend.scale,
                 divisor.hh, divisor.hl, divisor.lh, divisor.ll, divisor.scale,
                 result, scale, roundingMode
@@ -213,6 +215,7 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if division by zero or overflow occurs
      */
     public static void divide(
+            DecimalKnuthDivider divider,
             long dividendHH, long dividendHL, long dividendLH, long dividendLL, int dividendScale,
             long divisorHH, long divisorHL, long divisorLH, long divisorLL, int divisorScale,
             Decimal256 result, int scale, RoundingMode roundingMode) {
@@ -266,7 +269,7 @@ public class Decimal256 implements Sinkable {
             divisorLL = result.ll;
         }
 
-        DecimalKnuthDivider divider = DecimalKnuthDivider.instance();
+        divider.clear();
         divider.ofDividend(dividendHH, dividendHL, dividendLH, dividendLL);
         divider.ofDivisor(divisorHH, divisorHL, divisorLH, divisorLL);
         divider.divide(isNegative, roundingMode);
@@ -832,7 +835,7 @@ public class Decimal256 implements Sinkable {
             return;
         }
 
-        divide(hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
+        divide(divider, hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
     }
 
     /**
