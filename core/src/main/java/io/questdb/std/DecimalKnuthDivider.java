@@ -56,14 +56,18 @@ class DecimalKnuthDivider {
     public void divide(boolean isNegative, RoundingMode roundingMode) {
         // If the dividend is smaller than the divisor, the result is zero.
         if (m < n) {
-            round(isNegative, roundingMode);
+            if (m == 0) {
+                return;
+            }
+
+            round(isNegative, roundingMode, m - 1);
             return;
         }
 
         // If the divisor is a word, we can use the optimized algorithm.
         if (n == 1) {
             divideByWord();
-            round(isNegative, roundingMode);
+            round(isNegative, roundingMode, 0);
             return;
         }
 
@@ -288,7 +292,7 @@ class DecimalKnuthDivider {
         return 1;
     }
 
-    private void clear() {
+    public void clear() {
         m = 0;
         n = 0;
         // We don't need to clear u and v as they are bounded by m and n.
@@ -325,7 +329,7 @@ class DecimalKnuthDivider {
             long quo;
             if (qhat >= 0L) {
                 quo = (qhat / divisor);
-                r = (qhat - quo * divisor);
+                r = qhat % divisor;
             } else {
                 quo = divWord(qhat, divisor);
                 r = (quo >>> 32);
@@ -373,6 +377,17 @@ class DecimalKnuthDivider {
             }
         }
         if (mostSignificantDigit == -1) {
+            return;
+        }
+
+        round(isNegative, roundingMode, mostSignificantDigit);
+    }
+
+    /**
+     * Round the quotient based on the unnormalized remainder/division.
+     */
+    private void round(boolean isNegative, RoundingMode roundingMode, int mostSignificantDigit) {
+        if (u[mostSignificantDigit] == 0) {
             return;
         }
 
