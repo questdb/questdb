@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class BitmapIndexConcurrentTest extends AbstractCairoTest {
+public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
     private static final int MAX_ID = 100;
 
     @Test
