@@ -258,12 +258,12 @@ public final class ColumnType {
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
-        final short type = tagOf(timestampType);
+        final short tag = tagOf(timestampType);
         // null and UNDEFINED use MicrosTimestamp
-        if (type == NULL || type == UNDEFINED) {
+        if (tag == NULL || tag == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
-        assert type == TIMESTAMP;
+        assert tag == TIMESTAMP;
 
         switch (timestampType) {
             case TIMESTAMP_MICRO:
