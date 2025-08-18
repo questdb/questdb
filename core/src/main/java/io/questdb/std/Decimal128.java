@@ -393,8 +393,7 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Copy values from another Decimal128low
-     * low
+     * Copy values from another Decimal128
      */
     public void copyFrom(Decimal128 source) {
         this.high = source.high;
