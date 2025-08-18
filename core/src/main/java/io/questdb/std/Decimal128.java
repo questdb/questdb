@@ -781,7 +781,7 @@ public class Decimal128 implements Sinkable {
             // We need to rescale a to the same scale as b
             result.high = aH;
             result.low = aL;
-            result.rescale(bScale);
+            result.rescale0(bScale);
             aH = result.high;
             aL = result.low;
         } else if (aScale > bScale) {
@@ -789,7 +789,7 @@ public class Decimal128 implements Sinkable {
             result.high = bH;
             result.low = bL;
             result.scale = bScale;
-            result.rescale(aScale);
+            result.rescale0(aScale);
             bH = result.high;
             bL = result.low;
         }
