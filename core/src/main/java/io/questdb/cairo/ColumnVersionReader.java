@@ -320,16 +320,16 @@ public class ColumnVersionReader implements Closeable, Mutable {
             sink.put("\n{columnIndex: ").put(columnIndex).put(", ");
             boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
             if (isDefaultPartition) {
-                sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("addedPartition: '");
+                sink.putAscii("defaultNameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("addedPartition: ");
                 sink.put(columnTop);
-                sink.put("'}");
+                sink.putAscii('}');
             } else {
-                sink.put("nameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("partition: '");
+                sink.put("nameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("partition: ");
                 sink.put(timestamp);
-                sink.put("', ");
-                sink.put("columnTop: ").put(columnTop).put("}");
+                sink.putAscii(", ");
+                sink.putAscii("columnTop: ").put(columnTop).putAscii('}');
             }
         }
         sink.put("\n]}");

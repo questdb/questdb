@@ -345,15 +345,16 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 for (int i = 0; i < 3; i += 2) {
                     w.upsert(i, i % 10, -1, i * 10L);
                 }
-                w.upsertDefaultTxnName(4, 123, MicrosFormatUtils.parseTimestamp("2024-02-24T00:00:00.000000Z"));
+                final long defaultTs = MicrosFormatUtils.parseTimestamp("2024-02-24T00:00:00.000000Z");
+                w.upsertDefaultTxnName(4, 123, defaultTs);
 
                 w.commit();
 
                 r.readSafe(configuration.getMillisecondClock(), 1);
                 Assert.assertEquals("{[\n" +
-                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: '2024-02-24T00:00:00.000000Z'},\n" +
-                        "{columnIndex: 0, nameTxn: -1, partition: '1970-01-01T00:00:00.000000Z', columnTop: 0},\n" +
-                        "{columnIndex: 2, nameTxn: -1, partition: '1970-01-01T00:00:00.000002Z', columnTop: 20}\n" +
+                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: " + defaultTs + "},\n" +
+                        "{columnIndex: 0, nameTxn: -1, partition: 0, columnTop: 0},\n" +
+                        "{columnIndex: 2, nameTxn: -1, partition: 2, columnTop: 20}\n" +
                         "]}", r.toString());
             }
         });
