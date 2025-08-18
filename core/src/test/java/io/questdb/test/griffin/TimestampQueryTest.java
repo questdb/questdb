@@ -899,6 +899,29 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNanoWithTimezone() throws Exception {
+        // with constant
+        assertSql("ts\n" +
+                        "2020-01-01T00:00:00.000000001Z\n",
+                "select '2020-01-01T00:00:00.000000001Z'::timestamp_ns with time zone ts");
+
+        // with function
+        assertSql("ts\n" +
+                        "2020-01-01T01:02:03.123456789Z\n",
+                "select concat('2020-01-01T','01:02:03.123456789Z')::timestamp_ns with time zone ts");
+
+        // with column
+        assertMemoryLeak(() -> {
+            execute("create table tt (vch varchar, ts timestamp_ns)");
+            execute("insert into tt values ('2020-01-01T00:00:00.000000123Z', '2020-01-01T00:00:00.000000123Z'::timestamp_ns with time zone)");
+
+            assertSql("ts\n" +
+                            "2020-01-01T00:00:00.000000123Z\n",
+                    "select vch::timestamp_ns with time zone ts from tt");
+        });
+    }
+
+    @Test
     public void testTimestampOpSymbolColumns() throws Exception {
         assertQuery(
                 "a\tk\n" +

@@ -1966,6 +1966,22 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'p';
     }
 
+    public static boolean isTimestampNsKeyword(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 't'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't'
+                && (tok.charAt(6) | 32) == 'a'
+                && (tok.charAt(7) | 32) == 'm'
+                && (tok.charAt(8) | 32) == 'p'
+                && tok.charAt(9) == '_'
+                && (tok.charAt(10) | 32) == 'n'
+                && (tok.charAt(11) | 32) == 's';
+    }
+
     public static boolean isToKeyword(CharSequence tok) {
         return tok.length() == 2
                 && (tok.charAt(0) | 32) == 't'
