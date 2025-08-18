@@ -55,8 +55,8 @@ import java.util.concurrent.TimeUnit;
 public class Decimal256RoundBenchmark {
 
     private BigDecimal bigDecimalValue;
-    private Decimal256 decimal256Value;
     private Decimal256 decimal256Result;
+    private Decimal256 decimal256Value;
     private RoundingMode javaRoundingMode;
     @SuppressWarnings("unused")
     @Param({"HALF_UP", "HALF_DOWN", "HALF_EVEN", "UP", "DOWN", "CEILING", "FLOOR"})
@@ -100,7 +100,7 @@ public class Decimal256RoundBenchmark {
         } else {
             decimal256Result.round(targetScale, javaRoundingMode);
         }
-        
+
         return decimal256Result;
     }
 
