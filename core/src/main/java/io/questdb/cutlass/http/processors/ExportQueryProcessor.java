@@ -180,7 +180,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     state.metadata = state.recordCursorFactory.getMetadata();
 
                     if (isExpRequest && SqlKeywords.isParquetKeyword(state.fmt)) {
-                        // todo: make parquet export parkable/resumable
                         handleParquetExport(context);
                     } else {
                         assert (SqlKeywords.isCsvKeyword(state.fmt));
@@ -352,12 +351,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             return CopyExportRequestTask.STATUS_PENDING;
                         }
                     }
-                } else {
-                    return CopyExportRequestTask.STATUS_PENDING;
                 }
             }
         }
-        throw new UnsupportedOperationException();
+        return CopyExportRequestTask.STATUS_PENDING;
     }
 
     private String createTempTableForQuery(CharSequence query, long copyID) throws SqlException {
@@ -507,14 +504,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private String findParquetExportFile(String copyID) {
         try (Path path = new Path()) {
-            String inputRoot = engine.getConfiguration().getSqlCopyInputRoot().toString();
+            String inputRoot = engine.getConfiguration().getSqlCopyExportRoot().toString();
             path.of(inputRoot).concat("copy.").put(copyID);
 
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
 
             path.concat("default.parquet");
 
-            assert ff.exists(path.$()); // todo: improvre error
+            assert ff.exists(path.$()); // todo: improve error
 
             return path.asAsciiCharSequence().toString(); // todo: remove unnecessary string
             // handle cleanup
@@ -574,7 +571,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         sendException(context.getChunkedResponse(), 0, "exported parquet files not found [id=" + state.copyID + ']', state);
                     }
                     sendParquetFile(context.getChunkedResponse(), exportPath, state);
-//                    sendDone(context.getChunkedResponse(), state);
                     break;
             }
         } catch (ExportInProgressException e) {
