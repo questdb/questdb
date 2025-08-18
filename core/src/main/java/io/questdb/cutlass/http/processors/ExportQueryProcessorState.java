@@ -32,8 +32,10 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
@@ -63,6 +65,12 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long stop;
     SuspendEvent suspendEvent;
     boolean waitingForCopy;
+    long parquetFileFd = -1;
+    long parquetFileSize = 0;
+    long parquetFileOffset = 0;
+    String parquetFilePath;
+    long parquetFileBuffer = 0;
+    static final long PARQUET_BUFFER_SIZE = 8192;
     private boolean queryCacheable = false;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {
@@ -102,6 +110,18 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         copyID = null;
         waitingForCopy = false;
         suspendEvent = null;
+        parquetFileFd = -1;
+        parquetFileSize = 0;
+        parquetFileOffset = 0;
+        parquetFilePath = null;
+        if (parquetFileBuffer != 0) {
+            Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            parquetFileBuffer = 0;
+        }
+        if (parquetFileFd != -1) {
+            // Close any open file descriptor
+            parquetFileFd = -1;
+        }
     }
 
     @Override
@@ -109,6 +129,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         Misc.free(suspendEvent);
+        if (parquetFileBuffer != 0) {
+            Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            parquetFileBuffer = 0;
+        }
     }
 
     public long getFd() {

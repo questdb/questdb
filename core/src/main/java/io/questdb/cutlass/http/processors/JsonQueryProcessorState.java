@@ -85,6 +85,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
     static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
     static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
+    static final int QUERY_PARQUET_EXPORT_INIT = QUERY_RECORD_PREFIX + 1; // 10
+    static final int QUERY_PARQUET_EXPORT_WAIT = QUERY_PARQUET_EXPORT_INIT + 1; // 11
+    static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_EXPORT_WAIT + 1; // 12
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 13
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 14
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
