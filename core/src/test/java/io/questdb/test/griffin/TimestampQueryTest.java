@@ -418,44 +418,58 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMicrosecondVsNanosecondTimestampEquality() throws Exception {
+    public void testMicrosecondVsNanosecondTimestampJoin() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables for JOIN test
             execute("create table micro_table (id int, ts_micro timestamp) timestamp(ts_micro)");
             execute("create table nano_table (id int, ts_nano timestamp_ns) timestamp(ts_nano)");
 
-            // Create single table for WHERE clause test
-            execute("create table ts_table (id int, ts_micro timestamp, ts_nano timestamp_ns)");
-
-            // Insert data: microsecond timestamp vs nanosecond with extra precision
+            // Insert test data: one microsecond value, two nanosecond values (one matching, one with extra precision)
             long micros = 1577836800123456L; // 2020-01-01T00:00:00.123456
-            long nanosWithExtra = 1577836800123456789L; // 2020-01-01T00:00:00.123456789
+            long nanosMatching = micros * 1000; // 2020-01-01T00:00:00.123456000 (matching)
+            long nanosWithExtra = nanosMatching + 789; // 2020-01-01T00:00:00.123456789 (extra precision)
 
             execute("insert into micro_table values (1, " + micros + ")");
-            execute("insert into nano_table values (1, " + nanosWithExtra + ")");
-            execute("insert into ts_table values (1, " + micros + ", " + nanosWithExtra + ")");
+            execute("insert into nano_table values (1, " + nanosMatching + "), (2, " + nanosWithExtra + ")");
 
-            // Test 1: JOIN with explicit cast (should work)
+            // Test 1: JOIN with explicit nanos->micros cast (should work with both nano rows)
             assertSql("id\tts_micro\tid1\tts_nano\n" +
-                            "1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456789Z\n",
+                            "1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t2\t2020-01-01T00:00:00.123456789Z\n",
                     "select * from micro_table m join nano_table n on m.ts_micro = CAST(n.ts_nano as timestamp)");
 
-            // Test 2: WHERE clause with explicit cast (should work)
+            // Test 2: JOIN without explicit cast (should succeed with implicit casting)
+            // Only the matching precision row should join
+            assertSql("id\tts_micro\tid1\tts_nano\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z\n",
+                    "select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table for WHERE clause test
+            execute("create table ts_table (id int, ts_micro timestamp, ts_nano timestamp_ns)");
+
+            // Insert test data: one microsecond value, two nanosecond values (one matching, one with extra precision)
+            long micros = 1577836800123456L; // 2020-01-01T00:00:00.123456
+            long nanosMatching = micros * 1000; // 2020-01-01T00:00:00.123456000 (matching)
+            long nanosWithExtra = nanosMatching + 789; // 2020-01-01T00:00:00.123456789 (extra precision)
+
+            execute("insert into ts_table values (1, " + micros + ", " + nanosMatching + ")");
+            execute("insert into ts_table values (2, " + micros + ", " + nanosWithExtra + ")");
+
+            // Test 1: WHERE clause with explicit nanos->micros cast (should work with both rows)
             assertSql("id\tts_micro\tts_nano\n" +
-                            "1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456789Z\n",
+                            "1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z\n" +
+                            "2\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456789Z\n",
                     "select * from ts_table where ts_micro = CAST(ts_nano as timestamp)");
 
-            // Test 3: JOIN without explicit cast (should fail with type mismatch)
-            assertExceptionNoLeakCheck(
-                    "select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano",
-                    62,
-                    "join column type mismatch"
-            );
-
-            // Test 4: WHERE clause without explicit cast - should return empty (upgrade behavior)
-            // QuestDB follows DuckDB's approach: upgrade microseconds to nanoseconds for comparison
-            // 123456 μs becomes 123456000 ns, which ≠ 123456789 ns
-            assertSql("id\tts_micro\tts_nano\n", // Empty result expected - no matches
+            // Test 2: WHERE clause without explicit cast
+            // Row 1 has matching precision: microseconds convert to same nanoseconds
+            assertSql("id\tts_micro\tts_nano\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z\n",
                     "select * from ts_table where ts_micro = ts_nano");
         });
     }

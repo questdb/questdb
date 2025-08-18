@@ -422,6 +422,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeStringAsVarcharA = new BitSet();
     private final BitSet writeStringAsVarcharB = new BitSet();
     private final BitSet writeSymbolAsString = new BitSet();
+    // bitsets for timestamp conversion to higher precision type
+    private final BitSet writeTimestampAsNanosA = new BitSet();
+    private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -1177,7 +1180,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterMetadata,
                 listColumnFilterB,
                 writeSymbolAsString,
-                writeStringAsVarcharB
+                writeStringAsVarcharB,
+                writeTimestampAsNanosB
         );
 
         // This metadata allocates native memory, it has to be closed in case join
@@ -1252,7 +1256,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             slaveMetadata,
                             listColumnFilterA,
                             writeSymbolAsString,
-                            writeStringAsVarcharA
+                            writeStringAsVarcharA,
+                            writeTimestampAsNanosA
                     ),
                     masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
@@ -1295,7 +1300,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterMetadata,
                 listColumnFilterB,
                 writeSymbolAsString,
-                writeStringAsVarcharB
+                writeStringAsVarcharB,
+                writeTimestampAsNanosB
         );
 
         final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
@@ -1303,7 +1309,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveMetadata,
                 listColumnFilterA,
                 writeSymbolAsString,
-                writeStringAsVarcharA
+                writeStringAsVarcharA,
+                writeTimestampAsNanosA
         );
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -2686,14 +2693,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 masterMetadata,
                                                 listColumnFilterB,
                                                 writeSymbolAsString,
-                                                writeStringAsVarcharB
+                                                writeStringAsVarcharB,
+                                                writeTimestampAsNanosB
                                         );
                                         RecordSink slaveSink = RecordSinkFactory.getInstance(
                                                 asm,
                                                 slaveMetadata,
                                                 listColumnFilterA,
                                                 writeSymbolAsString,
-                                                writeStringAsVarcharA
+                                                writeStringAsVarcharA,
+                                                writeTimestampAsNanosA
                                         );
                                         boolean created = false;
                                         if (!asOfAvoidBinarySearch) {
@@ -2947,7 +2956,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterMetadata,
                                                         listColumnFilterB,
                                                         writeSymbolAsString,
-                                                        writeStringAsVarcharB
+                                                        writeStringAsVarcharB,
+                                                        writeTimestampAsNanosB
                                                 ),
                                                 slave,
                                                 RecordSinkFactory.getInstance(
@@ -2955,7 +2965,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         slaveMetadata,
                                                         listColumnFilterA,
                                                         writeSymbolAsString,
-                                                        writeStringAsVarcharA
+                                                        writeStringAsVarcharA,
+                                                        writeTimestampAsNanosA
                                                 ),
                                                 masterMetadata.getColumnCount(),
                                                 slaveModel.getContext(),
@@ -3014,7 +3025,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     masterMetadata,
                                                     listColumnFilterB,
                                                     writeSymbolAsString,
-                                                    writeStringAsVarcharB
+                                                    writeStringAsVarcharB,
+                                                    writeTimestampAsNanosB
                                             ),
                                             slave,
                                             RecordSinkFactory.getInstance(
@@ -3022,7 +3034,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     slaveMetadata,
                                                     listColumnFilterA,
                                                     writeSymbolAsString,
-                                                    writeStringAsVarcharA
+                                                    writeStringAsVarcharA,
+                                                    writeTimestampAsNanosA
                                             ),
                                             masterMetadata.getColumnCount(),
                                             slaveModel.getContext()
@@ -6675,6 +6688,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         writeSymbolAsString.clear();
         writeStringAsVarcharA.clear();
         writeStringAsVarcharB.clear();
+        writeTimestampAsNanosA.clear();
+        writeTimestampAsNanosB.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             // Don't use tagOf(columnType) to compare the types.
             // Key types have too much exactly except SYMBOL and STRING special case
@@ -6684,7 +6699,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
             final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
             final String columnNameB = masterMetadata.getColumnName(columnIndexB);
-            if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrStringOrVarchar(columnTypeB) && ColumnType.isSymbolOrStringOrVarchar(columnTypeA))) {
+            if (columnTypeB != columnTypeA &&
+                    !(ColumnType.isSymbolOrStringOrVarchar(columnTypeB) && ColumnType.isSymbolOrStringOrVarchar(columnTypeA)) &&
+                    !(ColumnType.isTimestamp(columnTypeB) && ColumnType.isTimestamp(columnTypeA))
+            ) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
@@ -6709,6 +6727,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyTypes.add(columnTypeB);
                 writeSymbolAsString.set(columnIndexA);
                 writeSymbolAsString.set(columnIndexB);
+            } else if (columnTypeA != columnTypeB &&
+                    ColumnType.isTimestamp(columnTypeA) && ColumnType.isTimestamp(columnTypeB)
+            ) {
+                keyTypes.add(TIMESTAMP_NANO);
+                // Mark columns that need conversion to nanoseconds
+                if (!ColumnType.isTimestampNano(columnTypeA)) {
+                    writeTimestampAsNanosA.set(columnIndexA);
+                }
+                if (!ColumnType.isTimestampNano(columnTypeB)) {
+                    writeTimestampAsNanosB.set(columnIndexB);
+                }
             } else {
                 keyTypes.add(columnTypeB);
             }
