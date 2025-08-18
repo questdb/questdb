@@ -91,7 +91,7 @@ public class Decimal64 implements Sinkable {
      *
      * @param value the unscaled decimal value
      * @param scale the number of decimal places
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public Decimal64(long value, int scale) {
         validateScale(scale);
@@ -120,7 +120,7 @@ public class Decimal64 implements Sinkable {
      */
     public static Decimal64 fromBigDecimal(BigDecimal value) {
         if (value == null) {
-            throw new IllegalArgumentException("BigDecimal cannot be null");
+            throw NumericException.instance().put("BigDecimal cannot be null");
         }
 
         int scale = value.scale();
@@ -133,7 +133,7 @@ public class Decimal64 implements Sinkable {
 
         BigInteger bi = value.unscaledValue();
         if (bi.bitLength() > 63) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow: BigDecimal value exceeds 64-bit capacity during conversion");
         }
         long unscaled = bi.longValueExact();
         return new Decimal64(unscaled, scale);
@@ -207,7 +207,7 @@ public class Decimal64 implements Sinkable {
                 this.value = Math.addExact(this.value, scaleUp(other.value, scaleDiff));
             }
         } catch (ArithmeticException e) {
-            throw NumericException.instance().put("Overflow in decimal addition");
+            throw NumericException.instance().put("Overflow in addition: result exceeds 64-bit capacity");
         }
     }
 
@@ -376,12 +376,12 @@ public class Decimal64 implements Sinkable {
         try {
             this.value = Math.multiplyExact(this.value, other.value);
         } catch (ArithmeticException ignored) {
-            throw NumericException.instance().put("Overflow in decimal multiplication");
+            throw NumericException.instance().put("Overflow in multiplication: product exceeds 64-bit capacity");
         }
         this.scale += other.scale;
 
         if (this.scale > MAX_SCALE) {
-            throw NumericException.instance().put("Overflow in decimal multiplication scaling");
+            throw NumericException.instance().put("Overflow in multiplication: resulting scale exceeds maximum (" + MAX_SCALE + ")");
         }
     }
 
@@ -392,7 +392,7 @@ public class Decimal64 implements Sinkable {
         try {
             this.value = Math.negateExact(this.value);
         } catch (ArithmeticException ignored) {
-            throw NumericException.instance().put("Overflow in decimal negation");
+            throw NumericException.instance().put("Overflow in negation: cannot negate Long.MIN_VALUE");
         }
     }
 
@@ -407,7 +407,7 @@ public class Decimal64 implements Sinkable {
      *
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
-     * @throws IllegalArgumentException if targetScale is invalid
+     * @throws NumericException if targetScale is invalid
      * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
@@ -469,7 +469,7 @@ public class Decimal64 implements Sinkable {
                 this.value = Math.subtractExact(this.value, scaleUp(other.value, scaleDiff));
             }
         } catch (ArithmeticException ignored) {
-            throw NumericException.instance().put("Overflow in decimal subtraction");
+            throw NumericException.instance().put("Overflow in subtraction: result exceeds 64-bit capacity");
         }
     }
 
@@ -526,10 +526,10 @@ public class Decimal64 implements Sinkable {
 
         // Check for overflow
         if (value > 0 && value > MAX_SAFE_MULTIPLY[scaleDiff]) {
-            throw NumericException.instance().put("Overflow in decimal scaling");
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + scaleDiff + " exceeds 64-bit capacity");
         }
         if (value < 0 && value < -MAX_SAFE_MULTIPLY[scaleDiff]) {
-            throw NumericException.instance().put("Overflow in decimal scaling");
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + scaleDiff + " exceeds 64-bit capacity");
         }
 
         return value * multiplier;
@@ -537,14 +537,14 @@ public class Decimal64 implements Sinkable {
 
     private static long scaleUpPositive(long value, int scaleDiff) {
         if (scaleDiff >= TEN_POWERS_TABLE.length) {
-            throw NumericException.instance().put("Overflow in decimal scaling");
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + scaleDiff + " exceeds 64-bit capacity");
         }
 
         long multiplier = TEN_POWERS_TABLE[scaleDiff];
 
         // Check for overflow
         if (value > 0 && value > MAX_SAFE_MULTIPLY[scaleDiff]) {
-            throw NumericException.instance().put("Overflow while scaling decimal");
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + scaleDiff + " exceeds 64-bit capacity");
         }
 
         return value * multiplier;
@@ -587,7 +587,7 @@ public class Decimal64 implements Sinkable {
 
     private static void validateScale(int scale) {
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
-            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+            throw NumericException.instance().put("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
         }
     }
 }

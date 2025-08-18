@@ -178,7 +178,7 @@ public class Decimal128 implements Sinkable {
      * @param high  the high 64 bits of the decimal value
      * @param low   the low 64 bits of the decimal value
      * @param scale the number of decimal places
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public Decimal128(long high, long low, int scale) {
         validateScale(scale);
@@ -219,11 +219,11 @@ public class Decimal128 implements Sinkable {
      *
      * @param value the BigDecimal value to convert
      * @return a new Decimal128 representing the BigDecimal value
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public static Decimal128 fromBigDecimal(BigDecimal value) {
         if (value == null) {
-            throw new IllegalArgumentException("BigDecimal value cannot be null");
+            throw NumericException.instance().put("BigDecimal value cannot be null");
         }
 
         int scale = value.scale();
@@ -237,7 +237,7 @@ public class Decimal128 implements Sinkable {
             scale = 0;
         }
         if (bi.bitLength() > 127) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow: BigDecimal value exceeds 128-bit capacity during conversion");
         }
         lo = bi.longValue();
         hi = bi.shiftRight(64).longValue();
@@ -251,7 +251,7 @@ public class Decimal128 implements Sinkable {
      * @param value the double value to convert
      * @param scale the number of decimal places
      * @return a new Decimal128 representing the double value
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public static Decimal128 fromDouble(double value, int scale) {
         validateScale(scale);
@@ -265,7 +265,7 @@ public class Decimal128 implements Sinkable {
      * @param value the long value to convert
      * @param scale the number of decimal places
      * @return a new Decimal128 representing the long value
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public static Decimal128 fromLong(long value, int scale) {
         validateScale(scale);
@@ -423,7 +423,7 @@ public class Decimal128 implements Sinkable {
 
         // Fail early if we're sure to overflow.
         if (delta > 0 && (this.scale + delta) > MAX_SCALE) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in division: resulting scale would exceed maximum (" + MAX_SCALE + ")");
         }
 
         final boolean negResult = (divisorHigh < 0) ^ isNegative();
@@ -607,7 +607,7 @@ public class Decimal128 implements Sinkable {
     public void rescale(int newScale) {
         validateScale(newScale);
         if (newScale < this.scale) {
-            throw new IllegalArgumentException("New scale must be >= current scale");
+            throw NumericException.instance().put("New scale must be >= current scale");
         }
         rescale0(newScale);
     }
@@ -618,7 +618,7 @@ public class Decimal128 implements Sinkable {
      *
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
-     * @throws IllegalArgumentException if targetScale is invalid
+     * @throws NumericException if targetScale is invalid
      * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
@@ -804,7 +804,7 @@ public class Decimal128 implements Sinkable {
         try {
             result.high = Math.addExact(aH, Math.addExact(bH, carry));
         } catch (ArithmeticException e) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in addition: result exceeds 128-bit capacity");
         }
     }
 
@@ -822,7 +822,7 @@ public class Decimal128 implements Sinkable {
     private static void validateScale(int scale) {
         // Use unsigned comparison for faster bounds check
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
-            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+            throw NumericException.instance().put("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
         }
     }
 
@@ -923,7 +923,7 @@ public class Decimal128 implements Sinkable {
                 (p33 & LONG_MASK);
 
         if ((r3 >>> 31) != 0 || r4 != 0 || r5 != 0 || r6 != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (128-bit × 128-bit): product exceeds 128-bit capacity");
         }
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -1033,7 +1033,7 @@ public class Decimal128 implements Sinkable {
 
         // Check for overflow: if r4 has significant bits, the result exceeds 128 bits
         if (r4 != 0 || (r3 >> 31) != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (128-bit × 64-bit): product exceeds 128-bit capacity");
         }
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -1088,7 +1088,7 @@ public class Decimal128 implements Sinkable {
         final long thresholdL = TEN_POWERS_TABLE_THRESHOLD_LOW[n];
 
         if (high > thresholdH || (high == thresholdH && unsignedLongCompare(low, thresholdL))) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + n + " exceeds 128-bit capacity");
         }
 
         final long multiplierHigh = n >= 20 ? TEN_POWERS_TABLE_HIGH[n - 20] : 0L;

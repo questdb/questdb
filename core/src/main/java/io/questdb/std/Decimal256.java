@@ -153,7 +153,7 @@ public class Decimal256 implements Sinkable {
      * @param lh    the mid 64 bits of the decimal value (bits 64-127)
      * @param ll    the low 64 bits of the decimal value (bits 0-63)
      * @param scale the number of decimal places
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public Decimal256(long hh, long hl, long lh, long ll, int scale) {
         validateScale(scale);
@@ -226,7 +226,7 @@ public class Decimal256 implements Sinkable {
 
         // Fail early if we're sure to overflow.
         if (delta > 0 && (scale + delta) > MAX_SCALE) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in division: resulting scale would exceed maximum (" + MAX_SCALE + ")");
         }
 
         final boolean isNegative = (dividendHH < 0) ^ (divisorHH < 0);
@@ -289,7 +289,7 @@ public class Decimal256 implements Sinkable {
      */
     public static Decimal256 fromBigDecimal(BigDecimal bd) {
         if (bd == null) {
-            throw new IllegalArgumentException("BigDecimal cannot be null");
+            throw NumericException.instance().put("BigDecimal cannot be null");
         }
 
         BigInteger unscaledValue = bd.unscaledValue();
@@ -334,7 +334,7 @@ public class Decimal256 implements Sinkable {
      * @param value the double value
      * @param scale the desired scale
      * @return new Decimal256 instance
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public static Decimal256 fromDouble(double value, int scale) {
         validateScale(scale);
@@ -348,7 +348,7 @@ public class Decimal256 implements Sinkable {
      * @param value the long value
      * @param scale the desired scale
      * @return new Decimal256 instance
-     * @throws IllegalArgumentException if scale is invalid
+     * @throws NumericException if scale is invalid
      */
     public static Decimal256 fromLong(long value, int scale) {
         validateScale(scale);
@@ -785,7 +785,7 @@ public class Decimal256 implements Sinkable {
      */
     public void rescale(int newScale) {
         if (newScale < scale) {
-            throw new IllegalArgumentException("New scale must be >= current scale");
+            throw NumericException.instance().put("New scale must be >= current scale");
         }
 
         int scaleDiff = newScale - this.scale;
@@ -810,7 +810,7 @@ public class Decimal256 implements Sinkable {
      *
      * @param targetScale  the target scale
      * @param roundingMode the rounding mode
-     * @throws IllegalArgumentException if target scale is invalid
+     * @throws NumericException if target scale is invalid
      */
     public void round(int targetScale, RoundingMode roundingMode) {
         if (targetScale == this.scale) {
@@ -986,11 +986,11 @@ public class Decimal256 implements Sinkable {
 
         t = aHH + carry;
         if (((aHH ^ t) & (carry ^ t)) < 0L) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
         }
         r = t + bHH;
         if (((bHH ^ r) & (t ^ r)) < 0L) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
         }
         result.hh = r;
     }
@@ -1081,7 +1081,7 @@ public class Decimal256 implements Sinkable {
 
         long overflow = p53 | p62 | p63 | p71 | p72 | p73;
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (128-bit × 128-bit): product exceeds 256-bit capacity");
         }
 
         // Gather results into 256-bit result
@@ -1101,7 +1101,7 @@ public class Decimal256 implements Sinkable {
                 (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
         overflow = (r7 >>> 31) | (p43 >>> 32) | (p52 >>> 32) | (p61 >>> 32) | (p70 >>> 32);
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (128-bit × 128-bit): product exceeds 256-bit capacity");
         }
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -1346,7 +1346,7 @@ public class Decimal256 implements Sinkable {
 
         long overflow = p35 | p44 | p45 | p53 | p54 | p55 | p62 | p63 | p64 | p65 | p71 | p72 | p73 | p74 | p75;
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (256-bit × 128-bit): product exceeds 256-bit capacity");
         }
 
         // Gather results into 256-bit result
@@ -1366,7 +1366,7 @@ public class Decimal256 implements Sinkable {
                 (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
         overflow = (r7 >>> 31) | (p25 >>> 32) | (p34 >>> 32) | (p43 >>> 32) | (p52 >>> 32) | (p61 >>> 32) | (p70 >>> 32);
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (256-bit × 128-bit): product exceeds 256-bit capacity");
         }
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -1594,7 +1594,7 @@ public class Decimal256 implements Sinkable {
         long overflow = p17 | p26 | p27 | p35 | p36 | p37 | p44 | p45 | p46 | p47 | p53 | p54 | p55 | p56 | p57 |
                 p62 | p63 | p64 | p65 | p66 | p67 | p71 | p72 | p73 | p74 | p75 | p76 | p77;
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (256-bit × 256-bit): product exceeds 256-bit capacity");
         }
 
         // Gather results into 256-bit result
@@ -1614,7 +1614,7 @@ public class Decimal256 implements Sinkable {
                 (p07 & 0xFFFFFFFFL) + (p16 & 0xFFFFFFFFL) + (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
         overflow = (r7 >>> 31) | (p07 >>> 32) | (p16 >>> 32) | (p25 >>> 32) | (p34 >>> 32) | (p43 >>> 32) | (p52 >>> 32) | (p61 >>> 32) | (p70 >>> 32);
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (256-bit × 256-bit): product exceeds 256-bit capacity");
         }
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -1741,7 +1741,7 @@ public class Decimal256 implements Sinkable {
         long p70 = a7 * b0;
         long p71 = a7 * b1;
         if (p71 != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (256-bit × 64-bit): product exceeds 256-bit capacity");
         }
 
         // Gather results into 256-bit result
@@ -1761,7 +1761,7 @@ public class Decimal256 implements Sinkable {
                 (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
         long overflow = (r7 >>> 31) | (p61 >>> 32) | (p70 >>> 32);
         if (overflow != 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in multiplication (256-bit × 64-bit): product exceeds 256-bit capacity");
         }
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -1885,7 +1885,7 @@ public class Decimal256 implements Sinkable {
         final long thresholdLL = POWERS_TEN_TABLE_THRESHOLD_LL[n];
 
         if (compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) > 0) {
-            throw NumericException.instance().put("Overflow");
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + n + " exceeds 256-bit capacity");
         }
 
         final long multiplierHH = n >= 58 ? POWERS_TEN_TABLE_HH[n - 58] : 0L;
