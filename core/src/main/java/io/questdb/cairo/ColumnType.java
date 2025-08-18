@@ -258,14 +258,14 @@ public final class ColumnType {
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
-        final short type = tagOf(timestampType);
+        final short tag = tagOf(timestampType);
         // null and UNDEFINED use MicrosTimestamp
-        if (type == NULL || type == UNDEFINED) {
+        if (tag == NULL || tag == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
-        assert type == TIMESTAMP;
+        assert tag == TIMESTAMP;
 
-        switch (timestampType) {
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
             case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
             case TIMESTAMP_NANO:
@@ -465,11 +465,11 @@ public final class ColumnType {
     }
 
     public static boolean isTimestampMicro(int timestampType) {
-        return timestampType == TIMESTAMP_MICRO;
+        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_MICRO;
     }
 
     public static boolean isTimestampNano(int timestampType) {
-        return timestampType == TIMESTAMP_NANO;
+        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_NANO;
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
@@ -587,7 +587,7 @@ public final class ColumnType {
 
     private static int getTimestampTypePriority(int timestampType) {
         assert tagOf(timestampType) == TIMESTAMP;
-        switch (timestampType) {
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
             case TIMESTAMP_MICRO:
                 return 1;
             case TIMESTAMP_NANO:
