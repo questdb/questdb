@@ -29,6 +29,7 @@ public class Decimal128 implements Sinkable {
     public static final Decimal128 MAX_VALUE = new Decimal128(Long.MAX_VALUE, Long.MIN_VALUE, 0);
     public static final Decimal128 MIN_VALUE = new Decimal128(Long.MIN_VALUE, Long.MIN_VALUE, 0);
     static final long LONG_MASK = 0xffffffffL;
+    private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private static final long INFLATED = Long.MIN_VALUE;
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
@@ -158,7 +159,6 @@ public class Decimal128 implements Sinkable {
     };
     // holders for in-place mutations that doesn't have a mutable structure available
     private static final ThreadLocal<Decimal128> tl = new ThreadLocal<>(Decimal128::new);
-    private transient long compact;  // Compact representation for values fitting in a signed long
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
     private int scale;  // Number of decimal places
@@ -170,7 +170,6 @@ public class Decimal128 implements Sinkable {
         this.high = 0;
         this.low = 0;
         this.scale = 0;
-        this.compact = 0;
     }
 
     /**
@@ -186,7 +185,6 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
-        this.compact = (high == 0 || (high == -1 && low < 0)) ? low : INFLATED;
     }
 
     /**
@@ -399,7 +397,6 @@ public class Decimal128 implements Sinkable {
         this.high = source.high;
         this.low = source.low;
         this.scale = source.scale;
-        this.compact = source.compact;
     }
 
     /**
@@ -450,7 +447,6 @@ public class Decimal128 implements Sinkable {
             // raise divisor to 10^(-delta), as we cannot modify the divisor, we use dividend to do it.
             long dividendHigh = this.high;
             long dividendLow = this.low;
-            long compact = this.compact;
             this.high = divisorHigh;
             this.low = divisorLow;
             multiplyByPowerOf10InPlace(-delta);
@@ -458,10 +454,9 @@ public class Decimal128 implements Sinkable {
             divisorLow = this.low;
             this.high = dividendHigh;
             this.low = dividendLow;
-            this.compact = compact;
         }
 
-        DecimalKnuthDivider divider = DecimalKnuthDivider.instance();
+        divider.clear();
         divider.ofDividend(high, low);
         divider.ofDivisor(divisorHigh, divisorLow);
         divider.divide(negResult, roundingMode);
@@ -471,7 +466,6 @@ public class Decimal128 implements Sinkable {
             negate();
         }
 
-        this.updateCompact();
     }
 
     @Override
@@ -678,7 +672,6 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
-        updateCompact();
     }
 
     /**
@@ -692,7 +685,6 @@ public class Decimal128 implements Sinkable {
         this.high = value < 0 ? -1L : 0L;
         this.low = value;
         this.scale = scale;
-        updateCompact();
     }
 
     /**
@@ -814,7 +806,6 @@ public class Decimal128 implements Sinkable {
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow");
         }
-        result.updateCompact();
     }
 
     /**
@@ -863,7 +854,11 @@ public class Decimal128 implements Sinkable {
         }
 
         if (bH == 0 && bL >= 0) {
-            multiplyBy64Bit(bL);
+            if (high == 0 && low >= 0) {
+                multiply64By64Bit(bL);
+            } else {
+                multiplyBy64Bit(bL);
+            }
         } else {
             multiplyBy128Bit(bH, bL);
         }
@@ -976,6 +971,36 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Multiply this unsigned 64-bit value by an unsigned 64-bit value in place
+     */
+    private void multiply64By64Bit(long multiplier) {
+        // Perform 128-bit × 64-bit multiplication
+        // Result is at most 192 bits, but we keep only the lower 128 bits
+
+        // Split multiplier into two 32-bit parts
+        long m1 = multiplier >>> 32;
+        long m0 = multiplier & 0xFFFFFFFFL;
+
+        // Split this into four 32-bit parts
+        long a1 = low >>> 32;
+        long a0 = low & 0xFFFFFFFFL;
+
+        // Compute partial products
+        long p0 = a0 * m0;
+        long p1 = a0 * m1 + a1 * m0;
+        long p2 = a1 * m1;
+
+        // Accumulate results
+        long r0 = p0 & 0xFFFFFFFFL;
+        long r1 = (p0 >>> 32) + (p1 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p1 >>> 32) + (p2 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p2 >>> 32);
+
+        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+    }
+
+    /**
      * Multiply this unsigned 128-bit value by an unsigned 64-bit value in place
      */
     private void multiplyBy64Bit(long multiplier) {
@@ -1056,20 +1081,6 @@ public class Decimal128 implements Sinkable {
             return;
         }
 
-        // For small powers, use lookup table
-        if (n < 18) {
-            long multiplier = TEN_POWERS_TABLE_LOW[n];
-            // Special case: if high is 0, use simple 64-bit multiplication
-            if (this.high == 0 && this.low >= 0) {
-                // Check if result will overflow 64 bits
-                if (this.low <= Long.MAX_VALUE / multiplier) {
-                    this.low *= multiplier;
-                    updateCompact();
-                    return;
-                }
-            }
-        }
-
         // For larger powers, break down into smaller chunks, first check the threshold to ensure that we won't overflow
         // and then apply either a fast multiplyBy64 or multiplyBy128 depending on high/low.
         // The bound checks for these tables already happens at the beginning of the method.
@@ -1083,11 +1094,14 @@ public class Decimal128 implements Sinkable {
         final long multiplierHigh = n >= 20 ? TEN_POWERS_TABLE_HIGH[n - 20] : 0L;
         final long multiplierLow = TEN_POWERS_TABLE_LOW[n];
         if (multiplierHigh == 0L && multiplierLow >= 0L) {
-            multiplyBy64BitUnchecked(multiplierLow);
+            if (high == 0 && low >= 0L) {
+                multiply64By64Bit(multiplierLow);
+            } else {
+                multiplyBy64BitUnchecked(multiplierLow);
+            }
         } else {
             multiplyBy128BitUnchecked(multiplierHigh, multiplierLow);
         }
-        updateCompact();
     }
 
     private void rescale0(int resultScale) {
@@ -1101,10 +1115,6 @@ public class Decimal128 implements Sinkable {
             negate();
         }
         this.scale = resultScale;
-    }
-
-    private void updateCompact() {
-        this.compact = (this.high == 0 || (this.high == -1 && this.low < 0)) ? this.low : INFLATED;
     }
 
     /**
