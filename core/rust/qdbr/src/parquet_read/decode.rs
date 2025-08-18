@@ -717,8 +717,7 @@ pub fn decode_page(
                                 let ts =
                                     unsafe { ptr::read_unaligned(nano_ts.as_ptr() as *const i64) };
                                 let ts = match ts_unit {
-                                    TimeUnit::Nanoseconds => ts,
-                                    TimeUnit::Microseconds => ts,
+                                    TimeUnit::Nanoseconds | TimeUnit::Microseconds => ts,
                                     TimeUnit::Milliseconds => ts * 1000,
                                 };
                                 out_buff.copy_from_slice(&ts.to_le_bytes());
