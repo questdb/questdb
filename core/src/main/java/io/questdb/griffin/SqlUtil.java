@@ -36,13 +36,13 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -65,7 +65,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
 public class SqlUtil {
 
-    static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
+    static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
@@ -97,33 +97,30 @@ public class SqlUtil {
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
         final int indexOfDot = Chars.indexOf(base, '.');
-        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base)
-                && (indexOfDot > -1 || disallowedAliases.contains(base));
+        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1;
+        boolean quote = nonLiteral
+                ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
+                : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
 
-        int len = base.length();
         // early exit for simple cases
-        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ' && indexOfDot == -1) {
+        final int baseLen = base.length();
+        if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
+                && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
             return base;
         }
-        // special case for table.column expressions
-        final CharacterStoreEntry entry = store.newEntry();
-        if (!nonLiteral && indexOfDot > -1) {
-            entry.put(base, indexOfDot + 1, base.length());
-            return createExprColumnAlias(
-                    store,
-                    entry.toImmutable(),
-                    aliasToColumnMap,
-                    maxLength,
-                    false
-            );
-        }
 
+        int len = !prefixedLiteral ? baseLen : baseLen - indexOfDot - 1;
+        final CharacterStoreEntry entry = store.newEntry();
         final int entryLen = entry.length();
         if (quote) {
             entry.put('"');
             len += 2;
         }
-        entry.put(base);
+        if (prefixedLiteral) {
+            entry.put(base, indexOfDot + 1, baseLen);
+        } else {
+            entry.put(base);
+        }
 
         int sequence = 1;
         int seqSize = 0;
