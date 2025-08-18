@@ -265,7 +265,7 @@ public final class ColumnType {
         }
         assert tag == TIMESTAMP;
 
-        switch (timestampType) {
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
             case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
             case TIMESTAMP_NANO:
