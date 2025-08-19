@@ -418,6 +418,32 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMicrosecondVsNanosecondTimestampAsOfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for AS OF JOIN test
+            execute("create table micro_events (id int, ts_micro timestamp, value int) timestamp(ts_micro)");
+            execute("create table nano_events (id int, ts_nano timestamp_ns, price double) timestamp(ts_nano)");
+
+            // Insert test data with various timestamp precisions
+            long baseMicros = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long baseNanos = baseMicros * 1000; // 2020-01-01T00:00:00.123456000
+
+            execute("insert into micro_events values (1, " + baseMicros + ", 100)");
+            execute("insert into micro_events values (2, " + (baseMicros + 1000) + ", 200)"); // +1ms
+
+            execute("insert into nano_events values (1, " + baseNanos + ", 10.5)");
+            execute("insert into nano_events values (2, " + (baseNanos + 500_000) + ", 20.5)"); // +500µs
+            execute("insert into nano_events values (3, " + (baseNanos + 1_000_123) + ", 30.5)"); // +1ms+123ns
+
+            // Test AS OF JOIN with mixed timestamp precisions
+            assertSql("id\tts_micro\tvalue\tid1\tts_nano\tprice\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t100\t1\t2020-01-01T00:00:00.123456000Z\t10.5\n" + // Connect rows 1 to 1 (same timestamp)
+                            "2\t2020-01-01T00:00:00.124456Z\t200\t2\t2020-01-01T00:00:00.123956000Z\t20.5\n", // Connect 2 to 2 (ts_nano in 3 is beyond ts_micro in 2)
+                    "select * from micro_events m asof join nano_events n");
+        });
+    }
+
+    @Test
     public void testMicrosecondVsNanosecondTimestampJoin() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables for JOIN test
@@ -443,6 +469,56 @@ public class TimestampQueryTest extends AbstractCairoTest {
             assertSql("id\tts_micro\tid1\tts_nano\n" +
                             "1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z\n",
                     "select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampLtJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for LT JOIN test
+            execute("create table micro_orders (order_id int, ts_micro timestamp, amount int) timestamp(ts_micro)");
+            execute("create table nano_trades (trade_id int, ts_nano timestamp_ns, quantity double) timestamp(ts_nano)");
+
+            // Insert test data
+            long orderTime = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long tradeTime1 = orderTime * 1000 - 1_000_000; // 1ms before order
+            long tradeTime2 = orderTime * 1000 + 500_000; // 500µs after order
+
+            execute("insert into micro_orders values (1, " + orderTime + ", 1000)");
+            execute("insert into nano_trades values (1, " + tradeTime1 + ", 100.0)");
+            execute("insert into nano_trades values (2, " + tradeTime2 + ", 200.0)");
+
+            // Test LT JOIN with mixed timestamp precisions
+            assertSql("order_id\tts_micro\tamount\ttrade_id\tts_nano\tquantity\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t1000\t1\t2020-01-01T00:00:00.122456000Z\t100.0\n",
+                    "select * from micro_orders m lt join nano_trades t");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampSpliceJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for SPLICE JOIN test
+            execute("create table micro_base (id int, ts_micro timestamp, status symbol) timestamp(ts_micro)");
+            execute("create table nano_updates (id int, ts_nano timestamp_ns, flag symbol) timestamp(ts_nano)");
+
+            // Insert test data with correct timestamp arithmetic
+            long baseTime = 1_577_836_800_000_000L; // 2020-01-01T00:00:00.000000 (microseconds)
+            execute("insert into micro_base values (1, " + baseTime + ", 'A')");
+            execute("insert into micro_base values (2, " + (baseTime + 2_000) + ", 'B')"); // +2ms
+
+            execute("insert into nano_updates values (1, " + (baseTime * 1000 + 1_000_000) + ", 'X')"); // +1ms
+            execute("insert into nano_updates values (2, " + (baseTime * 1000 + 3_000_000) + ", 'Y')"); // +3ms
+
+            // Test SPLICE JOIN with mixed timestamp precisions (no ON clause - true SPLICE JOIN semantics)
+            // SPLICE JOIN returns all records from both tables with prevailing records
+            // Expected: 4 rows total (2 from each table with their prevailing counterparts)
+            assertSql("id\tts_micro\tstatus\tid1\tts_nano\tflag\n" +
+                            "1\t2020-01-01T00:00:00.000000Z\tA\tnull\t\t\n" + // micro record A: no prevailing nano record
+                            "1\t2020-01-01T00:00:00.000000Z\tA\t1\t2020-01-01T00:00:00.001000000Z\tX\n" + // nano record X, A is prevailing micro
+                            "2\t2020-01-01T00:00:00.002000Z\tB\t1\t2020-01-01T00:00:00.001000000Z\tX\n" + // micro record B: X is prevailing nano
+                            "2\t2020-01-01T00:00:00.002000Z\tB\t2\t2020-01-01T00:00:00.003000000Z\tY\n", // nano record Y: B is prevailing micro
+                    "select * from micro_base m splice join nano_updates n");
         });
     }
 
