@@ -666,11 +666,6 @@ public class SqlOptimiser implements Mutable {
 
     private void addOrderByClausesToModel(QueryModel originalModel, QueryModel targetModel) {
         for (int i = 0; i < originalModel.getOrderBy().size(); i++) {
-//            ExpressionNode aliasNode = expressionNodePool.next();
-//            CharSequence truncateAlias = originalModel.getTableNameExpr() != null ?
-//                    originalModel.getTableNameExpr().token + "." : originalModel.getAlias().token + ".";
-//            String originalAlias = originalModel.getOrderBy().get(i).token.toString();
-//            aliasNode.token = originalAlias.replace(truncateAlias, "");
             targetModel.addOrderBy(originalModel.getOrderBy().get(i), originalModel.getOrderByDirection().getQuick(i));
         }
     }
@@ -3347,7 +3342,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Optimises models with ASOF joins, to push up .
+     * Optimises models with ASOF joins, to push up order-by and limit clause.
      * <p>
      * This method traverses the query model and optimises it by restructuring
      * the nested models to facilitate ASOF joins.
@@ -3363,11 +3358,11 @@ public class SqlOptimiser implements Mutable {
             optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
         }
 
-        QueryModel temporayModel = model;
-        while (temporayModel != null) {
-            optimiseModelsWithASOFJoins(executionContext, temporayModel.getNestedModel());
+        QueryModel temporaryModel = model;
+        while (temporaryModel != null) {
+            optimiseModelsWithASOFJoins(executionContext, temporaryModel.getNestedModel());
             optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
-            temporayModel = temporayModel.getNestedModel();
+            temporaryModel = temporaryModel.getNestedModel();
         }
 
         QueryModel targetModel = model.getNestedModel();
@@ -3399,13 +3394,13 @@ public class SqlOptimiser implements Mutable {
           nested of target model is null, construct level-0 using base table
          */
         if (level0 == null) {
-            level0 = QueryModel.FACTORY.newInstance();
+            level0 = queryModelPool.next();
             level0.setTimestamp(baseTableModel.getTimestamp());
             level0.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
             //if target model has both table name and alias.
-            level0.setTableNameExpr(copyModel.getTableNameExpr() == null ? null : copyModel.getTableNameExpr());
-            level0.setAlias(copyModel.getAlias() == null ? null : copyModel.getAlias());
-            for (int i = 0; i < copyModel.getModelAliasIndexes().keys().size(); i++) {
+            level0.setTableNameExpr(copyModel.getTableNameExpr());
+            level0.setAlias(copyModel.getAlias());
+            for (int i = 0, n = copyModel.getModelAliasIndexes().keys().size(); i < n; i++) {
                 CharSequence alias = copyModel.getModelAliasIndexes().keys().getQuick(i);
                 ExpressionNode aliasNode = expressionNodePool.next();
                 aliasNode.token = alias;
@@ -3417,7 +3412,7 @@ public class SqlOptimiser implements Mutable {
         /*
            level 1 is select-model-choose over level-0 model
          */
-        QueryModel level1 = QueryModel.FACTORY.newInstance();
+        QueryModel level1 = queryModelPool.next();
         level1.setSelectModelType(SELECT_MODEL_CHOOSE);
         propagateColumnsFromLowerToHigherModel(level0, level1, true);
         level1.setNestedModel(level0);
@@ -3425,7 +3420,7 @@ public class SqlOptimiser implements Mutable {
         /*
            level 2 is select model none over level-1 model with order-by clauses
          */
-        QueryModel level2 = QueryModel.FACTORY.newInstance();
+        QueryModel level2 = queryModelPool.next();
         level2.setSelectModelType(SELECT_MODEL_NONE);
         addOrderByClausesToModel(targetModel, level2);
         propagateColumnsFromLowerToHigherModel(level1, level2, false);
@@ -3440,7 +3435,7 @@ public class SqlOptimiser implements Mutable {
         /*
            level 3 is select model choose over level-2 model with limit clause
          */
-        QueryModel level3 = QueryModel.FACTORY.newInstance();
+        QueryModel level3 = queryModelPool.next();
         level3.setSelectModelType(SELECT_MODEL_CHOOSE);
         level3.setLimit(parentModel.getLimitLo(), null);
         propagateColumnsFromLowerToHigherModel(level2, level3, true);
@@ -3448,7 +3443,7 @@ public class SqlOptimiser implements Mutable {
         /*
           level 4 is select model none over level-3 model with order by timestamp ASC
         */
-        QueryModel level4 = QueryModel.FACTORY.newInstance();
+        QueryModel level4 = queryModelPool.next();
         level4.setSelectModelType(SELECT_MODEL_NONE);
         if (baseTableModel.getTimestamp() != null) {
             final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
@@ -3462,7 +3457,7 @@ public class SqlOptimiser implements Mutable {
          /*
           level 5 is select model choose over level-4 model
         */
-        QueryModel level5 = QueryModel.FACTORY.newInstance();
+        QueryModel level5 = queryModelPool.next();
         level5.setSelectModelType(SELECT_MODEL_CHOOSE);
         propagateColumnsFromLowerToHigherModel(level4, level5, true);
         level5.setNestedModel(level4);
@@ -6788,7 +6783,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
-// if columns do not exist
+    // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
         final QueryModel nested = model.getNestedModel();
         if (nested != null) {
@@ -7241,7 +7236,6 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-//            System.out.println("****" + rewrittenModel.toString0() + "****");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
@@ -7397,14 +7391,16 @@ public class SqlOptimiser implements Mutable {
             if (node.type == LITERAL) {
                 CharSequence clauseColumn = node.token;
                 int dot = Chars.indexOfLastUnquoted(clauseColumn, '.');
-                String clauseColumnName = Chars.toString(clauseColumn, dot + 1, clauseColumn.length());
+                CharSequence clauseColumnName = clauseColumn.subSequence(dot + 1, clauseColumn.length());
                 //check with column in between clause should be of master table
                 if (dot != -1) {
-                    String whereClauseAlias = Chars.toString(clauseColumn, 0, dot);
+                    CharSequence whereClauseAlias = clauseColumn.subSequence(0, dot);
                     CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
                             targetModel.getTableNameExpr().token;
-                    if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
-                            !targetModel.getAliasToColumnMap().contains(clauseColumnName))
+                    if (Chars.equals(whereClauseAlias, masterTableAlias))
+                        found = true;
+                } else {
+                    if (!targetModel.getAliasToColumnMap().contains(clauseColumnName))
                         found = true;
                 }
             }
