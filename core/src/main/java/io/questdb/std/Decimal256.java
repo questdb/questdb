@@ -27,7 +27,8 @@ public class Decimal256 implements Sinkable {
      */
     public static final int MAX_SCALE = 76;
     public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
-    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, -1, -1, -1, 0);
+    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE + 1, -1, -1, -1, 0);
+    public static final Decimal256 NULL_VALUE = new Decimal256(Long.MIN_VALUE, -1, -1, -1, 0);
     private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
             1L, 15L,
             159L, 1593L, 15930L, 159309L, 1593091L,
@@ -219,6 +220,11 @@ public class Decimal256 implements Sinkable {
             long dividendHH, long dividendHL, long dividendLH, long dividendLL, int dividendScale,
             long divisorHH, long divisorHL, long divisorLH, long divisorLL, int divisorScale,
             Decimal256 result, int scale, RoundingMode roundingMode) {
+        if (isNull(dividendHH, dividendHL, dividendLH, dividendLL) || isNull(divisorHH, divisorHL, divisorLH, divisorLL)) {
+            result.ofNull();
+            return;
+        }
+
         validateScale(scale);
 
         // Compute the delta: how much power of 10 we should raise either the dividend or divisor.
@@ -359,6 +365,55 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Calculates the required storage size in bytes for a decimal with given precision.
+     * <p>
+     * Storage sizes:
+     * - Precision 1-2:   1 byte  (7 bits for magnitude + 1 sign bit)
+     * - Precision 3-4:   2 bytes (15 bits for magnitude + 1 sign bit)
+     * - Precision 5-9:   4 bytes (31 bits for magnitude + 1 sign bit)
+     * - Precision 10-18: 8 bytes (63 bits for magnitude + 1 sign bit)
+     * - Precision 19-38: 16 bytes (128-bit storage)
+     * - Precision 39-76: 32 bytes (256-bit storage)
+     *
+     * @param precision the number of significant digits
+     * @return the required storage size in bytes
+     * @throws IllegalArgumentException if precision is invalid
+     */
+    public static int getStorageSize(int precision) {
+        if (precision < 1 || precision > MAX_SCALE) {
+            throw new IllegalArgumentException("Invalid decimal precision: " + precision +
+                    ". Must be between 1 and " + MAX_SCALE);
+        }
+
+        if (precision <= 2) {
+            return 1; // 1 byte (byte)
+        } else if (precision <= 4) {
+            return 2; // 2 bytes (short)
+        } else if (precision <= 9) {
+            return 4; // 4 bytes (int)
+        } else if (precision <= 18) {
+            return 8; // 8 bytes (long)
+        } else if (precision <= 38) {
+            return 16; // 16 bytes (128-bit)
+        } else {
+            return 32; // 32 bytes (256-bit)
+        }
+    }
+
+    /**
+     * Returns whether the Decimal256 is null or not.
+     *
+     * @param hh the highest 64 bits (bits 192-255)
+     * @param hl the high 64 bits (bits 128-191)
+     * @param lh the mid 64 bits (bits 64-127)
+     * @param ll the low 64 bits (bits 0-63)
+     * @return true if null, false otherwise
+     */
+    public static boolean isNull(long hh, long hl, long lh, long ll) {
+        return hh == Long.MIN_VALUE && hl == -1 && lh == -1 && ll == -1;
+    }
+
+    /**
      * Static modulo method.
      *
      * @param dividend the dividend
@@ -417,6 +472,15 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public void add(Decimal256 other) {
+        if (isNull()) {
+            return;
+        }
+
+        if (other.isNull()) {
+            ofNull();
+            return;
+        }
+
         add(this, hh, hl, lh, ll, scale, other.hh, other.hl, other.lh, other.ll, other.scale);
     }
 
@@ -556,6 +620,52 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Checks if this Decimal256 value fits within the specified storage size.
+     * The value fits if its absolute magnitude can be represented with the given number of digits.
+     *
+     * @param size the target size (number of bytes available)
+     * @return true if the value fits within the storage size, false otherwise
+     */
+    public boolean fitsInStorageSize(int size) {
+        switch (size) {
+            case 1: // 1 byte - max magnitude 127
+                return (hh == 0 || hh == -1) &&
+                        (hl == 0 || hl == -1) &&
+                        (lh == 0 || lh == -1) &&
+                        Math.abs(ll) <= 0x7FL;
+
+            case 2: // 2 bytes - max magnitude 32,767
+                return (hh == 0 || hh == -1) &&
+                        (hl == 0 || hl == -1) &&
+                        (lh == 0 || lh == -1) &&
+                        Math.abs(ll) <= 0x7FFFL;
+
+            case 4: // 4 bytes - max magnitude 2,147,483,647
+                return (hh == 0 || hh == -1) &&
+                        (hl == 0 || hl == -1) &&
+                        (lh == 0 || lh == -1) &&
+                        Math.abs(ll) <= 0x7FFFFFFFL;
+
+            case 8: // 8 bytes - max magnitude 9,223,372,036,854,775,807
+                return (hh == 0 || hh == -1) &&
+                        (hl == 0 || hl == -1) &&
+                        (lh == 0 || lh == -1);
+            // ll can use full long range
+
+            case 16: // 128-bit storage
+                return (hh == 0 || hh == -1) &&
+                        (hl == 0 || hl == -1);
+            // lh and ll can use full range
+
+            case 32: // 256-bit storage
+                return true; // Always fits in 256-bit
+
+            default:
+                return false;
+        }
+    }
+
+    /**
      * Gets the highest 64 bits of the 256-bit decimal value (bits 192-255).
      *
      * @return the highest 64 bits
@@ -626,6 +736,15 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Returns whether this is null or not.
+     *
+     * @return true if null, false otherwise
+     */
+    public boolean isNull() {
+        return hh == Long.MIN_VALUE && hl == -1 && lh == -1 && ll == -1;
+    }
+
+    /**
      * Check if this Decimal256 represents zero.
      *
      * @return true if zero, false otherwise
@@ -641,6 +760,15 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if division by zero occurs
      */
     public void modulo(Decimal256 divisor) {
+        if (isNull()) {
+            return;
+        }
+
+        if (divisor.isNull()) {
+            ofNull();
+            return;
+        }
+
         if (divisor.isZero()) {
             throw NumericException.instance().put("Division by zero");
         }
@@ -695,6 +823,15 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs or resulting scale exceeds MAX_SCALE
      */
     public void multiply(Decimal256 other) {
+        if (isNull()) {
+            return;
+        }
+
+        if (other.isNull()) {
+            ofNull();
+            return;
+        }
+
         int finalScale = scale + other.scale;
         validateScale(finalScale);
 
@@ -752,13 +889,10 @@ public class Decimal256 implements Sinkable {
      * Changes the sign of the decimal number (positive becomes negative and vice versa).
      */
     public void negate() {
-        ll = ~ll + 1;
-        long c = ll == 0L ? 1L : 0L;
-        lh = ~lh + c;
-        c = (c == 1L && lh == 0L) ? 1L : 0L;
-        hl = ~hl + c;
-        c = (c == 1L && hl == 0L) ? 1L : 0L;
-        hh = ~hh + c;
+        if (isNull()) {
+            return;
+        }
+        negate0();
     }
 
     /**
@@ -779,30 +913,33 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Returns whether this is null or not.
+     *
+     * @return true if null, false otherwise
+     */
+    public void ofNull() {
+        hh = Long.MIN_VALUE;
+        hl = -1;
+        lh = -1;
+        ll = -1;
+        scale = 0;
+    }
+
+    /**
      * Rescale this Decimal256 in place
      *
      * @param newScale The new scale (must be >= current scale)
      */
     public void rescale(int newScale) {
+        if (isNull()) {
+            return;
+        }
+
         if (newScale < scale) {
             throw NumericException.instance().put("New scale must be >= current scale");
         }
 
-        int scaleDiff = newScale - this.scale;
-
-        boolean isNegative = isNegative();
-        if (isNegative) {
-            negate();
-        }
-
-        // Multiply by 10^scaleDiff
-        multiplyByPowerOf10InPlace(scaleDiff);
-
-        if (isNegative) {
-            negate();
-        }
-
-        this.scale = newScale;
+        rescale0(newScale);
     }
 
     /**
@@ -813,6 +950,10 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if target scale is invalid
      */
     public void round(int targetScale, RoundingMode roundingMode) {
+        if (isNull()) {
+            return;
+        }
+
         if (targetScale == this.scale) {
             // No rounding needed
             return;
@@ -833,7 +974,7 @@ public class Decimal256 implements Sinkable {
         if (this.scale < targetScale) {
             boolean isNegative = isNegative();
             if (isNegative) {
-                negate();
+                negate0();
             }
 
             // Need to increase scale (add trailing zeros)
@@ -842,7 +983,7 @@ public class Decimal256 implements Sinkable {
             this.scale = targetScale;
 
             if (isNegative) {
-                negate();
+                negate0();
             }
             return;
         }
@@ -887,6 +1028,15 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public void subtract(long bHH, long bHL, long bLH, long bLL, int bScale) {
+        if (isNull()) {
+            return;
+        }
+
+        if (isNull(bHH, bHL, bLH, bLL)) {
+            ofNull();
+            return;
+        }
+
         // Negate other and perform addition
         if (bHH != 0 || bHL != 0 || bLH != 0 || bLL != 0) {
             bLL = ~bLL + 1;
@@ -952,7 +1102,7 @@ public class Decimal256 implements Sinkable {
         if (aScale < bScale) {
             // We need to rescale a to the same scale as b
             result.of(aHH, aHL, aLH, aLL, aScale);
-            result.rescale(bScale);
+            result.rescale0(bScale);
             aHH = result.hh;
             aHL = result.hl;
             aLH = result.lh;
@@ -960,7 +1110,7 @@ public class Decimal256 implements Sinkable {
         } else if (aScale > bScale) {
             // We need to rescale b to the same scale as a
             result.of(bHH, bHL, bLH, bLL, bScale);
-            result.rescale(aScale);
+            result.rescale0(aScale);
             bHH = result.hh;
             bHL = result.hl;
             bLH = result.lh;
@@ -1109,7 +1259,6 @@ public class Decimal256 implements Sinkable {
         this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
-
 
     private void multiply128By128(long h, long l) {
         // Perform 256-bit × 128-bit multiplication
@@ -1902,6 +2051,43 @@ public class Decimal256 implements Sinkable {
         } else {
             multiply64Unchecked(multiplierLL);
         }
+    }
+
+    /**
+     * Negates this Decimal256 in-place using two's complement arithmetic.
+     * Changes the sign of the decimal number (positive becomes negative and vice versa).
+     */
+    private void negate0() {
+        ll = ~ll + 1;
+        long c = ll == 0L ? 1L : 0L;
+        lh = ~lh + c;
+        c = (c == 1L && lh == 0L) ? 1L : 0L;
+        hl = ~hl + c;
+        c = (c == 1L && hl == 0L) ? 1L : 0L;
+        hh = ~hh + c;
+    }
+
+    /**
+     * Rescale this Decimal256 in place without checks
+     *
+     * @param newScale The new scale (must be >= current scale)
+     */
+    private void rescale0(int newScale) {
+        int scaleDiff = newScale - this.scale;
+
+        boolean isNegative = isNegative();
+        if (isNegative) {
+            negate0();
+        }
+
+        // Multiply by 10^scaleDiff
+        multiplyByPowerOf10InPlace(scaleDiff);
+
+        if (isNegative) {
+            negate0();
+        }
+
+        this.scale = newScale;
     }
 
     /**
