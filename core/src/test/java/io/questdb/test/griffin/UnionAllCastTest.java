@@ -2296,6 +2296,46 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMicrosTimestampNanos() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n" +
+                        "1970-01-01T00:00:00.000003000Z\n" +
+                        "1970-01-01T00:00:00.000004000Z\n" +
+                        "1970-01-01T00:00:00.000005000Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000005Z\n",
+                "create table x as (select cast(x as timestamp) a from long_sequence(5))",
+                "create table y as (select cast(x as timestamp_ns) a from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNanosTimestampMicros() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000005Z\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n" +
+                        "1970-01-01T00:00:00.000003000Z\n" +
+                        "1970-01-01T00:00:00.000004000Z\n" +
+                        "1970-01-01T00:00:00.000005000Z\n",
+                "create table x as (select cast(x as timestamp_ns) a from long_sequence(5))",
+                "create table y as (select cast(x as timestamp) a from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testTimestampNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
