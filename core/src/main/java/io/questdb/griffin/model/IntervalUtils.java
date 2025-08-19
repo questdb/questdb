@@ -167,13 +167,19 @@ public final class IntervalUtils {
     }
 
     public static short getEncodedAdjustment(LongList intervals, int index) {
-        return Numbers.decodeLowShort(Numbers.decodeHighInt(
-                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
+        return Numbers.decodeLowShort(
+                Numbers.decodeHighInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
     }
 
     public static short getEncodedDynamicIndicator(LongList intervals, int index) {
-        return Numbers.decodeHighShort(Numbers.decodeHighInt(
-                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
+        return Numbers.decodeHighShort(
+                Numbers.decodeHighInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
     }
 
     public static short getEncodedOperation(LongList intervals, int index) {
@@ -197,12 +203,11 @@ public final class IntervalUtils {
     }
 
     public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
-        assert intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO || intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO;
-        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO) {
-            return MicrosTimestampDriver.INSTANCE;
-        } else {
+        assert ColumnType.isInterval(intervalType);
+        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
             return NanosTimestampDriver.INSTANCE;
         }
+        return MicrosTimestampDriver.INSTANCE;
     }
 
     public static int getTimestampTypeByIntervalType(int intervalType) {
@@ -346,7 +351,15 @@ public final class IntervalUtils {
         applyLastEncodedInterval(timestampDriver, out);
     }
 
-    public static void parseInterval(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+    public static void parseInterval(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation
+    ) throws SqlException {
         int writeIndex = out.size();
         int[] pos = new int[3];
         int p = -1;
@@ -429,9 +442,13 @@ public final class IntervalUtils {
         int lastIndex = out.size() - 4;
         out.setQuick(lastIndex, lo);
         out.setQuick(lastIndex + HI_INDEX, hi);
-        out.setQuick(lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX, Numbers.encodeLowHighInts(
-                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
-                0));
+        out.setQuick(
+                lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX,
+                Numbers.encodeLowHighInts(
+                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                        0
+                )
+        );
         out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
     }
 
