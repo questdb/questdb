@@ -34,6 +34,7 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -73,7 +74,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -447,6 +447,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
                     case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK:
                         sendParquetFileChunk(response, state);
+
                         if (state.parquetFileOffset >= state.parquetFileSize) {
                             state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE;
                         }
@@ -678,10 +679,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
             state.parquetFileSize = ff.length(state.parquetFileFd);
             state.parquetFileOffset = 0;
-
-            if (state.parquetFileBuffer == 0) {
-                state.parquetFileBuffer = Unsafe.malloc(ExportQueryProcessorState.PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
+            state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
 
             // Send headers
             HttpChunkedResponse response = context.getChunkedResponse();
@@ -994,24 +992,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             return;
         }
 
-        long toRead = Math.min(ExportQueryProcessorState.PARQUET_BUFFER_SIZE, state.parquetFileSize - state.parquetFileOffset);
-        long bytesRead = ff.read(state.parquetFileFd, state.parquetFileBuffer, toRead, state.parquetFileOffset);
-
-        if (bytesRead <= 0) {
-            return;
-        }
-
-        for (long i = 0; i < bytesRead; i++) {
-            response.put((byte) Unsafe.getUnsafe().getByte(state.parquetFileBuffer + i));
-        }
-
-        state.parquetFileOffset += bytesRead;
+        state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, (int) (state.parquetFileSize - state.parquetFileOffset));
         response.bookmark();
 
         // Close file descriptor when done
         if (state.parquetFileOffset >= state.parquetFileSize) {
             ff.close(state.parquetFileFd);
             state.parquetFileFd = -1;
+        } else {
+            throw NoSpaceLeftInResponseBufferException.instance(state.parquetFileSize - state.parquetFileOffset);
         }
     }
 

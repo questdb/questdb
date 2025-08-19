@@ -57,6 +57,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
+    long parquetFileAddress = 0;
     long parquetFileBuffer = 0;
     long parquetFileFd = -1;
     long parquetFileOffset = 0;
