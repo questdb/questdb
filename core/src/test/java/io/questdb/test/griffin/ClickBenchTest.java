@@ -572,7 +572,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "Q35",
                     "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c FROM hits GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 ORDER BY c DESC LIMIT 10;",
                     "VirtualRecord\n" +
-                            "  functions: [ClientIP,ClientIP+1,ClientIP+2,ClientIP+3,c]\n" +
+                            "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
                             "    Long Top K lo: 10\n" +
                             "      keys: [c desc]\n" +
                             "        Async Group By workers: 1\n" +

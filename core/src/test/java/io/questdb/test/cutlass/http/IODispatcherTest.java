@@ -2346,7 +2346,7 @@ public class IODispatcherTest extends AbstractTest {
                                                 "ip1,ip2\r\n" +
                                                 "null,null\r\n" +
                                                 "null,null\r\n" +
-                                                "127.0.0.1,42\r\n" +
+                                                "127.0.0.1,42424242\r\n" +
                                                 "127.0.0.1,0\r\n" +
                                                 "\r\n" +
                                                 "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
@@ -2385,7 +2385,7 @@ public class IODispatcherTest extends AbstractTest {
                                         "ip1\tip2\n" +
                                                 "\t\n" +
                                                 "\t\n" +
-                                                "127.0.0.1\t0.0.0.42\n" +
+                                                "127.0.0.1\t2.135.87.178\n" +
                                                 "127.0.0.1\t\n"
                                 );
                             }

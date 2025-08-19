@@ -3058,7 +3058,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table hits (\n" +
-                            "    ClientIP int,\n" +
+                            "    ClientIP ipv4,\n" +
                             "    EventTime timestamp\n" +
                             ") timestamp(EventTime) partition by day wal;"
             );
@@ -3081,11 +3081,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             final String plan = "VirtualRecord\n" +
                     "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
-                    "    Sort light lo: 10\n" +
+                    "    Long Top K lo: 10\n" +
                     "      keys: [c desc]\n" +
-                    "        GroupBy vectorized: true workers: 1\n" +
+                    "        Async Group By workers: 1\n" +
                     "          keys: [ClientIP]\n" +
                     "          values: [count(*)]\n" +
+                    "          filter: null\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: hits\n";
