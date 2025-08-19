@@ -913,9 +913,7 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Returns whether this is null or not.
-     *
-     * @return true if null, false otherwise
+     * Set this Decimal256 to the null value.
      */
     public void ofNull() {
         hh = Long.MIN_VALUE;
