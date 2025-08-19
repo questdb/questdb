@@ -70,7 +70,6 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 427;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
-    public static final int TIMESTAMP_TYPE_MASK = 0x000FFFFF;
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
     // - to NULL: index must be last, other parts of the codebase rely on this fact.
@@ -265,7 +264,7 @@ public final class ColumnType {
         }
         assert tag == TIMESTAMP;
 
-        switch (timestampType & TIMESTAMP_TYPE_MASK) {
+        switch (timestampType) {
             case TIMESTAMP_MICRO:
                 return MicrosTimestampDriver.INSTANCE;
             case TIMESTAMP_NANO:
@@ -465,11 +464,11 @@ public final class ColumnType {
     }
 
     public static boolean isTimestampMicro(int timestampType) {
-        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_MICRO;
+        return timestampType == TIMESTAMP_MICRO;
     }
 
     public static boolean isTimestampNano(int timestampType) {
-        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_NANO;
+        return timestampType == TIMESTAMP_NANO;
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
@@ -587,7 +586,7 @@ public final class ColumnType {
 
     private static int getTimestampTypePriority(int timestampType) {
         assert tagOf(timestampType) == TIMESTAMP;
-        switch (timestampType & TIMESTAMP_TYPE_MASK) {
+        switch (timestampType) {
             case TIMESTAMP_MICRO:
                 return 1;
             case TIMESTAMP_NANO:
