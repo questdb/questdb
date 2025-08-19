@@ -816,9 +816,6 @@ public class SqlUtil {
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
         }
-        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
-        }
         return parser;
     }
 
@@ -880,9 +877,6 @@ public class SqlUtil {
         try {
             parser.of(value.asAsciiCharSequence(), ColumnType.decodeArrayDimensionality(expectedType));
         } catch (IllegalArgumentException e) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
-        }
-        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
         }
         return parser;
