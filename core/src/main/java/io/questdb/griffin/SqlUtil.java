@@ -96,31 +96,28 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
+        final int baseLen = base.length();
         final int indexOfDot = Chars.indexOf(base, '.');
-        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1;
+        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
         boolean quote = nonLiteral
                 ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
                 : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
 
         // early exit for simple cases
-        final int baseLen = base.length();
         if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
                 && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
             return base;
         }
 
-        int len = !prefixedLiteral ? baseLen : baseLen - indexOfDot - 1;
+        final int start = prefixedLiteral ? indexOfDot + 1 : 0;
+        int len = baseLen - start;
         final CharacterStoreEntry entry = store.newEntry();
         final int entryLen = entry.length();
         if (quote) {
             entry.put('"');
             len += 2;
         }
-        if (prefixedLiteral) {
-            entry.put(base, indexOfDot + 1, baseLen);
-        } else {
-            entry.put(base);
-        }
+        entry.put(base, start, baseLen);
 
         int sequence = 1;
         int seqSize = 0;
@@ -131,8 +128,8 @@ public class SqlUtil {
             len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
 
             // We don't want the alias to finish with a space.
-            if (!quote && len > 0 && base.charAt(len - 1) == ' ') {
-                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+            if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + len, ' ') - start;
                 if (lastSpace > 0) {
                     len = lastSpace + 1;
                 }

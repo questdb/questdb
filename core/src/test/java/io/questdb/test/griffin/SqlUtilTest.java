@@ -133,6 +133,10 @@ public class SqlUtilTest {
                 "\"prefix.nonliteral\"",
                 SqlUtil.createExprColumnAlias(store, "prefix.nonliteral", aliasMap, 64, true).toString()
         );
+        Assert.assertEquals(
+                "\"prefix.\"",
+                SqlUtil.createExprColumnAlias(store, "prefix.", aliasMap, 64, true).toString()
+        );
     }
 
     @Test
@@ -151,6 +155,18 @@ public class SqlUtilTest {
         Assert.assertEquals(
                 "\"quoted\"",
                 SqlUtil.createExprColumnAlias(store, "\"table\".\"quoted\"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "spaces",
+                SqlUtil.createExprColumnAlias(store, "table.spaces   ", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted spaces   \"",
+                SqlUtil.createExprColumnAlias(store, "table.\"quoted spaces   \"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"table.\"",
+                SqlUtil.createExprColumnAlias(store, "table.", aliasMap, 64).toString()
         );
 
         for (int i = 0; i < 100; i++) {
