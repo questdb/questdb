@@ -148,6 +148,10 @@ public class SqlUtilTest {
                 "\"between\"",
                 SqlUtil.createExprColumnAlias(store, "table.between", aliasMap, 64).toString()
         );
+        Assert.assertEquals(
+                "\"quoted\"",
+                SqlUtil.createExprColumnAlias(store, "\"table\".\"quoted\"", aliasMap, 64).toString()
+        );
 
         for (int i = 0; i < 100; i++) {
             Assert.assertEquals(
