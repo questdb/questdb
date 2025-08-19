@@ -64,7 +64,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             params.put("fmt", "parquet");
 
             // The parquet export now suspends the request until copy completes, then returns the parquet file
-            testHttpClient.assertGetContains("/exp", "PAR1", params.toString(), null, HTTP_PORT, null, null, null);
+            testHttpClient.assertGetContains("/exp", "PAR1", params.toString(), "localhost", HTTP_PORT, null, null, null);
         });
     }
 

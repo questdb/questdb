@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.network.SuspendEvent;
-import io.questdb.std.Misc;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -41,6 +41,7 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
+    static long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -56,6 +57,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
+    long parquetFileBuffer = 0;
+    long parquetFileFd = -1;
+    long parquetFileOffset = 0;
+    String parquetFilePath;
+    long parquetFileSize = 0;
     boolean pausedQuery = false;
     int queryState;
     Record record;
@@ -65,12 +71,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long stop;
     SuspendEvent suspendEvent;
     boolean waitingForCopy;
-    long parquetFileFd = -1;
-    long parquetFileSize = 0;
-    long parquetFileOffset = 0;
-    String parquetFilePath;
-    long parquetFileBuffer = 0;
-    static final long PARQUET_BUFFER_SIZE = 8192;
     private boolean queryCacheable = false;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {

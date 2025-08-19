@@ -408,9 +408,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             break OUT;
                         }
 
-                        switch (completion) {
-                            case CopyExportRequestTask.STATUS_PENDING:
-                                throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker());
+                        if (completion == CopyExportRequestTask.STATUS_PENDING) {
+                            throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker());
                         }
 
                         // Handle non-pending completion statuses
@@ -666,13 +665,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        Path path = new Path();
+        Path path = new Path(); // todo: allocation
 
         try {
             path.of(state.parquetFilePath);
             state.parquetFileFd = ff.openRO(path.$());
             if (state.parquetFileFd < 0) {
-                throw new RuntimeException("Could not open parquet file: " + state.parquetFilePath);
+                throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
+                        .put("could not find parquet file: [path=").put(state.parquetFilePath)
+                        .put(", copyId=").put(state.copyID).put(']');
             }
 
             state.parquetFileSize = ff.length(state.parquetFileFd);
@@ -695,7 +696,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             response.headers().putAscii("Content-Length: ").put(state.parquetFileSize).putEOL();
             response.headers().setKeepAlive(configuration.getKeepAliveHeader());
             response.sendHeader();
-
         } finally {
             Misc.free(path);
         }

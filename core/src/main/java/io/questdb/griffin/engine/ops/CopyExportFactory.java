@@ -273,7 +273,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 ((AtomicCountedCircuitBreaker) executionContext.getCircuitBreaker()).inc();
 
                 exportIdSink.clear();
-                exportIdSink.put("INSERT INTO '").put(tableName).put("' SELECT * FROM (").put(selectText).put(')');
+                exportIdSink.put("INSERT INTO '").put(tableName).put("' SELECT * FROM (");
+                if (selectText.endsWith(";")) {
+                    exportIdSink.put(selectText.substring(0, selectText.length() - 1));
+                } else {
+                    exportIdSink.put(selectText);
+                }
+                exportIdSink.put(");");
 
                 executionContext.getCairoEngine().execute(exportIdSink, executionContext);
             }
