@@ -210,6 +210,10 @@ public final class Micros {
         return floorMS(micros) + MILLI_MICROS;
     }
 
+    public static long ceilNS(long micros) {
+        return micros;
+    }
+
     public static long ceilSS(long micros) {
         return floorSS(micros) + SECOND_MICROS;
     }

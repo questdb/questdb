@@ -114,13 +114,14 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertSql(
-                            "ts\tc_micro\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_micro\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
-                                    "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n",
+                            "ts\tc_nano\tc_micro\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_nano\tf_micro\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
+                                    "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n",
                             "with t as (\n" +
                                     "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
                                     ")\n" +
                                     "select\n" +
                                     "  ts\n" +
+                                    "  , timestamp_ceil('n', ts) c_nano\n" +
                                     "  , timestamp_ceil('U', ts) c_micro\n" +
                                     "  , timestamp_ceil('T', ts) c_milli\n" +
                                     "  , timestamp_ceil('s', ts) c_second\n" +
@@ -131,6 +132,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                                     "  , timestamp_ceil('w', ts) c_week\n" +
                                     "  , timestamp_ceil('y', ts) c_year\n" +
                                     "  , timestamp_ceil('y', null) c_null\n" +
+                                    "  , timestamp_floor('n', ts) f_nano\n" +
                                     "  , timestamp_floor('U', ts) f_micro\n" +
                                     "  , timestamp_floor('T', ts) f_milli\n" +
                                     "  , timestamp_floor('s', ts) f_second\n" +
@@ -145,13 +147,14 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                     );
 
                     assertSql(
-                            "ts\tc_micro\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_micro\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
-                                    "2016-02-10T16:18:22.862145123Z\t2016-02-10T16:18:22.862146000Z\t2016-02-10T16:18:22.863000000Z\t2016-02-10T16:18:23.000000000Z\t2016-02-10T16:19:00.000000000Z\t2016-02-10T17:00:00.000000000Z\t2016-02-11T00:00:00.000000000Z\t2016-03-01T00:00:00.000000000Z\t2016-02-15T00:00:00.000000000Z\t2017-01-01T00:00:00.000000000Z\t\t2016-02-10T16:18:22.862145000Z\t2016-02-10T16:18:22.862000000Z\t2016-02-10T16:18:22.000000000Z\t2016-02-10T16:18:00.000000000Z\t2016-02-10T16:00:00.000000000Z\t2016-02-10T00:00:00.000000000Z\t2016-02-01T00:00:00.000000000Z\t2016-02-08T00:00:00.000000000Z\t2016-01-01T00:00:00.000000000Z\t\n",
+                            "ts\tc_nano\tc_micro\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_nano\tf_micro\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
+                                    "2016-02-10T16:18:22.862145123Z\t2016-02-10T16:18:22.862145123Z\t2016-02-10T16:18:22.862146000Z\t2016-02-10T16:18:22.863000000Z\t2016-02-10T16:18:23.000000000Z\t2016-02-10T16:19:00.000000000Z\t2016-02-10T17:00:00.000000000Z\t2016-02-11T00:00:00.000000000Z\t2016-03-01T00:00:00.000000000Z\t2016-02-15T00:00:00.000000000Z\t2017-01-01T00:00:00.000000000Z\t\t2016-02-10T16:18:22.862145123Z\t2016-02-10T16:18:22.862145000Z\t2016-02-10T16:18:22.862000000Z\t2016-02-10T16:18:22.000000000Z\t2016-02-10T16:18:00.000000000Z\t2016-02-10T16:00:00.000000000Z\t2016-02-10T00:00:00.000000000Z\t2016-02-01T00:00:00.000000000Z\t2016-02-08T00:00:00.000000000Z\t2016-01-01T00:00:00.000000000Z\t\n",
                             "with t as (\n" +
                                     "   select cast('2016-02-10T16:18:22.862145123Z' as timestamp_ns) ts\n" +
                                     ")\n" +
                                     "select\n" +
                                     "  ts\n" +
+                                    "  , timestamp_ceil('n', ts) c_nano\n" +
                                     "  , timestamp_ceil('U', ts) c_micro\n" +
                                     "  , timestamp_ceil('T', ts) c_milli\n" +
                                     "  , timestamp_ceil('s', ts) c_second\n" +
@@ -162,6 +165,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                                     "  , timestamp_ceil('w', ts) c_week\n" +
                                     "  , timestamp_ceil('y', ts) c_year\n" +
                                     "  , timestamp_ceil('y', null) c_null\n" +
+                                    "  , timestamp_ceil('n', ts) f_nano\n" +
                                     "  , timestamp_floor('U', ts) f_micro\n" +
                                     "  , timestamp_floor('T', ts) f_milli\n" +
                                     "  , timestamp_floor('s', ts) f_second\n" +

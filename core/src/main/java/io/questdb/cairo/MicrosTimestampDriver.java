@@ -660,6 +660,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return Micros::ceilMS;
             case 'U':
                 return Micros::ceilMR;
+            case 'n':
+                return Micros::ceilNS;
             default:
                 return null;
         }

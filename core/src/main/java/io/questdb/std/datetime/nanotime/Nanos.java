@@ -202,6 +202,10 @@ public final class Nanos {
         return floorMS(nanos) + MILLI_NANOS;
     }
 
+    public static long ceilNS(long nanos) {
+        return nanos;
+    }
+
     public static long ceilSS(long nanos) {
         return floorSS(nanos) + SECOND_NANOS;
     }
