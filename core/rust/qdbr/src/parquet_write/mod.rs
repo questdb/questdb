@@ -1,5 +1,6 @@
 use num_traits::AsPrimitive;
 
+pub mod array;
 mod binary;
 mod boolean;
 pub(crate) mod file;
@@ -166,6 +167,7 @@ mod tests {
                     0,
                     null(),
                     0,
+                    false,
                 )
                 .expect("column")
             })
@@ -275,6 +277,7 @@ mod tests {
             col_chars.len(),
             offsets.as_ptr(),
             offsets.len(),
+            false,
         )
         .unwrap();
 
@@ -338,6 +341,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
         )
         .unwrap();
 
@@ -353,6 +357,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
         )
         .unwrap();
 
@@ -410,6 +415,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
         )
         .unwrap();
 
