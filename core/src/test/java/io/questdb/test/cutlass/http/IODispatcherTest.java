@@ -2345,7 +2345,9 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n" +
                                                 "ip1,ip2\r\n" +
                                                 "null,null\r\n" +
+                                                "null,null\r\n" +
                                                 "127.0.0.1,42\r\n" +
+                                                "127.0.0.1,0\r\n" +
                                                 "\r\n" +
                                                 "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                                         "HTTP/1.1 200 OK\r\n" +
@@ -2360,8 +2362,8 @@ public class IODispatcherTest extends AbstractTest {
                                                 "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
                                                 "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|   Rows handled  |                                                 2  |                 |         |              |\r\n" +
-                                                "|  Rows imported  |                                                 2  |                 |         |              |\r\n" +
+                                                "|   Rows handled  |                                                 4  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 4  |                 |         |              |\r\n" +
                                                 "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                                 "|              0  |                                               ip1  |                     IPv4  |           0  |\r\n" +
                                                 "|              1  |                                               ip2  |                     IPv4  |           0  |\r\n" +
@@ -2382,7 +2384,9 @@ public class IODispatcherTest extends AbstractTest {
                                         sink,
                                         "ip1\tip2\n" +
                                                 "\t\n" +
-                                                "127.0.0.1\t0.0.0.42\n"
+                                                "\t\n" +
+                                                "127.0.0.1\t0.0.0.42\n" +
+                                                "127.0.0.1\t\n"
                                 );
                             }
                         }
