@@ -31,7 +31,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
@@ -43,49 +46,74 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleArraySumFunctionFactory.Func {
-        private int count = 0;
+    static class Func extends DoubleFunction implements UnaryFunction {
+        private final Function arrayArg;
+        private int count;
+        private double sum;
 
         Func(Function arrayArg) {
-            super(arrayArg);
+            this.arrayArg = arrayArg;
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (!Double.isNaN(v)) {
-                sum += v;
-                count++;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            sum = view.flatView().avgDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyToNullArray() {
-            sum = Double.NaN;
+        public Function getArg() {
+            return arrayArg;
         }
 
         @Override
         public double getDouble(Record rec) {
             ArrayView arr = arrayArg.getArray(rec);
+            boolean vanilla = arr.isVanilla();
+            if (arr.isNull()) {
+                return Double.NaN;
+            } else if (vanilla) {
+                return arr.flatView().avgDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
+            }
             count = 0;
             sum = 0d;
-            boolean vanilla = arr.isVanilla();
-            calculate(arr);
-            return vanilla ? sum : sum / count;
+            calculateRecursive(arr, 0, 0);
+            return sum / count;
         }
 
         @Override
         public String getName() {
             return FUNCTION_NAME;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int dimLen = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < dimLen; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
+                        sum += v;
+                        count++;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < dimLen; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }

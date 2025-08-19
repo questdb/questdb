@@ -322,6 +322,19 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equalsAscii(@NotNull CharSequence asciiSeq, long rLo, long rHi) {
+        int rLen = (int) (rHi - rLo);
+        if (rLen != asciiSeq.length()) {
+            return false;
+        }
+        for (int i = 0; i < rLen; i++) {
+            if (asciiSeq.charAt(i) != (char) Unsafe.getUnsafe().getByte(rLo + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
         int ll = lAsciiSeq.length();
         if (ll != rHi - rLo) {
@@ -781,10 +794,15 @@ public final class Utf8s {
         return true;
     }
 
+    // checks 8 consequent bytes at once for non-ASCII chars, convenient for SWAR
+    public static boolean isAscii(long w) {
+        return (w & ASCII_MASK) == 0;
+    }
+
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
         for (; i + 7 < size; i += 8) {
-            if ((Unsafe.getUnsafe().getLong(ptr + i) & ASCII_MASK) != 0) {
+            if (isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
                 return false;
             }
         }

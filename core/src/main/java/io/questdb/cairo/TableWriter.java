@@ -88,6 +88,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -1511,6 +1512,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int rowGroupSize = config.getPartitionEncoderParquetRowGroupSize();
                 final int dataPageSize = config.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = config.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = config.isPartitionEncoderParquetRawArrayEncoding();
                 final int parquetVersion = config.getPartitionEncoderParquetVersion();
 
                 PartitionEncoder.encodeWithOptions(
@@ -1518,6 +1520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         other,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
+                        rawArrayEncoding,
                         rowGroupSize,
                         dataPageSize,
                         parquetVersion
@@ -2860,37 +2863,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        assert tableToken.isMatView();
+
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+        }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateRefreshParams(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStart,
+                Chars.toString(timerTimeZone),
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+        updateMatViewDefinition(newDefinition);
+    }
+
+    @Override
     public void setMatViewRefreshLimit(int limitHoursOrMonths) {
         assert tableToken.isMatView();
 
-        try {
-            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
-            if (oldDefinition == null) {
-                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
-            }
-
-            final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
-            updateMatViewDefinition(newDefinition);
-        } finally {
-            path.trimTo(pathSize);
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
+        updateMatViewDefinition(newDefinition);
     }
 
     @Override
     public void setMatViewRefreshTimer(long start, int interval, char unit) {
         assert tableToken.isMatView();
 
-        try {
-            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
-            if (oldDefinition == null) {
-                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
-            }
-
-            final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
-            updateMatViewDefinition(newDefinition);
-        } finally {
-            path.trimTo(pathSize);
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
+        updateMatViewDefinition(newDefinition);
     }
 
     @Override
@@ -7626,8 +7654,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.txnApplyBlockError(tableToken);
         }
 
+        // Don't move the line to mmap Wal column inside the following try block,
+        // This call, if failed will close the WAL files correctly on its own
+        // putting it inside the try block will cause the WAL files to be closed twice in the finally block
+        // in case of the exception.
+        segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
         try {
-            segmentFileCache.mmapWalColumns(segmentCopyInfo, metadata, path);
             final long timestampAddr;
             final boolean copiedToMemory;
             final long o3Lo;
@@ -9497,7 +9529,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashPartitionForce(int partitionIndex) {
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        assert lastLogicalPartitionTimestamp == txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+        if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
+            lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+            // We can have a split partition without the parent logical partition
+            // after some replace commits
+            // We need to create a logical partition to squash into
+            txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
+            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
+            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
+            }
+            partitionIndex++;
+        }
 
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         while (partitionIndex < txWriter.getPartitionCount()) {
@@ -9542,6 +9585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
         int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
 
+        boolean splitsKept = false;
         if (partitionIndexLo < txWriter.getPartitionCount()) {
             int partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
             int partitionIndex = partitionIndexLo + 1;
@@ -9551,9 +9595,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 long nextPartitionLogicalTimestamp = txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp);
 
-                if (nextPartitionLogicalTimestamp > logicalPartitionTimestamp) {
-                    if (partitionIndex - partitionIndexLo > 1) {
+                if (nextPartitionLogicalTimestamp != logicalPartitionTimestamp) {
+                    int splitCount = partitionIndex - partitionIndexLo;
+                    if (splitCount > 1) {
+                        int partitionCount = txWriter.getPartitionCount();
                         squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+                        int partitionReduction = partitionCount - txWriter.getPartitionCount();
+                        splitsKept = partitionReduction < splitCount - 1;
+
                         logicalPartitionTimestamp = nextPartitionTimestamp;
 
                         // Squashing changes the partitions, re-calculate the loop index and boundaries
@@ -9561,6 +9610,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
                     } else {
                         partitionIndexLo = partitionIndex;
+                        logicalPartitionTimestamp = nextPartitionLogicalTimestamp;
+                    }
+
+                    if (!splitsKept && timestampMin == minSplitPartitionTimestamp) {
+                        // All splits seen are squashed, move minSplitPartitionTimestamp forward.
+                        minSplitPartitionTimestamp = nextPartitionTimestamp;
                     }
                 }
             }
@@ -10008,12 +10063,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (BlockFileWriter definitionWriter = blockFileWriter) {
             definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
             MatViewDefinition.append(newDefinition, definitionWriter);
+        } finally {
+            path.trimTo(pathSize);
         }
 
         // Unlike mat view state write-through behavior, we update the in-memory definition
         // object here, after updating the definition file.
-        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
         engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
     }
 
     private void updateMaxTimestamp(long timestamp) {

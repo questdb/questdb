@@ -32,6 +32,7 @@ import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataService {
 
@@ -166,6 +167,21 @@ public interface MetadataService {
     void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
+
+    /**
+     * Sets refresh type and settings for materialized view.
+     */
+    void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    );
 
     /**
      * Sets the incremental refresh limit for materialized view:

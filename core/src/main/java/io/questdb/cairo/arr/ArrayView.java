@@ -181,7 +181,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     public final boolean arrayEquals(ArrayView other) {
-        if (type != other.type || !shapeEquals(other)) {
+        if (type != other.type || shapeDiffers(other)) {
             return false;
         }
         // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded
@@ -218,6 +218,13 @@ public abstract class ArrayView implements QuietCloseable {
                         }
                     }
                     break;
+                case ColumnType.NULL:
+                    // The other array can only be NULL at this point. Empty array creation is disallowed by
+                    // the SQL parser. By the time we are here we would have verified that both arrays
+                    // have the same dimensionality. When this element type is NULL, it means dimensionality is 0
+                    // (e.g. empty array). The only other array that is allowed to be empty would also have
+                    // element type as NULL
+                    return true;
                 default:
                     throw new UnsupportedOperationException("Implemented only for DOUBLE and LONG");
             }
@@ -398,6 +405,14 @@ public abstract class ArrayView implements QuietCloseable {
         return flatViewOffset;
     }
 
+    public final int getHi() {
+        return flatViewOffset + flatViewLength;
+    }
+
+    public final int getLo() {
+        return flatViewOffset;
+    }
+
     /**
      * Returns the {@code long} value at the supplied flat index in this array.
      * When accessing an array element at coordinates (i, j, k, ...), use this formula
@@ -499,23 +514,23 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Tells whether this array has the same shape as the other one.
+     * Tells whether this array has the same shape as the other one, or not.
      * <p>
      * <strong>NOTE:</strong> arrays of the same shape do not necessarily have the same
      * strides.
      */
-    public final boolean shapeEquals(ArrayView other) {
+    public final boolean shapeDiffers(ArrayView other) {
         int nDims = shape.size();
         IntList otherShape = other.shape;
         if (otherShape.size() != nDims) {
-            return false;
+            return true;
         }
         for (int i = 0; i < nDims; i++) {
             if (shape.getQuick(i) != otherShape.getQuick(i)) {
-                return false;
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     /**

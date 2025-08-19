@@ -35,7 +35,7 @@ public interface MemoryOM extends MemoryM {
 
     long getOffset();
 
-    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         ofOffset(ff, name, 0L, size, memoryTag, opts);
     }
 
@@ -56,7 +56,7 @@ public interface MemoryOM extends MemoryM {
      * @param memoryTag  memory tag for diagnostics
      * @param opts       file options
      */
-    void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, long opts);
+    void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, int opts);
 
     /**
      * Maps file to memory
@@ -69,7 +69,7 @@ public interface MemoryOM extends MemoryM {
      * @param memoryTag memory tag for diagnostics
      * @param opts      file options
      */
-    default void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+    default void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, int opts) {
         ofOffset(ff, -1, false, name, lo, hi, memoryTag, opts);
     }
 }

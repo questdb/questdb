@@ -385,6 +385,10 @@ public final class ColumnType {
     }
 
     public static boolean isSymbolOrString(int columnType) {
+        return columnType == SYMBOL || columnType == STRING;
+    }
+
+    public static boolean isSymbolOrStringOrVarchar(int columnType) {
         return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR;
     }
 
@@ -408,7 +412,7 @@ public final class ColumnType {
     }
 
     public static boolean isUnderdefined(int columnType) {
-        return columnType == UNDEFINED || isUnderdefinedArray(columnType);
+        return columnType == UNDEFINED || isUndefinedArray(columnType);
     }
 
     public static boolean isVarSize(int columnType) {
@@ -582,7 +586,7 @@ public final class ColumnType {
                 || (fromType == UUID && toType == STRING);
     }
 
-    private static boolean isUnderdefinedArray(int columnType) {
+    private static boolean isUndefinedArray(int columnType) {
         return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
     }
 

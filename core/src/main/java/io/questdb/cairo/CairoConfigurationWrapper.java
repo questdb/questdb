@@ -142,6 +142,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return getDelegate().getColumnAliasGeneratedMaxSize();
+    }
+
+    @Override
     public int getColumnIndexerQueueCapacity() {
         return getDelegate().getColumnIndexerQueueCapacity();
     }
@@ -302,6 +307,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
+    }
+
+    @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
     }
@@ -442,13 +452,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return getDelegate().getMatViewMaxRefreshIntervals();
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
     }
 
     @Override
-    public long getMatViewMinRefreshInterval() {
-        return getDelegate().getMatViewMinRefreshInterval();
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
+        return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
 
     @Override
@@ -1007,6 +1022,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolTableAppendPageSize() {
+        return getDelegate().getSymbolTableAppendPageSize();
+    }
+
+    @Override
     public long getSystemDataAppendPageSize() {
         return getDelegate().getSystemDataAppendPageSize();
     }
@@ -1192,7 +1212,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterFileOpenOpts() {
+    public int getWriterFileOpenOpts() {
         return getDelegate().getWriterFileOpenOpts();
     }
 
@@ -1204,6 +1224,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
+    }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return getDelegate().isColumnAliasExpressionEnabled();
     }
 
     @Override
@@ -1219,11 +1244,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
-    }
-
-    @Override
-    public boolean isMatViewDebugEnabled() {
-        return getDelegate().isMatViewDebugEnabled();
     }
 
     @Override
@@ -1249,6 +1269,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return getDelegate().isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetRawArrayEncoding() {
+        return getDelegate().isPartitionEncoderParquetRawArrayEncoding();
     }
 
     @Override
@@ -1302,6 +1327,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelTopKEnabled() {
+        return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }
@@ -1352,16 +1382,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useWithinLatestByOptimisation() {
         return getDelegate().useWithinLatestByOptimisation();
-    }
-
-    @Override
-    public boolean isColumnAliasExpressionEnabled() {
-        return getDelegate().isColumnAliasExpressionEnabled();
-    }
-
-    @Override
-    public int getColumnAliasGeneratedMaxSize() {
-        return getDelegate().getColumnAliasGeneratedMaxSize();
     }
 
     protected CairoConfiguration getDelegate() {

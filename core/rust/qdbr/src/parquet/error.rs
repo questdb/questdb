@@ -108,27 +108,19 @@ impl ParquetError {
         let last_index = self.context.len().saturating_sub(1);
         for (index, context) in self.context.iter().rev().enumerate() {
             if index == last_index {
-                write!(f, "{}", context)?;
+                write!(f, "{context}")?;
             } else {
-                write!(f, "{}: ", context)?;
+                write!(f, "{context}: ")?;
             }
         }
 
         // Then the source's cause, if there is one.
         if let Some(source) = source {
             if self.context.is_empty() {
-                write!(f, "{}", source)?;
+                write!(f, "{source}")?;
             } else {
-                write!(f, ": {}", source)?;
+                write!(f, ": {source}")?;
             }
-        }
-        Ok(())
-    }
-
-    fn fmt_msg_with_backtrace<W: Write>(&self, f: &mut W) -> std::fmt::Result {
-        self.fmt_msg(f)?;
-        if self.backtrace.status() == BacktraceStatus::Captured {
-            write!(f, "\n{}", self.backtrace)?;
         }
         Ok(())
     }
@@ -184,7 +176,7 @@ impl Debug for ParquetError {
         writeln!(f, "ParquetError\n    Reason: {:?}", self.reason)?;
         writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
-            writeln!(f, "        {}", line)?;
+            writeln!(f, "        {line}")?;
         }
         if self.backtrace.status() == BacktraceStatus::Captured {
             writeln!(f, "    Backtrace:\n{}", self.backtrace)?;
@@ -196,15 +188,6 @@ impl Debug for ParquetError {
 impl Display for ParquetError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.fmt_msg(f)?;
-        Ok(())
-    }
-}
-
-pub struct ParquetErrorWithBacktraceDisplay<'a>(&'a ParquetError);
-
-impl Display for ParquetErrorWithBacktraceDisplay<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt_msg_with_backtrace(f)?;
         Ok(())
     }
 }

@@ -107,6 +107,7 @@ public class TableSequencerAPI implements QuietCloseable {
             } finally {
                 seq.unlockWrite();
             }
+            getSeqTxnTracker(tableToken).notifyOnDrop();
         } catch (CairoException e) {
             LOG.info().$("failed to drop wal table [table=").$(tableToken).I$();
             if (!failedCreate) {
@@ -126,7 +127,6 @@ public class TableSequencerAPI implements QuietCloseable {
 
             // Exclude locked entries.
             // Use includeDropped argument to decide whether to include dropped tables.
-            String publicTableName = tableToken.getTableName();
             boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
             if (engine.isWalTable(tableToken) && !isDropped) {
                 long lastTxn;

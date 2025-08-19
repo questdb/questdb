@@ -335,8 +335,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     errors.incrementAndGet();
                     e.printStackTrace(System.out);
                 } finally {
-                    halt.countDown();
                     Path.clearThreadLocals();
+                    halt.countDown();
                 }
             }).start();
 
@@ -371,8 +371,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         errors.incrementAndGet();
                         e.printStackTrace(System.out);
                     } finally {
-                        halt.countDown();
                         Path.clearThreadLocals();
+                        halt.countDown();
                     }
                 }).start();
             }

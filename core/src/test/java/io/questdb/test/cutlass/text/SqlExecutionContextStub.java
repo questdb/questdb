@@ -134,6 +134,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getSharedQueryWorkerCount() {
+        return 0;
+    }
+
+    @Override
     public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return null;
     }
@@ -141,11 +146,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     @Override
     public WindowContext getWindowContext() {
         return null;
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return 0;
     }
 
     @Override
@@ -179,6 +179,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public boolean isParallelReadParquetEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelTopKEnabled() {
         return false;
     }
 
@@ -246,6 +251,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
+    public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
     }
 
     @Override

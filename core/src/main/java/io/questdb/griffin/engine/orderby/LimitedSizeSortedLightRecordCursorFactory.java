@@ -43,7 +43,6 @@ import org.jetbrains.annotations.Nullable;
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private final RecordCursorFactory base;
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
@@ -52,7 +51,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
     // factory does not own the chain, just keeps the reference to enable updating of the limits
-    private LimitedSizeLongTreeChain chain = null;
+    private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
     private boolean isFirstN;
@@ -222,17 +221,17 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                     this.limit = -Math.min(hi, lo);
                     this.skipLast = Math.max(-Math.max(hi, lo), 0);
                 }
-            } else { //lo >= 0
+            } else { // lo >= 0
                 if (hi < 0) {
-                    //if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
+                    // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
                     // (it's from lo up to end-hi so probably whole result anyway )
                     this.limit = -1;
                     this.skipFirst = lo;
                     this.skipLast = -hi;
-                } else { //both lo and hi are positive
+                } else { // both lo and hi are positive
                     this.isFirstN = true;
                     this.limit = Math.max(hi, lo);
-                    //but we've to skip to lo
+                    // but we've to skip to lo
                     this.skipFirst = Math.min(hi, lo);
                 }
             }
