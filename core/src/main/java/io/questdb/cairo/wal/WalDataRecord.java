@@ -122,6 +122,76 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
+    public byte getDecimal8(int col) {
+        final long offset = recordIndex;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? Byte.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getByte(offset);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        final long offset = recordIndex * Short.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? Short.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getShort(offset);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        final long offset = recordIndex * Integer.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? Integer.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getInt(offset);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        final long offset = recordIndex * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? Long.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
+    public long getDecimal128Hi(int col) {
+        final long offset = recordIndex * 2 * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? Long.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        final long offset = recordIndex * 2 * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        final long offset = recordIndex * 4 * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? Long.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        final long offset = recordIndex * 4 * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        final long offset = recordIndex * 4 * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + 2 * Long.BYTES);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        final long offset = recordIndex * 4 * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + 3 * Long.BYTES);
+    }
+
+    @Override
     public int getGeoInt(int col) {
         final long offset = recordIndex * Integer.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);

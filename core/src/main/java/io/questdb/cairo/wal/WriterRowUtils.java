@@ -24,16 +24,70 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Decimal256;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
 
 public class WriterRowUtils {
 
     private WriterRowUtils() {
+    }
+
+    public static void putDecimal(int index, Decimal256 value, int columnType, TableWriter.Row row) {
+        if (value.isNull()) {
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.DECIMAL8:
+                    row.putByte(index, Byte.MIN_VALUE);
+                    break;
+                case ColumnType.DECIMAL16:
+                    row.putShort(index, Short.MIN_VALUE);
+                    break;
+                case ColumnType.DECIMAL32:
+                    row.putInt(index, Integer.MIN_VALUE);
+                    break;
+                case ColumnType.DECIMAL64:
+                    row.putLong(index, Long.MIN_VALUE);
+                    break;
+                case ColumnType.DECIMAL128:
+                    row.putDecimal128(index, Long.MIN_VALUE, -1);
+                    break;
+                case ColumnType.DECIMAL256:
+                    row.putDecimal256(index, Long.MIN_VALUE, -1, -1, -1);
+                    break;
+            }
+            return;
+        }
+        short tag = ColumnType.tagOf(columnType);
+        if (!value.fitsInStorageSizePow2(tag - ColumnType.DECIMAL8)) {
+            throw CairoException.nonCritical().put("value does not fit in column type ").put(ColumnType.nameOf(columnType));
+        }
+        // TODO: adjust scale
+        // TODO: check for precision overflow
+        switch (tag) {
+            case ColumnType.DECIMAL8:
+                row.putByte(index, (byte) value.getLl());
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(index, (short) value.getLl());
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(index, (int) value.getLl());
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(index, value.getLl());
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(index, value.getLh(), value.getLl());
+                break;
+            default:
+                row.putDecimal256(index, value.getHh(), value.getHl(), value.getLh(), value.getLl());
+                break;
+        }
     }
 
     public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
