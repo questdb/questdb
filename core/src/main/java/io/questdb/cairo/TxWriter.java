@@ -242,21 +242,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         short partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionIndex);
         if (partitionSquashCounter == -1) {
             // -1 as signed = 0xFFFF = 65535 unsigned
+            // this means 16bit unsigned value is overflown.
+            // Return false so that the coller can fall back to an alternative way to track squashes.
             return false;
         }
         setPartitionSquashCounterByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, ++partitionSquashCounter);
+        // Bump versions to make sure that incremental txn update will save the change
+        // and incremental txn read will read it
+        recordStructureVersion++;
+        partitionTableVersion++;
         return true;
-    }
-
-    private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
-        int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
-        long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
-        // Clear the existing squash counter bits (bits 59-44)
-        partitionSizeMasked &= ~(0xFFFFL << 44);
-
-        // Set the new squash counter value
-        partitionSizeMasked |= ((long)(partitionSquashCounter & 0xFFFF) << 44);
-        attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
     }
 
     public void initLastPartition(long timestamp) {
@@ -716,6 +711,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
+        long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
+        // Clear the existing squash counter bits (bits 59-44)
+        partitionSizeMasked &= ~(0xFFFFL << 44);
+
+        // Set the new squash counter value
+        partitionSizeMasked |= ((long) (partitionSquashCounter & 0xFFFF) << 44);
+        attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         for (int i = 0, n = symbolCountProviders.size(); i < n; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -798,7 +804,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         recordStructureVersion++;
         updatePartitionSizeByRawIndex(index, partitionSize);
         // New partition version is written, reset the squash counter.
-        setPartitionSquashCounterByRawIndex(index, (short)0);
+        setPartitionSquashCounterByRawIndex(index, (short) 0);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

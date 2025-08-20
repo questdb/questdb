@@ -9746,7 +9746,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // the same version and row count it will be included in a backup.
                 // It is OK to overwrite the file, it is not read by backup process at the moment
                 // because backup locks scoreboard to not allow to squash into the partitions it operates on
-                squashSplitPartitions_updateSquashTimestampFile(targetPartition);
+                squashSplitPartitions_updateSquashTimestampFile(targetPartition, targetPartitionNameTxn);
             }
 
 
@@ -9782,12 +9782,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return partitionIndex;
     }
 
-    private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition) {
-        setPathForNativePartition(other, partitionBy, targetPartition, txWriter.txn);
+    private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
+        setPathForNativePartition(other.trimTo(pathSize), partitionBy, targetPartition, targetPartitionNameTxn);
         other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
         long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
         Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
-        if (ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+
+        if (squashCounterFileFd == -1 || ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
             // Log as critical, this is not fatal
             LOG.critical().$("cannot write partition squash timestamp, " +
                             "incremental backup may not be able to track partition update [path=")
