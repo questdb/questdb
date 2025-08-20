@@ -1515,6 +1515,29 @@ public class InsertCastTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharToArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab(arr double[][])");
+            execute("insert into tab values ('{{1.0, 2.0}, {3.0, 4.0}}'::varchar), (null)");
+            assertQuery("arr\n" +
+                            "[[1.0,2.0],[3.0,4.0]]\n" +
+                            "null\n",
+                    "select * from tab",
+                    true);
+
+            // bad array
+            assertException("insert into tab values ('not array'::varchar)",
+                    0,
+                    "inconvertible value: `not array` [VARCHAR -> DOUBLE[][]]");
+
+            // bad non-ascii array (😀)
+            assertException("insert into tab values ('{{1.0, 2.0}, {3.0, 4.0, \uD83D\uDE00}}'::varchar)",
+                    0,
+                    "inconvertible value: `{{1.0, 2.0}, {3.0, 4.0, \uD83D\uDE00}}` [VARCHAR -> DOUBLE[][]]");
+        });
+    }
+
     private void assertCastFloatTab(String type, String expected, float outOfRangeLeft, float outOfRangeRight) throws Exception {
         // insert table
         execute("create table y(a " + type + ");");
