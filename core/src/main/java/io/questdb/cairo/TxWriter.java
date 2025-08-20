@@ -238,6 +238,27 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount || prevPartitionTableVersion != partitionTableVersion;
     }
 
+    public boolean incrementPartitionSquashCounter(int partitionIndex) {
+        short partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionIndex);
+        if (partitionSquashCounter == -1) {
+            // -1 as signed = 0xFFFF = 65535 unsigned
+            return false;
+        }
+        setPartitionSquashCounterByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, ++partitionSquashCounter);
+        return true;
+    }
+
+    private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
+        long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
+        // Clear the existing squash counter bits (bits 59-44)
+        partitionSizeMasked &= ~(0xFFFFL << 44);
+
+        // Set the new squash counter value
+        partitionSizeMasked |= ((long)(partitionSquashCounter & 0xFFFF) << 44);
+        attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
     public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
@@ -776,6 +797,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
         updatePartitionSizeByRawIndex(index, partitionSize);
+        // New partition version is written, reset the squash counter.
+        setPartitionSquashCounterByRawIndex(index, (short)0);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

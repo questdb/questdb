@@ -57,9 +57,9 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_PARQUET_FILE_SIZE_OFFSET = 3;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
-    // | reserved | read-only | parquet format | available bits | partition size |
-    // +----------+-----------+----------------+----------------+----------------+
-    // |  1 bit   |  1 bit    |  1 bit         |  17 bits       |      44 bits   |
+    // | reserved | read-only | parquet format | reserved | squash counter | partition size |
+    // +----------+-----------+----------------+----------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  1 bit         |  1 bit   |   16 bit       |      44 bits   |
     //
     // when read-only bit is set, the partition is read only.
     // we reserve the highest bit to allow negative values to
@@ -412,8 +412,17 @@ public class TxReader implements Closeable, Mutable {
         return isPartitionParquetByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public short getPartitionSquashCount(int i) {
+        return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
     public boolean isPartitionParquetByRawIndex(int indexRaw) {
         return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    public short getPartitionSquashCountByRawIndex(int indexRaw) {
+        long partitionSizeMasked = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
+        return (short) ((partitionSizeMasked >>> 44) & 0xFFFF);
     }
 
     public boolean isPartitionReadOnly(int i) {
