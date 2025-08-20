@@ -40,7 +40,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             "    Title varchar,\n" +
             "    GoodEvent byte,\n" +
             "    EventTime timestamp,\n" +
-            "    Eventdate timestamp,\n" +
+            "    Eventdate date,\n" +
             "    CounterID int,\n" +
             "    ClientIP ipv4,\n" +
             "    RegionID int,\n" +
