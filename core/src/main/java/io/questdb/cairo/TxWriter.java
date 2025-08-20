@@ -239,14 +239,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean incrementPartitionSquashCounter(int partitionIndex) {
-        short partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionIndex);
-        if (partitionSquashCounter == -1) {
-            // -1 as signed = 0xFFFF = 65535 unsigned
-            // this means 16bit unsigned value is overflown.
-            // Return false so that the coller can fall back to an alternative way to track squashes.
+        int partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionIndex);
+        if (partitionSquashCounter == PARTITION_SQUASH_COUNTER_MAX) {
+            // This means 16bit unsigned value is overflown.
+            // Return false so that the caller can fall back to an alternative way to track squashes.
             return false;
         }
-        setPartitionSquashCounterByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, ++partitionSquashCounter);
+        setPartitionSquashCounterByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, (short) (partitionSquashCounter + 1));
         // Bump versions to make sure that incremental txn update will save the change
         // and incremental txn read will read it
         recordStructureVersion++;
@@ -718,7 +717,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         partitionSizeMasked &= ~(0xFFFFL << 44);
 
         // Set the new squash counter value
-        partitionSizeMasked |= ((long) (partitionSquashCounter & 0xFFFF) << 44);
+        partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << 44);
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
     }
 

@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -614,11 +615,43 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " from long_sequence(200)"
             );
 
+            Assert.assertEquals(1, getSquashCount("x", "2020-02-04"));
+
             assertSql("minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t2040\t2020-02-04\n" +
                     "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n", partitionsSql);
 
+            // Append to partition 2020-02-04 and check that squash count is persisted
+            execute(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T23:59', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(1)"
+            );
+            Assert.assertEquals(1, getSquashCount("x", "2020-02-04"));
+
+            // Replace partition 2020-02-04 with a new verion and check that squash count is reset
+            execute(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(1)"
+            );
+            Assert.assertEquals(0, getSquashCount("x", "2020-02-04"));
         });
+    }
+
+    private int getSquashCount(String tableName, String partitionDate) {
+        try (TableReader reader = getReader(tableName)) {
+            long timestamp = IntervalUtils.parseFloorPartialTimestamp(partitionDate);
+            int partitionIndex = reader.getPartitionIndexByTimestamp(timestamp);
+            if (partitionIndex >= 0) {
+                return reader.getTxFile().getPartitionSquashCount(partitionIndex);
+            }
+            return 0;
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test

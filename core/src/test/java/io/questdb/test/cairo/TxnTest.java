@@ -204,6 +204,22 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashCounterOverflow() throws IOException {
+        try (Path p = new Path()) {
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
+                while (tw.incrementPartitionSquashCounter(0)) {
+                }
+
+                Assert.assertEquals(TxReader.PARTITION_SQUASH_COUNTER_MAX, tw.getPartitionSquashCount(0));
+
+                Assert.assertFalse(tw.incrementPartitionSquashCounter(0));
+                Assert.assertEquals(TxReader.PARTITION_SQUASH_COUNTER_MAX, tw.getPartitionSquashCount(0));
+            }
+        }
+    }
+
+    @Test
     public void testToString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
