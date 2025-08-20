@@ -789,7 +789,7 @@ public class MemoryPARWImpl implements MemoryARW {
         if (pageHi - appendPointer > 2 * Long.BYTES - 1) {
             Unsafe.getUnsafe().putLong(appendPointer, high);
             Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, low);
-            appendPointer += Decimal256.BYTES;
+            appendPointer += 2 * Long.BYTES;
         } else {
             putLong(high);
             putLong(low);
