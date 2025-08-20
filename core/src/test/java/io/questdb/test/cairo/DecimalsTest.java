@@ -24,8 +24,11 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Decimals;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -33,14 +36,72 @@ import org.junit.Test;
  * Tests for Decimal256 storage with variable byte length based on precision
  */
 public class DecimalsTest extends AbstractTest {
-    @Test(expected = IllegalArgumentException.class)
-    public void testGetStorageSizeInvalid() {
-        int ignored = Decimals.getStorageSizePow2(-1);
+    public short getExpectedTag(int precision) {
+        int size = Decimals.getStorageSizePow2(precision);
+        switch (size) {
+            case 0:
+                return ColumnType.DECIMAL8;
+            case 1:
+                return ColumnType.DECIMAL16;
+            case 2:
+                return ColumnType.DECIMAL32;
+            case 3:
+                return ColumnType.DECIMAL64;
+            case 4:
+                return ColumnType.DECIMAL128;
+            default:
+                return ColumnType.DECIMAL256;
+        }
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void testGetStorageSizeInvalidTooBig() {
-        int ignored = Decimals.getStorageSizePow2(100);
+    @Test
+    public void testGetDecimalTypeCombinatorics() {
+        // Combinations of precision, scale -> expected type
+        int[][] combinations = {
+                {1, 0, 0x00000100 | (int) ColumnType.DECIMAL8},
+                {1, 1, 0x00010100 | (int) ColumnType.DECIMAL8},
+                {3, 2, 0x00020300 | (int) ColumnType.DECIMAL16},
+                {6, 0, 0x00000600 | (int) ColumnType.DECIMAL32},
+                {7, 4, 0x00040700 | (int) ColumnType.DECIMAL32},
+                {12, 12, 0x000C0C00 | (int) ColumnType.DECIMAL64},
+                {18, 0, 0x00001200 | (int) ColumnType.DECIMAL64},
+                {18, 18, 0x00121200 | (int) ColumnType.DECIMAL64},
+                {30, 4, 0x00041E00 | (int) ColumnType.DECIMAL128},
+                {30, 30, 0x001E1E00 | (int) ColumnType.DECIMAL128},
+                {42, 4, 0x00042A00 | (int) ColumnType.DECIMAL256},
+                {55, 45, 0x002D3700 | (int) ColumnType.DECIMAL256},
+                {76, 10, 0x000A4C00 | (int) ColumnType.DECIMAL256},
+        };
+
+        for (int[] combination : combinations) {
+            int precision = combination[0];
+            int scale = combination[1];
+            int expectedType = combination[2];
+            int type = ColumnType.getDecimalType(precision, scale);
+            Assert.assertEquals(String.format("Failure with precision: %d and scale: %d. Expected 0x%08x but was 0x%08x", precision, scale, expectedType, type), expectedType, type);
+        }
+    }
+
+    @Test
+    public void testGetDecimalTypeFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        final int iterations = 1_000;
+        for (int i = 0; i < iterations; i++) {
+            int precision = rnd.nextInt(Decimals.MAX_PRECISION - 1) + 1;
+            int scale = rnd.nextInt(Decimals.MAX_SCALE - 1) + 1;
+            int type = ColumnType.getDecimalType(precision, scale);
+
+            int p = ColumnType.getDecimalPrecision(type);
+            Assert.assertEquals(String.format("Failed at iteration %d, expected precision to be %d not %d", i, precision, p), precision, p);
+
+            int s = ColumnType.getDecimalScale(type);
+            Assert.assertEquals(String.format("Failed at iteration %d, expected scale to be %d not %d", i, scale, s), scale, s);
+
+            short tag = ColumnType.tagOf(type);
+            short expectedTag = getExpectedTag(precision);
+            Assert.assertEquals(String.format("Failed at iteration %d, expected tag to be %d not %d", i, expectedTag, tag), expectedTag, tag);
+        }
     }
 
     @Test
@@ -66,5 +127,15 @@ public class DecimalsTest extends AbstractTest {
             int storageSizeNeeded = combination[1];
             Assert.assertEquals("Expected " + storageSizeNeeded + " pow 2 bytes needed for decimal of precision " + precision, storageSizeNeeded, Decimals.getStorageSizePow2(precision));
         }
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testGetStorageSizeInvalid() {
+        int ignored = Decimals.getStorageSizePow2(-1);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testGetStorageSizeInvalidTooBig() {
+        int ignored = Decimals.getStorageSizePow2(100);
     }
 }

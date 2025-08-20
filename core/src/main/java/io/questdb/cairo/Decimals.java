@@ -25,7 +25,8 @@
 package io.questdb.cairo;
 
 public class Decimals {
-    public static final int MAX_SCALE = 76;
+    public static final int MAX_PRECISION = 76;
+    public static final int MAX_SCALE = MAX_PRECISION;
     private static final int[] PRECISION_SIZE_POW2 = {
             0, 0, 0, // precision 0-2 -> 1 byte
             1, 1, // precision 3-4 -> 2 byte

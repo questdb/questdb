@@ -107,12 +107,32 @@ public final class ColumnType {
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = ARRAY + 1;          // = 28;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 29;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 30;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 31;
-    public static final short INTERVAL = PARAMETER + 1;         // = 32
-    public static final short NULL = INTERVAL + 1;              // = 33; ALWAYS the last
+    public static final short REGCLASS = ARRAY + 1;            // = 28;
+    public static final short REGPROCEDURE = REGCLASS + 1;     // = 29;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1; // = 30;
+    public static final short PARAMETER = ARRAY_STRING + 1;    // = 31;
+    public static final short INTERVAL = PARAMETER + 1;        // = 32;
+    // Similarly to GeoHash, Decimal is separated in 2 kinds of type:
+    //  - Stored ones with the number of bits used in the suffix (selected from the precision
+    // through getStorageSize).
+    //  - Unstored one that is used as a surrogate to resolve decimal functions.
+    //
+    // Stored decimal uses the Extra type information to store the precision
+    // and scale, giving this layout:
+    //       31         30~24    23~16      15~8              7~0
+    // +--------------+--------+--------+-----------+-------------------------+
+    // | Handling bit | Unused | Scale  | Precision | Type discriminant (tag) |
+    // +--------------+--------+--------+-----------+-------------------------+
+    // |    1 bit     | 7 bits | 8 bits |  8 bits   |         8 bits          |
+    // +--------------+--------+--------+-----------+-------------------------+
+    public static final short DECIMAL8 = INTERVAL + 1;     // = 33;
+    public static final short DECIMAL16 = DECIMAL8 + 1;    // = 34;
+    public static final short DECIMAL32 = DECIMAL16 + 1;   // = 35;
+    public static final short DECIMAL64 = DECIMAL32 + 1;   // = 36;
+    public static final short DECIMAL128 = DECIMAL64 + 1;  // = 37;
+    public static final short DECIMAL256 = DECIMAL128 + 1; // = 38;
+    public static final short DECIMAL = DECIMAL256 + 1;    // = 39;
+    public static final short NULL = DECIMAL + 1;          // = 40; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -213,6 +233,23 @@ public final class ColumnType {
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
                 | (elemType & ARRAY_ELEMTYPE_FIELD_MASK) << ARRAY_ELEMTYPE_FIELD_POS
                 | ARRAY;
+    }
+
+    public static int getDecimalPrecision(int type) {
+        return (type >>> 8) & 0xFF;
+    }
+
+    public static int getDecimalScale(int type) {
+        return (type >>> 16) & 0xFF;
+    }
+
+    public static int getDecimalType(int precision, int scale) {
+        assert precision > 0 && precision <= Decimals.MAX_PRECISION;
+        assert scale >= 0 && scale <= Decimals.MAX_SCALE;
+        int size = Decimals.getStorageSizePow2(precision);
+        // Construct the type following the layout described earlier.
+        // DECIMAL8-256 needs to be clustered together for this to work.
+        return ((scale & 0xFF) << 16) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -620,40 +657,47 @@ public final class ColumnType {
         /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
 
         OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN   */, {BOOLEAN}
-                /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
-                /* 4  CHAR      */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE      */, {DATE, TIMESTAMP, LONG, DOUBLE}
-                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE, DOUBLE}
-                /* 9  FLOAT     */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256   */, {LONG256, LONG}
-                /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
-                /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID, STRING}
-                /* 20 CURSOR    */, {CURSOR}
-                /* 21 unused    */, {}
-                /* 22 unused    */, {}
-                /* 23 unused    */, {}
-                /* 24 LONG128   */, {LONG128}
-                /* 25 IPv4      */, {IPv4, STRING, VARCHAR}
-                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 27 ARRAY     */, {ARRAY}
-                /* 28 unused    */, {}
-                /* 29 unused    */, {}
-                /* 30 unused    */, {}
-                /* 31 unused    */, {}
-                /* 32 INTERVAL  */, {INTERVAL, STRING}
-                /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+                /* 1  BOOLEAN    */, {BOOLEAN}
+                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
+                /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE}
+                /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
+                /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
+                /* 9  FLOAT      */, {FLOAT, DOUBLE}
+                /* 10 DOUBLE     */, {DOUBLE}
+                /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
+                /* 13 LONG256    */, {LONG256, LONG}
+                /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}
+                /* 17 GEOLONG    */, {GEOLONG, GEOHASH}
+                /* 18 BINARY     */, {BINARY}
+                /* 19 UUID       */, {UUID, STRING}
+                /* 20 CURSOR     */, {CURSOR}
+                /* 21 unused     */, {}
+                /* 22 unused     */, {}
+                /* 23 unused     */, {}
+                /* 24 LONG128    */, {LONG128}
+                /* 25 IPv4       */, {IPv4, STRING, VARCHAR}
+                /* 26 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 27 ARRAY      */, {ARRAY}
+                /* 28 unused     */, {}
+                /* 29 unused     */, {}
+                /* 30 unused     */, {}
+                /* 31 unused     */, {}
+                /* 32 INTERVAL   */, {INTERVAL, STRING}
+                /* 33 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 34 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 35 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 36 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 37 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
+                /* 38 DECIMAL256 */, {DECIMAL256, DECIMAL}
+                /* 39 DECIMAL    */, {DECIMAL}
+                /* 40 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -706,6 +750,7 @@ public final class ColumnType {
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
         typeNameMap.put(INTERVAL, "INTERVAL");
+        typeNameMap.put(DECIMAL, "DECIMAL");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -753,6 +798,7 @@ public final class ColumnType {
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
         nameTypeMap.put("interval", INTERVAL);
+        nameTypeMap.put("decimal", DECIMAL);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
@@ -798,6 +844,12 @@ public final class ColumnType {
         TYPE_SIZE_POW2[LONG128] = 4;
         TYPE_SIZE_POW2[UUID] = 4;
         TYPE_SIZE_POW2[INTERVAL] = 4;
+        TYPE_SIZE_POW2[DECIMAL8] = 0;
+        TYPE_SIZE_POW2[DECIMAL16] = 1;
+        TYPE_SIZE_POW2[DECIMAL32] = 2;
+        TYPE_SIZE_POW2[DECIMAL64] = 3;
+        TYPE_SIZE_POW2[DECIMAL128] = 4;
+        TYPE_SIZE_POW2[DECIMAL256] = 5;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -829,6 +881,12 @@ public final class ColumnType {
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
         TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
+        TYPE_SIZE[DECIMAL8] = Byte.BYTES;
+        TYPE_SIZE[DECIMAL16] = Short.BYTES;
+        TYPE_SIZE[DECIMAL32] = Integer.BYTES;
+        TYPE_SIZE[DECIMAL64] = Long.BYTES;
+        TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
+        TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
 
         nonPersistedTypes.add(UNDEFINED);
         nonPersistedTypes.add(INTERVAL);
@@ -860,6 +918,15 @@ public final class ColumnType {
         for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {
             ARRAY_DIM_SUFFIX[i] = sink.toString();
             sink.put("[]");
+        }
+
+        // Stored decimals
+        for (int i = 8, type = DECIMAL8; type <= DECIMAL256; i <<= 1, type++) {
+            sink.clear();
+            sink.put("DECIMAL(").put(i).put(")");
+            String name = sink.toString();
+            typeNameMap.put(type, name);
+            nameTypeMap.put(name, type);
         }
     }
 }
