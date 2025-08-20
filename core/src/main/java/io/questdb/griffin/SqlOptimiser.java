@@ -7397,7 +7397,7 @@ public class SqlOptimiser implements Mutable {
                     CharSequence whereClauseAlias = clauseColumn.subSequence(0, dot);
                     CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
                             targetModel.getTableNameExpr().token;
-                    if (Chars.equals(whereClauseAlias, masterTableAlias))
+                    if (!Chars.equals(whereClauseAlias, masterTableAlias))
                         found = true;
                 } else {
                     if (!targetModel.getAliasToColumnMap().contains(clauseColumnName))
