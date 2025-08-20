@@ -38,7 +38,7 @@ public interface BinarySequence {
     default void copyTo(long address, long start, long length) {
         final long n = Math.min(length() - start, length);
         for (long l = 0; l < n; l++) {
-            Unsafe.getUnsafe().putByte(address + l, byteAt(start + l));
+            Unsafe.putByte(address + l, byteAt(start + l));
         }
     }
 

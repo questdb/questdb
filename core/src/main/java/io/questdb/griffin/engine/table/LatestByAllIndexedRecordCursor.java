@@ -340,7 +340,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     private void postProcessRows() {
-        Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
+        Vect.sortULongAscInPlaceChecked(rows.getAddress(), aLimit);
     }
 
     private void processTasks(int queuedCount) {

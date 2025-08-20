@@ -328,7 +328,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -384,7 +384,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             double val = value != null ? value.getDouble(0) : Double.NaN;
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
 
         @Override
@@ -819,7 +819,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
 
         @Override
@@ -1210,7 +1210,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
 
         @Override
@@ -1328,7 +1328,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
 
         @Override
@@ -1384,7 +1384,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
 
         @Override
@@ -1444,7 +1444,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), avg);
         }
 
         @Override

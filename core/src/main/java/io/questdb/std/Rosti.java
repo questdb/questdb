@@ -40,7 +40,7 @@ public final class Rosti {
         try {
             long p = mem;
             for (int i = 0; i < columnCount; i++) {
-                Unsafe.getUnsafe().putInt(p, types.getColumnType(i));
+                Unsafe.putInt(p, types.getColumnType(i));
                 p += Integer.BYTES;
             }
             // this is not an exact size of memory allocated for Rosti, but this is useful to

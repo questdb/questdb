@@ -81,8 +81,8 @@ public class LongChain implements Closeable, Mutable, Reopenable {
 
         final long appendRawOffset = heapPos - heapStart;
         final int appendOffset = compressOffset(appendRawOffset);
-        Unsafe.getUnsafe().putLong(heapPos, value);
-        Unsafe.getUnsafe().putInt(heapPos + 8, parentOffset);
+        Unsafe.putLong(heapPos, value);
+        Unsafe.putInt(heapPos + 8, parentOffset);
         heapPos += CHAIN_VALUE_SIZE;
         return appendOffset;
     }
