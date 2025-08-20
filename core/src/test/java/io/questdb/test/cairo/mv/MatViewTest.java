@@ -3107,6 +3107,11 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
 
+            assertSql("indexBlockCapacity\n" +
+                            "2\n",
+                    "select indexBlockCapacity from (show columns from price_1h) where column = 'sym'"
+            );
+
             assertSql(
                     "QUERY PLAN\n" +
                             "DeferredSingleSymbolFilterPageFrame\n" +
@@ -3133,7 +3138,7 @@ public class MatViewTest extends AbstractCairoTest {
                 assertSql(
                         "QUERY PLAN\n" +
                                 "Async JIT Filter workers: 1\n" +
-                                "  filter: sym='eurusd' [pre-touch]\n" +
+                                "  filter: sym='eurusd'\n" +
                                 "    PageFrame\n" +
                                 "        Row forward scan\n" +
                                 "        Frame forward scan on: price_1h\n",
@@ -3143,7 +3148,7 @@ public class MatViewTest extends AbstractCairoTest {
                 assertSql(
                         "QUERY PLAN\n" +
                                 "Async Filter workers: 1\n" +
-                                "  filter: sym='eurusd' [pre-touch]\n" +
+                                "  filter: sym='eurusd'\n" +
                                 "    PageFrame\n" +
                                 "        Row forward scan\n" +
                                 "        Frame forward scan on: price_1h\n",
@@ -3162,6 +3167,70 @@ public class MatViewTest extends AbstractCairoTest {
                             "      filter: sym=2\n" +
                             "    Frame forward scan on: price_1h\n",
                     "explain " + sql
+            );
+        });
+    }
+
+    @Test
+    public void testIndexEmptyMV() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 312);
+
+            execute(
+                    "create table base_price (" +
+                            "sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+
+
+            drainQueues();
+
+            execute("alter materialized view price_1h alter column sym add index");
+
+            drainQueues();
+
+            // index already exists - exception
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym add index",
+                    46,
+                    "column 'sym' already indexed"
+            );
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.311, '2024-09-11T13:03')" +
+                            ",('eurusd', 1.312, '2024-09-12T13:03')" +
+                            ",('gbpusd', 1.313, '2024-09-13T13:03')" +
+                            ",('eurusd', 1.314, '2024-09-14T13:03')"
+            );
+
+            drainQueues();
+
+            String sql = "select * from price_1h where sym = 'eurusd';";
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "eurusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                            "eurusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    sql,
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "DeferredSingleSymbolFilterPageFrame\n" +
+                            "    Index forward scan on: sym\n" +
+                            "      filter: sym=2\n" +
+                            "    Frame forward scan on: price_1h\n",
+                    "explain " + sql
+            );
+
+            assertSql("indexBlockCapacity\n" +
+                            Numbers.ceilPow2(configuration.getIndexValueBlockSize()) + "\n",
+                    "select indexBlockCapacity from (show columns from price_1h) where column = 'sym'"
             );
         });
     }
