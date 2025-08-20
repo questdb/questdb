@@ -80,6 +80,26 @@ public interface MemoryR extends Closeable {
 
     Long256 getLong256B(long offset);
 
+    byte getDecimal8(long offset);
+
+    short getDecimal16(long offset);
+
+    int getDecimal32(long offset);
+
+    long getDecimal64(long offset);
+
+    long getDecimal128Hi(long offset);
+
+    long getDecimal128Lo(long offset);
+
+    long getDecimal256HH(long offset);
+
+    long getDecimal256HL(long offset);
+
+    long getDecimal256LH(long offset);
+
+    long getDecimal256LL(long offset);
+
     long getPageAddress(int pageIndex);
 
     int getPageCount();

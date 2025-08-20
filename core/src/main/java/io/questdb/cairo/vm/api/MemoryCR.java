@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -80,6 +81,62 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default char getChar(long offset) {
         assert addressOf(offset + Character.BYTES) > 0;
         return Unsafe.getUnsafe().getChar(addressOf(offset));
+    }
+
+    @Override
+    default long getDecimal256HH(long offset) {
+        final long addr = addressOf(offset + Decimal256.BYTES);
+        return Unsafe.getUnsafe().getLong(addr - Decimal256.BYTES);
+    }
+
+    @Override
+    default long getDecimal256HL(long offset) {
+        final long addr = addressOf(offset + Decimal256.BYTES);
+        return Unsafe.getUnsafe().getLong(addr - 3 * Long.BYTES);
+    }
+
+    @Override
+    default long getDecimal256LH(long offset) {
+        final long addr = addressOf(offset + Decimal256.BYTES);
+        return Unsafe.getUnsafe().getLong(addr - 2 * Long.BYTES);
+    }
+
+    @Override
+    default long getDecimal256LL(long offset) {
+        final long addr = addressOf(offset + Decimal256.BYTES);
+        return Unsafe.getUnsafe().getLong(addr - Long.BYTES);
+    }
+
+    @Override
+    default long getDecimal128Hi(long offset) {
+        final long addr = addressOf(offset + 2 * Long.BYTES);
+        return Unsafe.getUnsafe().getLong(addr - 2 * Long.BYTES);
+    }
+
+    @Override
+    default long getDecimal128Lo(long offset) {
+        final long addr = addressOf(offset + 2 * Long.BYTES);
+        return Unsafe.getUnsafe().getLong(addr - Long.BYTES);
+    }
+
+    @Override
+    default long getDecimal64(long offset) {
+        return getLong(offset);
+    }
+
+    @Override
+    default int getDecimal32(long offset) {
+        return getInt(offset);
+    }
+
+    @Override
+    default short getDecimal16(long offset) {
+        return getShort(offset);
+    }
+
+    @Override
+    default byte getDecimal8(long offset) {
+        return getByte(offset);
     }
 
     @Override

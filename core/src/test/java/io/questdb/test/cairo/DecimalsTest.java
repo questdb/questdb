@@ -26,6 +26,8 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Decimals;
+import io.questdb.cairo.vm.MemoryPARWImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
@@ -137,5 +139,65 @@ public class DecimalsTest extends AbstractTest {
     @Test(expected = IllegalArgumentException.class)
     public void testGetStorageSizeInvalidTooBig() {
         int ignored = Decimals.getStorageSizePow2(100);
+    }
+
+    @Test
+    public void testPutDecimal128() {
+        for (int i = 0; i < 16; i++) {
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(8, 256, MemoryTag.NATIVE_DEFAULT)) {
+                long high = 0x0102030405060708L;
+                long low = 0x090A0B0C0D0E0F10L;
+                mem.putDecimal128(i, high, low);
+
+                Assert.assertEquals("Unexpected high value with offset " + i, high, mem.getDecimal128Hi(i));
+                Assert.assertEquals("Unexpected low value with offset " + i, low, mem.getDecimal128Lo(i));
+            }
+        }
+    }
+
+    @Test
+    public void testPutDecimal128WithoutOffset() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(8, 256, MemoryTag.NATIVE_DEFAULT)) {
+            long high = 0x0102030405060708L;
+            long low = 0x090A0B0C0D0E0F10L;
+            mem.putDecimal128(high, low);
+
+            Assert.assertEquals("Unexpected high value", high, mem.getDecimal128Hi(0));
+            Assert.assertEquals("Unexpected low value", low, mem.getDecimal128Lo(0));
+        }
+    }
+
+    @Test
+    public void testPutDecimal256() {
+        for (int i = 0; i < 32; i++) {
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(8, 256, MemoryTag.NATIVE_DEFAULT)) {
+                long hh = 0x0102030405060708L;
+                long hl = 0x090A0B0C0D0E0F10L;
+                long lh = 0x1112131415161718L;
+                long ll = 0x191A1B1C1D1E1F20L;
+                mem.putDecimal256(i, hh, hl, lh, ll);
+
+                Assert.assertEquals("Unexpected hh value with offset " + i, hh, mem.getDecimal256HH(i));
+                Assert.assertEquals("Unexpected hl value with offset " + i, hl, mem.getDecimal256HL(i));
+                Assert.assertEquals("Unexpected lh value with offset " + i, lh, mem.getDecimal256LH(i));
+                Assert.assertEquals("Unexpected ll value with offset " + i, ll, mem.getDecimal256LL(i));
+            }
+        }
+    }
+
+    @Test
+    public void testPutDecimal256WithoutOffset() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(8, 256, MemoryTag.NATIVE_DEFAULT)) {
+            long hh = 0x0102030405060708L;
+            long hl = 0x090A0B0C0D0E0F10L;
+            long lh = 0x1112131415161718L;
+            long ll = 0x191A1B1C1D1E1F20L;
+            mem.putDecimal256(hh, hl, lh, ll);
+
+            Assert.assertEquals("Unexpected hh value", hh, mem.getDecimal256HH(0));
+            Assert.assertEquals("Unexpected hl value", hl, mem.getDecimal256HL(0));
+            Assert.assertEquals("Unexpected lh value", lh, mem.getDecimal256LH(0));
+            Assert.assertEquals("Unexpected ll value", ll, mem.getDecimal256LL(0));
+        }
     }
 }
