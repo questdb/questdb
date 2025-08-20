@@ -127,7 +127,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                         for (; pos < mlim; pos++) {
                             char c = seq.charAt(pos);
                             if (c < '0' || c > '9') {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance();
                             }
                             micr *= 10;
                             micr += c - '0';
@@ -148,7 +148,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                     + min * Micros.MINUTE_MICROS
                                     + sec * Micros.SECOND_MICROS;
                         } else {
-                            throw NumericException.INSTANCE;
+                            throw NumericException.instance();
                         }
                     }
                 } else {
@@ -251,8 +251,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public Interval fixInterval(Interval interval, int intervalType) {
         if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
-            long lo = interval.getLo() / 1000L;
-            long hi = interval.getHi() / 1000L;
+            long lo = interval.getLo() / Micros.MICRO_NANOS;
+            long hi = interval.getHi() / Micros.MICRO_NANOS;
             interval.of(lo, hi);
         }
         return interval;
@@ -267,24 +267,24 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public long from(long value, ChronoUnit unit) {
         switch (unit) {
             case NANOS:
-                return value / 1_000;
+                return value / Micros.MICRO_NANOS;
             case MICROS:
                 return value;
             case MILLIS:
-                return Math.multiplyExact(value, 1_000);
+                return Math.multiplyExact(value, Micros.MILLI_MICROS);
             case SECONDS:
-                return Math.multiplyExact(value, 1_000_000);
+                return Math.multiplyExact(value, Micros.SECOND_MICROS);
             default:
                 Duration duration = unit.getDuration();
-                long micros = Math.multiplyExact(duration.getSeconds(), 1_000_000L);
-                micros = Math.addExact(micros, duration.getNano() / 1_000);
+                long micros = Math.multiplyExact(duration.getSeconds(), Micros.SECOND_MICROS);
+                micros = Math.addExact(micros, duration.getNano() / Micros.MICRO_NANOS);
                 return Math.multiplyExact(micros, value);
         }
     }
 
     @Override
     public long from(Instant instant) {
-        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Micros.SECOND_MICROS), instant.getNano() / 1000);
+        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Micros.SECOND_MICROS), instant.getNano() / Micros.MICRO_NANOS);
     }
 
     @Override
@@ -800,6 +800,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
         switch (timeUnit) {
+            case 'n':
+                // nanos
+                return new BaseTimestampSampler(Math.max(interval / Micros.MICRO_NANOS, 1), ColumnType.TIMESTAMP_MICRO);
             case 'U':
                 // micros
                 return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
@@ -892,7 +895,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public long parseFloor(Utf8Sequence str, int lo, int hi) throws NumericException {
         long ts;
         if (hi - lo < 4) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
@@ -1001,7 +1004,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public long parseFloor(CharSequence str, int lo, int hi) throws NumericException {
         long ts;
         if (hi - lo < 4) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
@@ -1107,7 +1110,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
         if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
         int p = pos;
         int year = Numbers.parseInt(input, p, p += 4);
@@ -1133,7 +1136,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                             int sec = Numbers.parseInt(input, p, p += 2);
                             CommonUtils.checkRange(sec, 0, 59);
                             if (p < lim) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance();
                             } else {
                                 // seconds
                                 IntervalUtils.encodeInterval(Micros.yearMicros(year, l)
@@ -1308,7 +1311,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long toDate(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000L;
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Micros.MILLI_MICROS;
     }
 
     @Override
@@ -1396,7 +1399,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return tzSign * (hour * Micros.HOUR_MICROS);
             }
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     private static long checkTimezoneTail(Utf8Sequence seq, int p, int lim) throws NumericException {
@@ -1427,7 +1430,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return tzSign * (hour * Micros.HOUR_MICROS);
             }
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     private static void validateBounds0(long timestamp) {
@@ -1497,7 +1500,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
         public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
             long ts;
             if (hi - lo < 4 || hi - lo > 25) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
             }
             int p = lo;
             int year = Numbers.parseInt(in, p, p += 4);

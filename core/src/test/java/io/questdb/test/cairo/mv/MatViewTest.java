@@ -5204,6 +5204,57 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1000000000n");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\timmediate\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1000000000n\tvalid\t\t1\t1\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            final String expected = timestampType == TestTimestampType.MICRO
+                    ? "sym\tprice\tts\n" +
+                    "gbpusd\t1.32\t2024-09-10T12:01:00.000000Z\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:02:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:02:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:02:00.000000Z\n"
+                    : "sym\tprice\tts\n" +
+                    "gbpusd\t1.32\t2024-09-10T12:01:00.000000000Z\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:02:00.000000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:02:00.000000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:02:00.000000000Z\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "price_1h",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";

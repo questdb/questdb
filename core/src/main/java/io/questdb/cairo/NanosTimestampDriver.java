@@ -128,7 +128,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                         for (; pos < nlim; pos++) {
                             char c = seq.charAt(pos);
                             if (c < '0' || c > '9') {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance();
                             }
                             nanos *= 10;
                             nanos += c - '0';
@@ -148,7 +148,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                     + min * Nanos.MINUTE_NANOS
                                     + sec * Nanos.SECOND_NANOS;
                         } else {
-                            throw NumericException.INSTANCE;
+                            throw NumericException.instance();
                         }
                     }
                 } else {
@@ -156,7 +156,6 @@ public class NanosTimestampDriver implements TimestampDriver {
                     ts += (day - 1) * Nanos.DAY_NANOS
                             + hour * Nanos.HOUR_NANOS
                             + min * Nanos.MINUTE_NANOS;
-
                 }
             } else {
                 // year + month + day + hour
@@ -913,7 +912,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     public long parseFloor(Utf8Sequence str, int lo, int hi) throws NumericException {
         long ts;
         if (hi - lo < 4) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
@@ -1011,7 +1010,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     public long parseFloor(CharSequence str, int lo, int hi) throws NumericException {
         long ts;
         if (hi - lo < 4) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
@@ -1108,7 +1107,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
         if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
         int p = pos;
         int year = Numbers.parseInt(input, p, p += 4);
@@ -1134,7 +1133,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                             int sec = Numbers.parseInt(input, p, p += 2);
                             CommonUtils.checkRange(sec, 0, 59);
                             if (p < lim) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance();
                             } else {
                                 // seconds
                                 IntervalUtils.encodeInterval(Nanos.yearNanos(year, l)
@@ -1309,7 +1308,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long toDate(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / 1000_000L;
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.MILLI_NANOS;
     }
 
     @Override
@@ -1397,7 +1396,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return tzSign * (hour * Nanos.HOUR_NANOS);
             }
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     private static long checkTimezoneTail(Utf8Sequence seq, int p, int lim) throws NumericException {
@@ -1428,7 +1427,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return tzSign * (hour * Nanos.HOUR_NANOS);
             }
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     private static void validateBounds0(long timestamp) {
@@ -1495,7 +1494,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
             long ts;
             if (hi - lo < 4 || hi - lo > 28) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
             }
             int p = lo;
             int year = Numbers.parseInt(in, p, p += 4);
