@@ -29,6 +29,7 @@ public class Decimal256 implements Sinkable {
     public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
     public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE + 1, -1, -1, -1, 0);
     public static final Decimal256 NULL_VALUE = new Decimal256(Long.MIN_VALUE, -1, -1, -1, 0);
+    public static final int BYTES = 32;
     private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
             1L, 15L,
             159L, 1593L, 15930L, 159309L, 1593091L,
@@ -362,42 +363,6 @@ public class Decimal256 implements Sinkable {
         Decimal256 result = new Decimal256();
         result.setFromLong(value, scale);
         return result;
-    }
-
-    /**
-     * Calculates the required storage size in bytes for a decimal with given precision.
-     * <p>
-     * Storage sizes:
-     * - Precision 1-2:   1 byte  (7 bits for magnitude + 1 sign bit)
-     * - Precision 3-4:   2 bytes (15 bits for magnitude + 1 sign bit)
-     * - Precision 5-9:   4 bytes (31 bits for magnitude + 1 sign bit)
-     * - Precision 10-18: 8 bytes (63 bits for magnitude + 1 sign bit)
-     * - Precision 19-38: 16 bytes (128-bit storage)
-     * - Precision 39-76: 32 bytes (256-bit storage)
-     *
-     * @param precision the number of significant digits
-     * @return the required storage size in bytes
-     * @throws IllegalArgumentException if precision is invalid
-     */
-    public static int getStorageSize(int precision) {
-        if (precision < 1 || precision > MAX_SCALE) {
-            throw new IllegalArgumentException("Invalid decimal precision: " + precision +
-                    ". Must be between 1 and " + MAX_SCALE);
-        }
-
-        if (precision <= 2) {
-            return 1; // 1 byte (byte)
-        } else if (precision <= 4) {
-            return 2; // 2 bytes (short)
-        } else if (precision <= 9) {
-            return 4; // 4 bytes (int)
-        } else if (precision <= 18) {
-            return 8; // 8 bytes (long)
-        } else if (precision <= 38) {
-            return 16; // 16 bytes (128-bit)
-        } else {
-            return 32; // 32 bytes (256-bit)
-        }
     }
 
     /**

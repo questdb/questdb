@@ -553,12 +553,6 @@ public class Decimal256Test {
     }
 
     @Test
-    public void testFitsInStorageSizeInvalid() {
-        Decimal256 d = new Decimal256(0, 0, 0, 1, 0);
-        Assert.assertFalse(d.fitsInStorageSize(5));
-    }
-
-    @Test
     public void testFitsInStorageSizeCombinatorics() {
         // combinations described as
         // hh, hl, lh, ll, fits in byte, fits in short, fits in int, fits in long, fits in Long128, fits in Long256
@@ -590,6 +584,12 @@ public class Decimal256Test {
             Assert.assertEquals("Expected " + d + " to fit in 128-bits", combination[8], d.fitsInStorageSize(16));
             Assert.assertEquals("Expected " + d + " to fit in 256-bits", combination[9], d.fitsInStorageSize(32));
         }
+    }
+
+    @Test
+    public void testFitsInStorageSizeInvalid() {
+        Decimal256 d = new Decimal256(0, 0, 0, 1, 0);
+        Assert.assertFalse(d.fitsInStorageSize(5));
     }
 
     @Test
@@ -633,41 +633,6 @@ public class Decimal256Test {
         Assert.assertEquals(12345, decimal.getLl());
         Assert.assertEquals(2, decimal.getScale());
         Assert.assertEquals(123.45, decimal.toDouble(), 0.001);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testGetStorageSizeInvalid() {
-        int ignored = Decimal256.getStorageSize(-1);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testGetStorageSizeInvalidTooBig() {
-        int ignored = Decimal256.getStorageSize(100);
-    }
-
-    @Test
-    public void testGetStorageSizeCombinatorics() {
-        // Combinations of precision -> storage size needed (in bytes)
-        int[][] combinations = {
-                {1, 1},
-                {2, 1},
-                {3, 2},
-                {4, 2},
-                {5, 4},
-                {9, 4},
-                {10, 8},
-                {18, 8},
-                {19, 16},
-                {38, 16},
-                {39, 32},
-                {76, 32},
-        };
-
-        for (int[] combination : combinations) {
-            int precision = combination[0];
-            int storageSizeNeeded = combination[1];
-            Assert.assertEquals("Expected " + storageSizeNeeded + " bytes needed for decimal of precision " + precision, storageSizeNeeded, Decimal256.getStorageSize(precision));
-        }
     }
 
     @Test
