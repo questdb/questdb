@@ -577,19 +577,19 @@ public class Decimal256Test {
         Decimal256 d = new Decimal256();
         for (var combination : combinations) {
             d.of((long) combination[0], (long) combination[1], (long) combination[2], (long) combination[3], 0);
-            Assert.assertEquals("Expected " + d + " to fit in a byte", combination[4], d.fitsInStorageSize(1));
-            Assert.assertEquals("Expected " + d + " to fit in a short", combination[5], d.fitsInStorageSize(2));
-            Assert.assertEquals("Expected " + d + " to fit in an integer", combination[6], d.fitsInStorageSize(4));
-            Assert.assertEquals("Expected " + d + " to fit in a long", combination[7], d.fitsInStorageSize(8));
-            Assert.assertEquals("Expected " + d + " to fit in 128-bits", combination[8], d.fitsInStorageSize(16));
-            Assert.assertEquals("Expected " + d + " to fit in 256-bits", combination[9], d.fitsInStorageSize(32));
+            Assert.assertEquals("Expected " + d + " to fit in a byte", combination[4], d.fitsInStorageSizePow2(0));
+            Assert.assertEquals("Expected " + d + " to fit in a short", combination[5], d.fitsInStorageSizePow2(1));
+            Assert.assertEquals("Expected " + d + " to fit in an integer", combination[6], d.fitsInStorageSizePow2(2));
+            Assert.assertEquals("Expected " + d + " to fit in a long", combination[7], d.fitsInStorageSizePow2(3));
+            Assert.assertEquals("Expected " + d + " to fit in 128-bits", combination[8], d.fitsInStorageSizePow2(4));
+            Assert.assertEquals("Expected " + d + " to fit in 256-bits", combination[9], d.fitsInStorageSizePow2(5));
         }
     }
 
     @Test
     public void testFitsInStorageSizeInvalid() {
         Decimal256 d = new Decimal256(0, 0, 0, 1, 0);
-        Assert.assertFalse(d.fitsInStorageSize(5));
+        Assert.assertFalse(d.fitsInStorageSizePow2(6));
     }
 
     @Test

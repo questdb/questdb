@@ -585,44 +585,44 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Checks if this Decimal256 value fits within the specified storage size.
+     * Checks if this Decimal256 value fits within the specified storage size (pow 2).
      * The value fits if its absolute magnitude can be represented with the given number of digits.
      *
-     * @param size the target size (number of bytes available)
+     * @param size the target size (number of bytes available pow 2, e.g., 4 bytes -> 2)
      * @return true if the value fits within the storage size, false otherwise
      */
-    public boolean fitsInStorageSize(int size) {
+    public boolean fitsInStorageSizePow2(int size) {
         switch (size) {
-            case 1: // 1 byte - max magnitude 127
+            case 0: // 1 byte - max magnitude 127
                 return (hh == 0 || hh == -1) &&
                         (hl == 0 || hl == -1) &&
                         (lh == 0 || lh == -1) &&
                         Math.abs(ll) <= 0x7FL;
 
-            case 2: // 2 bytes - max magnitude 32,767
+            case 1: // 2 bytes - max magnitude 32,767
                 return (hh == 0 || hh == -1) &&
                         (hl == 0 || hl == -1) &&
                         (lh == 0 || lh == -1) &&
                         Math.abs(ll) <= 0x7FFFL;
 
-            case 4: // 4 bytes - max magnitude 2,147,483,647
+            case 2: // 4 bytes - max magnitude 2,147,483,647
                 return (hh == 0 || hh == -1) &&
                         (hl == 0 || hl == -1) &&
                         (lh == 0 || lh == -1) &&
                         Math.abs(ll) <= 0x7FFFFFFFL;
 
-            case 8: // 8 bytes - max magnitude 9,223,372,036,854,775,807
+            case 3: // 8 bytes - max magnitude 9,223,372,036,854,775,807
                 return (hh == 0 || hh == -1) &&
                         (hl == 0 || hl == -1) &&
                         (lh == 0 || lh == -1);
             // ll can use full long range
 
-            case 16: // 128-bit storage
+            case 4: // 128-bit storage
                 return (hh == 0 || hh == -1) &&
                         (hl == 0 || hl == -1);
             // lh and ll can use full range
 
-            case 32: // 256-bit storage
+            case 5: // 256-bit storage
                 return true; // Always fits in 256-bit
 
             default:
