@@ -40,12 +40,14 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.bytes.DirectByteSlice;
@@ -54,6 +56,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -71,26 +74,28 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final int baseTimeoutMillis;
     private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
-    private final String host;
+    private final ObjList<String> hosts;
+    private final boolean isTls;
     private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
     private final String password;
     private final String path;
-    private final int port;
+    private final IntList ports;
     private final CharSequence questDBVersion;
     private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
     private final StringSink sink = new StringSink();
-    private final String url;
     private final String username;
     protected HttpClient.Request request;
     private HttpClient client;
     private boolean closed;
+    private int currentAddressIndex;
     private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
+    private String url;
 
     protected AbstractLineHttpSender(
             String host,
@@ -140,10 +145,32 @@ public abstract class AbstractLineHttpSender implements Sender {
             long minRequestThroughput,
             long flushIntervalNanos
     ) {
+        this(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, client, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, minRequestThroughput, flushIntervalNanos, 0);
+    }
+
+    @SuppressWarnings("ReplaceNullCheck")
+    protected AbstractLineHttpSender(
+            ObjList<String> hosts,
+            IntList ports,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            HttpClient client,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            int currentAddressIndex
+    ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
-        this.host = host;
-        this.port = port;
+        this.hosts = hosts;
+        this.ports = ports;
+        this.currentAddressIndex = currentAddressIndex;
         this.path = path != null ? path : PATH;
         this.autoFlushRows = autoFlushRows;
         this.authToken = authToken;
@@ -152,18 +179,23 @@ public abstract class AbstractLineHttpSender implements Sender {
         this.minRequestThroughput = minRequestThroughput;
         this.flushIntervalNanos = flushIntervalNanos;
         this.baseTimeoutMillis = clientConfiguration.getTimeout();
-        if (tlsConfig != null) {
-            this.client = client == null ? HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig) : client;
-            this.url = "https://" + host + ":" + port + this.path;
+
+        this.isTls = tlsConfig != null;
+
+        if (client != null) {
+            this.client = client;
         } else {
-            this.client = client == null ? HttpClientFactory.newPlainTextInstance(clientConfiguration) : client;
-            this.url = "http://" + host + ":" + port + this.path;
+            this.client = isTls ?
+                    HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig)
+                    : HttpClientFactory.newPlainTextInstance(clientConfiguration);
         }
+        this.url = buildUrl();
         this.questDBVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
         this.maxNameLength = maxNameLength;
     }
 
+    @SuppressWarnings("unused")
     public static AbstractLineHttpSender createLineSender(
             String host,
             int port,
@@ -180,7 +212,27 @@ public abstract class AbstractLineHttpSender implements Sender {
             long flushIntervalNanos,
             int protocolVersion
     ) {
+        return createLineSender(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, minRequestThroughput, flushIntervalNanos, protocolVersion);
+    }
+
+    public static AbstractLineHttpSender createLineSender(
+            ObjList<String> hosts,
+            IntList ports,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            int protocolVersion
+    ) {
         HttpClient cli = null;
+        int currentAddressIndex = 0;
 
         // if user does not set protocol version explicit, client will try to detect it from server
         if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
@@ -190,29 +242,46 @@ public abstract class AbstractLineHttpSender implements Sender {
                 cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
             }
             try {
-                HttpClient.Request req = cli.newRequest(host, port).GET();
-                HttpClient.ResponseHeaders response = req.url(clientConfiguration.getSettingsPath()).send();
-                response.await();
-                DirectUtf8Sequence statusCode = response.getStatusCode();
-                if (Utf8s.equalsNcAscii("200", statusCode)) {
-                    try (JsonSettingsParser parser = new JsonSettingsParser()) {
-                        parser.parse(response.getResponse());
-                        protocolVersion = parser.getDefaultProtocolVersion();
-                        if (parser.getMaxNameLen() != 0) {
-                            maxNameLength = parser.getMaxNameLen();
-                        }
-                    }
-                } else if (Utf8s.equalsNcAscii("404", statusCode)) {
-                    // The client is unable to differentiate between a server shutdown and connecting to an older version.
-                    // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
-                    protocolVersion = PROTOCOL_VERSION_V1;
-                } else {
-                    StringSink sink = new StringSink();
-                    chunkedResponseToSink(response, sink);
+                if (hosts.size() < 1 || ports.size() < 1 || hosts.size() != ports.size()) {
                     throw new LineSenderException(
-                            "Failed to detect server line protocol version [http-status=").put(statusCode)
-                            .put(", http-message=").put(sink)
-                            .put(']');
+                            "addresses have been improperly configured [hostCount=").put(hosts.size())
+                            .put(", portCount=").put(ports.size()).put(']');
+                }
+                HttpClient.Request req;
+                @Nullable HttpClient.ResponseHeaders response;
+                @Nullable DirectUtf8Sequence statusCode;
+
+                for (int i = 0, n = hosts.size(); i < n; i++) {
+                    final String host = hosts.getQuick(i);
+                    final int port = ports.getQuick(i);
+                    req = cli.newRequest(host, port).GET();
+                    response = req.url(clientConfiguration.getSettingsPath()).send();
+                    response.await();
+                    statusCode = response.getStatusCode();
+
+                    if (Utf8s.equalsNcAscii("200", statusCode)) {
+                        try (JsonSettingsParser parser = new JsonSettingsParser()) {
+                            parser.parse(response.getResponse());
+                            protocolVersion = parser.getDefaultProtocolVersion();
+                            if (parser.getMaxNameLen() != 0) {
+                                maxNameLength = parser.getMaxNameLen();
+                            }
+                            if (parser.isAcceptingWrites()) {
+                                break;
+                            }
+                        }
+                    } else if (Utf8s.equalsNcAscii("404", statusCode)) {
+                        // The client is unable to differentiate between a server shutdown and connecting to an older version.
+                        // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
+                        protocolVersion = PROTOCOL_VERSION_V1;
+                    } else {
+                        StringSink sink = new StringSink();
+                        chunkedResponseToSink(response, sink);
+                        throw new LineSenderException(
+                                "Failed to detect server line protocol version [http-status=").put(statusCode)
+                                .put(", http-message=").put(sink)
+                                .put(']');
+                    }
                 }
             } catch (LineSenderException e) {
                 Misc.free(cli);
@@ -225,8 +294,8 @@ public abstract class AbstractLineHttpSender implements Sender {
 
         if (protocolVersion == PROTOCOL_VERSION_V1) {
             return new LineHttpSenderV1(
-                    host,
-                    port,
+                    hosts,
+                    ports,
                     path,
                     clientConfiguration,
                     tlsConfig,
@@ -238,12 +307,13 @@ public abstract class AbstractLineHttpSender implements Sender {
                     maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
-                    flushIntervalNanos
+                    flushIntervalNanos,
+                    currentAddressIndex
             );
         } else {
             return new LineHttpSenderV2(
-                    host,
-                    port,
+                    hosts,
+                    ports,
                     path,
                     clientConfiguration,
                     tlsConfig,
@@ -255,7 +325,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                     maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
-                    flushIntervalNanos
+                    flushIntervalNanos,
+                    currentAddressIndex
             );
         }
     }
@@ -302,6 +373,10 @@ public abstract class AbstractLineHttpSender implements Sender {
         return bufferView.of(request.getContentStart(), request.getContentLength());
     }
 
+    public String buildUrl() {
+        return "http" + (isTls ? "s" : "") + "://" + currentHost() + ":" + currentPort() + this.path;
+    }
+
     @Override
     public void cancelRow() {
         validateNotClosed();
@@ -330,6 +405,10 @@ public abstract class AbstractLineHttpSender implements Sender {
     @Override
     public void flush() {
         flush0(false);
+    }
+
+    public boolean isMisdirectedRequest(DirectUtf8Sequence statusCode) {
+        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
     }
 
     @Override
@@ -436,7 +515,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         return HttpKeywords.isClose(connectionHeader);
     }
 
-
     private int backoff(int retryBackoff) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
         int backoff = retryBackoff + jitter;
@@ -453,6 +531,14 @@ public abstract class AbstractLineHttpSender implements Sender {
         while ((chunkedRsp.recv()) != null) {
             // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
         }
+    }
+
+    private CharSequence currentHost() {
+        return hosts.get(currentAddressIndex);
+    }
+
+    private int currentPort() {
+        return ports.get(currentAddressIndex);
     }
 
     private void escapeString(CharSequence value) {
@@ -497,7 +583,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         for (; ; ) {
             try {
                 long beforeRequest = System.nanoTime();
-                HttpClient.ResponseHeaders response = request.send(actualTimeoutMillis);
+                HttpClient.ResponseHeaders response = request.send(currentHost(), currentPort(), actualTimeoutMillis);
                 long elapsedNanos = System.nanoTime() - beforeRequest;
                 int remainingMillis = actualTimeoutMillis - (int) (elapsedNanos / 1_000_000L);
                 if (remainingMillis <= 0) {
@@ -515,7 +601,12 @@ public abstract class AbstractLineHttpSender implements Sender {
                     break;
                 }
                 assert response.isChunked();
-                if (isRetryableHttpStatus(statusCode)) {
+                if (isRetryableHttpStatus(statusCode) || isMisdirectedRequest(statusCode)) {
+                    if (isMisdirectedRequest(statusCode)) {
+                        currentAddressIndex = (currentAddressIndex + 1) % hosts.size();
+                        this.url = buildUrl();
+                    }
+
                     long nowNanos = System.nanoTime();
                     retryingDeadlineNanos =
                             (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
@@ -528,6 +619,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     retryBackoff = backoff(retryBackoff);
                     continue;
                 }
+
                 throwOnHttpErrorResponse(statusCode, response);
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
@@ -571,6 +663,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         524:  A Timeout Occurred
         529:  Site is overloaded
         599:  Network Connect Timeout Error
+
         */
 
         byte middle = statusCode.byteAt(1);
@@ -581,7 +674,7 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     private HttpClient.Request newRequest() {
-        HttpClient.Request r = client.newRequest(host, port)
+        HttpClient.Request r = client.newRequest(currentHost(), currentPort())
                 .POST()
                 .url(path)
                 .header("User-Agent", "QuestDB/java/" + questDBVersion);
@@ -878,10 +971,12 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     public static class JsonSettingsParser implements JsonParser, Closeable {
+        private final static byte ACCEPTING_WRITES = 3;
         private final static byte LINE_PROTO_SUPPORT_VERSIONS = 1;
         private final static byte MAX_NAME_LEN = 2;
         private final JsonLexer lexer = new JsonLexer(1024, 1024);
         private final IntList supportVersions = new IntList(8);
+        private boolean acceptingWrites = true;
         private int maxNameLen = 0;
         private byte nextJsonValueFlag = 0;
 
@@ -907,6 +1002,10 @@ public abstract class AbstractLineHttpSender implements Sender {
             return maxNameLen;
         }
 
+        public boolean isAcceptingWrites() {
+            return acceptingWrites;
+        }
+
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
             switch (code) {
@@ -915,6 +1014,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                         nextJsonValueFlag = LINE_PROTO_SUPPORT_VERSIONS;
                     } else if (tag.equals("cairo.max.file.name.length")) {
                         nextJsonValueFlag = MAX_NAME_LEN;
+                    } else if (tag.equals("accepting.writes")) {
+                        nextJsonValueFlag = ACCEPTING_WRITES;
                     } else {
                         nextJsonValueFlag = 0;
                     }
@@ -925,6 +1026,9 @@ public abstract class AbstractLineHttpSender implements Sender {
                             maxNameLen = Numbers.parseInt(tag);
                         } catch (NumericException ignored) {
                         }
+                    }
+                    if (nextJsonValueFlag == ACCEPTING_WRITES) {
+                        acceptingWrites = SqlKeywords.isTrueKeyword(tag);
                     }
                     break;
                 case JsonLexer.EVT_ARRAY_VALUE:

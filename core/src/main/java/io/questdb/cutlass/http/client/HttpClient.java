@@ -477,7 +477,7 @@ public abstract class HttpClient implements QuietCloseable {
             return send(defaultTimeout);
         }
 
-        public ResponseHeaders send(int timeout) {
+        public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
@@ -500,6 +500,10 @@ public abstract class HttpClient implements QuietCloseable {
             }
             responseHeaders.clear();
             return responseHeaders;
+        }
+
+        public ResponseHeaders send(int timeout) {
+            return send(host, port, timeout);
         }
 
         public void sendPartialContent(int maxContentLen, int timeout) {

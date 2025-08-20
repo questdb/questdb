@@ -46,6 +46,8 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 
+import static io.questdb.PropServerConfiguration.ACCEPTING_WRITES;
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.bool;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static java.net.HttpURLConnection.*;
 
@@ -102,6 +104,7 @@ public class SettingsProcessor implements HttpRequestHandler {
             settings.clear();
             settings.putAscii('{');
             serverConfiguration.exportConfiguration(settings);
+            bool(ACCEPTING_WRITES, serverConfiguration.getCairoConfiguration().isAcceptingWrites(), settings);
             integer(PREFERENCES_VERSION, settingsStore.getVersion(), settings);
             settingsStore.exportPreferences(settings);
             settings.putAscii('}');

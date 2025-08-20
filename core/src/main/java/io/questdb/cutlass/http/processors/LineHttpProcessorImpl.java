@@ -47,8 +47,7 @@ import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static io.questdb.cutlass.http.HttpRequestValidator.*;
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.PRECISION_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
 public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
@@ -113,6 +112,11 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
         }
 
         HttpRequestHeader requestHeader = context.getRequestHeader();
+
+        if (!engine.getConfiguration().isAcceptingWrites()) {
+            state.reject(NOT_ACCEPTING_WRITES, "this instance cannot receive writes", context.getFd());
+            return;
+        }
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);

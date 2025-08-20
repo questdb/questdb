@@ -58,6 +58,15 @@ public class IntList implements Mutable, Sinkable {
         data[pos++] = value;
     }
 
+    @SuppressWarnings("ForLoopReplaceableByForEach")
+    public static IntList createWithValues(int... values) {
+        IntList list = new IntList();
+        for (int i = 0, n = values.length; i < n; i++) {
+            list.add(values[i]);
+        }
+        return list;
+    }
+
     public void addAll(IntList that) {
         int p = pos;
         int s = that.size();

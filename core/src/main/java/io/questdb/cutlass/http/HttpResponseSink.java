@@ -59,6 +59,7 @@ import static io.questdb.std.Chars.isBlank;
 import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
+    public static final int HTTP_MISDIRECTED_REQUEST = 421;
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
     private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
     private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
@@ -863,5 +864,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, new Utf8String("Request range not satisfiable"));
         httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
+        httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
     }
 }
