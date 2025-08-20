@@ -30,14 +30,14 @@ public class Decimals {
     private static final int[] PRECISION_SIZE_POW2 = {
             0, 0, 0, // precision 0-2 -> 1 byte
             1, 1, // precision 3-4 -> 2 byte
-            2, 2, 2, 2, 2, // precision 5-9 -> 2 bytes
-            3, 3, 3, 3, 3, 3, 3, 3, 3, // precision 10-18 -> 4 bytes
+            2, 2, 2, 2, 2, // precision 5-9 -> 4 bytes
+            3, 3, 3, 3, 3, 3, 3, 3, 3, // precision 10-18 -> 8 bytes
             4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-            4, 4, 4, 4, 4, 4, 4, 4, // precision 19-38 -> 8 bytes
+            4, 4, 4, 4, 4, 4, 4, 4, // precision 19-38 -> 16 bytes
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-            5, 5, // precision 39-76 -> 16 bytes
+            5, 5, // precision 39-76 -> 32 bytes
     };
 
     /**
