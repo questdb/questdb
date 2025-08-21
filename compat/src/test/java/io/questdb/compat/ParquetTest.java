@@ -599,9 +599,9 @@ public class ParquetTest extends AbstractTest {
                     " timestamp_sequence(1600000000000, 500)::" + designedTimestampType +
                     " from long_sequence(" + UPDATE_ROWS + ");";
 
-            serverMain.getEngine().execute(insert); // txn 25
+            serverMain.getEngine().execute(insert); // txn 26
 
-            serverMain.awaitTxn(tableName, 25);
+            serverMain.awaitTable(tableName);
 
             final String parquetPathStr;
             try (
