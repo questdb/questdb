@@ -26,17 +26,15 @@
 
 ---
 
-QuestDB is an open-source time-series database offering **blazingly fast ingestion** 
-and **dynamic, low-latency SQL queries**. 
+QuestDB is an open-source time-series database offering blazingly fast ingestion
+and dynamic, low-latency SQL queries.
+
+QuestDB delivers a multi-tier storage engine (WAL → native → Parquet on object storage), and the 
+entire codebase is built from the ground up in zero-GC Java, C++ and Rust (QuestDB Enterprise).
 
 We achieve high performance via a column-oriented storage model, parallelized
 vector execution, SIMD instructions, and low-latency techniques. In addition,
 QuestDB is hardware efficient, with quick setup and operational efficiency.
-
-QuestDB implements ANSI SQL with native time-series SQL extensions.
-
-QuestDB delivers a multi-tier storage engine (WAL → native → Parquet on object storage), and the 
-entire codebase is built from the ground up in zero-GC Java, C++ and Rust (QuestDB Enterprise).
 
 > Ready to go? Jump to the
 > [Get started](#get-started) section.
