@@ -106,10 +106,12 @@ QuestDB يتفوق مع:
 
 للغوص العميق في الآليات الداخلية والأداء، راجع منشورات المدونة التالية:
 
-- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
-- [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
-- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/">QuestDB vs InfluxDB</a></li>
+<li><a href="https://questdb.com/compare/questdb-vs-kdb/">QuestDB vs Kdb+</a></li>
+<li><a href="https://questdb.com/blog/timescaledb-vs-questdb-comparison/">QuestDB vs TimescaleDB</a></li>
+<li><a href="https://questdb.com/blog/mongodb-time-series-benchmark-review/">QuestDB vs MongoDB</a></li>
+</ul>
 
 كما هو الحال دائمًا، نشجعك على تشغيل معاييرك الخاصة.
 
@@ -223,11 +225,13 @@ questdb stop
 
 ### 🚢 نشر QuestDB
 
-- [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [صورة Docker الرسمية](https://questdb.com/docs/get-started/docker)
-- [قطرات DigitalOcean](https://questdb.com/docs/guides/digitalocean)
-- [مخططات Kubernetes Helm](https://questdb.com/docs/guides/kubernetes)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/docs/guides/aws-official-ami">AWS AMI</a></li>
+<li><a href="https://questdb.com/docs/guides/google-cloud-platform">Google Cloud Platform</a></li>
+<li><a href="https://questdb.com/docs/get-started/docker">صورة Docker الرسمية</a></li>
+<li><a href="https://questdb.com/docs/guides/digitalocean">قطرات DigitalOcean</a></li>
+<li><a href="https://questdb.com/docs/guides/kubernetes">مخططات Kubernetes Helm</a></li>
+</ul>
 
 ## المساهمة
 
