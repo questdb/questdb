@@ -121,7 +121,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             metadataIndex++;
         }
-        return metadataIndex == metadata.getColumnCount() - 1;
+        return metadataIndex != metadata.getColumnCount();
     }
 
     @Override
