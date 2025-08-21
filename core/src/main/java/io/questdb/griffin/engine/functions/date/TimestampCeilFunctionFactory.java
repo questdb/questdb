@@ -61,7 +61,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             case 'T':
             case 'U':
             case 'n':
-                return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getTimestampType(args.getQuick(1).getType()));
+                return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(1).getType()), ColumnType.TIMESTAMP_MICRO));
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:

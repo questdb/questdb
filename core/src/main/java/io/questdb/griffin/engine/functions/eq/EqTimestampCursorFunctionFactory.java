@@ -84,7 +84,10 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         switch (ColumnType.tagOf(metadataType)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
-                int timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
+                int timestampType = arg0Type;
+                if (ColumnType.isTimestamp(metadataType)) {
+                    timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
+                }
                 boolean leftNeedsConvert = arg0Type != timestampType;
                 TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                 if (leftNeedsConvert) {

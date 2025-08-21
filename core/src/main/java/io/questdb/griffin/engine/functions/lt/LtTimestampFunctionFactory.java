@@ -60,12 +60,14 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
     ) {
         int leftType = ColumnType.getTimestampType(args.getQuick(0).getType());
         int rightType = ColumnType.getTimestampType(args.getQuick(1).getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
+        assert ColumnType.isTimestamp(timestampType);
         if (leftType == rightType) {
             return new Func(args.getQuick(0), args.getQuick(1));
-        } else if (leftType < rightType) {
-            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(rightType), leftType);
+        } else if (leftType != timestampType) {
+            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), leftType);
         } else {
-            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(leftType), rightType);
+            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(timestampType), rightType);
         }
     }
 

@@ -504,17 +504,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             int funType = fun.getType();
-            switch (ColumnType.tagOf(funType)) {
-                case ColumnType.TIMESTAMP:
-                    key = driver.from(fun.getTimestamp(null), funType);
-                    break;
-                case ColumnType.DATE:
-                    key = driver.fromDate(fun.getDate(null));
-                    break;
-                default:
-                    key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
-            }
-
+            key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");

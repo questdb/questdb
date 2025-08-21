@@ -69,7 +69,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
         public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
-            leftTimestampType = ColumnType.getTimestampType(left.getType());
+            leftTimestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(left.getType()), ColumnType.TIMESTAMP_MICRO);
             timestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
         }
 

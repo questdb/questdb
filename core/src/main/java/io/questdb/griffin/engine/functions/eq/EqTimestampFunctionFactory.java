@@ -61,6 +61,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         int leftType = ColumnType.getTimestampType(left.getType());
         int rightType = ColumnType.getTimestampType(right.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
+        assert ColumnType.isTimestamp(timestampType);
         if (leftType == rightType) {
             return new Func(left, right);
         } else if (timestampType == rightType) {

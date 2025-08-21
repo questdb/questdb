@@ -98,6 +98,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         boolean intervalSearch = isIntervalSearch(args);
         int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
+        assert ColumnType.isTimestamp(timestampType);
         if (allConst) {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);

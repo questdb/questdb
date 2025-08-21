@@ -60,6 +60,19 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         int argType = ColumnType.getTimestampType(arg.getType());
         int fromType = ColumnType.getTimestampType(fromFn.getType());
         int toType = ColumnType.getTimestampType(toFn.getType());
+        if (!ColumnType.isTimestamp(argType)) {
+            if (fromFn.isConstant() && toFn.isConstant()) {
+                long fromFnTimestamp = fromFn.getTimestamp(null);
+                long toFnTimestamp = toFn.getTimestamp(null);
+                if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+                    return BooleanConstant.FALSE;
+                }
+                return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
+            }
+            return new VarBetweenFunction(arg, fromFn, toFn, null, fromType, toType);
+        }
+
+
         TimestampDriver driver = ColumnType.getTimestampDriver(argType);
 
         if (fromFn.isConstant() && toFn.isConstant()) {

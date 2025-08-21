@@ -72,7 +72,7 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
             }
         }
         Function arg = args.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(arg.getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(arg.getType()), ColumnType.TIMESTAMP_MICRO);
         switch (c) {
             case 'M':
                 return createFloorFunction(arg, "month", stride, timestampType);

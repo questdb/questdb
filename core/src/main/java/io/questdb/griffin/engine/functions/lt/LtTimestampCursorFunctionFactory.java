@@ -84,7 +84,10 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         switch (ColumnType.tagOf(metadataType)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
-                int timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
+                int timestampType = arg0Type;
+                if (ColumnType.isTimestamp(metadataType)) {
+                    timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
+                }
                 boolean leftNeedsConvert = arg0Type != timestampType;
                 if (leftNeedsConvert) {
                     return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), arg0Type);

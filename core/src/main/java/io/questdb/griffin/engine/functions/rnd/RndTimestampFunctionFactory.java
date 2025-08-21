@@ -59,6 +59,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         int arg1Type = ColumnType.getTimestampType(arg.getType());
         int arg2Type = ColumnType.getTimestampType(arg2.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(arg1Type, arg2Type);
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         final long lo = driver.from(arg.getTimestamp(null), arg1Type);
         final long hi = driver.from(arg2.getTimestamp(null), arg2Type);

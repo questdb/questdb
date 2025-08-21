@@ -60,6 +60,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         final int startType = ColumnType.getTimestampType(start.getType());
         final int endType = ColumnType.getTimestampType(end.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(startType, endType);
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
 
         if (periodFunction.isConstant()) {

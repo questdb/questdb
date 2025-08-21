@@ -68,7 +68,7 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
         Function var = args.getQuick(0);
-        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(var.getType()));
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(var.getType()), ColumnType.TIMESTAMP_MICRO));
         DateFormat timestampFormat = driver.getTimestampDateFormatFactory().get(fmt.getStrA(null));
         if (var.isConstant()) {
             long value = var.getTimestamp(null);

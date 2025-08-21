@@ -66,6 +66,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
         int leftTimestampType = ColumnType.getTimestampType(loFunc.getType());
         int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType);
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         int intervalType = IntervalUtils.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {

@@ -248,12 +248,10 @@ public final class ColumnType {
     }
 
     public static int getHigherPrecisionTimestampType(int left, int right) {
-        int leftTimestampType = getTimestampType(left);
-        int rightTimestampType = getTimestampType(right);
-        int leftPriority = getTimestampTypePriority(leftTimestampType);
-        int rightPriority = getTimestampTypePriority(rightTimestampType);
+        int leftPriority = getTimestampTypePriority(left);
+        int rightPriority = getTimestampTypePriority(right);
         // Return the timestamp type with higher precision using explicit priority
-        return leftPriority >= rightPriority ? leftTimestampType : rightTimestampType;
+        return leftPriority >= rightPriority ? left : right;
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
@@ -285,11 +283,13 @@ public final class ColumnType {
      * <li> DATE types: converted to {@link #TIMESTAMP_MICRO}
      * <li> String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO}
      * for maximum precision when parsing timestamp strings
-     * <li> All other types(Long, Int and so on): converted to {@link #TIMESTAMP_MICRO}
+     * <li> Other types (LONG, INT, etc.): return {@link #UNDEFINED}, the caller should
+     * determine the appropriate timestamp type based on context
      * </ul>
      *
      * @param type the input column type to convert
-     * @return the appropriate timestamp type for the input column type
+     * @return the appropriate timestamp type for the input column type, or {@link #UNDEFINED}
+     * for numeric types where the caller should determine the timestamp type
      */
     public static int getTimestampType(int type) {
         switch (tagOf(type)) {
@@ -298,9 +298,11 @@ public final class ColumnType {
             case VARCHAR:
             case STRING:
             case SYMBOL:
-                return ColumnType.TIMESTAMP_NANO;
-            default: // Date, Long, Int etc.
-                return ColumnType.TIMESTAMP_MICRO;
+                return TIMESTAMP_NANO;
+            case DATE: // Date
+                return TIMESTAMP_MICRO;
+            default: // Long, Int etc.
+                return UNDEFINED;
         }
     }
 
@@ -585,13 +587,16 @@ public final class ColumnType {
     }
 
     private static int getTimestampTypePriority(int timestampType) {
-        assert tagOf(timestampType) == TIMESTAMP;
+        assert tagOf(timestampType) == TIMESTAMP || timestampType == UNDEFINED;
         switch (timestampType) {
             case TIMESTAMP_MICRO:
                 return 1;
             case TIMESTAMP_NANO:
                 return 2;
+            case UNDEFINED:
+                return 0;
         }
+
         return 0;
     }
 

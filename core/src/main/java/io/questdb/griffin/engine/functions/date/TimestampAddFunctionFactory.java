@@ -55,7 +55,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
         int stride;
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);

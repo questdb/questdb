@@ -58,6 +58,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         int argType = ColumnType.getTimestampType(arg.getType());
         int arg2Type = ColumnType.getTimestampType(arg2.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(argType, arg2Type);
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         long start = driver.from(arg.getTimestamp(null), argType);
         long end = driver.from(arg2.getTimestamp(null), arg2Type);

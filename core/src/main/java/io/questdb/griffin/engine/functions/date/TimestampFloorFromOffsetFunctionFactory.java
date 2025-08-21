@@ -86,7 +86,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         final char unit = CommonUtils.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         long from = args.getQuick(2).getTimestamp(null);
         if (from == Numbers.LONG_NULL) {

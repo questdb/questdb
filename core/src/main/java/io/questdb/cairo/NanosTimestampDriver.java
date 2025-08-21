@@ -291,8 +291,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long from(long timestamp, int columnType) {
-        if (columnType == ColumnType.TIMESTAMP_MICRO || columnType == ColumnType.DATE) {
-            // DateFunction.toTimestamp() returns micros
+        if (ColumnType.isTimestampMicro(columnType)) {
             return CommonUtils.microsToNanos(timestamp);
         }
         return timestamp;

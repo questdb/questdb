@@ -64,6 +64,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
         int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
 
         if (timezoneFunc.isConstant()) {
             return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);

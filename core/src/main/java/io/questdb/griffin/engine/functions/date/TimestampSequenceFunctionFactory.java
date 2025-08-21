@@ -53,7 +53,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(0).getType()), ColumnType.TIMESTAMP_MICRO);
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NULL) {
@@ -61,7 +61,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             }
             return new TimestampSequenceFunction(start, args.getQuick(1), timestampType);
         } else {
-            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampType(args.getQuick(0).getType()));
+            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), timestampType);
         }
     }
 
