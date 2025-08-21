@@ -568,39 +568,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // todo, remove before merge, exists for benchmarking purposes
-    private static long copyOrdered0(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int fromTimestampType,
-            int cursorTimestampIndex,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
-        if (converter == null) {
-            while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-                copier.copy(record, row);
-                row.append();
-                rowCount++;
-            }
-        } else {
-            while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
-                copier.copy(record, row);
-                row.append();
-                rowCount++;
-            }
-        }
-
-        return rowCount;
-    }
-
     // returns number of copied rows
     private static long copyOrderedBatched0(
             TableWriterAPI writer,
@@ -637,35 +604,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     writer.ic(o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
-            }
-        }
-
-        return rowCount;
-    }
-
-    // todo, this is used to benchmark, will remove in the release.
-    private static long copyOrderedBatched0UseFrom(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int fromTimestampType,
-            int cursorTimestampIndex,
-            long batchSize,
-            long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long commitTarget = batchSize;
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow(timestampDriver.from(record.getTimestamp(cursorTimestampIndex), fromTimestampType));
-            copier.copy(record, row);
-            row.append();
-            if (++rowCount >= commitTarget) {
-                writer.ic(o3MaxLag);
-                commitTarget = rowCount + batchSize;
             }
         }
 
