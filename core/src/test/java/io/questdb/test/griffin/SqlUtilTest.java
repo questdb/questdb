@@ -157,6 +157,10 @@ public class SqlUtilTest {
                 SqlUtil.createExprColumnAlias(store, "\"table\".\"quoted\"", aliasMap, 64).toString()
         );
         Assert.assertEquals(
+                "\"quoted.table\"",
+                SqlUtil.createExprColumnAlias(store, "\"quoted.table\"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
                 "spaces",
                 SqlUtil.createExprColumnAlias(store, "table.spaces   ", aliasMap, 64).toString()
         );

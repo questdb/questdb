@@ -97,7 +97,7 @@ public class SqlUtil {
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
         final int baseLen = base.length();
-        final int indexOfDot = Chars.indexOf(base, '.');
+        final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
         final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
         boolean quote = nonLiteral
                 ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
