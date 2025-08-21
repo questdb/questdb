@@ -3126,6 +3126,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case ColumnType.GEOLONG:
                     nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
                     break;
+                case ColumnType.DECIMAL8:
+                    nullers.add(() -> dataMem.putByte(Byte.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL16:
+                    nullers.add(() -> dataMem.putShort(Short.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL32:
+                    nullers.add(() -> dataMem.putInt(Integer.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL64:
+                    nullers.add(() -> dataMem.putLong(Long.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL128:
+                    nullers.add(() -> dataMem.putDecimal128(Long.MIN_VALUE, -1));
+                    break;
+                case ColumnType.DECIMAL256:
+                    nullers.add(() -> dataMem.putDecimal256(Long.MIN_VALUE, -1, -1, -1));
+                    break;
                 default:
                     nullers.add(NOOP);
             }
