@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.com/" target="blank"><img alt="QuestDB Logo" src="https://questdb.com/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
@@ -47,7 +47,7 @@ configurazione rapida ed efficienza operativa.
 <p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.io/">
+  <a href="https://demo.questdb.com/">
     <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
   <p><em>Console Web QuestDB - clicca per lanciare la demo</em></p>
@@ -171,16 +171,16 @@ Interagisci con QuestDB e i tuoi dati tramite le seguenti interfacce:
 
 Gli strumenti popolari che si integrano con QuestDB includono:
 
-- [Kafka](https://questdb.io/docs/third-party-tools/kafka/)
+- [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
-- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
+- [Grafana](https://questdb.com/docs/third-party-tools/grafana/)
 - [Polars](https://questdb.com/docs/third-party-tools/polars/)
 - [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
 - [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
 - [Superset](https://questdb.com/docs/third-party-tools/superset/)
-- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
+- [Apache Flink](https://questdb.com/docs/third-party-tools/flink/)
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
-- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
+- [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
 ### Scaffold di codice end-to-end
 
@@ -215,13 +215,13 @@ Visita la [pagina Enterprise](https://questdb.com/enterprise/) per ulteriori det
 - [Documentazione QuestDB:](https://questdb.com/docs/) inizia il percorso
 - [Roadmap prodotto:](https://github.com/orgs/questdb/projects/1/views/5) controlla il nostro piano per le prossime
   release
-- [Tutorial:](https://questdb.io/tutorial/) scopri cosa è possibile con QuestDB, passo dopo passo
+- [Tutorial:](https://questdb.com/tutorial/) scopri cosa è possibile con QuestDB, passo dopo passo
 
 ### ❓ Ottieni supporto
 
 - [Forum discussione community:](https://community.questdb.com/) unisciti alle discussioni tecniche, fai domande e
   incontra altri utenti!
-- [Slack pubblico:](https://slack.questdb.io/) chatta con il team QuestDB e i membri della community
+- [Slack pubblico:](https://slack.questdb.com/) chatta con il team QuestDB e i membri della community
 - [Issue GitHub:](https://github.com/questdb/questdb/issues) segnala bug o problemi con QuestDB
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) cerca soluzioni comuni per la risoluzione dei
   problemi
@@ -257,7 +257,7 @@ Per iniziare a contribuire:
   le [istruzioni di build](https://github.com/questdb/questdb/blob/master/core/README.md)
 - [Crea un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) di QuestDB e invia una pull
   request con le tue modifiche proposte
-- Bloccato? Unisciti al nostro [Slack pubblico](https://slack.questdb.io/) per assistenza
+- Bloccato? Unisciti al nostro [Slack pubblico](https://slack.questdb.com/) per assistenza
 
 ✨ Come segno della nostra gratitudine, inviamo gadget QuestDB ai nostri contributori!
 
@@ -300,10 +300,10 @@ QuestDB [chiave emoji](https://allcontributors.org/docs/en/emoji-key):
       <td align="center" valign="top" width="14.28%"><a href="https://borowski-software.de/"><img src="https://avatars.githubusercontent.com/u/8701341?v=4" width="100px;" alt=""/><br /><sub><b>TimBo93</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ATimBo93" title="Bug reports">🐛</a> <a href="#userTesting-TimBo93" title="User Testing">📓</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://zikani.me"><img src="https://avatars.githubusercontent.com/u/1501387?v=4" width="100px;" alt=""/><br /><sub><b>zikani03</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=zikani03" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/jaugsburger"><img src="https://avatars.githubusercontent.com/u/10787042?v=4" width="100px;" alt=""/><br /><sub><b>jaugsburger</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=jaugsburger" title="Code">💻</a> <a href="#maintenance-jaugsburger" title="Maintenance">🚧</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.questdb.io"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://www.questdb.com"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://davidgs.com"><img src="https://avatars.githubusercontent.com/u/2071898?v=4" width="100px;" alt=""/><br /><sub><b>davidgs</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Adavidgs" title="Bug reports">🐛</a> <a href="#content-davidgs" title="Content">🖋</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://redalemeden.com"><img src="https://avatars.githubusercontent.com/u/519433?v=4" width="100px;" alt=""/><br /><sub><b>kaishin</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=kaishin" title="Code">💻</a> <a href="#example-kaishin" title="Examples">💡</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://questdb.io"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://questdb.com"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
     </tr>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="http://patrick.spacesurfer.com/"><img src="https://avatars.githubusercontent.com/u/29952889?v=4" width="100px;" alt=""/><br /><sub><b>patrickSpaceSurfer</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Code">💻</a> <a href="#maintenance-patrickSpaceSurfer" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Tests">⚠️</a></td>
