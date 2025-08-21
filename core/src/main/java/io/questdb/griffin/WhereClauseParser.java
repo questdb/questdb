@@ -248,7 +248,7 @@ public final class WhereClauseParser implements Mutable {
                     ? Numbers.LONG_NULL
                     : parseStringAsTimestamp(timestampDriver, varchar.asAsciiCharSequence(), functionPosition, detectIntervals);
         } else {
-            return timestampDriver.from(function.getTimestamp(null), ColumnType.getTimestampType(type));
+            return timestampDriver.from(function.getTimestamp(null), type);
         }
     }
 

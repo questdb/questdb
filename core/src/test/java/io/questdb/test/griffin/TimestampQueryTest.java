@@ -71,6 +71,22 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFunctionExtractionNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab(i int, ts timestamp_ns) timestamp(ts) partition by DAY;");
+            execute("INSERT INTO tab VALUES(0, '2000-01-01T00:00:00.000000000Z')");
+
+
+            String expected = "i\tts\n" +
+                    "0\t2000-01-01T00:00:00.000000000Z\n";
+            // constant function
+            String query = "select * from tab where ts = 946684800000000000 + 0;";
+
+            assertQueryNoLeakCheck(expected, query, "ts", true, false);
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
         assertQuery(
                 "a\tdk\tk\n" +

@@ -3085,8 +3085,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampEpochEqualsLongConst() throws Exception {
         setCurrentMicros(24L * 3600 * 1000 * 1000);
+
+        long ts = 1424649600000000L;
+        if (timestampType == TestTimestampType.NANO) {
+            ts = ts * 1000;
+        }
         try {
-            runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
+            runWhereCompareToModelTest("timestamp = " + ts + " * 1",
                     "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
         } finally {
             setCurrentMicros(-1);
