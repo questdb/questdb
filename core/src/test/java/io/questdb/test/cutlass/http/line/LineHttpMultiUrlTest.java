@@ -166,7 +166,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             final @Nullable TxReader[] r1 = {null};
             final @Nullable TxReader[] r2 = {null};
 
-
             long expectedTotalRows = 100_000;
             try (Sender sender = Sender.fromConfig("http::addr=localhost:9020;addr=localhost:9030;auto_flush=off;")) {
                 for (int i = 0; i < expectedTotalRows; i++) {
@@ -177,7 +176,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                         if (serverMain1.hasBeenClosed()) {
                             serverMain1 = startInstancesWithoutConflict("server1", HOST, PORT1, false);
                             serverMain1.start();
-
                         }
                     }
 
@@ -277,6 +275,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         } finally {
             if (serverMain != null && serverMain.hasBeenClosed()) {
                 serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
+                serverMain.start();
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = null;
