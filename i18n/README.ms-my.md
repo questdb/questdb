@@ -17,7 +17,7 @@
   <a href="./README.it-it.md">Italiano</a> |
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
-  Português |
+  <a href="./README.pt.md">Português</a> |
   <a href="./README.fr-fr.md">Français</a> |
   <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
@@ -26,110 +26,107 @@
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a> |
-  <a href="./README.ms-my.md">Bahasa Melayu</a>
+  Bahasa Melayu
 </p>
 
 ---
 
-O QuestDB é um banco de dados de séries temporais open-source que oferece **ingestão extremamente rápida** e **consultas
-SQL dinâmicas de baixa latência**.
+QuestDB adalah pangkalan data siri masa sumber terbuka yang menawarkan **penyerapan data yang sangat pantas** dan
+pertanyaan SQL dinamik dengan kekangan rendah.
 
-O QuestDB oferece um mecanismo de armazenamento multicamadas (WAL → nativo → Parquet em object storage), e o motor
-principal é implementado em Java zero-GC e C++; o QuestDB Enterprise inclui componentes adicionais em Rust.
+QuestDB menyampaikan enjin storan berbilang peringkat (WAL → asli → Parquet pada storan objek), dan enjin teras
+dilaksanakan dalam Java dan C++ tanpa GC; QuestDB Enterprise termasuk komponen tambahan dalam Rust.
 
-Alcançamos alto desempenho através de um modelo de armazenamento orientado a colunas, execução vetorial paralela,
-instruções SIMD e técnicas de baixa latência. Além disso, o QuestDB é eficiente em hardware, com configuração rápida e
-eficiência operacional.
+Kami mencapai prestasi tinggi melalui model storan berorientasikan lajur, pelaksanaan vektor selari, arahan SIMD, dan
+teknik kekangan rendah. Selain itu, QuestDB adalah cekap perkakasan, dengan persediaan pantas dan kecekapan operasi.
 
-> Pronto para começar? Vá para a seção [Começando](#começando).
+> Bersedia untuk mula? Lompat ke bahagian [Bermula](#get-started).
 
 <p>&nbsp;</p>
 
 <div align="center">
   <a href="https://demo.questdb.io/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
+    <img alt="Konsol Web QuestDB menunjukkan penyata SQL dan hasil pertanyaan" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB Web Console - clique para lançar a demo</em></p>
+  <p><em>Konsol Web QuestDB - klik untuk lancarkan demo</em></p>
 </div>
 
 <p>&nbsp;</p>
 
-## Benefícios do QuestDB
+## Faedah QuestDB
 
-Recursos em destaque incluem:
+Ciri-ciri utama termasuk:
 
-- Ingestão de baixa latência e alto throughput — de eventos únicos a milhões/seg
-- SQL de baixa latência com extensões de séries temporais (ASOF JOIN, SAMPLE BY, LATEST ON)
-- Execução paralela acelerada por SIMD; executa rapidamente em hardware modesto
-- Armazenamento multicamadas: WAL → colunar nativo → Parquet (particionado por tempo e ordenado por tempo)
-- Protocolo Postgres (PGwire) e REST API
-- Visualizações materializadas e arrays n-dimensionais (incluindo arrays 2D para order books)
-- Console web para consultas e gerenciamento de dados
-- Apache 2.0 open source e formatos abertos — sem vendor lock-in
-- [Funções financeiras](https://questdb.com/docs/reference/function/finance/)
-  e [análise de order book](https://questdb.com/docs/guides/order-book/)
+- Penyerapan kekangan rendah, pemprosesan tinggi — dari peristiwa tunggal hingga jutaan/saat
+- SQL kekangan rendah dengan sambungan siri masa (ASOF JOIN, SAMPLE BY, LATEST ON)
+- Pelaksanaan selari yang dipercepat SIMD; berjalan pantas pada perkakasan sederhana
+- Storan berbilang peringkat: WAL → lajur asli → Parquet (dibahagi masa dan tersusun masa)
+- Protokol Postgres (PGwire) dan REST API
+- Paparan bermaterial dan tatasusunan n-dimensi (termasuk tatasusunan 2D untuk buku pesanan)
+- Konsol web untuk pertanyaan dan pengurusan data
+- Sumber terbuka Apache 2.0 dan format terbuka — tiada kuncian vendor
+- [Fungsi kewangan](https://questdb.com/docs/reference/function/finance/)
+  dan [analitik buku pesanan](https://questdb.com/docs/guides/order-book/)
 
-O QuestDB se destaca com:
+QuestDB unggul dengan:
 
-- Dados de mercados financeiros (tick data, trades, order books, OHLC)
-- Dados de sensor/telemetria com alta cardinalidade de dados
-- Dashboards em tempo real e monitoramento
+- data pasaran kewangan (data tick, perdagangan, buku pesanan, OHLC)
+- Data sensor/telemetri dengan kardinaliti data tinggi
+- papan pemuka masa nyata dan pemantauan
 
-E por que usar um banco de dados de séries temporais?
+Dan mengapa menggunakan pangkalan data siri masa?
 
-Além de desempenho e eficiência, com um banco de dados de séries temporais especializado, você não precisa se preocupar
-com:
+Selain prestasi dan kecekapan, dengan pangkalan data siri masa khusus, anda tidak perlu risau tentang:
 
-- Dados fora de ordem
-- Deduplicação e semântica exactly-once
-- Ingestão de streaming contínuo com múltiplas consultas concorrentes
-- Dados de streaming (baixa latência)
-- Dados voláteis e "bursty"
-- Adicionar novas colunas - alterar esquema "on the fly" ao fazer streaming de dados
+- data yang tidak berurutan
+- deduplikasi dan semantik tepat satu
+- Penyerapan strim berterusan dengan banyak pertanyaan serentak
+- data strim (kekangan rendah)
+- data yang tidak menentu dan "bergelora"
+- menambah lajur baru - ubah skema "semasa bergerak" sambil mengalirkan data
 
-## Experimente o QuestDB, demos e dashboards
+## Cuba QuestDB, demo dan papan pemuka
 
-A [demo pública ao vivo](https://demo.questdb.com/) é provisionada com a versão mais recente do QuestDB e conjuntos de
-dados de exemplo:
+[Demo langsung awam](https://demo.questdb.com/) disediakan dengan keluaran QuestDB terkini dan set data sampel:
 
-- Trades: trades de crypto ao vivo com mais de 30M de linhas por mês (exchange OKX)
-- FX order book: gráficos ao vivo com pares FX de order book.
-- Trips: 10 anos de dados de viagens de táxi de NYC com 1.6 bilhões de linhas
+- Perdagangan: perdagangan kripto langsung dengan 30J+ baris sebulan (bursa OKX)
+- Buku pesanan FX: carta langsung dengan pasangan FX buku pesanan.
+- Perjalanan: 10 tahun perjalanan teksi NYC dengan 1.6 bilion baris
 
-Também temos alguns dashboards de demo públicos em tempo real usando nosso
-plugin [nativo do Grafana](https://questdb.com/docs/third-party-tools/grafana/):
+Kami juga mempunyai beberapa papan pemuka demo masa nyata awam menggunakan
+plugin [Grafana-asli](https://questdb.com/docs/third-party-tools/grafana/) kami:
 
-- [Trades de crypto em tempo real:](https://questdb.com/dashboards/crypto/) trades executados no OKX de mais de 20
-  ativos em tempo real
-- [FX order book:](https://questdb.com/dashboards/FX-orderbook/) gráficos de depth/imbalance ao vivo para principais
-  pares FX
+- [Perdagangan kripto masa nyata:](https://questdb.com/dashboards/crypto/) perdagangan yang dilaksanakan di OKX dari
+  lebih 20 aset dalam masa nyata
+- [Buku pesanan FX:](https://questdb.com/dashboards/FX-orderbook/) carta kedalaman/ketidakseimbangan langsung untuk
+  pasangan FX utama
 
-### Desempenho do QuestDB vs outros bancos de dados
+### Prestasi QuestDB berbanding pangkalan data lain
 
-O QuestDB se sai muito bem em benchmarks de desempenho comparado a alternativas.
+QuestDB berprestasi sangat baik dalam penanda aras prestasi berbanding dengan alternatif.
 
-Para análises detalhadas sobre internos e desempenho, veja os seguintes posts do blog:
+Untuk penyelaman mendalam ke dalam dalaman dan prestasi, lihat pos blog berikut:
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
 - [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
-Como sempre, encorajamos você a executar seus próprios benchmarks.
+Seperti biasa, kami menggalakkan anda menjalankan penanda aras anda sendiri.
 
 <div align="center">
-  <img alt="Um gráfico comparando a taxa de ingestão do QuestDB, InfluxDB e TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
+  <img alt="Carta yang membandingkan kadar penyerapan QuestDB, InfluxDB dan TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
-## Começando
+## Bermula
 
-Use [Docker](https://www.docker.com/) para começar rapidamente:
+Gunakan [Docker](https://www.docker.com/) untuk bermula dengan pantas:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Ou usuários do macOS podem usar o Homebrew:
+Atau pengguna macOS boleh menggunakan Homebrew:
 
 ```bash
 brew install questdb
@@ -141,12 +138,12 @@ questdb start
 questdb stop
 ```
 
-Alternativamente, para começar a jornada completa de onboarding, comece com
-nosso [guia de início rápido](https://questdb.com/docs/quick-start/) conciso.
+Sebagai alternatif, untuk memulakan perjalanan orientasi penuh, mulakan
+dengan [panduan permulaan pantas](https://questdb.com/docs/quick-start/) kami yang ringkas.
 
-### Clientes de ingestão próprios
+### Klien penyerapan pihak pertama
 
-Clientes QuestDB para ingerir dados via InfluxDB Line Protocol:
+Klien QuestDB untuk menyerap data melalui Protokol Baris InfluxDB:
 
 - [Python](https://questdb.com/docs/clients/ingest-python/)
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
@@ -156,20 +153,20 @@ Clientes QuestDB para ingerir dados via InfluxDB Line Protocol:
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-### Conectar ao QuestDB
+### Sambung ke QuestDB
 
-Interaja com o QuestDB e seus dados através das seguintes interfaces:
+Berinteraksi dengan QuestDB dan data anda melalui antara muka berikut:
 
-- [Console Web](https://questdb.com/docs/web-console/) para editor SQL interativo e importação CSV na porta `9000`
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) para ingestão de streaming na porta
+- [Konsol Web](https://questdb.com/docs/web-console/) untuk editor SQL interaktif dan import CSV pada port `9000`
+- [Protokol Baris InfluxDB](https://questdb.com/docs/reference/api/ilp/overview/) untuk penyerapan strim pada port
   `9000`
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) para consultas programáticas na porta
+- [Protokol Wayar PostgreSQL](https://questdb.com/docs/reference/api/postgres/) untuk pertanyaan programatik pada port
   `8812`
-- [REST API](https://questdb.com/docs/reference/api/rest/) para importação CSV e cURL na porta `9000`
+- [REST API](https://questdb.com/docs/reference/api/rest/) untuk import CSV dan cURL pada port `9000`
 
-### Ferramentas populares de terceiros
+### Alatan pihak ketiga yang popular
 
-Ferramentas populares que se integram com o QuestDB incluem:
+Alatan popular yang berintegrasi dengan QuestDB termasuk:
 
 - [Kafka](https://questdb.io/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
@@ -182,86 +179,84 @@ Ferramentas populares que se integram com o QuestDB incluem:
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
 - [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
-### Scaffolds de código end-to-end
+### Perancah kod hujung ke hujung
 
-Do streaming de ingestão à visualização com Grafana, comece com scaffolds de código do
-nosso [repositório quickstart](https://github.com/questdb/questdb-quickstart).
+Dari penyerapan strim hingga visualisasi dengan Grafana, mulakan dengan perancah kod
+dari [repositori permulaan pantas](https://github.com/questdb/questdb-quickstart) kami.
 
-### Configurar o QuestDB para workloads de produção
+### Konfigurasikan QuestDB untuk beban kerja pengeluaran
 
-Encontre nosso [planejamento de capacidade](https://questdb.com/docs/deployment/capacity-planning/) para ajustar o
-QuestDB para workloads de produção.
+Cari [perancangan kapasiti](https://questdb.com/docs/deployment/capacity-planning/) kami untuk menala halus QuestDB
+untuk beban kerja pengeluaran.
 
 ### QuestDB Enterprise
 
-Para operação segura em maior escala ou dentro de organizações maiores.
+Untuk operasi selamat pada skala yang lebih besar atau dalam organisasi yang lebih besar.
 
-Recursos adicionais incluem:
+Ciri tambahan termasuk:
 
-- Alta disponibilidade e réplica(s) de leitura
-- Ingestão multi-primária
-- Integração com cold storage
-- Controle de acesso baseado em funções
-- Criptografia TLS
-- Consulta nativa de arquivos Parquet via object storage
-- Suporte SLA, monitoramento aprimorado e muito mais
+- ketersediaan tinggi dan replika baca
+- penyerapan berbilang utama
+- integrasi storan sejuk
+- kawalan akses berasaskan peranan
+- penyulitan TLS
+- pertanyaan asli fail Parquet melalui storan objek
+- sokongan SLA, pemantauan dipertingkat dan banyak lagi
 
-Visite a [página Enterprise](https://questdb.com/enterprise/) para mais detalhes e informações de contato.
+Lawati [halaman Enterprise](https://questdb.com/enterprise/) untuk butiran lanjut dan maklumat hubungan.
 
-## Recursos adicionais
+## Sumber tambahan
 
-### 📚 Leia a documentação
+### 📚 Baca dokumen
 
-- [Documentação do QuestDB:](https://questdb.com/docs/) comece a jornada
-- [Roadmap do produto:](https://github.com/orgs/questdb/projects/1/views/5) confira nosso plano para próximos
-  lançamentos
-- [Tutoriais:](https://questdb.io/tutorial/) aprenda o que é possível com QuestDB, passo a passo
+- [Dokumentasi QuestDB:](https://questdb.com/docs/) mulakan perjalanan
+- [Peta jalan produk:](https://github.com/orgs/questdb/projects/1/views/5) lihat rancangan kami untuk keluaran akan
+  datang
+- [Tutorial:](https://questdb.io/tutorial/) belajar apa yang mungkin dengan QuestDB, langkah demi langkah
 
-### ❓ Obtenha suporte
+### ❓ Dapatkan sokongan
 
-- [Fórum Discourse da comunidade:](https://community.questdb.com/) participe de discussões técnicas, faça perguntas e
-  conheça outros usuários!
-- [Slack público:](https://slack.questdb.io/) converse com a equipe QuestDB e membros da comunidade
-- [Issues do GitHub:](https://github.com/questdb/questdb/issues) reporte bugs ou problemas com QuestDB
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) procure soluções comuns de solução de problemas
+- [Forum Discourse Komuniti:](https://community.questdb.com/) sertai perbincangan teknikal, tanya soalan, dan temui
+  pengguna lain!
+- [Slack Awam:](https://slack.questdb.io/) berbual dengan pasukan QuestDB dan ahli komuniti
+- [Isu GitHub:](https://github.com/questdb/questdb/issues) laporkan bug atau isu dengan QuestDB
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) cari penyelesaian penyelesaian masalah biasa
 
-### 🚢 Implementar QuestDB
+### 🚢 Gunakan QuestDB
 
 - [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [Imagem oficial do Docker](https://questdb.com/docs/get-started/docker)
-- [Droplets DigitalOcean](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
+- [Imej Docker rasmi](https://questdb.com/docs/get-started/docker)
+- [Droplet DigitalOcean](https://questdb.com/docs/guides/digitalocean)
+- [Carta Helm Kubernetes](https://questdb.com/docs/guides/kubernetes)
 
-## Contribua
+## Menyumbang
 
-Contribuições são bem-vindas!
+Sumbangan dialu-alukan!
 
-Valorizamos:
+Kami menghargai:
 
-- Código fonte
-- Documentação (veja nosso [repositório de documentação](https://github.com/questdb/documentation))
-- Relatórios de bug
-- Solicitações de recursos ou feedback
+- kod sumber
+- dokumentasi (lihat [repositori dokumentasi](https://github.com/questdb/documentation) kami)
+- laporan bug
+- permintaan ciri atau maklum balas.
 
-Para começar a contribuir:
+Untuk memulakan dengan menyumbang:
 
-- Confira issues do GitHub marcados
-  como "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-- Para Hacktoberfest,
-  veja [issues marcados](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-  relevantes
-- Leia o [guia de contribuição](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- Para detalhes sobre construir QuestDB, veja
-  as [instruções de construção](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [Crie um fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) do QuestDB e envie um pull
-  request com suas mudanças propostas
-- Ficou empacado? Junte-se ao nosso [Slack público](https://slack.questdb.io/) para ajuda
+- Lihat isu GitHub yang
+  dilabel "[Isu pertama yang baik](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+- Untuk Hacktoberfest,
+  lihat [isu berlabel](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest) berkaitan
+- Baca [panduan sumbangan](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- Untuk butiran membina QuestDB, lihat [arahan binaan](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Cipta cabang](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) QuestDB dan hantar
+  permintaan tarik dengan perubahan yang dicadangkan
+- Tersekat? Sertai [Slack awam](https://slack.questdb.io/) kami untuk bantuan
 
-✨ Como sinal de nossa gratidão, enviamos swag QuestDB para nossos contribuidores!
+✨ Sebagai tanda terima kasih kami, kami menghantar swag QuestDB kepada penyumbang kami!
 
-Muito obrigado às seguintes pessoas maravilhosas que contribuíram para o
-QuestDB [chave emoji](https://allcontributors.org/docs/en/emoji-key):
+Terima kasih yang besar kepada orang-orang yang indah berikut yang telah menyumbang kepada
+QuestDB [kunci emoji](https://allcontributors.org/docs/en/emoji-key):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -416,5 +411,5 @@ QuestDB [chave emoji](https://allcontributors.org/docs/en/emoji-key):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Este projeto segue a especificação [all-contributors](https://github.com/all-contributors/all-contributors).
-Contribuições de qualquer tipo são bem-vindas!
+Projek ini mematuhi spesifikasi [all-contributors](https://github.com/all-contributors/all-contributors). Sumbangan
+dalam apa jua bentuk dialu-alukan!

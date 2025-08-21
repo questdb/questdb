@@ -9,6 +9,7 @@
   </a>
 </p>
 
+<div dir="rtl">
 <p align="center">
   <a href="https://github.com/questdb/questdb">English</a> |
   <a href="./README.zh-cn.md">简体中文</a> |
@@ -17,12 +18,12 @@
   <a href="./README.it-it.md">Italiano</a> |
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
-  Português |
+  <a href="./README.pt.md">Português</a> |
   <a href="./README.fr-fr.md">Français</a> |
   <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.ko-kr.md">한국어</a> |
-  <a href="./README.he-il.md">עברית</a> |
+  עברית |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a> |
@@ -31,105 +32,107 @@
 
 ---
 
-O QuestDB é um banco de dados de séries temporais open-source que oferece **ingestão extremamente rápida** e **consultas
-SQL dinâmicas de baixa latência**.
+<p dir="rtl" style="text-align: right;">QuestDB הוא מסד נתונים של סדרות זמן בקוד פתוח המציע **קליטת נתונים מהירה במיוחד** ושאילתות SQL דינמיות בהשהיה נמוכה.</p>
 
-O QuestDB oferece um mecanismo de armazenamento multicamadas (WAL → nativo → Parquet em object storage), e o motor
-principal é implementado em Java zero-GC e C++; o QuestDB Enterprise inclui componentes adicionais em Rust.
+<p dir="rtl" style="text-align: right;">QuestDB מספק מנוע אחסון רב-שכבתי (WAL → מקורי → Parquet על אחסון אובייקט), והמנוע הליבה מיושם ב-Java אפס-GC ו-C++; QuestDB Enterprise כולל רכיבים נוספים ב-Rust.</p>
 
-Alcançamos alto desempenho através de um modelo de armazenamento orientado a colunas, execução vetorial paralela,
-instruções SIMD e técnicas de baixa latência. Além disso, o QuestDB é eficiente em hardware, com configuração rápida e
-eficiência operacional.
+<p dir="rtl" style="text-align: right;">אנו משיגים ביצועים גבוהים באמצעות מודל אחסון מוכוון עמודות, ביצוע וקטור מקבילי, הוראות SIMD וטכניקות השהיה נמוכה. בנוסף, QuestDB יעיל מבחינת חומרה, עם הגדרה מהירה ויעילות תפעולית.</p>
 
-> Pronto para começar? Vá para a seção [Começando](#começando).
+> <p dir="rtl" style="text-align: right;">מוכן להתחיל? עבור לקטע [התחלה](#התחלה).</p>
 
 <p>&nbsp;</p>
 
 <div align="center">
   <a href="https://demo.questdb.io/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
+    <img alt="קונסולת הרשת של QuestDB המציגה הצהרת SQL ותוצאת שאילתה" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB Web Console - clique para lançar a demo</em></p>
+  <p><em>קונסולת הרשת של QuestDB - לחץ להפעלת הדמו</em></p>
 </div>
 
 <p>&nbsp;</p>
 
-## Benefícios do QuestDB
+## יתרונות QuestDB
 
-Recursos em destaque incluem:
+<p dir="rtl" style="text-align: right;">תכונות מרכזיות כוללות:</p>
 
-- Ingestão de baixa latência e alto throughput — de eventos únicos a milhões/seg
-- SQL de baixa latência com extensões de séries temporais (ASOF JOIN, SAMPLE BY, LATEST ON)
-- Execução paralela acelerada por SIMD; executa rapidamente em hardware modesto
-- Armazenamento multicamadas: WAL → colunar nativo → Parquet (particionado por tempo e ordenado por tempo)
-- Protocolo Postgres (PGwire) e REST API
-- Visualizações materializadas e arrays n-dimensionais (incluindo arrays 2D para order books)
-- Console web para consultas e gerenciamento de dados
-- Apache 2.0 open source e formatos abertos — sem vendor lock-in
-- [Funções financeiras](https://questdb.com/docs/reference/function/finance/)
-  e [análise de order book](https://questdb.com/docs/guides/order-book/)
+<ul dir="rtl" style="text-align: right;">
+<li>קליטה בהשהיה נמוכה ובתפוקה גבוהה — מאירועים בודדים למיליונים לשנייה</li>
+<li>SQL בהשהיה נמוכה עם הרחבות סדרות זמן (ASOF JOIN, SAMPLE BY, LATEST ON)</li>
+<li>ביצוע מקבילי מואץ SIMD; פועל מהר על חומרה צנועה</li>
+<li>אחסון רב-שכבתי: WAL → עמודות מקוריות → Parquet (מחולק זמן ומסודר זמן)</li>
+<li>פרוטוקול Postgres (PGwire) ו-REST API</li>
+<li>תצוגות ממוחשות ומערכי n-ממדי (כולל מערכי 2D עבור ספרי הזמנות)</li>
+<li>קונסולת רשת לשאילתות וניהול נתונים</li>
+<li>Apache 2.0 קוד פתוח ופורמטים פתוחים — ללא נעילת ספק</li>
+<li><a href="https://questdb.com/docs/reference/function/finance/">פונקציות פיננסיות</a> ו<a href="https://questdb.com/docs/guides/order-book/">אנליטיקת ספר הזמנות</a></li>
+</ul>
 
-O QuestDB se destaca com:
+<p dir="rtl" style="text-align: right;">QuestDB מצטיין עם:</p>
 
-- Dados de mercados financeiros (tick data, trades, order books, OHLC)
-- Dados de sensor/telemetria com alta cardinalidade de dados
-- Dashboards em tempo real e monitoramento
+<ul dir="rtl" style="text-align: right;">
+<li>נתוני שוק פיננסי (נתוני טיק, עסקאות, ספרי הזמנות, OHLC)</li>
+<li>נתוני חיישן/טלמטריה עם קרדינליות נתונים גבוהה</li>
+<li>דשבורדים בזמן אמת ומעקב</li>
+</ul>
 
-E por que usar um banco de dados de séries temporais?
+<p dir="rtl" style="text-align: right;">ולמה להשתמש במסד נתונים של סדרות זמן?</p>
 
-Além de desempenho e eficiência, com um banco de dados de séries temporais especializado, você não precisa se preocupar
-com:
+<p dir="rtl" style="text-align: right;">מעבר לביצועים ויעילות, עם מסד נתונים מיוחד לסדרות זמן, אינך צריך לדאוג לגבי:</p>
 
-- Dados fora de ordem
-- Deduplicação e semântica exactly-once
-- Ingestão de streaming contínuo com múltiplas consultas concorrentes
-- Dados de streaming (baixa latência)
-- Dados voláteis e "bursty"
-- Adicionar novas colunas - alterar esquema "on the fly" ao fazer streaming de dados
+<ul dir="rtl" style="text-align: right;">
+<li>נתונים לא בסדר</li>
+<li>הסרת כפולים וסמנטיקה של בדיוק פעם אחת</li>
+<li>קליטת זרם רציפה עם שאילתות מקבילות רבות</li>
+<li>נתוני זרם (השהיה נמוכה)</li>
+<li>נתונים תנודתיים ו"פורצניים"</li>
+<li>הוספת עמודות חדשות - שינוי סכמה "תוך כדי" בזמן זרימת נתונים</li>
+</ul>
 
-## Experimente o QuestDB, demos e dashboards
+## נסה QuestDB, דמו ודשבורדים
 
-A [demo pública ao vivo](https://demo.questdb.com/) é provisionada com a versão mais recente do QuestDB e conjuntos de
-dados de exemplo:
+<p dir="rtl" style="text-align: right;"><a href="https://demo.questdb.com/">הדמו הציבורי החי</a> מסופק עם גרסת QuestDB העדכנית ביותר ומערכי נתונים לדוגמה:</p>
 
-- Trades: trades de crypto ao vivo com mais de 30M de linhas por mês (exchange OKX)
-- FX order book: gráficos ao vivo com pares FX de order book.
-- Trips: 10 anos de dados de viagens de táxi de NYC com 1.6 bilhões de linhas
+<ul dir="rtl" style="text-align: right;">
+<li>עסקאות: עסקאות קריפטו חיות עם למעלה מ-30 מיליון שורות לחודש (בורסת OKX)</li>
+<li>ספר הזמנות FX: תרשימים חיים עם זוגות FX של ספר הזמנות</li>
+<li>נסיעות: 10 שנים של נסיעות מונית NYC עם 1.6 מיליארד שורות</li>
+</ul>
 
-Também temos alguns dashboards de demo públicos em tempo real usando nosso
-plugin [nativo do Grafana](https://questdb.com/docs/third-party-tools/grafana/):
+<p dir="rtl" style="text-align: right;">יש לנו גם כמה דשבורדי דמו ציבוריים בזמן אמת באמצעות הפלאגין <a href="https://questdb.com/docs/third-party-tools/grafana/">מקורי ל-Grafana</a> שלנו:</p>
 
-- [Trades de crypto em tempo real:](https://questdb.com/dashboards/crypto/) trades executados no OKX de mais de 20
-  ativos em tempo real
-- [FX order book:](https://questdb.com/dashboards/FX-orderbook/) gráficos de depth/imbalance ao vivo para principais
-  pares FX
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/dashboards/crypto/">עסקאות קריפטו בזמן אמת:</a> עסקאות מבוצעות ב-OKX מלמעלה מ-20 נכסים בזמן אמת</li>
+<li><a href="https://questdb.com/dashboards/FX-orderbook/">ספר הזמנות FX:</a> תרשימי עומק/אי-איזון חיים עבור זוגות FX מרכזיים</li>
+</ul>
 
-### Desempenho do QuestDB vs outros bancos de dados
+### ביצועי QuestDB מול מסדי נתונים אחרים
 
-O QuestDB se sai muito bem em benchmarks de desempenho comparado a alternativas.
+<p dir="rtl" style="text-align: right;">QuestDB מבצע טוב מאוד בבנצ'מרקים של ביצועים בהשוואה לחלופות.</p>
 
-Para análises detalhadas sobre internos e desempenho, veja os seguintes posts do blog:
+<p dir="rtl" style="text-align: right;">לצלילה עמוקה לתוך הפנימיות והביצועים, ראה את פוסטי הבלוג הבאים:</p>
 
-- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
-- [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
-- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/">QuestDB מול InfluxDB</a></li>
+<li><a href="https://questdb.com/compare/questdb-vs-kdb/">QuestDB מול Kdb+</a></li>
+<li><a href="https://questdb.com/blog/timescaledb-vs-questdb-comparison/">QuestDB מול TimescaleDB</a></li>
+<li><a href="https://questdb.com/blog/mongodb-time-series-benchmark-review/">QuestDB מול MongoDB</a></li>
+</ul>
 
-Como sempre, encorajamos você a executar seus próprios benchmarks.
+<p dir="rtl" style="text-align: right;">כתמיד, אנו מעודדים אותך להריץ בנצ'מרקים של עצמך.</p>
 
 <div align="center">
-  <img alt="Um gráfico comparando a taxa de ingestão do QuestDB, InfluxDB e TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
+  <img alt="תרשים המשווה את שיעור הקליטה של QuestDB, InfluxDB ו-TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
-## Começando
+## התחלה
 
-Use [Docker](https://www.docker.com/) para começar rapidamente:
+<p dir="rtl" style="text-align: right;">השתמש ב-<a href="https://www.docker.com/">Docker</a> כדי להתחיל במהירות:</p>
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Ou usuários do macOS podem usar o Homebrew:
+<p dir="rtl" style="text-align: right;">או שמשתמשי macOS יכולים להשתמש ב-Homebrew:</p>
 
 ```bash
 brew install questdb
@@ -141,127 +144,132 @@ questdb start
 questdb stop
 ```
 
-Alternativamente, para começar a jornada completa de onboarding, comece com
-nosso [guia de início rápido](https://questdb.com/docs/quick-start/) conciso.
+<p dir="rtl" style="text-align: right;">לחלופין, כדי להתחיל את מסע ההטמעה המלא, התחל עם <a href="https://questdb.com/docs/quick-start/">מדריך ההתחלה המהירה</a> שלנו הקצר.</p>
 
-### Clientes de ingestão próprios
+### לקוחות קליטה ראשוניים
 
-Clientes QuestDB para ingerir dados via InfluxDB Line Protocol:
+<p dir="rtl" style="text-align: right;">לקוחות QuestDB לקליטת נתונים באמצעות פרוטוקול InfluxDB Line:</p>
 
-- [Python](https://questdb.com/docs/clients/ingest-python/)
-- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
-- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
-- [Go](https://questdb.com/docs/clients/ingest-go/)
-- [Java](https://questdb.com/docs/clients/java_ilp/)
-- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
-- [Rust](https://questdb.com/docs/clients/ingest-rust/)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/docs/clients/ingest-python/">Python</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-dotnet/">.NET</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-c-and-cpp/">C/C++</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-go/">Go</a></li>
+<li><a href="https://questdb.com/docs/clients/java_ilp/">Java</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-node/">NodeJS</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-rust/">Rust</a></li>
+</ul>
 
-### Conectar ao QuestDB
+### התחבר ל-QuestDB
 
-Interaja com o QuestDB e seus dados através das seguintes interfaces:
+<p dir="rtl" style="text-align: right;">קיים אינטראקציה עם QuestDB והנתונים שלך באמצעות הממשקים הבאים:</p>
 
-- [Console Web](https://questdb.com/docs/web-console/) para editor SQL interativo e importação CSV na porta `9000`
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) para ingestão de streaming na porta
-  `9000`
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) para consultas programáticas na porta
-  `8812`
-- [REST API](https://questdb.com/docs/reference/api/rest/) para importação CSV e cURL na porta `9000`
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/docs/web-console/">קונסולת רשת</a> לעורך SQL אינטראקטיבי וייבוא CSV בפורט <code>9000</code></li>
+<li><a href="https://questdb.com/docs/reference/api/ilp/overview/">פרוטוקול InfluxDB Line</a> לקליטת זרם בפורט <code>9000</code></li>
+<li><a href="https://questdb.com/docs/reference/api/postgres/">פרוטוקול PostgreSQL Wire</a> לשאילתות פרוגרמטיות בפורט <code>8812</code></li>
+<li><a href="https://questdb.com/docs/reference/api/rest/">REST API</a> לייבוא CSV ו-cURL בפורט <code>9000</code></li>
+</ul>
 
-### Ferramentas populares de terceiros
+### כלי צד שלישי פופולריים
 
-Ferramentas populares que se integram com o QuestDB incluem:
+<p dir="rtl" style="text-align: right;">כלים פופולריים שמתשלבים עם QuestDB כוללים:</p>
 
-- [Kafka](https://questdb.io/docs/third-party-tools/kafka/)
-- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
-- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
-- [Polars](https://questdb.com/docs/third-party-tools/polars/)
-- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
-- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
-- [Superset](https://questdb.com/docs/third-party-tools/superset/)
-- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
-- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
-- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.io/docs/third-party-tools/kafka/">Kafka</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/redpanda/">Redpanda</a></li>
+<li><a href="https://questdb.io/docs/third-party-tools/grafana/">Grafana</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/polars/">Polars</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/pandas/">Pandas</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/powerbi/">PowerBI</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/superset/">Superset</a></li>
+<li><a href="https://questdb.io/docs/third-party-tools/flink/">Apache Flink</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/telegraf/">Telegraf</a></li>
+<li><a href="https://questdb.io/docs/third-party-tools/mindsdb/">MindsDB</a></li>
+</ul>
 
-### Scaffolds de código end-to-end
+### פיגומי קוד מקצה לקצה
 
-Do streaming de ingestão à visualização com Grafana, comece com scaffolds de código do
-nosso [repositório quickstart](https://github.com/questdb/questdb-quickstart).
+<p dir="rtl" style="text-align: right;">מקליטת זרם ועד הדמיה עם Grafana, התחל עם פיגומי קוד מ<a href="https://github.com/questdb/questdb-quickstart">מאגר ההתחלה המהירה</a> שלנו.</p>
 
-### Configurar o QuestDB para workloads de produção
+### הגדר QuestDB לעומסי עבודה בייצור
 
-Encontre nosso [planejamento de capacidade](https://questdb.com/docs/deployment/capacity-planning/) para ajustar o
-QuestDB para workloads de produção.
+<p dir="rtl" style="text-align: right;">מצא את <a href="https://questdb.com/docs/deployment/capacity-planning/">תכנון הקיבולת</a> שלנו כדי לכוונן את QuestDB לעומסי עבודה בייצור.</p>
 
-### QuestDB Enterprise
+## QuestDB Enterprise
 
-Para operação segura em maior escala ou dentro de organizações maiores.
+<p dir="rtl" style="text-align: right;">לפעולה מאובטחת בקנה מידה גדול יותר או בתוך ארגונים גדולים יותר.</p>
 
-Recursos adicionais incluem:
+<p dir="rtl" style="text-align: right;">תכונות נוספות כוללות:</p>
 
-- Alta disponibilidade e réplica(s) de leitura
-- Ingestão multi-primária
-- Integração com cold storage
-- Controle de acesso baseado em funções
-- Criptografia TLS
-- Consulta nativa de arquivos Parquet via object storage
-- Suporte SLA, monitoramento aprimorado e muito mais
+<ul dir="rtl" style="text-align: right;">
+<li>זמינות גבוהה ורפליקת קריאה</li>
+<li>קליטה רב-ראשית</li>
+<li>אינטגרציה של אחסון קר</li>
+<li>בקרת גישה מבוססת תפקידים</li>
+<li>הצפנת TLS</li>
+<li>שאילתה מקורית של קבצי Parquet באמצעות אחסון אובייקט</li>
+<li>תמיכה ב-SLA, מעקב משופר ועוד</li>
+</ul>
 
-Visite a [página Enterprise](https://questdb.com/enterprise/) para mais detalhes e informações de contato.
+<p dir="rtl" style="text-align: right;">בקר ב<a href="https://questdb.com/enterprise/">עמוד Enterprise</a> לפרטים נוספים ומידע יצירת קשר.</p>
 
-## Recursos adicionais
+## משאבים נוספים
 
-### 📚 Leia a documentação
+### 📚 קרא את המסמכים
 
-- [Documentação do QuestDB:](https://questdb.com/docs/) comece a jornada
-- [Roadmap do produto:](https://github.com/orgs/questdb/projects/1/views/5) confira nosso plano para próximos
-  lançamentos
-- [Tutoriais:](https://questdb.io/tutorial/) aprenda o que é possível com QuestDB, passo a passo
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/docs/">תיעוד QuestDB:</a> התחל את המסע</li>
+<li><a href="https://github.com/orgs/questdb/projects/1/views/5">מפת דרכים של המוצר:</a> בדוק את התכנית שלנו לגרסאות עתידיות</li>
+<li><a href="https://questdb.io/tutorial/">מדריכים:</a> למד מה אפשר עם QuestDB, צעד אחר צעד</li>
+</ul>
 
-### ❓ Obtenha suporte
+### ❓ קבל תמיכה
 
-- [Fórum Discourse da comunidade:](https://community.questdb.com/) participe de discussões técnicas, faça perguntas e
-  conheça outros usuários!
-- [Slack público:](https://slack.questdb.io/) converse com a equipe QuestDB e membros da comunidade
-- [Issues do GitHub:](https://github.com/questdb/questdb/issues) reporte bugs ou problemas com QuestDB
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) procure soluções comuns de solução de problemas
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://community.questdb.com/">פורום Discourse קהילתי:</a> הצטרף לדיונים טכניים, שאל שאלות ופגוש משתמשים אחרים!</li>
+<li><a href="https://slack.questdb.io/">Slack ציבורי:</a> צ'אט עם צוות QuestDB וחברי הקהילה</li>
+<li><a href="https://github.com/questdb/questdb/issues">GitHub issues:</a> דווח על באגים או בעיות עם QuestDB</li>
+<li><a href="https://stackoverflow.com/questions/tagged/questdb">Stack Overflow:</a> חפש פתרונות נפוצים לפתרון בעיות</li>
+</ul>
 
-### 🚢 Implementar QuestDB
+### 🚢 פרוס QuestDB
 
-- [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [Imagem oficial do Docker](https://questdb.com/docs/get-started/docker)
-- [Droplets DigitalOcean](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/docs/guides/aws-official-ami">AWS AMI</a></li>
+<li><a href="https://questdb.com/docs/guides/google-cloud-platform">Google Cloud Platform</a></li>
+<li><a href="https://questdb.com/docs/get-started/docker">תמונת Docker רשמית</a></li>
+<li><a href="https://questdb.com/docs/guides/digitalocean">DigitalOcean droplets</a></li>
+<li><a href="https://questdb.com/docs/guides/kubernetes">Kubernetes Helm charts</a></li>
+</ul>
 
-## Contribua
+## תרומה
 
-Contribuições são bem-vindas!
+<p dir="rtl" style="text-align: right;">תרומות מתקבלות בברכה!</p>
 
-Valorizamos:
+<p dir="rtl" style="text-align: right;">אנו מעריכים:</p>
 
-- Código fonte
-- Documentação (veja nosso [repositório de documentação](https://github.com/questdb/documentation))
-- Relatórios de bug
-- Solicitações de recursos ou feedback
+<ul dir="rtl" style="text-align: right;">
+<li>קוד מקור</li>
+<li>תיעוד (ראה את <a href="https://github.com/questdb/documentation">מאגר התיעוד</a> שלנו)</li>
+<li>דיווחי באגים</li>
+<li>בקשות תכונות או משוב</li>
+</ul>
 
-Para começar a contribuir:
+<p dir="rtl" style="text-align: right;">כדי להתחיל לתרום:</p>
 
-- Confira issues do GitHub marcados
-  como "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-- Para Hacktoberfest,
-  veja [issues marcados](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-  relevantes
-- Leia o [guia de contribuição](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- Para detalhes sobre construir QuestDB, veja
-  as [instruções de construção](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [Crie um fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) do QuestDB e envie um pull
-  request com suas mudanças propostas
-- Ficou empacado? Junte-se ao nosso [Slack público](https://slack.questdb.io/) para ajuda
+<ul dir="rtl" style="text-align: right;">
+<li>עיין ב-GitHub issues עם התווית "<a href="https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22">Good first issue</a>"</li>
+<li>עבור Hacktoberfest, ראה את <a href="https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest">הנושאים המתויגים</a> הרלוונטיים</li>
+<li>קרא את <a href="https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md">מדריך התרומה</a></li>
+<li>לפרטים על בניית QuestDB, ראה את <a href="https://github.com/questdb/questdb/blob/master/core/README.md">הוראות הבנייה</a></li>
+<li><a href="https://docs.github.com/en/github/getting-started-with-github/fork-a-repo">צור פורק</a> של QuestDB והגש pull request עם השינויים המוצעים שלך</li>
+<li>תקוע? הצטרף ל-<a href="https://slack.questdb.io/">Slack הציבורי</a> שלנו לעזרה</li>
+</ul>
 
-✨ Como sinal de nossa gratidão, enviamos swag QuestDB para nossos contribuidores!
+<p dir="rtl" style="text-align: right;">✨ כאות הכרת תודה, אנו שולחים swag של QuestDB לתורמים שלנו!</p>
 
-Muito obrigado às seguintes pessoas maravilhosas que contribuíram para o
-QuestDB [chave emoji](https://allcontributors.org/docs/en/emoji-key):
+<p dir="rtl" style="text-align: right;">תודה רבה לאנשים הנפלאים הבאים שתרמו ל-QuestDB (<a href="https://allcontributors.org/docs/en/emoji-key">מפתח אמוג'י</a>):</p>
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -416,5 +424,6 @@ QuestDB [chave emoji](https://allcontributors.org/docs/en/emoji-key):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Este projeto segue a especificação [all-contributors](https://github.com/all-contributors/all-contributors).
-Contribuições de qualquer tipo são bem-vindas!
+<p dir="rtl" style="text-align: right;">פרויקט זה מצייתת למפרט <a href="https://github.com/all-contributors/all-contributors">all-contributors</a>. תרומות מכל סוג מתקבלות בברכה!</p>
+
+</div>

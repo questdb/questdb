@@ -24,7 +24,8 @@
   한국어 |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
-  <a href="./README.vi-vn.md">Tiếng Việt</a>
+  <a href="./README.vi-vn.md">Tiếng Việt</a> |
+  <a href="./README.ms-my.md">Bahasa Melayu</a>
 </p>
 
 ---
