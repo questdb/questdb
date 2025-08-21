@@ -4,7 +4,7 @@
 <p>&nbsp;</p>
 
 <p align="center">
-  <a href="#contribute">
+  <a href="#기여하기">
     <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
 </p>
@@ -17,11 +17,11 @@
   <a href="./README.it-it.md">Italiano</a> |
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
-  Português |
+  <a href="./README.pt.md">Português</a> |
   <a href="./README.fr-fr.md">Français</a> |
   <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
-  <a href="./README.ko-kr.md">한국어</a> |
+  한국어 |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a>
@@ -29,105 +29,97 @@
 
 ---
 
-O QuestDB é um banco de dados de séries temporais open-source que oferece **ingestão extremamente rápida** e **consultas
-SQL dinâmicas de baixa latência**.
+QuestDB는 **초고속 데이터 수집**과 **동적이고 낮은 지연 시간의 SQL 쿼리**를 제공하는 오픈소스 시계열 데이터베이스입니다.
 
-O QuestDB oferece um mecanismo de armazenamento multicamadas (WAL → nativo → Parquet em object storage), e o motor
-principal é implementado em Java zero-GC e C++; o QuestDB Enterprise inclui componentes adicionais em Rust.
+QuestDB는 다층 스토리지 엔진(WAL → 네이티브 → 객체 스토리지의 Parquet)을 제공하며,
+핵심 엔진은 제로-GC Java와 C++로 구현되었습니다. QuestDB Enterprise는 Rust로 구현된 추가 구성 요소를 포함합니다.
 
-Alcançamos alto desempenho através de um modelo de armazenamento orientado a colunas, execução vetorial paralela,
-instruções SIMD e técnicas de baixa latência. Além disso, o QuestDB é eficiente em hardware, com configuração rápida e
-eficiência operacional.
+우리는 컬럼 지향 스토리지 모델, 병렬화된 벡터 실행, SIMD 명령어, 그리고 낮은 지연 시간 기술을 통해 높은 성능을 달성합니다.
+또한 QuestDB는 하드웨어 효율적이며, 빠른 설정과 운영 효율성을 제공합니다.
 
-> Pronto para começar? Vá para a seção [Começando](#começando).
+> 시작할 준비가 되셨나요? [시작하기](#시작하기) 섹션으로 이동하세요.
 
 <p>&nbsp;</p>
 
 <div align="center">
   <a href="https://demo.questdb.io/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
+    <img alt="SQL 문과 쿼리 결과를 보여주는 QuestDB 웹 콘솔" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB Web Console - clique para lançar a demo</em></p>
+  <p><em>QuestDB 웹 콘솔 - 클릭하여 데모 실행</em></p>
 </div>
 
 <p>&nbsp;</p>
 
-## Benefícios do QuestDB
+## QuestDB의 장점
 
-Recursos em destaque incluem:
+주요 기능은 다음과 같습니다:
 
-- Ingestão de baixa latência e alto throughput — de eventos únicos a milhões/seg
-- SQL de baixa latência com extensões de séries temporais (ASOF JOIN, SAMPLE BY, LATEST ON)
-- Execução paralela acelerada por SIMD; executa rapidamente em hardware modesto
-- Armazenamento multicamadas: WAL → colunar nativo → Parquet (particionado por tempo e ordenado por tempo)
-- Protocolo Postgres (PGwire) e REST API
-- Visualizações materializadas e arrays n-dimensionais (incluindo arrays 2D para order books)
-- Console web para consultas e gerenciamento de dados
-- Apache 2.0 open source e formatos abertos — sem vendor lock-in
-- [Funções financeiras](https://questdb.com/docs/reference/function/finance/)
-  e [análise de order book](https://questdb.com/docs/guides/order-book/)
+- 낮은 지연 시간, 높은 처리량의 데이터 수집 — 단일 이벤트부터 초당 수백만 건까지
+- 시계열 확장 기능이 있는 낮은 지연 시간 SQL (ASOF JOIN, SAMPLE BY, LATEST ON)
+- SIMD 가속, 병렬 실행; 적은 하드웨어에서도 빠르게 실행
+- 다층 스토리지: WAL → 네이티브 컬럼형 → Parquet (시간 분할 및 시간 정렬)
+- Postgres 프로토콜(PGwire)과 REST API
+- 구체화된 뷰와 n차원 배열 (주문서를 위한 2D 배열 포함)
+- 쿼리와 데이터 관리를 위한 웹 콘솔
+- Apache 2.0 오픈소스와 오픈 포맷 — 벤더 종속성 없음
+- [금융 함수](https://questdb.com/docs/reference/function/finance/)와 [주문서 분석](https://questdb.com/docs/guides/order-book/)
 
-O QuestDB se destaca com:
+QuestDB가 뛰어난 분야:
 
-- Dados de mercados financeiros (tick data, trades, order books, OHLC)
-- Dados de sensor/telemetria com alta cardinalidade de dados
-- Dashboards em tempo real e monitoramento
+- 금융 시장 데이터 (틱 데이터, 거래, 주문서, OHLC)
+- 높은 데이터 카디널리티를 가진 센서/텔레메트리 데이터
+- 실시간 대시보드와 모니터링
 
-E por que usar um banco de dados de séries temporais?
+그리고 왜 시계열 데이터베이스를 사용해야 할까요?
 
-Além de desempenho e eficiência, com um banco de dados de séries temporais especializado, você não precisa se preocupar
-com:
+성능과 효율성을 넘어서, 전문적인 시계열 데이터베이스를 사용하면 다음에 대해 걱정할 필요가 없습니다:
 
-- Dados fora de ordem
-- Deduplicação e semântica exactly-once
-- Ingestão de streaming contínuo com múltiplas consultas concorrentes
-- Dados de streaming (baixa latência)
-- Dados voláteis e "bursty"
-- Adicionar novas colunas - alterar esquema "on the fly" ao fazer streaming de dados
+- 순서가 맞지 않는 데이터
+- 중복 제거와 정확히 한 번(exactly once) 의미론
+- 많은 동시 쿼리와 함께 지속적인 스트리밍 수집
+- 스트리밍 데이터 (낮은 지연 시간)
+- 변동성이 크고 "버스트성" 데이터
+- 새 컬럼 추가 - 데이터 스트리밍 중에 "즉석에서" 스키마 변경
 
-## Experimente o QuestDB, demos e dashboards
+## QuestDB 체험, 데모 및 대시보드
 
-A [demo pública ao vivo](https://demo.questdb.com/) é provisionada com a versão mais recente do QuestDB e conjuntos de
-dados de exemplo:
+[라이브 공개 데모](https://demo.questdb.com/)는 최신 QuestDB 릴리스와 샘플 데이터셋으로 구성되어 있습니다:
 
-- Trades: trades de crypto ao vivo com mais de 30M de linhas por mês (exchange OKX)
-- FX order book: gráficos ao vivo com pares FX de order book.
-- Trips: 10 anos de dados de viagens de táxi de NYC com 1.6 bilhões de linhas
+- 거래: 월 3천만+ 행의 라이브 암호화폐 거래 (OKX 거래소)
+- FX 주문서: 주문서 FX 쌍의 라이브 차트
+- 여행: 16억 행의 NYC 택시 여행 10년 데이터
 
-Também temos alguns dashboards de demo públicos em tempo real usando nosso
-plugin [nativo do Grafana](https://questdb.com/docs/third-party-tools/grafana/):
+우리는 또한 [Grafana 네이티브](https://questdb.com/docs/third-party-tools/grafana/) 플러그인을 사용한 몇 가지 공개 실시간 데모 대시보드를 제공합니다:
 
-- [Trades de crypto em tempo real:](https://questdb.com/dashboards/crypto/) trades executados no OKX de mais de 20
-  ativos em tempo real
-- [FX order book:](https://questdb.com/dashboards/FX-orderbook/) gráficos de depth/imbalance ao vivo para principais
-  pares FX
+- [실시간 암호화폐 거래:](https://questdb.com/dashboards/crypto/) OKX에서 20개 이상의 자산에서 실시간으로 실행되는 거래
+- [FX 주문서:](https://questdb.com/dashboards/FX-orderbook/) 주요 FX 쌍의 라이브 깊이/불균형 차트
 
-### Desempenho do QuestDB vs outros bancos de dados
+### QuestDB 성능 vs. 다른 데이터베이스
 
-O QuestDB se sai muito bem em benchmarks de desempenho comparado a alternativas.
+QuestDB는 대안들과 비교했을 때 성능 벤치마크에서 매우 좋은 결과를 보입니다.
 
-Para análises detalhadas sobre internos e desempenho, veja os seguintes posts do blog:
+내부와 성능에 대한 자세한 내용은 다음 블로그 포스트를 참조하세요:
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
 - [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
-Como sempre, encorajamos você a executar seus próprios benchmarks.
+항상 그렇듯이, 여러분만의 벤치마크를 실행해보시기를 권장합니다.
 
 <div align="center">
-  <img alt="Um gráfico comparando a taxa de ingestão do QuestDB, InfluxDB e TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
+  <img alt="QuestDB, InfluxDB, TimescaleDB의 수집률을 비교하는 차트" src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
-## Começando
+## 시작하기
 
-Use [Docker](https://www.docker.com/) para começar rapidamente:
+[Docker](https://www.docker.com/)를 사용하여 빠르게 시작하세요:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Ou usuários do macOS podem usar o Homebrew:
+또는 macOS 사용자는 Homebrew를 사용할 수 있습니다:
 
 ```bash
 brew install questdb
@@ -139,12 +131,12 @@ questdb start
 questdb stop
 ```
 
-Alternativamente, para começar a jornada completa de onboarding, comece com
-nosso [guia de início rápido](https://questdb.com/docs/quick-start/) conciso.
+또는 전체 온보딩 여정을 시작하려면 간결한
+[빠른 시작 가이드](https://questdb.com/docs/quick-start/)부터 시작하세요.
 
-### Clientes de ingestão próprios
+### 자체 수집 클라이언트
 
-Clientes QuestDB para ingerir dados via InfluxDB Line Protocol:
+InfluxDB Line Protocol을 통해 데이터를 수집하는 QuestDB 클라이언트:
 
 - [Python](https://questdb.com/docs/clients/ingest-python/)
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
@@ -154,20 +146,18 @@ Clientes QuestDB para ingerir dados via InfluxDB Line Protocol:
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-### Conectar ao QuestDB
+### QuestDB에 연결
 
-Interaja com o QuestDB e seus dados através das seguintes interfaces:
+다음 인터페이스를 통해 QuestDB와 데이터와 상호작용하세요:
 
-- [Console Web](https://questdb.com/docs/web-console/) para editor SQL interativo e importação CSV na porta `9000`
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) para ingestão de streaming na porta
-  `9000`
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) para consultas programáticas na porta
-  `8812`
-- [REST API](https://questdb.com/docs/reference/api/rest/) para importação CSV e cURL na porta `9000`
+- 포트 `9000`에서 대화형 SQL 편집기와 CSV 가져오기를 위한 [웹 콘솔](https://questdb.com/docs/web-console/)
+- 포트 `9000`에서 스트리밍 수집을 위한 [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)
+- 포트 `8812`에서 프로그래밍 방식 쿼리를 위한 [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)
+- 포트 `9000`에서 CSV 가져오기와 cURL을 위한 [REST API](https://questdb.com/docs/reference/api/rest/)
 
-### Ferramentas populares de terceiros
+### 인기 있는 서드파티 도구
 
-Ferramentas populares que se integram com o QuestDB incluem:
+QuestDB와 통합되는 인기 있는 도구들:
 
 - [Kafka](https://questdb.io/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
@@ -180,86 +170,84 @@ Ferramentas populares que se integram com o QuestDB incluem:
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
 - [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
-### Scaffolds de código end-to-end
+### 엔드 투 엔드 코드 스캐폴드
 
-Do streaming de ingestão à visualização com Grafana, comece com scaffolds de código do
-nosso [repositório quickstart](https://github.com/questdb/questdb-quickstart).
+스트리밍 수집부터 Grafana를 통한 시각화까지,
+[빠른 시작 저장소](https://github.com/questdb/questdb-quickstart)에서 코드 스캐폴드로 시작하세요.
 
-### Configurar o QuestDB para workloads de produção
+### 프로덕션 워크로드를 위한 QuestDB 구성
 
-Encontre nosso [planejamento de capacidade](https://questdb.com/docs/deployment/capacity-planning/) para ajustar o
-QuestDB para workloads de produção.
+프로덕션 워크로드를 위해 QuestDB를 미세 조정하려면
+[용량 계획](https://questdb.com/docs/deployment/capacity-planning/)을 참조하세요.
 
-### QuestDB Enterprise
+## QuestDB Enterprise
 
-Para operação segura em maior escala ou dentro de organizações maiores.
+더 큰 규모 또는 더 큰 조직 내에서의 보안 운영을 위해.
 
-Recursos adicionais incluem:
+추가 기능들:
 
-- Alta disponibilidade e réplica(s) de leitura
-- Ingestão multi-primária
-- Integração com cold storage
-- Controle de acesso baseado em funções
-- Criptografia TLS
-- Consulta nativa de arquivos Parquet via object storage
-- Suporte SLA, monitoramento aprimorado e muito mais
+- 고가용성과 읽기 복제본
+- 다중 기본 수집
+- 콜드 스토리지 통합
+- 역할 기반 액세스 제어
+- TLS 암호화
+- 객체 스토리지를 통한 Parquet 파일의 네이티브 쿼리
+- SLA 지원, 향상된 모니터링 등
 
-Visite a [página Enterprise](https://questdb.com/enterprise/) para mais detalhes e informações de contato.
+자세한 내용과 연락처 정보는 [Enterprise 페이지](https://questdb.com/enterprise/)를 참조하세요.
 
-## Recursos adicionais
+## 추가 리소스
 
-### 📚 Leia a documentação
+### 📚 문서 읽기
 
-- [Documentação do QuestDB:](https://questdb.com/docs/) comece a jornada
-- [Roadmap do produto:](https://github.com/orgs/questdb/projects/1/views/5) confira nosso plano para próximos
-  lançamentos
-- [Tutoriais:](https://questdb.io/tutorial/) aprenda o que é possível com QuestDB, passo a passo
+- [QuestDB 문서:](https://questdb.com/docs/) 여정을 시작하세요
+- [제품 로드맵:](https://github.com/orgs/questdb/projects/1/views/5)
+  예정된 릴리스에 대한 계획을 확인하세요
+- [튜토리얼:](https://questdb.io/tutorial/) QuestDB로 가능한 것을 단계별로 학습하세요
 
-### ❓ Obtenha suporte
+### ❓ 지원 받기
 
-- [Fórum Discourse da comunidade:](https://community.questdb.com/) participe de discussões técnicas, faça perguntas e
-  conheça outros usuários!
-- [Slack público:](https://slack.questdb.io/) converse com a equipe QuestDB e membros da comunidade
-- [Issues do GitHub:](https://github.com/questdb/questdb/issues) reporte bugs ou problemas com QuestDB
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) procure soluções comuns de solução de problemas
+- [커뮤니티 디스커스 포럼:](https://community.questdb.com/) 기술 토론에 참여하고, 질문하고, 다른 사용자들을 만나보세요!
+- [공개 Slack:](https://slack.questdb.io/) QuestDB 팀과 커뮤니티 구성원들과 채팅하세요
+- [GitHub 이슈:](https://github.com/questdb/questdb/issues) QuestDB의 버그나 문제를 신고하세요
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 일반적인 문제 해결 솔루션을 찾아보세요
 
-### 🚢 Implementar QuestDB
+### 🚢 QuestDB 배포
 
 - [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [Imagem oficial do Docker](https://questdb.com/docs/get-started/docker)
-- [Droplets DigitalOcean](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
+- [공식 Docker 이미지](https://questdb.com/docs/get-started/docker)
+- [DigitalOcean 드롭릿](https://questdb.com/docs/guides/digitalocean)
+- [Kubernetes Helm 차트](https://questdb.com/docs/guides/kubernetes)
 
-## Contribua
+## 기여하기
 
-Contribuições são bem-vindas!
+기여를 환영합니다!
 
-Valorizamos:
+우리가 감사하게 생각하는 것들:
 
-- Código fonte
-- Documentação (veja nosso [repositório de documentação](https://github.com/questdb/documentation))
-- Relatórios de bug
-- Solicitações de recursos ou feedback
+- 소스 코드
+- 문서 ([문서 저장소](https://github.com/questdb/documentation) 참조)
+- 버그 리포트
+- 기능 요청이나 피드백
 
-Para começar a contribuir:
+기여를 시작하려면:
 
-- Confira issues do GitHub marcados
-  como "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-- Para Hacktoberfest,
-  veja [issues marcados](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-  relevantes
-- Leia o [guia de contribuição](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- Para detalhes sobre construir QuestDB, veja
-  as [instruções de construção](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [Crie um fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) do QuestDB e envie um pull
-  request com suas mudanças propostas
-- Ficou empacado? Junte-se ao nosso [Slack público](https://slack.questdb.io/) para ajuda
+- "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+  라벨이 있는 GitHub 이슈들을 살펴보세요
+- Hacktoberfest의 경우, 관련
+  [라벨이 있는 이슈들](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)을 확인하세요
+- [기여 가이드](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)를 읽어보세요
+- QuestDB 빌드에 대한 자세한 내용은
+  [빌드 지침](https://github.com/questdb/questdb/blob/master/core/README.md)을 참조하세요
+- QuestDB를 [포크](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)하고
+  제안하신 변경사항과 함께 풀 리퀘스트를 제출하세요
+- 막히셨나요? 도움을 위해 [공개 Slack](https://slack.questdb.io/)에 참여하세요
 
-✨ Como sinal de nossa gratidão, enviamos swag QuestDB para nossos contribuidores!
+✨ 감사의 표시로, 기여자들에게 QuestDB 굿즈를 보내드립니다!
 
-Muito obrigado às seguintes pessoas maravilhosas que contribuíram para o
-QuestDB [chave emoji](https://allcontributors.org/docs/en/emoji-key):
+QuestDB에 기여해주신 다음의 훌륭한 분들께 큰 감사를 드립니다
+([이모지 키](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -414,5 +402,5 @@ QuestDB [chave emoji](https://allcontributors.org/docs/en/emoji-key):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Este projeto segue a especificação [all-contributors](https://github.com/all-contributors/all-contributors).
-Contribuições de qualquer tipo são bem-vindas!
+이 프로젝트는 [all-contributors](https://github.com/all-contributors/all-contributors)
+사양을 준수합니다. 모든 종류의 기여를 환영합니다!

@@ -21,6 +21,7 @@
   <a href="./i18n/README.fr-fr.md">Français</a> |
   <a href="./i18n/README.de-de.md">Deutsch</a> |
   <a href="./i18n/README.ja-ja.md">日本語</a> |
+  <a href="./i18n/README.ko-kr.md">한국어</a> |
   <a href="./i18n/README.tr-tr.md">Türkçe</a> |
   <a href="./i18n/README.hn-in.md">हिंदी</a> |
   <a href="./i18n/README.vi-vn.md">Tiếng Việt</a>
