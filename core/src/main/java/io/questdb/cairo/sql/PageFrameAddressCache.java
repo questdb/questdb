@@ -36,7 +36,11 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 
 /**
- * Holds formats, addresses and sizes for native (mmapped) page frames.
+ * Holds formats, addresses and sizes for page frames.
+ * <p>
+ * For native (mmapped) page frames we store addresses that correspond
+ * to aux/data vectors for each column. For parquet page frames we store
+ * addresses of mmapped files, as well as the list of row groups.
  * <p>
  * Once initialized, this cache is thread-safe.
  * <p>
@@ -63,6 +67,8 @@ public class PageFrameAddressCache implements Mutable {
     // Sum of all LongList sizes.
     private long cacheSize;
     private int columnCount;
+    // True in case of external parquet files, false in case of table partition files.
+    private boolean external;
 
     public PageFrameAddressCache(CairoConfiguration configuration) {
         this.nativeCacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -136,6 +142,7 @@ public class PageFrameAddressCache implements Mutable {
             longListPool.resetCapacity();
         }
         cacheSize = 0;
+        external = false;
     }
 
     public LongList getAuxPageAddresses(int frameIndex) {
@@ -201,18 +208,23 @@ public class PageFrameAddressCache implements Mutable {
         return rowIdOffsets.getQuick(frameIndex);
     }
 
+    public boolean isExternal() {
+        return external;
+    }
+
     public boolean isVarSizeColumn(int columnIndex) {
         return ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
     }
 
-    public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes) {
-        columnCount = metadata.getColumnCount();
+    public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes, boolean external) {
+        this.columnCount = metadata.getColumnCount();
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
         this.columnIndexes.clear();
         this.columnIndexes.addAll(columnIndexes);
-        clear();
+        clear(); // also clears external flag
+        this.external = external;
     }
 }

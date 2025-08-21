@@ -142,7 +142,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     public TimeFrameRecordCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);

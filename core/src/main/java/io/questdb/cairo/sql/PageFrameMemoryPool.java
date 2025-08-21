@@ -282,8 +282,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (ColumnType.isUndefined(parquetColumnType)) {
                 continue;
             }
-            final int columnId = parquetMetadata.columnId(parquetIndex);
-            if (columnId != -1) {
+            if (!addressCache.isExternal()) {
+                // We can only trust column ids in case of partition files.
+                final int columnId = parquetMetadata.columnId(parquetIndex);
+                assert columnId > -1 : "negative column id value for " + parquetMetadata.columnName(parquetIndex);
                 toParquetColumnIndexes.extendAndSet(columnId, parquetIndex);
             } else {
                 toParquetColumnIndexes.extendAndSet(metadataIndex, parquetIndex);
