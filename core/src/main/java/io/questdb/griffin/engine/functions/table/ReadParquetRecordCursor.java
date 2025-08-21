@@ -72,6 +72,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
+    // doesn't include unsupported columns
     private final RecordMetadata metadata;
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
@@ -97,24 +98,30 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public static boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
-        if (metadata.getColumnCount() != decoder.metadata().columnCount()) {
+        final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+        if (metadata.getColumnCount() > parquetMetadata.columnCount()) {
             return true;
         }
 
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (!Chars.equals(metadata.getColumnName(i), decoder.metadata().columnName(i))) {
+        int metadataIndex = 0;
+        for (int parquetIndex = 0, n = parquetMetadata.columnCount(); parquetIndex < n; parquetIndex++) {
+            final int parquetType = parquetMetadata.getColumnType(parquetIndex);
+            // If the column is not recognized by the decoder, we have to skip it.
+            if (ColumnType.isUndefined(parquetType)) {
+                continue;
+            }
+            if (!Chars.equalsIgnoreCase(parquetMetadata.columnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
                 return true;
             }
-
-            final int metadataType = metadata.getColumnType(i);
-            final int decoderType = decoder.metadata().getColumnType(i);
-            final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL);
+            final int metadataType = metadata.getColumnType(metadataIndex);
+            final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
             // No need to compare column types if we deal with symbol remapping.
-            if (!symbolRemappingDetected && metadataType != decoderType) {
+            if (!symbolRemappingDetected && metadataType != parquetType) {
                 return true;
             }
+            metadataIndex++;
         }
-        return false;
+        return metadataIndex == metadata.getColumnCount() - 1;
     }
 
     @Override
@@ -164,9 +171,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             rowGroupBuffers.reopen();
             columns.reopen();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                columns.add(i);
-                columns.add(metadata.getColumnType(i));
+            final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+            for (int i = 0, n = parquetMetadata.columnCount(); i < n; i++) {
+                final int columnType = parquetMetadata.getColumnType(i);
+                if (!ColumnType.isUndefined(columnType)) {
+                    columns.add(i);
+                    columns.add(columnType);
+                }
             }
             toTop();
         } catch (DataUnavailableException e) {
@@ -205,9 +216,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             final int rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
             rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
 
-            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(columnIndex));
-                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(columnIndex));
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
+                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
             }
             currentRowInRowGroup = 0;
             return true;

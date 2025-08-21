@@ -275,9 +275,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         // Prepare table reader to parquet column index mappings.
         toParquetColumnIndexes.clear();
-        for (int i = 0, n = parquetMetadata.columnCount(); i < n; i++) {
-            final int columnIndex = parquetMetadata.columnId(i);
-            toParquetColumnIndexes.extendAndSet(columnIndex, i);
+        int metadataIndex = 0;
+        for (int parquetIndex = 0, n = parquetMetadata.columnCount(); parquetIndex < n; parquetIndex++) {
+            final int parquetColumnType = parquetMetadata.getColumnType(parquetIndex);
+            // If the column is not recognized by the decoder, we have to skip it.
+            if (ColumnType.isUndefined(parquetColumnType)) {
+                continue;
+            }
+            final int columnId = parquetMetadata.columnId(parquetIndex);
+            if (columnId != -1) {
+                toParquetColumnIndexes.extendAndSet(columnId, parquetIndex);
+            } else {
+                toParquetColumnIndexes.extendAndSet(metadataIndex, parquetIndex);
+            }
+            metadataIndex++;
         }
         // Now do the final remapping.
         parquetColumns.clear();

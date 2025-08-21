@@ -24,12 +24,12 @@
 use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
-use std::num::NonZeroI32;
 
 // Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnTypeTag {
+    Undefined = 0,
     Boolean = 1,
     Byte = 2,
     Short = 3,
@@ -57,7 +57,8 @@ pub enum ColumnTypeTag {
 
 impl ColumnTypeTag {
     #[cfg(test)]
-    const VALUES: [Self; 23] = [
+    const VALUES: [Self; 24] = [
+        Self::Undefined,
         Self::Boolean,
         Self::Byte,
         Self::Short,
@@ -113,15 +114,13 @@ impl ColumnTypeTag {
 
             ColumnTypeTag::Long256 => Some(32),
 
-            ColumnTypeTag::Binary
-            | ColumnTypeTag::String
-            | ColumnTypeTag::Varchar
-            | ColumnTypeTag::Array => None,
+            _ => None,
         }
     }
 
     pub const fn name(self) -> &'static str {
         match self {
+            ColumnTypeTag::Undefined => "undefined",
             ColumnTypeTag::Boolean => "boolean",
             ColumnTypeTag::Byte => "byte",
             ColumnTypeTag::Short => "short",
@@ -211,24 +210,23 @@ const ARRAY_NDIMS_FIELD_POS: i32 = 14;
 #[serde(transparent)]
 pub struct ColumnType {
     // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
-    code: NonZeroI32,
+    code: i32,
 }
 
 impl ColumnType {
     pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
-        let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
-            .expect("column type code should never be zero");
+        let code = tag as i32 | shifted_extra_type_info;
         Self { code }
     }
 
     pub fn code(&self) -> i32 {
-        self.code.get()
+        self.code
     }
 
     pub fn is_designated(&self) -> bool {
         (self.tag() == ColumnTypeTag::Timestamp)
-            && ((self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
+            && ((self.code & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
     }
 
     pub fn into_designated(self) -> CoreResult<ColumnType> {
@@ -239,7 +237,7 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        let code = self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP;
         Ok(Self { code })
     }
 
@@ -305,8 +303,7 @@ impl TryFrom<i32> for ColumnType {
         let _tag: ColumnTypeTag = col_tag_num
             .try_into()
             .with_context(|_| format!("could not parse {v} to a valid ColumnType"))?;
-        let code = NonZeroI32::new(v).expect("column type code should never be zero");
-        Ok(Self { code })
+        Ok(Self { code: v })
     }
 }
 
