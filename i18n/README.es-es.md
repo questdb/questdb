@@ -45,8 +45,9 @@ configuración rápida y eficiencia operacional.
 
 QuestDB implementa ANSI SQL con extensiones SQL nativas para series temporales.
 
-QuestDB ofrece un motor de almacenamiento multicapa (WAL → nativo → Parquet en almacenamiento de objetos), y toda la
-base de código está construida desde cero en Java sin recolección de basura, C++ y Rust (QuestDB Enterprise).
+QuestDB ofrece un motor de almacenamiento multicapa (WAL → nativo → Parquet en almacenamiento de objetos), y el motor
+principal está implementado en Java sin recolección de basura y C++; QuestDB Enterprise incluye componentes adicionales
+en Rust.
 
 > ¿Listo para comenzar? Ve a la sección [Comenzar](#comenzar).
 
@@ -63,66 +64,52 @@ base de código está construida desde cero en Java sin recolección de basura, 
 
 ## Beneficios de QuestDB
 
-### 🚄 Velocidad y eficiencia
+Los aspectos destacados de las características incluyen:
 
-- **Ingestión extremadamente rápida**: Desde eventos individuales hasta millones por segundo
-- **SQL de baja latencia**: Extensiones de series temporales (ASOF JOIN, SAMPLE BY, LATEST ON)
-- **Ejecución acelerada por SIMD**: Procesamiento paralelo, funciona rápido en hardware modesto
-- **Almacenamiento multicapa**: WAL → columnar nativo → Parquet (particionado y ordenado por tiempo)
+- Ingestión de baja latencia y alto rendimiento — desde eventos individuales hasta millones/seg
+- SQL de baja latencia con extensiones de series temporales (ASOF JOIN, SAMPLE BY, LATEST ON)
+- Ejecución paralela acelerada por SIMD; funciona rápido en hardware modesto
+- Almacenamiento multicapa: WAL → columnar nativo → Parquet (particionado y ordenado por tiempo)
+- Protocolo Postgres (PGwire) y API REST
+- Vistas materializadas y arrays n-dimensionales (incluyendo arrays 2D para order books)
+- Consola web para consultas y gestión de datos
+- Apache 2.0 código abierto y formatos abiertos — sin lock-in de proveedor
+- [Funciones financieras](https://questdb.com/docs/reference/function/finance/)
+  y [analíticas de order book](https://questdb.com/docs/guides/order-book/)
 
-### 🔧 Facilidad de uso
+QuestDB sobresale con:
 
-- **SQL estándar**: ANSI SQL con extensiones de series temporales
-- **Protocolo Postgres (PGwire)** y **API REST** para amplia compatibilidad
-- **Consola web** para consultas y gestión de datos
-- **Múltiples formatos de ingestión**: InfluxDB Line Protocol, CSV, JSON
-- **Esquema sobre la marcha**: Agregar nuevas columnas durante la transmisión de datos
+- datos de mercados financieros (datos de tick, operaciones, order books, OHLC)
+- Datos de sensores/telemetría con alta cardinalidad de datos
+- dashboards en tiempo real y monitoreo
 
-### 📊 Capacidades poderosas
-
-- **Vistas materializadas** y **arrays n-dimensionales**
-- **Funciones financieras** y **analíticas de order book**
-- **Consultas geoespaciales** con soporte PostGIS
-- **Búsqueda de texto completo** con [Tantivy](https://questdb.com/docs/reference/function/text-search/)
-- **Apache 2.0** código abierto y formatos abiertos — sin lock-in de proveedor
-
-### QuestDB sobresale con:
-
-- **Datos de mercados financieros**: datos de tick, operaciones, order books, OHLC
-- **Datos de sensores/telemetría** con alta cardinalidad de datos
-- **Dashboards en tiempo real** y monitoreo
-- **Analítica** y aprendizaje automático en series temporales
-- **Logging** y métricas de aplicaciones
-
-### ¿Y por qué usar una base de datos de series temporales?
+Y ¿por qué usar una base de datos de series temporales?
 
 Más allá del rendimiento y la eficiencia, con una base de datos de series temporales especializada, no necesitas
 preocuparte por:
 
-- **Datos fuera de orden** — manejo automático
-- **Deduplicación** y semántica de exactamente una vez
-- **Ingestión de streaming continuo** con muchas consultas concurrentes
-- **Datos de streaming** con baja latencia
-- **Datos volátiles y "a ráfagas"**
-- **Agregar nuevas columnas** — cambiar esquema "sobre la marcha"
+- datos fuera de orden
+- deduplicación y semántica de exactamente una vez
+- Ingestión de streaming continuo con muchas consultas concurrentes
+- datos de streaming (baja latencia)
+- datos volátiles y "a ráfagas"
+- agregar nuevas columnas - cambiar esquema "sobre la marcha" mientras se transmiten datos
 
-## Prueba QuestDB
+## Prueba QuestDB, demo y dashboards
 
-La [demo pública en vivo](https://demo.questdb.com/) está aprovisionada con la última versión de QuestDB y conjuntos de
-datos de ejemplo:
+La [demo pública en vivo](https://demo.questdb.com/) está aprovisionada con la última
+versión de QuestDB y conjuntos de datos de ejemplo:
 
-- **Trades**: operaciones de cripto en vivo con más de 30M de filas por mes (exchange OKX)
-- **Order book FX**: gráficos en vivo con pares FX de order book
-- **Trips**: 10 años de viajes de taxi de NYC con 1.6 mil millones de filas
-
-### Dashboards de demo públicos
+- Trades: operaciones de cripto en vivo con más de 30M de filas por mes (exchange OKX)
+- Order book FX: gráficos en vivo con pares FX de order book.
+- Trips: 10 años de viajes de taxi de NYC con 1.6 mil millones de filas
 
 También tenemos algunos dashboards de demo públicos en tiempo real usando nuestro
 plugin [nativo de Grafana](https://questdb.com/docs/third-party-tools/grafana/):
 
-- [Trades de cripto en tiempo real](https://questdb.com/dashboards/crypto/): operaciones ejecutadas en OKX de más de 20
-  activos en tiempo real
-- [Order book FX](https://questdb.com/dashboards/FX-orderbook/): gráficos de profundidad/desequilibrio en vivo para
+- [Trades de cripto en tiempo real:](https://questdb.com/dashboards/crypto/) operaciones ejecutadas
+  en OKX de más de 20 activos en tiempo real
+- [Order book FX:](https://questdb.com/dashboards/FX-orderbook/) gráficos de profundidad/desequilibrio en vivo para
   pares principales
 
 ### Rendimiento de QuestDB vs otras bases de datos

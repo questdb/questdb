@@ -36,8 +36,8 @@ De plus, QuestDB est efficace en ressources matérielles, avec une configuration
 
 QuestDB implémente ANSI SQL avec des extensions SQL natives pour les séries temporelles.
 
-QuestDB fournit un moteur de stockage multi-niveaux (WAL → natif → Parquet sur stockage objet), et
-l'ensemble du code est construit de zéro en Java sans garbage collection, C++ et Rust (QuestDB Enterprise).
+QuestDB fournit un moteur de stockage multi-niveaux (WAL → natif → Parquet sur stockage objet), et le moteur principal
+est implémenté en Java sans garbage collection et C++; QuestDB Enterprise inclut des composants supplémentaires en Rust.
 
 > Prêt à commencer ? Rendez-vous à la section
 > [Démarrage](#get-started).
@@ -55,7 +55,7 @@ l'ensemble du code est construit de zéro en Java sans garbage collection, C++ e
 
 ## Avantages de QuestDB
 
-### Les fonctionnalités principales incluent :
+Les fonctionnalités principales incluent :
 
 - Ingestion haute fréquence, faible latence — d'événements uniques à des millions/sec
 - SQL faible latence avec extensions de séries temporelles (ASOF JOIN, SAMPLE BY, LATEST ON)
@@ -68,13 +68,13 @@ l'ensemble du code est construit de zéro en Java sans garbage collection, C++ e
 - [Fonctions financières](https://questdb.com/docs/reference/function/finance/)
   et [analyses de carnets d'ordres](https://questdb.com/docs/guides/order-book/)
 
-### QuestDB excelle avec :
+QuestDB excelle avec :
 
 - les données de marchés financiers (données tick, transactions, carnets d'ordres, OHLC)
 - Les données de capteurs/télémétrie avec une cardinalité de données élevée
 - les tableaux de bord et la surveillance en temps réel
 
-### Et pourquoi utiliser une base de données de séries temporelles ?
+Et pourquoi utiliser une base de données de séries temporelles ?
 
 Au-delà des performances et de l'efficacité, avec une base de données de séries temporelles spécialisée, vous
 n'avez pas à vous soucier de :

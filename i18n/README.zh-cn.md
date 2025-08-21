@@ -29,8 +29,8 @@
 
 QuestDB 是一个开源时间序列数据库，提供**超快的数据摄取**和**动态低延迟 SQL 查询**。
 
-QuestDB 提供多层存储引擎（WAL → 原生 → 对象存储上的 Parquet），整个代码库从零开始使用零 GC Java、C++ 和 Rust 构建（QuestDB
-Enterprise）。
+QuestDB 提供多层存储引擎（WAL → 原生 → 对象存储上的 Parquet），核心引擎采用零 GC Java 和 C++ 实现；QuestDB Enterprise 包含用
+Rust 编写的额外组件。
 
 我们通过列式存储模型、并行化向量执行、SIMD 指令和低延迟技术实现高性能。此外，QuestDB 在硬件效率方面表现出色，具有快速设置和运营效率。
 

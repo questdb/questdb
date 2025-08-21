@@ -35,8 +35,8 @@ elde ederiz. Ayrıca, QuestDB donanım açısından verimlidir, hızlı kurulum 
 
 QuestDB, yerel zaman serisi SQL uzantıları ile ANSI SQL uygular.
 
-QuestDB, çok katmanlı bir depolama motoru (WAL → yerel → nesne depolamasında Parquet) sunar ve tüm kod tabanı sıfır-GC
-Java, C++ ve Rust (QuestDB Enterprise) ile sıfırdan oluşturulmuştur.
+QuestDB, çok katmanlı bir depolama motoru (WAL → yerel → nesne depolamasında Parquet) sunar ve çekirdek motor sıfır-GC
+Java ve C++ ile uygulanır; QuestDB Enterprise Rust ile yazılmış ek bileşenler içerir.
 
 > Başlamaya hazır mısınız?
 > [Başlangıç](#başlarken) bölümüne geçin.
@@ -54,7 +54,7 @@ Java, C++ ve Rust (QuestDB Enterprise) ile sıfırdan oluşturulmuştur.
 
 ## QuestDB'nin Faydaları
 
-### Özellik vurguları şunları içerir:
+Özellik vurguları şunları içerir:
 
 - Düşük gecikmeli, yüksek verimli veri alımı — tek olaylardan milyonlarca/saniyeye
 - Zaman serisi uzantıları ile düşük gecikmeli SQL (ASOF JOIN, SAMPLE BY, LATEST ON)
@@ -67,13 +67,13 @@ Java, C++ ve Rust (QuestDB Enterprise) ile sıfırdan oluşturulmuştur.
 - [Finans fonksiyonları](https://questdb.com/docs/reference/function/finance/)
   ve [sipariş defteri analitiği](https://questdb.com/docs/guides/order-book/)
 
-### QuestDB şunlarda mükemmeldir:
+QuestDB şunlarda mükemmeldir:
 
 - finansal piyasa verileri (tick verisi, işlemler, sipariş defterleri, OHLC)
 - Yüksek veri kardinaliteli sensör/telemetri verileri
 - gerçek zamanlı panolar ve izleme
 
-### Peki neden bir zaman serisi veritabanı kullanılır?
+Ve neden bir zaman serisi veritabanı kullanılır?
 
 Performans ve verimlilikten ötürü, özelleşmiş bir zaman serisi veritabanıyla şu konularda endişelenmenize gerek kalmaz:
 
@@ -82,7 +82,7 @@ Performans ve verimlilikten ötürü, özelleşmiş bir zaman serisi veritabanı
 - Birçok eş zamanlı sorgu ile sürekli akış alımı
 - akış verileri (düşük gecikme)
 - değişken ve "patlamalı" veriler
-- yeni sütunlar ekleme - veri akışı sırasında şemayı "anında" değiştirin
+- yeni sütunlar ekleme - veri akışı sırasında şemayı "anında" değiştirme
 
 ## QuestDB'yi deneyin, demo ve panolar
 

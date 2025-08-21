@@ -30,8 +30,8 @@
 QuestDB è un database di serie temporali open-source che offre **ingestione dei dati ultra-veloce** e **query SQL
 dinamiche a bassa latenza**.
 
-QuestDB fornisce un motore di archiviazione multi-livello (WAL → nativo → Parquet su object storage), e l'intera base di
-codice è costruita da zero in Java zero-GC, C++ e Rust (QuestDB Enterprise).
+QuestDB fornisce un motore di archiviazione multi-livello (WAL → nativo → Parquet su object storage), e il motore
+principale è implementato in Java zero-GC e C++; QuestDB Enterprise include componenti aggiuntivi in Rust.
 
 Raggiungiamo alte prestazioni attraverso un modello di storage orientato alle colonne, esecuzione vettoriale
 parallelizzata, istruzioni SIMD e tecniche a bassa latenza. Inoltre, QuestDB è efficiente nell'hardware, con
@@ -88,7 +88,7 @@ Oltre alle prestazioni e all'efficienza, con un database di serie temporali spec
 La [demo pubblica live](https://demo.questdb.com/) è dotata dell'ultima versione di QuestDB e dataset di esempio:
 
 - Trade: trade cripto dal vivo con oltre 30M di righe al mese (exchange OKX)
-- Order book FX: grafici dal vivo con coppie FX order book
+- Order book FX: grafici dal vivo con coppie FX order book.
 - Viaggi: 10 anni di viaggi taxi NYC con 1,6 miliardi di righe
 
 Abbiamo anche alcune dashboard demo pubbliche in tempo reale utilizzando il nostro

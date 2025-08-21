@@ -33,8 +33,8 @@ QuestDBは**超高速インジェスト**と**動的で低遅延のSQLクエリ*
 
 QuestDBはネイティブな時系列SQL拡張機能を持つANSI SQLを実装しています。
 
-QuestDBは多層ストレージエンジン（WAL → ネイティブ → オブジェクトストレージ上のParquet）を提供し、
-コードベース全体はゼロGC Java、C++、Rust（QuestDB Enterprise）で一から構築されています。
+QuestDBは多層ストレージエンジン（WAL → ネイティブ → オブジェクトストレージ上のParquet）を提供し、コアエンジンはゼロGC
+JavaとC++で実装されており、QuestDB EnterpriseはRustで記述された追加コンポーネントを含んでいます。
 
 > すぐに始めたいですか？
 > [はじめに](#get-started)セクションにジャンプしてください。
