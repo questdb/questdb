@@ -1,3 +1,5 @@
+<div dir="rtl">
+
 <div align="center">
   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
@@ -9,7 +11,7 @@
   </a>
 </p>
 
-<p align="center">
+<p align="center" dir="ltr">
   <a href="https://github.com/questdb/questdb">English</a> |
   <a href="./README.zh-cn.md">简体中文</a> |
   <a href="./README.zh-hk.md">繁體中文</a> |
@@ -408,3 +410,5 @@ QuestDB [مفتاح الرموز التعبيرية](https://allcontributors.org
 
 هذا المشروع يلتزم بمواصفات [all-contributors](https://github.com/all-contributors/all-contributors). المساهمات من أي نوع
 مرحب بها!
+
+</div>
