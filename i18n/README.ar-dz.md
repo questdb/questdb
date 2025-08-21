@@ -1,16 +1,5 @@
 <div dir="rtl">
 
-<style>
-ul, ol {
-  direction: rtl;
-  text-align: right;
-}
-li {
-  direction: rtl;
-  text-align: right;
-}
-</style>
-
 <div align="center">
   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
@@ -154,13 +143,15 @@ questdb stop
 
 عملاء QuestDB لاستيعاب البيانات عبر بروتوكول InfluxDB Line Protocol:
 
-- [Python](https://questdb.com/docs/clients/ingest-python/)
-- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
-- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
-- [Go](https://questdb.com/docs/clients/ingest-go/)
-- [Java](https://questdb.com/docs/clients/java_ilp/)
-- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
-- [Rust](https://questdb.com/docs/clients/ingest-rust/)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.com/docs/clients/ingest-python/">Python</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-dotnet/">.NET</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-c-and-cpp/">C/C++</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-go/">Go</a></li>
+<li><a href="https://questdb.com/docs/clients/java_ilp/">Java</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-node/">NodeJS</a></li>
+<li><a href="https://questdb.com/docs/clients/ingest-rust/">Rust</a></li>
+</ul>
 
 ### الاتصال بـ QuestDB
 
@@ -177,16 +168,18 @@ questdb stop
 
 تشمل الأدوات الشائعة التي تتكامل مع QuestDB:
 
-- [Kafka](https://questdb.io/docs/third-party-tools/kafka/)
-- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
-- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
-- [Polars](https://questdb.com/docs/third-party-tools/polars/)
-- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
-- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
-- [Superset](https://questdb.com/docs/third-party-tools/superset/)
-- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
-- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
-- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
+<ul dir="rtl" style="text-align: right;">
+<li><a href="https://questdb.io/docs/third-party-tools/kafka/">Kafka</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/redpanda/">Redpanda</a></li>
+<li><a href="https://questdb.io/docs/third-party-tools/grafana/">Grafana</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/polars/">Polars</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/pandas/">Pandas</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/powerbi/">PowerBI</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/superset/">Superset</a></li>
+<li><a href="https://questdb.io/docs/third-party-tools/flink/">Apache Flink</a></li>
+<li><a href="https://questdb.com/docs/third-party-tools/telegraf/">Telegraf</a></li>
+<li><a href="https://questdb.io/docs/third-party-tools/mindsdb/">MindsDB</a></li>
+</ul>
 
 ### سقالات الكود الشاملة
 
