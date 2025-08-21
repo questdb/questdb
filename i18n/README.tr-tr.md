@@ -19,9 +19,10 @@
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
   <a href="./README.fr-fr.md">Français</a> |
+  <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   Türkçe |
-  <a href="./README.hn-in.md">हिंदŀ</a> |
+  <a href="./README.hn-in.md">हिंदी</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a>
 </p>
 
@@ -254,11 +255,8 @@ Katkıda bulunmaya başlamak için:
 
 ✨ Minnettarlığımızın bir göstergesi olarak, katkıda bulunanlarımıza QuestDB swag'ı gönderiyoruz!
 
-QuestDB'ye katkıda bulunan şu harika insanlara çok
-teşekkürler [emoji anahtarı](https://allcontributors.org/docs/en/emoji-key):
-
 QuestDB'ye katkıda bulunan aşağıdaki harika insanlara
-çok büyük teşekkürler: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+çok büyük teşekkürler ([emoji anahtarı](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->

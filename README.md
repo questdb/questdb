@@ -19,6 +19,7 @@
   <a href="./i18n/README.es-es.md">Español</a> |
   <a href="./i18n/README.pt.md">Português</a> |
   <a href="./i18n/README.fr-fr.md">Français</a> |
+  <a href="./i18n/README.de-de.md">Deutsch</a> |
   <a href="./i18n/README.ja-ja.md">日本語</a> |
   <a href="./i18n/README.tr-tr.md">Türkçe</a> |
   <a href="./i18n/README.hn-in.md">हिंदी</a> |

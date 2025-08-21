@@ -19,6 +19,7 @@
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
   Français |
+  <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
@@ -40,7 +41,7 @@ QuestDB fournit un moteur de stockage multi-niveaux (WAL → natif → Parquet s
 est implémenté en Java sans garbage collection et C++; QuestDB Enterprise inclut des composants supplémentaires en Rust.
 
 > Prêt à commencer ? Rendez-vous à la section
-> [Démarrage](#get-started).
+> [Démarrage](#démarrage).
 
 <p>&nbsp;</p>
 

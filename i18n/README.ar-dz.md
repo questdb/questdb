@@ -21,6 +21,7 @@
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
   <a href="./README.fr-fr.md">Français</a> |
+  <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
@@ -29,7 +30,7 @@
 
 ---
 
-<p dir="rtl" style="text-align: right;">QuestDB هي قاعدة بيانات سلاسل زمنية مفتوحة المصدر توفر **استيعاب البيانات السريع** و**استعلامات SQL ديناميكية منخفضة الكمون**.</p>
+<p dir="rtl" style="text-align: right;">QuestDB هي قاعدة بيانات سلاسل زمنية مفتوحة المصدر توفر **استيعاب البيانات السريع للغاية** و**استعلامات SQL ديناميكية منخفضة الكمون**.</p>
 
 يوفر QuestDB محرك تخزين متعدد الطبقات (WAL → أصلي → Parquet على تخزين الكائنات)، ويتم تنفيذ المحرك الأساسي باستخدام Java
 بدون جمع القمامة و C++؛ QuestDB Enterprise يتضمن مكونات إضافية مكتوبة بـ Rust.
