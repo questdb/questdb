@@ -4070,6 +4070,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' expected");
     }
 
+    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(),
+                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
+        );
+    }
+
     protected void compileDropExt(
             @NotNull SqlExecutionContext executionContext,
             @NotNull GenericDropOperationBuilder opBuilder,
@@ -4150,6 +4156,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("deallocate", this::compileDeallocate);
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
+        keywordBasedExecutors.put("backup", this::compileBackup);
     }
 
     protected void unknownDropColumnSuffix(

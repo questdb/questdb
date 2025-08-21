@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -67,6 +66,8 @@ public interface SecurityContext extends Mutable {
     void authorizeAlterTableSetType(TableToken tableToken);
 
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
+
+    void authorizeDatabaseBackup();
 
     void authorizeDatabaseSnapshot();
 

@@ -203,6 +203,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     }
                 }
 
+                TableToken tableToken = null;
+
                 try {
                     // Prepare table name registry for copying.
                     path.trimTo(checkpointDbLen).$();
@@ -223,7 +225,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                         // Copy metadata files for all tables.
                         for (int t = 0, n = ordered.size(); t < n; t++) {
-                            TableToken tableToken = ordered.get(t);
+                            tableToken = ordered.get(t);
                             if (engine.isTableDropped(tableToken)) {
                                 LOG.info().$("skipping, table is dropped [table=").$(tableToken).I$();
                                 continue;
@@ -373,7 +375,21 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     if (walPurgeJobRunLock != null) {
                         walPurgeJobRunLock.unlock();
                     }
-                    LOG.error().$("checkpoint error [e=").$(e).I$();
+                    var log = LOG.error().$("cannot create checkpoint [e=").$(e);
+                    if (tableToken != null) {
+                        log.$(", table=").$(tableToken);
+                    }
+                    log.I$();
+                    if (e instanceof CairoException && tableToken != null) {
+                        CairoException ex = (CairoException) e;
+                        // Copy exception message in case the exception instance is re-used
+                        StringSink ss = Misc.getThreadLocalSink();
+                        ss.put(ex.getFlyweightMessage());
+
+                        throw CairoException.critical(ex.errno).put("error creating checkpoint [table=")
+                                .put(tableToken).put(", error=").put(ss)
+                                .put(']');
+                    }
                     throw e;
                 } finally {
                     tableNameRegistryStore.close();
