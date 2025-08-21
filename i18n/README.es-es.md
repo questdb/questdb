@@ -126,7 +126,7 @@ Para análisis profundos sobre internos y rendimiento, consulta las siguientes p
 Como siempre, te animamos a ejecutar tus propios benchmarks.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="Un gráfico comparando la velocidad de ingestión de QuestDB, InfluxDB y TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## Comenzar

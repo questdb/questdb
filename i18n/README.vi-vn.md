@@ -111,7 +111,7 @@ QuestDB hoạt động rất tốt trong các benchmark hiệu suất so với c
 Như mọi khi, chúng tôi khuyến khích bạn chạy các benchmark của riêng mình.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="Biểu đồ so sánh tốc độ nhập dữ liệu của QuestDB, InfluxDB và TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## Bắt đầu

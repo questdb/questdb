@@ -109,7 +109,7 @@ QuestDBはパフォーマンスベンチマークで代替案と比較して非�
 常に、独自のベンチマークを実行することをお勧めします。
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="QuestDB、InfluxDB、TimescaleDBのインジェスト率を比較したグラフ。" src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## はじめに

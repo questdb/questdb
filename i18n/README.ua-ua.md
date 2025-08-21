@@ -124,7 +124,7 @@ QuestDB дуже добре показує себе у тестах продук
 Як завжди, ми заохочуємо вас запускати власні тести.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="Діаграма, що порівнює швидкість прийому даних QuestDB, InfluxDB та TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## Початок роботи

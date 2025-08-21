@@ -115,7 +115,7 @@
 كما هو الحال دائمًا، نشجعك على تشغيل معاييرك الخاصة.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="مخطط يقارن معدل استيعاب QuestDB و InfluxDB و TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## البدء

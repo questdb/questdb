@@ -106,7 +106,7 @@ QuestDB 在性能基準測試中相比其他替代方案表現優異。
 我們始終鼓勵您運行自己的基準測試。
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="比較 QuestDB、InfluxDB 和 TimescaleDB 獲取速率的圖表。" src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## 開始使用

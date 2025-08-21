@@ -114,7 +114,7 @@ QuestDB, alternatiflere kıyasla performans kıyaslamalarında çok iyi performa
 Her zaman kendi kıyaslamalarınızı çalıştırmanızı öneririz.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="QuestDB, InfluxDB ve TimescaleDB'nin veri alım oranlarını karşılaştıran grafik." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
 ## Başlarken
