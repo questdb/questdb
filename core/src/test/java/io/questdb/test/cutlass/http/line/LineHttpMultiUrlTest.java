@@ -48,8 +48,8 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public void fuzzServersStartingAndStopping() throws Exception {
         Path.clearThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
-            int timeoutMillis = 10_000;
-            int delayMillis = 500;
+            int timeoutMillis = 30_000;
+            int delayMillis = 2000;
             int jitterMillis = 150;
 
             AtomicLong t1Count = new AtomicLong();
@@ -157,7 +157,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testServersStartAndStop() throws Exception {
-        Path.clearThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
             TestServerMain serverMain1 = startInstancesWithoutConflict("server1", HOST, PORT1, false);
             serverMain1.start();
@@ -220,15 +219,17 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
 
                     r1[0] = new TxReader(finalServerMain1.getEngine().getConfiguration().getFilesFacade());
-                    r2[0] = new TxReader(finalServerMain1.getEngine().getConfiguration().getFilesFacade());
+                    r2[0] = new TxReader(finalServerMain2.getEngine().getConfiguration().getFilesFacade());
 
 
                     long rows1 = getRowCount(finalServerMain1.getEngine(), tt1, r1[0]);
-                    long rows2 = getRowCount(finalServerMain2.getEngine(), tt1, r1[0]);
+                    long rows2 = getRowCount(finalServerMain2.getEngine(), tt1, r2[0]);
+
+                    r1[0].close();
+                    r2[0].close();
 
                     Assert.assertEquals(expectedTotalRows, rows1 + rows2);
                 });
-
             } finally {
                 if (!serverMain1.hasBeenClosed()) {
                     serverMain1.close();
@@ -238,7 +239,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 }
                 Misc.free(r1);
                 Misc.free(r2);
-                Path.clearThreadLocals();
             }
         });
     }
@@ -247,7 +247,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
      * Creates and destroys a server based on a delay and jitter.
      */
     private void createAServerAndOccasionallyBlipIt(String rootName, String host, int port, boolean readOnly, int timeoutMillis, int delayMillis, int jitterMillis, AtomicLong count) {
-        Path.clearThreadLocals();
         long elapsedMillis = 0;
         @Nullable TestServerMain serverMain = null;
 
@@ -276,11 +275,20 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 elapsedMillis += (endMillis - startMillis);
             }
         } finally {
-            if (serverMain.hasBeenClosed()) {
+            if (serverMain != null && serverMain.hasBeenClosed()) {
                 serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
-            count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), new TxReader(serverMain.getEngine().getConfiguration().getFilesFacade())));
+            TableToken tt = null;
+            for (int i = 0; i < 100_000; i++) {
+                tt = serverMain.getEngine().getTableTokenIfExists("line");
+                if (tt != null) {
+                    break;
+                }
+            }
+            try (TxReader txReader = new TxReader(serverMain.getEngine().getConfiguration().getFilesFacade())) {
+                count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), txReader));
+            }
             Misc.free(serverMain);
             Path.clearThreadLocals();
         }
@@ -289,43 +297,48 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     private long getRowCount(CairoEngine engine, TableToken token, TxReader txReader) {
         try (TableMetadata tm = engine.getTableMetadata(token)) {
             int partitionBy = tm.getPartitionBy();
-            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            // TxReader
-            TableUtils.setTxReaderPath(txReader, path, partitionBy); // modifies path
-            long rowCount = txReader.unsafeLoadRowCount();
-            txReader.close();
-            path.trimTo(0);
-            return rowCount;
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
+                TableUtils.setTxReaderPath(txReader, path, partitionBy); // modifies path
+                return txReader.unsafeLoadRowCount();
+            }
         }
     }
 
     private void sendToTwoPossibleServers(String host1, int port1, String host2, int port2, int timeoutMillis, int delayMillis, int jitterMillis, AtomicLong count) {
-        Path.clearThreadLocals();
         long elapsedMillis = 0;
         long nextFlushAt = delayMillis;
 
+        int localCount = 0;
         assert delayMillis > jitterMillis;
 
-        try (Sender sender = Sender.builder(Sender.Transport.HTTP).address(host1).port(port1).address(host2).port(port2).build()) {
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP).address(host1).port(port1).address(host2).port(port2).disableAutoFlush().build()) {
             while (elapsedMillis < timeoutMillis) {
                 long startMillis = System.currentTimeMillis();
 
                 sender.table("line").longColumn("foo", 123).atNow();
-                count.incrementAndGet();
+                localCount++;
 
-                long endMillis = System.currentTimeMillis();
-                elapsedMillis += (endMillis - startMillis);
+
+                Os.sleep(10);
 
                 if (elapsedMillis > nextFlushAt) {
                     sender.flush();
+                    count.set(count.get() + localCount);
+
+                    localCount = 0;
                     int jitter = rnd.nextIntSync(jitterMillis);
                     jitter = (jitter >> 1) ^ (-(jitter & 1)); // zigzag conversion
 
                     nextFlushAt = elapsedMillis + jitter + delayMillis;
                 }
+
+                long endMillis = System.currentTimeMillis();
+                elapsedMillis += (endMillis - startMillis);
             }
 
             sender.flush();
+            count.set(count.get() + localCount);
         }
         Path.clearThreadLocals();
     }
