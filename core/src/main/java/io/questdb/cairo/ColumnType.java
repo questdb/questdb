@@ -252,6 +252,11 @@ public final class ColumnType {
         return ((scale & 0xFF) << 16) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
     }
 
+    public static boolean isDecimal(int type) {
+        final short tag = tagOf(type);
+        return tag >= DECIMAL8 && tag <= DECIMAL;
+    }
+
     public static ColumnTypeDriver getDriver(int columnType) {
         switch (tagOf(columnType)) {
             case STRING:
@@ -367,6 +372,12 @@ public final class ColumnType {
             case GEOLONG:
             case UUID:
             case IPv4:
+            case DECIMAL8:
+            case DECIMAL16:
+            case DECIMAL32:
+            case DECIMAL64:
+            case DECIMAL128:
+            case DECIMAL256:
                 return true;
             default:
                 return false;
@@ -434,14 +445,17 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
+        return (fromTag == toTag && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
                 || isImplicitParsingCast(fromType, toType)
                 || isIPv4Cast(fromType, toType)
-                || isArrayCast(fromType, toType);
+                || isArrayCast(fromType, toType)
+                || (fromTag >= DECIMAL8 && fromTag <= DECIMAL256 && toTag >= DECIMAL8 && toTag <= DECIMAL256);
     }
 
     public static boolean isUndefined(int columnType) {
@@ -696,7 +710,7 @@ public final class ColumnType {
                 /* 36 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
                 /* 37 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
                 /* 38 DECIMAL256 */, {DECIMAL256, DECIMAL}
-                /* 39 DECIMAL    */, {DECIMAL}
+                /* 39 DECIMAL    */, {}
                 /* 40 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
