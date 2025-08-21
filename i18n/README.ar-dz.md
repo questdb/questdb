@@ -66,7 +66,7 @@
 - [وظائف مالية](https://questdb.com/docs/reference/function/finance/)
   و[تحليلات كتاب الطلبات](https://questdb.com/docs/guides/order-book/)
 
-QuestDB يتفوق مع:
+<p dir="rtl" style="text-align: right;">QuestDB يتفوق مع:</p>
 
 - بيانات الأسواق المالية (بيانات التجارة، الصفقات، كتب الطلبات، OHLC)
 - بيانات المستشعرات/القياس عن بُعد ذات كثافة البيانات العالية
