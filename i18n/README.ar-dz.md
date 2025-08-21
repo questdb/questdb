@@ -191,7 +191,7 @@ questdb stop
 
 اعثر على [تخطيط السعة](https://questdb.com/docs/deployment/capacity-planning/) لضبط QuestDB لأعباء العمل الإنتاجية.
 
-### QuestDB Enterprise
+<h3 dir="rtl" style="text-align: right;">QuestDB Enterprise</h3>
 
 للتشغيل الآمن على نطاق أوسع أو داخل منظمات أكبر.
 
