@@ -255,7 +255,15 @@ public abstract class AbstractLineHttpSender implements Sender {
                     final String host = hosts.getQuick(i);
                     final int port = ports.getQuick(i);
                     req = cli.newRequest(host, port).GET();
-                    response = req.url(clientConfiguration.getSettingsPath()).send();
+                    try {
+                        response = req.url(clientConfiguration.getSettingsPath()).send();
+                    } catch (HttpClientException e) {
+                        if (e.getErrno() == 61) {
+                            // server completely down
+                            continue;
+                        }
+                        throw e;
+                    }
                     response.await();
                     statusCode = response.getStatusCode();
 
@@ -409,6 +417,10 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     public boolean isMisdirectedRequest(DirectUtf8Sequence statusCode) {
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
+    }
+
+    public boolean isNotFound(DirectUtf8Sequence statusCode) {
+        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
     }
 
     @Override
@@ -603,8 +615,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 assert response.isChunked();
                 if (isRetryableHttpStatus(statusCode) || isMisdirectedRequest(statusCode)) {
                     if (isMisdirectedRequest(statusCode)) {
-                        currentAddressIndex = (currentAddressIndex + 1) % hosts.size();
-                        this.url = buildUrl();
+                        rotateAddress();
                     }
 
                     long nowNanos = System.nanoTime();
@@ -635,7 +646,11 @@ public abstract class AbstractLineHttpSender implements Sender {
                     flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
                     throw new LineSenderException("Could not flush buffer: ").put(url)
-                            .put(" Connection Failed").put(": ").put(e.getMessage());
+                            .put(" Connection Failed").put(": ").put(e.getMessage()).errno(e.getErrno());
+                }
+                if (e.getErrno() == 61) {
+                    // either a 404 or completely down
+                    rotateAddress();
                 }
                 retryBackoff = backoff(retryBackoff);
             }
@@ -688,6 +703,10 @@ public abstract class AbstractLineHttpSender implements Sender {
         return r;
     }
 
+    private void rotateAddress() {
+        currentAddressIndex = (currentAddressIndex + 1) % hosts.size();
+        this.url = buildUrl();
+    }
 
     /**
      * @return true if flush is required
