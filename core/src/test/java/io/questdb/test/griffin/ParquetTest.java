@@ -192,6 +192,32 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArraySmallDataPages() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4096);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (\n" +
+                            "  select array[42] arr, timestamp_sequence(0,1000000) as ts\n" +
+                            "  from long_sequence(10000)\n" +
+                            ") timestamp(ts) partition by day;"
+            );
+            // create new active partition
+            execute("insert into x values (null, '2000-01-01')");
+            execute("alter table x convert partition to parquet where ts >= 0");
+
+            assertQuery(
+                    "count\n" +
+                            "10000\n",
+                    "select count() from x where arr[1] = 42",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testColTops() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (id long, ts timestamp) timestamp(ts) partition by month;");
