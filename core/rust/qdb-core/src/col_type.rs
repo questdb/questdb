@@ -161,6 +161,7 @@ impl TryFrom<u8> for ColumnTypeTag {
 
     fn try_from(col_tag_num: u8) -> Result<Self, Self::Error> {
         match col_tag_num {
+            0 => Ok(ColumnTypeTag::Undefined),
             1 => Ok(ColumnTypeTag::Boolean),
             2 => Ok(ColumnTypeTag::Byte),
             3 => Ok(ColumnTypeTag::Short),
