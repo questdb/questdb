@@ -26,17 +26,15 @@
 
 ---
 
-QuestDB is an open-source time-series database offering **blazingly fast ingestion** 
-and **dynamic, low-latency SQL queries**. 
+QuestDB is an open-source time-series database offering blazingly fast ingestion
+and dynamic, low-latency SQL queries.
+
+QuestDB delivers a multi-tier storage engine (WAL → native → Parquet on object storage), and the 
+entire codebase is built from the ground up in zero-GC Java, C++ and Rust (QuestDB Enterprise).
 
 We achieve high performance via a column-oriented storage model, parallelized
 vector execution, SIMD instructions, and low-latency techniques. In addition,
 QuestDB is hardware efficient, with quick setup and operational efficiency.
-
-QuestDB implements ANSI SQL with native time-series SQL extensions.
-
-QuestDB delivers a multi-tier storage engine (WAL → native → Parquet on object storage), and the 
-entire codebase is built from the ground up in zero-GC Java, C++ and Rust (QuestDB Enterprise).
 
 > Ready to go? Jump to the
 > [Get started](#get-started) section.
@@ -54,7 +52,7 @@ entire codebase is built from the ground up in zero-GC Java, C++ and Rust (Quest
 
 ## Benefits of QuestDB
 
-### Feature highlights include:
+Feature highlights include:
 
 - Low-latency, high-throughput ingestion — from single events to millions/sec
 - Low-latency SQL with time-series extensions (ASOF JOIN, SAMPLE BY, LATEST ON)
@@ -66,13 +64,13 @@ entire codebase is built from the ground up in zero-GC Java, C++ and Rust (Quest
 - Apache 2.0 open source and open formats — no vendor lock-in
 - [Finance functions](https://questdb.com/docs/reference/function/finance/) and [orderbook analytics](https://questdb.com/docs/guides/order-book/)
 
-### QuestDB excels with:
+QuestDB excels with:
 
 - financial market data (tick data, trades, order books, OHLC)
 - Sensor/telemetry data with high data cardinality
 - real-time dashboards and monitoring
 
-### And why use a time-series database?
+And why use a time-series database?
 
 Beyond performance and efficiency, with a specialized time-series database, you
 don't need to worry about:
@@ -98,7 +96,7 @@ our [Grafana-native](https://questdb.com/docs/third-party-tools/grafana/) plugin
 
 - [Real-time crypto trades:](https://questdb.com/dashboards/crypto/) executed
   trades on OKX from more than 20 assets in real time
-- [FX order book:](https://questdb.com/dashboards/FX-orderbook/)live depth/imbalance charts for major pairs
+- [FX order book:](https://questdb.com/dashboards/FX-orderbook/) live depth/imbalance charts for major FX pairs
 
 ### QuestDB performance vs. other databases
 
