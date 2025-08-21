@@ -98,7 +98,7 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
             super.of(executionContext);
             this.start = timestampDriver.from(startFunc.getTimestamp(null), ColumnType.getTimestampType(startFunc.getType()));
             this.end = timestampDriver.from(endFunc.getTimestamp(null), ColumnType.getTimestampType(endFunc.getType()));
-            this.step = timestampDriver.from(stepFunc.getTimestamp(null), ColumnType.getTimestampType(startFunc.getType()));
+            this.step = stepFunc.getLong(null);
             if (step == 0) {
                 throw SqlException.$(stepPosition, "step cannot be zero");
             }

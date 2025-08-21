@@ -718,7 +718,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999998Z\n" +
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000004Z\n",
-                "generate_series((-5)::timestamp, 5::timestamp, 3::timestamp);",
+                "generate_series((-5)::timestamp, 5::timestamp, 3);",
                 "generate_series",
                 true,
                 true);
@@ -728,7 +728,7 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         "1969-12-31T23:59:59.999998000Z\n" +
                         "1970-01-01T00:00:00.000001000Z\n" +
                         "1970-01-01T00:00:00.000004000Z\n",
-                "generate_series((-5)::timestamp, 5000::timestamp_ns, 3::timestamp);",
+                "generate_series((-5)::timestamp, 5000::timestamp_ns, 3000);",
                 "generate_series",
                 true,
                 true);
