@@ -27,8 +27,8 @@
 
 ---
 
-QuestDB là một cơ sở dữ liệu chuỗi thời gian mã nguồn mở cung cấp tốc độ nhập dữ liệu cực nhanh và các truy vấn SQL động
-với độ trễ thấp.
+QuestDB là một cơ sở dữ liệu chuỗi thời gian mã nguồn mở cung cấp **tốc độ nhập dữ liệu cực nhanh** và **các truy vấn
+SQL động với độ trễ thấp**.
 
 QuestDB cung cấp một công cụ lưu trữ đa tầng (WAL → native → Parquet trên object storage), và công cụ lõi được triển
 khai bằng Java zero-GC và C++; QuestDB Enterprise bao gồm các thành phần bổ sung bằng Rust.

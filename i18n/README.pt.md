@@ -27,8 +27,8 @@
 
 ---
 
-O QuestDB é um banco de dados de séries temporais open-source que oferece ingestão extremamente rápida e consultas SQL
-dinâmicas de baixa latência.
+O QuestDB é um banco de dados de séries temporais open-source que oferece **ingestão extremamente rápida** e **consultas
+SQL dinâmicas de baixa latência**.
 
 O QuestDB oferece um mecanismo de armazenamento multicamadas (WAL → nativo → Parquet em object storage), e o motor
 principal é implementado em Java zero-GC e C++; o QuestDB Enterprise inclui componentes adicionais em Rust.
