@@ -1,181 +1,262 @@
 <div align="center">
-   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.com/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
-  <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="Comunidad QuestDB en Slack"/>
-  </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="Contribuidores OSS QuestDB"/>
-  </a>
-  <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB en Maven Central"/>
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) |
-Español | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="./README.zh-cn.md">简体中文</a> |
+  <a href="./README.zh-hk.md">繁體中文</a> |
+  <a href="./README.ar-dz.md">العربية</a> |
+  <a href="./README.it-it.md">Italiano</a> |
+  <a href="./README.ua-ua.md">Українська</a> |
+  Español |
+  <a href="./README.pt.md">Português</a> |
+  <a href="./README.ja-ja.md">日本語</a> |
+  <a href="./README.tr-tr.md">Türkçe</a> |
+  <a href="./README.hn-in.md">हिंदी</a> |
+  <a href="./README.vi-vn.md">Tiếng Việt</a>
+</p>
 
-# QuestDB
+---
 
-QuestDB es una base de datos SQL, de código abierto y alto rendimiento. Es usada por aplicaciones en el ámbito de los
-servicios financieros, IoT, aprendizaje automático, DevOps y observabilidad. Es compatible con el protocolo de
-PostgreSQL, ofrece puntos de conexión de alto rendimiento usando el protocolo InfluxDB, además de un API REST para
-consultas y la importación/exportación masiva de datos.
+QuestDB es una base de datos de series temporales de código abierto que ofrece **ingestión extremadamente rápida** y *
+*consultas SQL dinámicas de baja latencia**.
 
-QuestDB implementa ANSI SQL con extensiones nativas orientadas al manejo de series temporales. Estas extensiones
-simplifican la correlación de datos de múltiples fuentes utilizando uniones y relacionales. QuestDB logra un alto
-rendimiento al usar un modelo de almacenamiento orientado a columnas, ejecución vectorial masivamente paralela,
-instrucciones SIMD y varias técnicas de baja latencia, que incluyen un compilador JIT. La totalidad del código ha sido
-creado desde cero en Java y C++, sin dependencias, y es 100% libre de GC (recolección de basura).
+Logramos un alto rendimiento a través de un modelo de almacenamiento orientado a columnas, ejecución vectorial
+paralelizada, instrucciones SIMD y técnicas de baja latencia. Además, QuestDB es eficiente en términos de hardware, con
+configuración rápida y eficiencia operacional.
+
+QuestDB implementa ANSI SQL con extensiones SQL nativas para series temporales.
+
+QuestDB ofrece un motor de almacenamiento multicapa (WAL → nativo → Parquet en almacenamiento de objetos), y toda la
+base de código está construida desde cero en Java sin recolección de basura, C++ y Rust (QuestDB Enterprise).
+
+> ¿Listo para comenzar? Ve a la
+> sección [Comenzar](#get-started).
 
 <div align="center">
-  <a href="https://demo.questdb.io/">
-    <img alt="Consola web de QuestDB que muestra varias declaraciones SQL y visualiza una consulta como un gráfico" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+  <a href="https://demo.questdb.com/">
+    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
+  <p><em>QuestDB Web Console - haz clic para lanzar la demo</em></p>
 </div>
 
-## Prueba QuestDB
+<p>&nbsp;</p>
 
-Esta es una [demo](https://demo.questdb.io/) con la última versión de QuestDB, que incluye datos y consultas de ejemplo:
+## Beneficios de QuestDB
 
-- 10 años de viajes en taxi por la ciudad de Nueva York con 1600 millones de filas
-- datos comerciales en vivo de un exchange, o bolsa, de criptomonedas
-- geolocalizaciones de una flota de 250k navíos y buques a lo largo del tiempo
+### Las características destacadas incluyen:
 
-| Query                                                                         | Tiempo de ejecución                                                                                                                                                                                 |
-|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+- Ingestión de baja latencia y alto rendimiento — desde eventos individuales hasta millones por segundo
+- SQL de baja latencia con extensiones de series temporales (ASOF JOIN, SAMPLE BY, LATEST ON)
+- Ejecución paralela acelerada por SIMD; funciona rápido en hardware modesto
+- Almacenamiento multicapa: WAL → columnar nativo → Parquet (particionado y ordenado por tiempo)
+- Protocolo Postgres (PGwire) y API REST
+- Vistas materializadas y arrays n-dimensionales (incluyendo arrays 2D para order books)
+- Consola web para consultas y gestión de datos
+- Código abierto Apache 2.0 y formatos abiertos — sin lock-in de proveedor
+- [Funciones financieras](https://questdb.com/docs/reference/function/finance/)
+  y [analíticas de order book](https://questdb.com/docs/guides/order-book/)
 
-Nuestra demo usa una instancia `c5.metal` de AWS, utilizando 24 de los 96 cores disponibles.
+### QuestDB sobresale con:
 
-## Instala QuestDB
+- datos de mercados financieros (datos de tick, operaciones, order books, OHLC)
+- Datos de sensores/telemetría con alta cardinalidad de datos
+- tableros en tiempo real y monitoreo
 
-Para empezar ya con QuestDB puedes usar Docker:
+### ¿Y por qué usar una base de datos de series temporales?
+
+Más allá del rendimiento y la eficiencia, con una base de datos de series temporales especializada, no necesitas
+preocuparte por:
+
+- datos fuera de orden
+- deduplicación y semántica de exactamente una vez
+- Ingestión de streaming continuo con muchas consultas concurrentes
+- datos de streaming (baja latencia)
+- datos volátiles y "a ráfagas"
+- agregar nuevas columnas - cambiar esquema "sobre la marcha" mientras transmites datos
+
+## Prueba QuestDB, demo y dashboards
+
+La [demo pública en vivo](https://demo.questdb.com/) está aprovisionada con la última versión de QuestDB y conjuntos de
+datos de ejemplo:
+
+- Trades: operaciones de cripto en vivo con más de 30M de filas por mes (exchange OKX)
+- Order book FX: gráficos en vivo con pares FX de order book.
+- Trips: 10 años de viajes de taxi de NYC con 1.6 mil millones de filas
+
+También tenemos algunos dashboards de demo públicos en tiempo real usando nuestro
+plugin [nativo de Grafana](https://questdb.com/docs/third-party-tools/grafana/):
+
+- [Trades de cripto en tiempo real:](https://questdb.com/dashboards/crypto/) operaciones ejecutadas en OKX de más de 20
+  activos en tiempo real
+- [Order book FX:](https://questdb.com/dashboards/FX-orderbook/) gráficos de profundidad/desequilibrio en vivo para
+  pares principales
+
+### Rendimiento de QuestDB vs otras bases de datos
+
+QuestDB funciona muy bien en benchmarks de rendimiento comparado con alternativas.
+
+Para análisis profundos sobre internos y rendimiento, consulta las siguientes publicaciones del blog:
+
+- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
+- [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
+
+Como siempre, te animamos a ejecutar tus propios benchmarks.
+
+<div align="center">
+  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+</div>
+
+## Comenzar
+
+Usa [Docker](https://www.docker.com/) para empezar rápidamente:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-En MacOS puedes usar Homebrew:
+O los usuarios de macOS pueden usar Homebrew:
 
 ```bash
 brew install questdb
 brew services start questdb
-
-questdb start // To start questdb
-questdb stop  // To stop questdb
 ```
 
-La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece métodos
-de instalacion en una variedad de plataformas.
+```bash
+questdb start
+questdb stop
+```
 
-### QuestDB Cloud
+Alternativamente, para iniciar el viaje completo de incorporación, comienza con nuestra
+concisa [guía de inicio rápido](https://questdb.com/docs/quick-start/).
 
-QuestDB Cloud es la versión gestionada de QuestDB, con funcionalidades añadidas como control de acceso basado en roles (RBAC), 
-replicación nativa en nube, compresión, monitorización, o snapshots en nube. La [prueba gratuita](https://cloud.questdb.com)
-incluye un crédito de $200.
+### Clientes de ingestión de primera parte
 
-### Conéctate con QuestDB
+Clientes de QuestDB para ingerir datos vía el Protocolo de Línea InfluxDB:
 
-Puedes conectarte con QuestDB utilizando las siguientes interfaces:
+- [Python](https://questdb.com/docs/clients/ingest-python/)
+- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
+- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
+- [Go](https://questdb.com/docs/clients/ingest-go/)
+- [Java](https://questdb.com/docs/clients/java_ilp/)
+- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
+- [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-- [Consola web] (https://questdb.io/docs/develop/web-console/) escuchando en el puerto
+### Conectar con QuestDB
+
+Interactúa con QuestDB y tus datos vía las siguientes interfaces:
+
+- [Consola Web](https://questdb.com/docs/web-console/) para un editor SQL interactivo e importación CSV en el puerto
   `9000`
-- [API REST](https://questdb.io/docs/reference/api/rest/) en el puerto `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) protocolo de conexión en puerto `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) protocolo de línea para ingesta de alto rendimiento en el
-  puerto `9009`
+- [Protocolo de Línea InfluxDB](https://questdb.com/docs/reference/api/ilp/overview/) para ingestión de streaming en el
+  puerto `9000`
+- [Protocolo Wire de PostgreSQL](https://questdb.com/docs/reference/api/postgres/) para consultas programáticas en el
+  puerto `8812`
+- [API REST](https://questdb.com/docs/reference/api/rest/) para importación CSV y cURL en el puerto `9000`
 
-### Inserta datos
+### Herramientas populares de terceros
 
-Estos son los clientes oficiales para varios lenguajes de programación:
+Herramientas populares que se integran con QuestDB incluyen:
 
-- [.NET](https://github.com/questdb/net-questdb-client/)
-- [C/C++](https://github.com/questdb/c-questdb-client/)
-- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client/)
-- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
-- [NodeJS](https://questdb.github.io/nodejs-questdb-client/)
-- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
-- [Rust](https://docs.rs/crate/questdb-rs/latest/)
+- [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
+- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
+- [Grafana](https://questdb.com/docs/third-party-tools/grafana/)
+- [Polars](https://questdb.com/docs/third-party-tools/polars/)
+- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
+- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
+- [Superset](https://questdb.com/docs/third-party-tools/superset/)
+- [Apache Flink](https://questdb.com/docs/third-party-tools/flink/)
+- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
+- [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
-### Tutorial completo de punto a punto
+### Andamios de código de extremo a extremo
 
-¿Quieres probarlo todo? ¿Desde ingestión en tiempo real hasta visualización de gráficos integrando QuestDB y Grafana?
-Prueba nuestro tutorial en [el repositorio quickstart](https://github.com/questdb/questdb-quickstart/).
+Desde ingestión de streaming hasta visualización con Grafana, comienza con andamios de código de
+nuestro [repositorio quickstart](https://github.com/questdb/questdb-quickstart).
 
-## Cómo se compara QuestDB con otras bases de datos de series temporales de código abierto
+### Configurar QuestDB para cargas de trabajo de producción
 
-[Este artículo](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-compara QuestDB con otras bases de datos de series temporales open source, cubriendo funcionalidades, madurez, y
-rendimiento.
+Encuentra nuestra [planificación de capacidad](https://questdb.com/docs/deployment/capacity-planning/) para ajustar
+QuestDB para cargas de trabajo de producción.
 
-En
-esta [suite de referencia de series temporales](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-se pueden ver los resultados para un caso de uso de alta cardinalidad, usando entre 6 y 16 CPUs en una máquina con 32
-CPUs y 64GB de RAM.
+### QuestDB Enterprise
 
-<div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/readme-benchmark.png" width="600"/>
-  </a>
-</div>
+Para operación segura a mayor escala o dentro de organizaciones más grandes.
 
+Las características adicionales incluyen:
 
-La siguiente tabla muestra los tiempos de ejecución para 1MM, un millón de millones de filas, corriendo en un
-servidor `c5.metal` usando 16 de los 96 hilos disponibles:
+- alta disponibilidad y réplica(s) de lectura
+- ingestión multi-primaria
+- integración de almacenamiento frío
+- control de acceso basado en roles
+- cifrado TLS
+- consulta nativa de archivos Parquet vía almacenamiento de objetos
+- SLAs de soporte, monitoreo mejorado y más
 
-| Query                                                        | Runtime    |
-|--------------------------------------------------------------|------------|
-| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
+Visita la [página Enterprise](https://questdb.com/enterprise/) para más detalles e información de contacto.
 
-## Recursos
+## Recursos adicionales
 
 ### 📚 Lee la documentación
 
-- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr
-  QuestDB.
-- [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
-- [Product roadmap:](https://github.com/questdb/questdb/projects/) echa un vistazo a nuestro plan para las versiones que
-  vienen.
+- [Documentación de QuestDB:](https://questdb.com/docs/) comienza el viaje
+- [Roadmap del producto:](https://github.com/orgs/questdb/projects/1/views/5) echa un vistazo a nuestro plan para
+  próximos lanzamientos
+- [Tutoriales:](https://questdb.com/tutorial/) aprende qué es posible con QuestDB, paso a paso
 
-### ❓ Ayuda!
+### ❓ Obtén soporte
 
-- [Community Slack:](https://slack.questdb.io) participa en las discusiones técnicas, pregunta, conoce al equipo y a
-  otros usuarios y usuarias.
-- [GitHub issues:](https://github.com/questdb/questdb/issues) envía informes de error, o de problemas con QuestDB.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) busca soluciones a problemas comunes.
+- [Foro Community Discourse:](https://community.questdb.com/) únete a discusiones técnicas, haz preguntas y conoce otros
+  usuarios!
+- [Slack Público:](https://slack.questdb.io/) chatea con el equipo de QuestDB y miembros de la comunidad
+- [GitHub issues:](https://github.com/questdb/questdb/issues) reporta bugs o problemas con QuestDB
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) busca soluciones comunes de resolución de
+  problemas
 
 ### 🚢 Despliega QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami/)
-- [Plataforma en la nube de Google](https://questdb.io/docs/guides/google-cloud-platform/)
-- [Imagen oficial de Docker](https://questdb.io/docs/get-started/docker/)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean/)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes/)
+- [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
+- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
+- [Imagen oficial de Docker](https://questdb.com/docs/get-started/docker)
+- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
+- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
 
 ## Contribuye
 
-Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código, documentación, informes de errores,
-solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
+¡Las contribuciones son bienvenidas!
 
-- Echa un vistazo a GitHub, en particular a los elementos etiquetados
-  "[Good first issue]"(https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22).
-- Lee la [guía de contribución](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- Para obtener detalles sobre la compilación, empaquetado e instalación de QuestDB, consulta
-  [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
-- [Crea un fork](https://docs.github.com/en/github/empezando-con-github/fork-a-repo)
-  de QuestDB y envía un pull request con los cambios propuestos.
+Apreciamos:
 
-✨ Como muestra de nuestra gratitud, te enviaremos **Swag de QuestDB**
-. [Reclama tu swag aquí.](https://questdb.io/community/)
+- código fuente
+- documentación (consulta nuestro [repositorio de documentación](https://github.com/questdb/documentation))
+- reportes de bugs
+- solicitudes de funcionalidades o comentarios.
+
+Para empezar a contribuir:
+
+- Echa un vistazo a los issues de GitHub
+  etiquetados "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+- Para Hacktoberfest, consulta
+  los [issues etiquetados](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+  relevantes
+- Lee la [guía de contribución](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- Para detalles sobre construir QuestDB, consulta
+  las [instrucciones de construcción](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Crea un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) de QuestDB y envía un pull
+  request con tus cambios propuestos
+- ¿Atascado? Únete a nuestro [Slack público](https://slack.questdb.io/) para asistencia
+
+✨ Como muestra de nuestra gratitud, ¡enviamos swag de QuestDB a nuestros contribuidores!
 
 Un gran agradecimiento a las siguientes personas maravillosas que han contribuido a
 QuestDB: ([clave emoji](https://allcontributors.org/docs/en/emoji-key)):

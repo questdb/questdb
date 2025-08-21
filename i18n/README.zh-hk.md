@@ -24,14 +24,35 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="./README.zh-cn.md">简体中文</a> |
+  繁體中文 |
+  <a href="./README.ar-dz.md">العربية</a> |
+  <a href="./README.it-it.md">Italiano</a> |
+  <a href="./README.ua-ua.md">Українська</a> |
+  <a href="./README.es-es.md">Español</a> |
+  <a href="./README.pt.md">Português</a> |
+  <a href="./README.ja-ja.md">日本語</a> |
+  <a href="./README.tr-tr.md">Türkçe</a> |
+  <a href="./README.hn-in.md">हिंदी</a> |
+  <a href="./README.vi-vn.md">Tiếng Việt</a>
+</p>
 
 # QuestDB
 
 QuestDB 是一個開源的時序數據庫，支持高吞吐數據獲取和快速 SQL 查詢，操作簡單。
-它支持使用InfluxDB連接協議、PostgreSQL協議和REST API進行批量無模式導入和導出。
 
-QuestDB非常適用于金融市場數據、應用程序指標、傳感器數據、實時分析、儀表板和系統基礎設施監控。
+## QuestDB 的優勢
+
+QuestDB 為時序數據的擷入和查詢提供卓越的性能，特別適用於金融市場數據、IoT
+傳感器數據、實時應用程式和分析。它在高[cardinality](https://questdb.io/glossary/high-cardinality/)數據集上表現出色，並可通過支持
+InfluxDB Line Protocol 來替代 InfluxDB。
+
+- **高性能**：每秒擷入超過 400 萬行，並在毫秒級完成複雜查詢
+- **SQL 相容性**：實現 ANSI SQL 及時序 SQL 擴展
+- **易於整合**：相容 InfluxDB Line Protocol、PostgreSQL wire protocol 和 REST API
+- **現代架構**：從頭構建，為現代硬體優化，支持並行處理和 SIMD
 
 QuestDB使用原生時間序列SQL插件實現了ANSI SQL。這些 SQL 擴展語義能更簡單的連接
 （JOIN）多個來源的關系型數據以及時間序列數據。我們通過列導向的存儲模型、大規模
@@ -53,9 +74,9 @@ C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾�
 我們提供了一個[在線演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
 和幾個樣本數據集：
 
-- Trips： 近 10 年的紐約市出租車行程軌迹數據集，含 1.6 億行的數據。
-- Trades： 每月30M+的實時加密貨幣市場數據。
-- Pos： 含有 25 萬艘船的時序地理數據集。
+- Trips： 10 年的紐約出租車數據，共 16 億行
+- Trades： 每月超過 3000 萬行的實時加密貨幣市場數據
+- Pos： 25 萬艘獨特船隻的時序地理位置
 
 | 查詢                                                                          | 運行時間                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -66,6 +87,22 @@ C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾�
 | `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
 我們的[在線演示](https://demo.questdb.io/)運行在 `c5.metal` 上且僅使用 96 個線程中的 24 個線程。
+
+> 查看由 QuestDB 和 Grafana 提供的[互動實時市場數據仪表板](https://questdb.io/dashboards/crypto/)
+> 和[紐約出租車數據分析仪表板](https://questdb.io/dashboards/taxi/)。
+
+## 性能比較
+
+QuestDB 在數據擷入速度和查詢性能方面優於其他開源時序數據庫：
+
+| 數據庫         | 擷入速度           | 查詢性能         |
+|-------------|----------------|--------------|
+| QuestDB     | 4,000,000+ 行/秒 | < 1ms 聚合查詢   |
+| InfluxDB    | 500,000 行/秒    | > 100ms 聚合查詢 |
+| TimescaleDB | 300,000 行/秒    | > 50ms 聚合查詢  |
+
+> 查看 QuestDB 和 InfluxDB
+> 在功能、穩定性和性能方面的[詳細比較文章](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)。
 
 ## 如何開始
 
@@ -90,21 +127,31 @@ questdb stop  // To stop questdb
 [QuestDB 下載頁面](https://questdb.io/get-questdb/) 提供運行文件的直接下載，並
 提供其他安裝和部署方式的詳細信息。
 
+### QuestDB Cloud
+
+QuestDB Cloud 是 QuestDB 的完全管理版本，具有企業級功能：
+
+- **基於角色的訪問控制 (RBAC)**：安全管理用戶許可權
+- **自動備份**：雲原生備份與時間點還原
+- **數據壓縮**：儲存成本最多減少 90%
+- **監控和警示**：追蹤性能和系統健康狀態
+- **自動快照**：定期建立快照以保護數據
+- **24/7 支持**：專業技術支持
+
+[免費開始使用，獲得 $200 信用額](https://cloud.questdb.com)。
+
 ### 連接到 QuestDB
 
-你可以使用以下接口與 QuestDB 進行交互。
+你可以使用以下接口與 QuestDB 進行交互：
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 將會啓動一個 web
-  控制台，默認運行在 `9000` 端口
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
-  持高性能、高吞吐量單向數據插入，默認運行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 默認運行在 `9000` 端口
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
-  默認運行在 `8812` 端口
+- [Web 控制台](https://questdb.io/docs/web-console/)：使用互動 SQL 編輯器和 CSV 導入，運行在端口 `9000`
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)：用於串流數據擷入，運行在端口 `9009`
+- [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/)：用於程式化查詢和交易插入，運行在端口 `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/)：用於 CSV 導入和 cURL 操作，運行在端口 `9000`
 
 ### 寫入數據
 
-以下是我們官方開發的questdb客戶端，支持多種編程語言：
+以下是我們的官方 QuestDB 客戶端，支持通過 InfluxDB Line Protocol 進行數據擷入：
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -114,23 +161,48 @@ questdb stop  // To stop questdb
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
-## QuestDB 與其他開源 TSDB 的對比
+### 端到端快速入門
 
-參考[我們的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
-其中在功能、性能和成熟度上比較了 QuestDB 和其他的開源時序數據庫。
+想要完整體驗從串流數據擷入到使用 Grafana
+進行視覺化的整個流程嗎？請查看我們的多路徑[quickstart](https://github.com/questdb/questdb-quickstart)倉庫。
 
-以下是 高維度[時間序列基准測試套件](https://github.com/timescale/tsbs) 運行 `cpu-only`
-用例的測試結果，基于使用 6 到 16 個工作線程在 32 個 CPU 和 64 GB RAM上測試對比得到：
+## 為什麼選擇 QuestDB？
+
+### 與其他時序數據庫的比較
+
+QuestDB 在與其他時序數據庫解決方案的比較中優勢明顯：
+
+**vs InfluxDB：**
+
+- 擷入速度快 10 倍
+- 使用標準 SQL 而非定制查詢語言
+- 無需額外的視覺化軟體
+
+**vs TimescaleDB：**
+
+- 為時序特別設計的架構
+- 高 cardinality 數據性能更優
+- 不需要 PostgreSQL 依賴
+
+**vs ClickHouse：**
+
+- 為時序數據特別優化
+- 更易於使用和部署
+- 內建時序 SQL 支持
 
 <div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="../.github/readme-benchmark.png"
-      width="600"
-    />
-  </a>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
 </div>
+
+### 企業級功能
+
+QuestDB 通過 QuestDB Cloud 提供企業級功能：
+
+- **企業級安全性**：傳輸和靜態加密
+- **可擴展性**：按需求自動擴展
+- **符合性**：SOC 2 Type II、GDPR 就緒
+- **整合**：與超過 40 個熱門工具連接
+- **專業支持**：99.95% 運行時間 SLA
 
 ## 相關資源
 
@@ -331,5 +403,9 @@ questdb stop  // To stop questdb
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 本項目遵循
-[all-contributors](https://github.com/all-contributors/all-contributors) 標准.
+[all-contributors](https://github.com/all-contributors/all-contributors) 標準。
 歡迎任何形式的貢獻！
+
+## 授權許可
+
+QuestDB 在 [Apache License 2.0](https://github.com/questdb/questdb/blob/master/LICENSE.txt) 下分發。

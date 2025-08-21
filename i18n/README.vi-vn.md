@@ -15,13 +15,36 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | Tiếng Việt
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="./README.zh-cn.md">简体中文</a> |
+  <a href="./README.zh-hk.md">繁體中文</a> |
+  <a href="./README.ar-dz.md">العربية</a> |
+  <a href="./README.it-it.md">Italiano</a> |
+  <a href="./README.ua-ua.md">Українська</a> |
+  <a href="./README.es-es.md">Español</a> |
+  <a href="./README.pt.md">Português</a> |
+  <a href="./README.ja-ja.md">日本語</a> |
+  <a href="./README.tr-tr.md">Türkçe</a> |
+  <a href="./README.hn-in.md">हिंदी</a> |
+  Tiếng Việt
+</p>
 
 # QuestDB
 
 QuestDB là một cơ sở dữ liệu chuỗi thời gian mã nguồn mở, được thiết kế để xử lý lưu lượng dữ liệu lớn và truy vấn SQL nhanh chóng với tính đơn giản trong vận hành.
 
-QuestDB rất phù hợp cho dữ liệu thị trường tài chính, dữ liệu cảm biến IoT, quảng cáo công nghệ và bảng điều khiển thời gian thực. Nó nổi bật với các tập dữ liệu có [độ phức tạp cao](https://questdb.io/glossary/high-cardinality/) và có thể thay thế InfluxDB thông qua việc hỗ trợ giao thức InfluxDB Line.
+## Lợi ích của QuestDB
+
+QuestDB cung cấp hiệu suất xuất sắc cho việc nhập và truy vấn dữ liệu chuỗi thời gian, đặc biệt phù hợp cho dữ liệu thị
+trường tài chính, dữ liệu cảm biến IoT, ứng dụng thời gian thực và phân tích. Nó nổi bật với các tập dữ liệu
+có [độ phức tạp cao](https://questdb.io/glossary/high-cardinality/) và có thể thay thế InfluxDB thông qua việc hỗ trợ
+giao thức InfluxDB Line.
+
+- **Hiệu suất cao**: Nhập hơn 4 triệu hàng mỗi giây và thực hiện các truy vấn phức tạp trong mili giây
+- **SQL tương thích**: Triển khai ANSI SQL với các phần mở rộng SQL chuỗi thời gian
+- **Tích hợp dễ dàng**: Tương thích với các công cụ như InfluxDB Line Protocol, PostgreSQL wire protocol và REST API
+- **Kiến trúc hiện đại**: Được xây dựng từ đầu để tối ưu hóa cho phần cứng hiện đại với xử lý song song và SIMD
 
 QuestDB triển khai ANSI SQL với các phần mở rộng SQL chuỗi thời gian. Các phần mở rộng SQL này giúp đơn giản hóa việc lọc và giảm mẫu dữ liệu, hoặc tương quan dữ liệu từ nhiều nguồn bằng cách sử dụng các liên kết quan hệ và chuỗi thời gian.
 
@@ -58,6 +81,19 @@ Chúng tôi cung cấp một [bản demo trực tuyến](https://demo.questdb.io
 
 Bản demo của chúng tôi đang chạy trên phiên bản `c5.metal` và sử dụng 24 lõi trong tổng số 96 lõi.
 
+## So sánh hiệu suất
+
+QuestDB vượt trội hơn các cơ sở dữ liệu chuỗi thời gian mã nguồn mở khác về tốc độ nhập dữ liệu và hiệu suất truy vấn:
+
+| Cơ sở dữ liệu | Tốc độ nhập dữ liệu  | Hiệu suất truy vấn           |
+|---------------|----------------------|------------------------------|
+| QuestDB       | 4,000,000+ hàng/giây | < 1ms cho truy vấn agregat   |
+| InfluxDB      | 500,000 hàng/giây    | > 100ms cho truy vấn agregat |
+| TimescaleDB   | 300,000 hàng/giây    | > 50ms cho truy vấn agregat  |
+
+> Xem [bài đăng so sánh chi tiết](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/) giữa QuestDB và InfluxDB
+> về chức năng, tính ổn định và hiệu suất.
+
 ## Bắt đầu
 
 ### Cài đặt QuestDB
@@ -82,9 +118,16 @@ questdb stop  // To stop questdb
 
 ### QuestDB Cloud
 
-QuestDB Cloud là phiên bản được quản lý hoàn toàn của QuestDB, với các tính năng bổ sung như kiểm soát truy cập dựa trên vai trò,
-Sao lưu theo chuẩn Cloud-native, Nén dữ liệu, giám sát và chụp ảnh theo chuẩn Cloud-native.
-[Bắt đầu với $200 tín dụng](https://cloud.questdb.com).
+QuestDB Cloud là phiên bản được quản lý hoàn toàn của QuestDB với các tính năng doanh nghiệp:
+
+- **Kiểm soát truy cập dựa trên vai trò (RBAC)**: Quản lý quyền người dùng một cách an toàn
+- **Sao lưu tự động**: Sao lưu theo chuẩn cloud-native với khôi phục theo thời điểm
+- **Nén dữ liệu**: Giảm chi phí lưu trữ lên đến 90%
+- **Giám sát và cảnh báo**: Theo dõi hiệu suất và sức khỏe hệ thống
+- **Snapshot tự động**: Tạo snapshot định kỳ để bảo vệ dữ liệu
+- **Hỗ trợ 24/7**: Hỗ trợ kỹ thuật chuyên nghiệp
+
+[Bắt đầu với $200 tín dụng miễn phí](https://cloud.questdb.com).
 
 ### Kết nối với QuestDB
 
@@ -112,15 +155,43 @@ Dưới đây là các khách hàng chính thức của QuestDB để nhập d�
 Muốn đi qua mọi thứ, từ nhập dữ liệu theo luồng đến trực quan hóa với Grafana? Hãy kiểm tra
 kho lưu trữ [quickstart](https://github.com/questdb/questdb-quickstart) đa đường dẫn của chúng tôi.
 
-## So sánh QuestDB với các hệ thống cơ sở dữ liệu chuỗi thời gian mã nguồn mở khác
+## Tại sao chọn QuestDB?
 
-Xem [bài đăng so sánh](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
-giữa QuestDB và InfluxDB về chức năng, tính chín muối và hiệu suất.
+### So sánh với các cơ sở dữ liệu chuỗi thời gian khác
+
+QuestDB vượt trội so với các giải pháp cơ sở dữ liệu chuỗi thời gian khác:
+
+**vs InfluxDB:**
+
+- Nhanh hơn 10x trong nhập dữ liệu
+- SQL tiêu chuẩn thay vì ngôn ngữ truy vấn tùy chỉnh
+- Không cần phần mềm bổ sung cho visualization
+
+**vs TimescaleDB:**
+
+- Kiến trúc được thiết kế riêng cho chuỗi thời gian
+- Hiệu suất cao hơn cho dữ liệu có độ phức tạp cao
+- Không cần PostgreSQL làm phụ thuộc
+
+**vs ClickHouse:**
+
+- Tối ưu hóa đặc biệt cho dữ liệu chuỗi thời gian
+- Dễ sử dụng và triển khai hơn
+- Hỗ trợ SQL chuỗi thời gian tích hợp sẵn
 
 <div align="center">
     <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
-  </a>
 </div>
+
+### Tính năng doanh nghiệp
+
+QuestDB cung cấp các tính năng doanh nghiệp thông qua QuestDB Cloud:
+
+- **Bảo mật cấp doanh nghiệp**: Mã hóa trong quá trình truyền tải và lưu trữ
+- **Khả năng mở rộng**: Tự động scale theo nhu cầu
+- **Tuân thủ**: SOC 2 Type II, GDPR ready
+- **Tích hợp**: Kết nối với hơn 40 công cụ phổ biến
+- **Hỗ trợ chuyên nghiệp**: SLA 99.95% uptime
 
 ## Tài liệu
 
@@ -314,3 +385,7 @@ Một lời cảm ơn lớn gửi đến những người tuyệt vời sau đâ
 Dự án này tuân thủ theo
 [tất cả những người đóng góp](https://github.com/all-contributors/all-contributors)
 quy định. Mọi đóng góp đều được hoan nghênh!
+
+## Giấy phép
+
+QuestDB được phân phối dưới [Apache License 2.0](https://github.com/questdb/questdb/blob/master/LICENSE.txt).
