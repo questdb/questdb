@@ -103,7 +103,18 @@ public class DecimalsTest extends AbstractTest {
             short tag = ColumnType.tagOf(type);
             short expectedTag = getExpectedTag(precision);
             Assert.assertEquals(String.format("Failed at iteration %d, expected tag to be %d not %d", i, expectedTag, tag), expectedTag, tag);
+
+            Assert.assertTrue(ColumnType.isDecimal(type));
         }
+    }
+
+    @Test
+    public void testIsDecimalInvalid() {
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.BOOLEAN));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.DOUBLE));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.VARCHAR));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.INTERVAL));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.GEOHASH));
     }
 
     @Test
