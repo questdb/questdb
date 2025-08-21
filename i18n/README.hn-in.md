@@ -18,6 +18,7 @@
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
+  <a href="./README.fr-fr.md">Français</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.tr-tr.md">Türkçe</a> |
   हिंदी |

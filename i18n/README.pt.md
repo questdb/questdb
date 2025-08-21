@@ -26,9 +26,10 @@
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
   Português |
+  <a href="./README.fr-fr.md">Français</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.tr-tr.md">Türkçe</a> |
-  <a href="./README.hn-in.md">हिंदी</a> |
+  <a href="./README.hn-in.md">हिंदŀ</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a>
 </p>
 

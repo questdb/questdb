@@ -12,13 +12,13 @@
 <p align="center">
   <a href="https://github.com/questdb/questdb">English</a> |
   <a href="./README.zh-cn.md">简体中文</a> |
-  繁體中文 |
+  <a href="./README.zh-hk.md">繁體中文</a> |
   <a href="./README.ar-dz.md">العربية</a> |
   <a href="./README.it-it.md">Italiano</a> |
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
-  <a href="./README.fr-fr.md">Français</a> |
+  Français |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
@@ -27,13 +27,20 @@
 
 ---
 
-QuestDB 是一個開源時序數據庫，提供極速數據獲取和動態、低延遲的 SQL 查詢。
+QuestDB est une base de données de séries temporelles open source offrant une **ingestion ultra-rapide**
+et des **requêtes SQL dynamiques à faible latence**.
 
-QuestDB 提供多層存儲引擎（WAL → 原生 → 對象存儲上的 Parquet），整個代碼庫從頭開始使用零 GC Java、C++ 和 Rust（QuestDB 企業版）構建。
+Nous atteignons de hautes performances grâce à un modèle de stockage orienté colonnes,
+une exécution vectorielle parallélisée, des instructions SIMD et des techniques de faible latence.
+De plus, QuestDB est efficace en ressources matérielles, avec une configuration rapide et une efficacité opérationnelle.
 
-我們通過列導向存儲模型、並行向量執行、SIMD 指令和低延遲技術實現高性能。此外，QuestDB 硬體效率高，設定迅速且運營高效。
+QuestDB implémente ANSI SQL avec des extensions SQL natives pour les séries temporelles.
 
-> 準備好了嗎？跳轉到[開始使用](#開始使用)部分。
+QuestDB fournit un moteur de stockage multi-niveaux (WAL → natif → Parquet sur stockage objet), et
+l'ensemble du code est construit de zéro en Java sans garbage collection, C++ et Rust (QuestDB Enterprise).
+
+> Prêt à commencer ? Rendez-vous à la section
+> [Démarrage](#get-started).
 
 <p>&nbsp;</p>
 
@@ -41,82 +48,87 @@ QuestDB 提供多層存儲引擎（WAL → 原生 → 對象存儲上的 Parquet
   <a href="https://demo.questdb.io/">
     <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB Web 控制台 - 點擊啟動演示</em></p>
+  <p><em>Console Web QuestDB - cliquez pour lancer la démo</em></p>
 </div>
 
 <p>&nbsp;</p>
 
-## QuestDB 的優勢
+## Avantages de QuestDB
 
-特色功能包括：
+### Les fonctionnalités principales incluent :
 
-- 低延遲、高吞吐獲取 — 從單個事件到每秒數百萬個
-- 具有時序擴展的低延遲 SQL（ASOF JOIN、SAMPLE BY、LATEST ON）
-- SIMD 加速、並行執行；在適度硬體上快速運行
-- 多層存儲：WAL → 原生列導向 → Parquet（按時間分區和時間排序）
-- Postgres 協議（PGwire）和 REST API
-- 物化視圖和 n 維數組（包括用於訂單簿的 2D 數組）
-- 用於查詢和數據管理的 Web 控制台
-- Apache 2.0 開源和開放格式 — 無供應商鎖定
-- [金融函數](https://questdb.com/docs/reference/function/finance/)
-  和[訂單簿分析](https://questdb.com/docs/guides/order-book/)
+- Ingestion haute fréquence, faible latence — d'événements uniques à des millions/sec
+- SQL faible latence avec extensions de séries temporelles (ASOF JOIN, SAMPLE BY, LATEST ON)
+- Exécution parallèle accélérée SIMD ; fonctionne rapidement sur du matériel modeste
+- Stockage multi-niveaux : WAL → colonnes natives → Parquet (partitionné et ordonné par temps)
+- Protocole Postgres (PGwire) et API REST
+- Vues matérialisées et tableaux n-dimensionnels (y compris tableaux 2D pour les carnets d'ordres)
+- Console web pour les requêtes et la gestion des données
+- Apache 2.0 open source et formats ouverts — aucun verrouillage fournisseur
+- [Fonctions financières](https://questdb.com/docs/reference/function/finance/)
+  et [analyses de carnets d'ordres](https://questdb.com/docs/guides/order-book/)
 
-QuestDB 擅長處理：
+### QuestDB excelle avec :
 
-- 金融市場數據（tick 數據、交易、訂單簿、OHLC）
-- 高數據基數的傳感器/遙測數據
-- 即時儀表板和監控
+- les données de marchés financiers (données tick, transactions, carnets d'ordres, OHLC)
+- Les données de capteurs/télémétrie avec une cardinalité de données élevée
+- les tableaux de bord et la surveillance en temps réel
 
-為什麼使用時序數據庫？
+### Et pourquoi utiliser une base de données de séries temporelles ?
 
-除了性能和效率，使用專門的時序數據庫，您無需擔心：
+Au-delà des performances et de l'efficacité, avec une base de données de séries temporelles spécialisée, vous
+n'avez pas à vous soucier de :
 
-- 亂序數據
-- 去重和恰好一次語義
-- 連續流式獲取與多個併發查詢
-- 流式數據（低延遲）
-- 不穩定和"突發"數據
-- 添加新列 - 在流式數據時"即時"更改模式
+- données dans le désordre
+- déduplication et sémantique exactement-une-fois
+- Ingestion en streaming continu avec de nombreuses requêtes simultanées
+- données de streaming (faible latence)
+- données volatiles et "en rafales"
+- ajout de nouvelles colonnes - changer le schéma "à la volée" pendant le streaming de données
 
-## 試用 QuestDB、演示和儀表板
+## Essayer QuestDB, démo et tableaux de bord
 
-[即時公共演示](https://demo.questdb.com/)配備最新的 QuestDB 版本和示例數據集：
+La [démo publique en direct](https://demo.questdb.com/) est provisionnée avec la dernière
+version de QuestDB et des jeux de données d'exemple :
 
-- 交易：每月超過 3000 萬行的即時加密貨幣交易（OKX 交易所）
-- 外匯訂單簿：帶有訂單簿外匯對的即時圖表
-- 行程：10 年紐約出租車行程數據，包含 16 億行
+- Transactions : transactions crypto en direct avec 30M+ lignes par mois (bourse OKX)
+- Carnet d'ordres FX : graphiques en direct avec paires FX de carnets d'ordres
+- Trajets : 10 ans de trajets de taxis NYC avec 1,6 milliard de lignes
 
-我們還有一些使用我們的 [Grafana 原生](https://questdb.com/docs/third-party-tools/grafana/)插件的公共即時演示儀表板：
+Nous avons également des tableaux de bord de démonstration publics en temps réel utilisant
+notre plugin [natif Grafana](https://questdb.com/docs/third-party-tools/grafana/) :
 
-- [即時加密貨幣交易：](https://questdb.com/dashboards/crypto/)OKX 上超過 20 個資產的即時執行交易
-- [外匯訂單簿：](https://questdb.com/dashboards/FX-orderbook/)主要外匯對的即時深度/失衡圖表
+- [Transactions crypto en temps réel :](https://questdb.com/dashboards/crypto/) transactions exécutées
+  sur OKX à partir de plus de 20 actifs en temps réel
+- [Carnet d'ordres FX :](https://questdb.com/dashboards/FX-orderbook/) graphiques de profondeur/déséquilibre en direct
+  pour les paires principales
 
-### QuestDB 與其他數據庫的性能對比
+### Performance de QuestDB vs autres bases de données
 
-QuestDB 在性能基準測試中相比其他替代方案表現優異。
+QuestDB performe très bien dans les benchmarks de performance comparé aux alternatives.
 
-有關內部結構和性能的深入分析，請參閱以下博客文章：
+Pour des analyses approfondies des internels et des performances, consultez les articles de blog suivants :
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
 - [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
-我們始終鼓勵您運行自己的基準測試。
+Comme toujours, nous vous encourageons à exécuter vos propres benchmarks.
 
 <div align="center">
   <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
 </div>
 
-## 開始使用
+## Démarrage
 
-使用 [Docker](https://www.docker.com/) 快速開始：
+Utilisez [Docker](https://www.docker.com/) pour commencer rapidement :
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-或者 macOS 用戶可以使用 Homebrew：
+Ou les utilisateurs macOS peuvent utiliser Homebrew :
 
 ```bash
 brew install questdb
@@ -128,11 +140,12 @@ questdb start
 questdb stop
 ```
 
-或者，要開始完整的入門過程，請從我們簡潔的[快速入門指南](https://questdb.com/docs/quick-start/)開始。
+Alternativement, pour démarrer le parcours d'intégration complet, commencez avec notre
+[guide de démarrage rapide](https://questdb.com/docs/quick-start/) concis.
 
-### 第一方獲取客戶端
+### Clients d'ingestion first-party
 
-通過 InfluxDB Line Protocol 獲取數據的 QuestDB 客戶端：
+Clients QuestDB pour ingérer des données via le protocole InfluxDB Line Protocol :
 
 - [Python](https://questdb.com/docs/clients/ingest-python/)
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
@@ -142,18 +155,22 @@ questdb stop
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-### 連接到 QuestDB
+### Se connecter à QuestDB
 
-通過以下界面與 QuestDB 和您的數據交互：
+Interagissez avec QuestDB et vos données via les interfaces suivantes :
 
-- [Web 控制台](https://questdb.com/docs/web-console/)，用於在端口 `9000` 上進行交互式 SQL 編輯器和 CSV 導入
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)，用於在端口 `9000` 上進行流式獲取
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)，用於在端口 `8812` 上進行編程查詢
-- [REST API](https://questdb.com/docs/reference/api/rest/)，用於在端口 `9000` 上進行 CSV 導入和 cURL
+- [Console Web](https://questdb.com/docs/web-console/) pour un éditeur SQL interactif
+  et l'import CSV sur le port `9000`
+- [Protocole InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)
+  pour l'ingestion streaming sur le port `9000`
+- [Protocole PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)
+  pour les requêtes programmatiques sur le port `8812`
+- [API REST](https://questdb.com/docs/reference/api/rest/) pour l'import CSV et
+  cURL sur le port `9000`
 
-### 熱門第三方工具
+### Outils tiers populaires
 
-與 QuestDB 整合的熱門工具包括：
+Les outils populaires qui s'intègrent avec QuestDB incluent :
 
 - [Kafka](https://questdb.io/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
@@ -166,79 +183,93 @@ questdb stop
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
 - [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
-### 端到端代碼腳手架
+### Échafaudages de code de bout en bout
 
-從流式獲取到使用 Grafana 進行可視化，請從我們的[快速入門存儲庫](https://github.com/questdb/questdb-quickstart)中的代碼腳手架開始。
+Du streaming d'ingestion à la visualisation avec Grafana, commencez avec des échafaudages de code
+de notre [dépôt de démarrage rapide](https://github.com/questdb/questdb-quickstart).
 
-### 為生產工作負載配置 QuestDB
+### Configurer QuestDB pour les charges de travail de production
 
-查找我們的[容量規劃](https://questdb.com/docs/deployment/capacity-planning/)以為生產工作負載微調 QuestDB。
+Trouvez notre [planification de capacité](https://questdb.com/docs/deployment/capacity-planning/) pour
+ajuster finement QuestDB pour les charges de travail de production.
 
-### QuestDB 企業版
+### QuestDB Enterprise
 
-用於在更大規模或更大組織內的安全操作。
+Pour une opération sécurisée à plus grande échelle ou au sein d'organisations plus importantes.
 
-其他功能包括：
+Les fonctionnalités supplémentaires incluent :
 
-- 高可用性和讀取副本
-- 多主獲取
-- 冷存儲整合
-- 基於角色的訪問控制
-- TLS 加密
-- 通過對象存儲原生查詢 Parquet 文件
-- 支持 SLA、增強監控等
+- haute disponibilité et réplique(s) en lecture
+- ingestion multi-primaire
+- intégration du stockage froid
+- contrôle d'accès basé sur les rôles
+- chiffrement TLS
+- requête native de fichiers Parquet via le stockage objet
+- support SLA, surveillance améliorée et plus
 
-訪問[企業版頁面](https://questdb.com/enterprise/)獲取更多詳細信息和聯系信息。
+Visitez la [page Enterprise](https://questdb.com/enterprise/) pour plus de détails
+et informations de contact.
 
-## 其他資源
+## Ressources supplémentaires
 
-### 📚 閱讀文檔
+### 📚 Lire la documentation
 
-- [QuestDB 文檔：](https://questdb.com/docs/)開始旅程
-- [產品路線圖：](https://github.com/orgs/questdb/projects/1/views/5)查看我們即將發布的版本計劃
-- [教程：](https://questdb.io/tutorial/)逐步學習 QuestDB 的可能性
+- [Documentation QuestDB :](https://questdb.com/docs/) commencer le parcours
+- [Feuille de route produit :](https://github.com/orgs/questdb/projects/1/views/5) consulter
+  notre plan pour les versions à venir
+- [Tutoriels :](https://questdb.io/tutorial/) apprendre ce qui est possible avec QuestDB,
+  étape par étape
 
-### ❓ 獲取支持
+### ❓ Obtenir du support
 
-- [社群論壇：](https://community.questdb.com/)參加技術討論，提問問題，結識其他用戶！
-- [公共 Slack：](https://slack.questdb.io/)與 QuestDB 團隊和社群成員聊天
-- [GitHub 問題：](https://github.com/questdb/questdb/issues)報告 QuestDB 的錯誤或問題
-- [Stack Overflow：](https://stackoverflow.com/questions/tagged/questdb)尋找常見故障排除解決方案
+- [Forum de discussion communautaire :](https://community.questdb.com/) rejoindre les discussions techniques,
+  poser des questions, et rencontrer d'autres utilisateurs !
+- [Slack public :](https://slack.questdb.io/) discuter avec l'équipe QuestDB et
+  les membres de la communauté
+- [Issues GitHub :](https://github.com/questdb/questdb/issues) signaler des bugs ou
+  des problèmes avec QuestDB
+- [Stack Overflow :](https://stackoverflow.com/questions/tagged/questdb) chercher des
+  solutions de dépannage communes
 
-### 🚢 部署 QuestDB
+### 🚢 Déployer QuestDB
 
 - [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [官方 Docker 鏡像](https://questdb.com/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm 圖表](https://questdb.com/docs/guides/kubernetes)
+- [Image Docker officielle](https://questdb.com/docs/get-started/docker)
+- [Droplets DigitalOcean](https://questdb.com/docs/guides/digitalocean)
+- [Charts Kubernetes Helm](https://questdb.com/docs/guides/kubernetes)
 
-## 貢獻
+## Contribuer
 
-歡迎貢獻！
+Les contributions sont les bienvenues !
 
-我們感謝：
+Nous apprécions :
 
-- 源代碼
-- 文檔（請參閱我們的[文檔存儲庫](https://github.com/questdb/documentation)）
-- 錯誤報告
-- 功能請求或反饋
+- le code source
+- la documentation (voir notre
+  [dépôt de documentation](https://github.com/questdb/documentation))
+- les rapports de bugs
+- les demandes de fonctionnalités ou les commentaires.
 
-要開始貢獻：
+Pour commencer à contribuer :
 
--
-查看標記為「[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)
-」的 GitHub 問題
-- 對於
-  Hacktoberfest，請參閱相關的[標記問題](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-- 閱讀[貢獻指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- 有關構建 QuestDB 的詳細信息，請參閱[構建說明](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [創建 QuestDB 分支](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)並提交帶有您建議更改的拉取請求
-- 遇到困難？加入我們的[公共 Slack](https://slack.questdb.io/)尋求幫助
+- Jetez un œil aux issues GitHub étiquetées
+  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+- Pour Hacktoberfest, voir les
+  [issues étiquetées](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+  pertinentes
+- Lire le
+  [guide de contribution](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- Pour les détails sur la construction de QuestDB, voir les
+  [instructions de construction](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Créer un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
+  de QuestDB et soumettre une pull request avec vos changements proposés
+- Bloqué ? Rejoignez notre [Slack public](https://slack.questdb.io/) pour de l'aide
 
-✨ 作為我們感謝的標誌，我們向貢獻者發送 QuestDB 周邊產品！
+✨ En signe de notre gratitude, nous envoyons des goodies QuestDB à nos contributeurs !
 
-特別感謝以下為 QuestDB 做出貢獻的優秀人士[表情符號鍵](https://allcontributors.org/docs/en/emoji-key)：
+Un grand merci aux personnes merveilleuses suivantes qui ont contribué à
+QuestDB [clé emoji](https://allcontributors.org/docs/en/emoji-key) :
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -393,4 +424,5 @@ questdb stop
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-本項目遵循 [all-contributors](https://github.com/all-contributors/all-contributors) 規範。歡迎任何形式的貢獻！
+Ce projet adhère à la spécification [all-contributors](https://github.com/all-contributors/all-contributors).
+Les contributions de toute nature sont les bienvenues !
