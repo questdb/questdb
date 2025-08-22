@@ -858,6 +858,22 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
+
+        assertQuery(
+                "coalesce\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n",
+                "select coalesce(a, b) from tango",
+                "create table tango as (" +
+                        "select " +
+                        " x::timestamp a," +
+                        " x::timestamp_ns b" +
+                        " from long_sequence(2)" +
+                        ")",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
