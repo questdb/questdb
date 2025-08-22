@@ -238,7 +238,7 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringToIpv4() throws Exception {
+    public void testStringToIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table up as" +

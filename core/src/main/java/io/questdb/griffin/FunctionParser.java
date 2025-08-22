@@ -39,6 +39,8 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
@@ -225,7 +227,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.UUID:
                 return UuidColumn.newInstance(index);
             case ColumnType.IPv4:
-                return new IPv4Column(index);
+                return IPv4Column.newInstance(index);
             case ColumnType.INTERVAL:
                 return IntervalColumn.newInstance(index);
             case ColumnType.ARRAY:
@@ -265,7 +267,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     public Function createImplicitCast(int position, Function function, int toType) throws SqlException {
-        Function cast = createImplicitCastOrNull(position, function, toType);
+        final Function cast = createImplicitCastOrNull(position, function, toType);
         if (cast != null && cast.isConstant()) {
             Function constant = functionToConstant(cast);
             // incoming function is now converted to a constant and can be closed here
@@ -1110,6 +1112,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
                     return new CastCharToSymbolFunctionFactory.Func(function);
+                }
+                break;
+            case ColumnType.IPv4:
+                if (toType == ColumnType.STRING) {
+                    return new CastIPv4ToStrFunctionFactory.Func(function);
+                }
+                if (toType == ColumnType.VARCHAR) {
+                    return new CastIPv4ToVarcharFunctionFactory.Func(function);
                 }
                 break;
             default:

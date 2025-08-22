@@ -27,12 +27,23 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class IPv4Column extends IPv4Function implements ColumnFunction {
+    private static final ObjList<IPv4Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
     public IPv4Column(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    public static IPv4Column newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new IPv4Column(columnIndex);
     }
 
     @Override
@@ -46,5 +57,17 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
             return Numbers.IPv4_NULL;
         }
         return rec.getIPv4(columnIndex);
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return true;
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new IPv4Column(i));
+        }
     }
 }
