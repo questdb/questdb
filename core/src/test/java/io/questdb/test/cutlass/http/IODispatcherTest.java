@@ -7105,30 +7105,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testTest() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        testHttpClient.setKeepConnection(true);
-                        testHttpClient.assertGetParquet(
-                                "/exp",
-                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
-                                "generate_series(0, '1971-01-01', '5s');"
-                        );
-
-                        // verify that HTTP server is healthy, use the same connection
-//                        testHttpClient.setKeepConnection(false);
-//                        testHttpClient.assertGet(
-//                                "/exp",
-//                                "\"count\"\r\n" +
-//                                        "1\r\n",
-//                                "SELECT count() FROM trades;"
-//                        );
-                    }
-                });
-    }
-
-    @Test
     public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
         getSimpleTester()
                 .withWorkerCount(2)
