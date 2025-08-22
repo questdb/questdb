@@ -686,6 +686,22 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putDecimal128(long hi, long lo) {
+            Unsafe.getUnsafe().putLong(appendAddress, hi);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
+            appendAddress += 16L;
+        }
+
+        @Override
+        public void putDecimal256(long hh, long hl, long lh, long ll) {
+            Unsafe.getUnsafe().putLong(appendAddress, hh);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hl);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, lh);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, ll);
+            appendAddress += 32L;
+        }
+
+        @Override
         public void putDouble(double value) {
             Unsafe.getUnsafe().putDouble(appendAddress, value);
             appendAddress += 8L;
@@ -962,6 +978,24 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putDate(long value) {
             putLong(value);
+        }
+
+        @Override
+        public void putDecimal128(long hi, long lo) {
+            checkCapacity(16L);
+            Unsafe.getUnsafe().putLong(appendAddress, hi);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
+            appendAddress += 16L;
+        }
+
+        @Override
+        public void putDecimal256(long hh, long hl, long lh, long ll) {
+            checkCapacity(32L);
+            Unsafe.getUnsafe().putLong(appendAddress, hh);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hl);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, lh);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, ll);
+            appendAddress += 32L;
         }
 
         @Override

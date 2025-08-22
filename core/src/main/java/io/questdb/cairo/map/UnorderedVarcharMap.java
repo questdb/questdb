@@ -670,6 +670,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         @Override
+        public void putDecimal128(long hi, long lo) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(long hh, long hl, long lh, long ll) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putDouble(double value) {
             throw new UnsupportedOperationException();
         }
