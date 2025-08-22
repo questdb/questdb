@@ -2,10 +2,12 @@ package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
@@ -49,15 +51,27 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         Path.clearThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
             int timeoutMillis = 30_000;
-            int delayMillis = 2000;
+            int delayMillis = 3000;
             int jitterMillis = 150;
 
-            AtomicLong t1Count = new AtomicLong();
-            AtomicLong t2Count = new AtomicLong();
-            AtomicLong t3Count = new AtomicLong();
+            AtomicLong t1Count = new AtomicLong(0);
+            AtomicLong t2Count = new AtomicLong(0);
+            AtomicLong t3Count = new AtomicLong(0);
 
-            Thread t1 = new Thread(() -> createAServerAndOccasionallyBlipIt("server1", HOST, PORT1, false, timeoutMillis, delayMillis, jitterMillis, t1Count));
-            Thread t2 = new Thread(() -> createAServerAndOccasionallyBlipIt("server2", HOST, PORT2, false, timeoutMillis, delayMillis, jitterMillis, t2Count));
+            Thread t1 = new Thread(() -> {
+                try {
+                    createAServerAndOccasionallyBlipIt("server1", HOST, PORT1, false, timeoutMillis, delayMillis, jitterMillis, t1Count);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            Thread t2 = new Thread(() -> {
+                try {
+                    createAServerAndOccasionallyBlipIt("server2", HOST, PORT2, false, timeoutMillis, delayMillis, jitterMillis, t2Count);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
             Thread t3 = new Thread(() -> sendToTwoPossibleServers(HOST, PORT1, HOST, PORT2, (int) (timeoutMillis * 0.9), delayMillis / 5, jitterMillis / 5, t3Count));
             t1.start();
             t2.start();
@@ -66,8 +80,14 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             t2.join();
             t1.join();
 
+            long c1 = t1Count.get();
+            long c2 = t2Count.get();
+            long c3 = t3Count.get();
+            Assert.assertEquals(c3, c1 + c2);
+//            TestUtils.assertEventually(() -> {
+//                Assert.assertEquals(t3Count.get(), t1Count.get() + t2Count.get());
+//            });
 
-            Assert.assertEquals(t3Count.get(), t1Count.get() + t2Count.get());
             Path.clearThreadLocals();
         });
     }
@@ -80,15 +100,30 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     }
 
     public TestServerMain startInstancesWithoutConflict(String rootName, String host, int port, boolean readOnly) {
-        return startWithEnvVariables(
-                PropertyKey.HTTP_BIND_TO.getEnvVarName(), host + ":" + port,
-                PropertyKey.HTTP_MIN_NET_BIND_TO.getEnvVarName(), host + ":" + port + 1,
-                PropertyKey.PG_NET_BIND_TO.getEnvVarName(), host + ":" + port + 2,
-                PropertyKey.LINE_TCP_NET_BIND_TO.getEnvVarName(), host + ":" + port + 3,
-                PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath.parent().concat(rootName).toString(),
-                PropertyKey.LINE_HTTP_ENABLED.getEnvVarName(), "true",
-                PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), String.valueOf(readOnly)
-        );
+        TestServerMain server;
+
+        for (int i = 0; i < 10; i++) {
+            try {
+                server = startWithEnvVariables(
+                        PropertyKey.HTTP_BIND_TO.getEnvVarName(), host + ":" + port,
+                        PropertyKey.HTTP_MIN_NET_BIND_TO.getEnvVarName(), host + ":" + port + 1,
+                        PropertyKey.PG_NET_BIND_TO.getEnvVarName(), host + ":" + port + 2,
+                        PropertyKey.LINE_TCP_NET_BIND_TO.getEnvVarName(), host + ":" + port + 3,
+                        PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath.parent().concat(rootName).toString(),
+                        PropertyKey.LINE_HTTP_ENABLED.getEnvVarName(), "true",
+                        PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), String.valueOf(readOnly)
+                );
+                return server;
+            } catch (CairoException e) {
+                if (e.getMessage().contains("cannot lock")) {
+                    Os.sleep((i + 1) * 100);
+                    continue;
+                }
+                throw e;
+            }
+        }
+        Assert.fail();
+        return null;
     }
 
     @Test
@@ -241,10 +276,21 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         });
     }
 
+    private void assertThatWalIsDrained(CairoEngine engine, TableToken tt) throws Exception {
+        TestUtils.assertEventually(() -> {
+            try {
+                SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                Assert.assertEquals(seqTxnTracker.getWriterTxn(), seqTxnTracker.getSeqTxn());
+            } catch (Exception e) {
+                Assert.fail(e.getMessage());
+            }
+        });
+    }
+
     /**
      * Creates and destroys a server based on a delay and jitter.
      */
-    private void createAServerAndOccasionallyBlipIt(String rootName, String host, int port, boolean readOnly, int timeoutMillis, int delayMillis, int jitterMillis, AtomicLong count) {
+    private void createAServerAndOccasionallyBlipIt(String rootName, String host, int port, boolean readOnly, int timeoutMillis, int delayMillis, int jitterMillis, AtomicLong count) throws Exception {
         long elapsedMillis = 0;
         @Nullable TestServerMain serverMain = null;
 
@@ -259,10 +305,14 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 if (serverMain.hasStarted()) {
                     // close it
                     serverMain.close();
+                    Os.sleep(50);
                 }
 
                 if (serverMain.hasBeenClosed()) {
                     serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
+                    Os.sleep(50);
+                    serverMain.start();
+                    Os.sleep(50);
                 }
 
                 int jitter = rnd.nextIntSync(jitterMillis);
@@ -273,9 +323,12 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 elapsedMillis += (endMillis - startMillis);
             }
         } finally {
-            if (serverMain != null && serverMain.hasBeenClosed()) {
+            if (serverMain == null || serverMain.hasBeenClosed()) {
+
                 serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
                 serverMain.start();
+                Os.sleep(50);
+
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = null;
@@ -284,7 +337,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 if (tt != null) {
                     break;
                 }
+                Os.sleep(10);
             }
+            assertThatWalIsDrained(serverMain.getEngine(), tt);
             try (TxReader txReader = new TxReader(serverMain.getEngine().getConfiguration().getFilesFacade())) {
                 count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), txReader));
             }
@@ -299,6 +354,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
                 TableUtils.setTxReaderPath(txReader, path, partitionBy); // modifies path
+//                txReader.unsafeLoadRowCount();
+//                txReader.getRowCount();
+//                txReader.getFixedRowCount();
                 return txReader.unsafeLoadRowCount();
             }
         }
