@@ -84,9 +84,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             long c2 = t2Count.get();
             long c3 = t3Count.get();
             Assert.assertEquals(c3, c1 + c2);
-//            TestUtils.assertEventually(() -> {
-//                Assert.assertEquals(t3Count.get(), t1Count.get() + t2Count.get());
-//            });
 
             Path.clearThreadLocals();
         });
@@ -353,10 +350,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             int partitionBy = tm.getPartitionBy();
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-                TableUtils.setTxReaderPath(txReader, path, partitionBy); // modifies path
-//                txReader.unsafeLoadRowCount();
-//                txReader.getRowCount();
-//                txReader.getFixedRowCount();
+                TableUtils.setTxReaderPath(txReader, path, partitionBy);
                 return txReader.unsafeLoadRowCount();
             }
         }
@@ -375,8 +369,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
                 sender.table("line").longColumn("foo", 123).atNow();
                 localCount++;
-
-
                 Os.sleep(10);
 
                 if (elapsedMillis > nextFlushAt) {
