@@ -52,24 +52,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
 
     @Test
-    public void testBasicExport() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    engine.execute("CREATE TABLE basic_parquet_test AS (" +
-                            "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
-                            "FROM long_sequence(5)" +
-                            ")", sqlExecutionContext);
-
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "select * from basic_parquet_test");
-                    params.put("fmt", "parquet");
-
-                    // The parquet export now suspends the request until copy completes, then returns the parquet file
-                    testHttpClient.assertGet("/exp", "PAR1", params.toString());
-                });
-    }
-
-    @Test
     public void testBasicParquetExport() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -78,12 +60,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
 
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "select * from basic_parquet_test");
-                    params.put("fmt", "parquet");
-                    params.put("filename", "basic_test");
-
-                    testHttpClient.assertGet("/exp", "{\"query\":\"select * from basic_parquet_test\",\"error\":\"\",\"position\":0}", params, null, null);
+                    testHttpClient.assertGetParquet("/exp", "PAR1\u0015\u0000\u0015\\\u0015\\,\u0015\n" +
+                            "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(|b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018|b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u001F\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0003\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0004\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0015\u0004\u0019%\u0000\u0006\u0019\u0018\u0002id\u0015\u0000\u0016\n" +
+                            "\u0016", "basic_parquet_test");
                 });
     }
 
@@ -163,10 +142,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("CREATE TABLE reject_non_select_test AS (SELECT x FROM long_sequence(2))", sqlExecutionContext);
 
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test");
-                    params.put("fmt", "parquet");
-                    testHttpClient.assertGet("/exp", "{\"query\":\"INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}", params, null, null);
+                    testHttpClient.assertGetParquet("/exp", "{\"query\":\"INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}", "INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test");
                 });
     }
 
@@ -232,46 +208,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testParquetExportStateTransitions() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    // Create test table for state transition testing
-                    engine.execute("CREATE TABLE state_transition_test AS (" +
-                            "SELECT x as id, x * 3 as value, 'state_' || x as label " +
-                            "FROM long_sequence(50)" +
-                            ")", sqlExecutionContext);
-
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "select * from state_transition_test");
-                    params.put("fmt", "parquet");
-                    params.put("filename", "state_transitions");
-
-                    // Test that the state machine properly transitions through parquet export states
-                    testHttpClient.assertGet("/exp", "PAR1\u0015\u0000\u0015", params, null, null);
-                });
-    }
-
-    @Test
-    public void testParquetExportWithFileDescriptorManagement() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    // Create a small test table
-                    engine.execute("CREATE TABLE fd_test AS (" +
-                            "SELECT x as id, 'fd_test_' || x as name " +
-                            "FROM long_sequence(10)" +
-                            ")", sqlExecutionContext);
-
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "select * from fd_test");
-                    params.put("fmt", "parquet");
-                    params.put("filename", "fd_management_test");
-
-                    // Test proper file descriptor handling during parquet export
-                    testHttpClient.assertGet("/exp", "{\"query\":\"select * from fd_test\",\"error\":\"\",\"position\":0}", params, null, null);
-                });
-    }
-
-    @Test
     public void testParquetExportWithMultipleDataTypes() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -288,11 +224,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "FROM long_sequence(3)" +
                             ")", sqlExecutionContext);
 
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "select * from " + tableName);
-                    params.put("fmt", "parquet");
 
-                    testHttpClient.assertGet("/exp", "PAR1\u0015\u0000\u0015$\u0015$,\u0015\u0006\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\u0004\u0003\u0000\u0000\u0000\u0018\u0004\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u0007\u0001\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u0000\u0000\u0000\u0015\u0002\u0019%\u0000\u0006\u0019\u0018\u0007int_col\u0015\u0000\u0016\u0006\u0016f\u0016f&|b<6\u0000(\u0004\u0003\u0000\u0000\u0000\u0018\u0004\u0001\u0000\u0000\u0000\u0000\u0000\u0015\u0000\u0015<\u0015<,\u0015\u0006\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(|b\u0003\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018|b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u0007\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0003\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0015\u0004\u0019%\u0000\u0006\u0019\u0018|blong_col\u0015\u0000\u0016\u0006\u0016", params, null, null);
+                    testHttpClient.assertGetParquet("/exp", "PAR1\u0015\u0000\u0015$\u0015$,\u0015\u0006\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\u0004\u0003\u0000\u0000\u0000\u0018\u0004\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u0007\u0001\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u0000\u0000\u0000\u0015\u0002\u0019%\u0000\u0006\u0019\u0018\u0007int_col\u0015\u0000\u0016\u0006\u0016f\u0016f&|b<6\u0000(\u0004\u0003\u0000\u0000\u0000\u0018\u0004\u0001\u0000\u0000\u0000\u0000\u0000\u0015\u0000\u0015<\u0015<,\u0015\u0006\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(|b\u0003\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018|b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0003\u0007\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0003\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0015\u0004\u0019%\u0000\u0006\u0019\u0018|blong_col\u0015\u0000\u0016\u0006\u0016",
+                            tableName);
                 });
     }
 }
