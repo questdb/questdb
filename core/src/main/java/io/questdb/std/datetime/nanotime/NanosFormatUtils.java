@@ -372,7 +372,14 @@ public class NanosFormatUtils {
     static {
         updateReferenceYear(Os.currentTimeMicros());
         final NanosFormatCompiler compiler = new NanosFormatCompiler();
-        PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUUNNN");
+        // PostgreSQL timestamp format with microsecond precision (not nanosecond).
+        // This format intentionally truncates nanoseconds to microsecond resolution because:
+        // 1. PostgreSQL's timestamp type only supports microsecond precision (6 decimal places)
+        // 2. Some PostgreSQL clients (e.g., psycopg2) fail when receiving timestamps with
+        //    nanosecond precision (9 decimal places)
+        // 3. PostgreSQL's binary wire protocol also uses microsecond precision, making this
+        //    consistent across both text and binary formats
+        PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
         final String[] httpPatterns = new String[]{ // priority sorted
                 "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
                 "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID
