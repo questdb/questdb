@@ -85,7 +85,20 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            boolean swapped = false;
+            if (masterFactory.recordCursorSupportsRandomAccess()) {
+                long masterSize = masterCursor.size();
+                long slaveSize = slaveCursor.size();
+
+                if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
+                    RecordCursor temp = masterCursor;
+                    masterCursor = slaveCursor;
+                    slaveCursor = temp;
+                    swapped = true;
+                }
+            }
+
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker(), swapped);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -254,7 +267,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker, boolean swapped) {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.reopen();
@@ -265,7 +278,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.circuitBreaker = circuitBreaker;
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
-            record.of(masterRecord, slaveRecord);
+            if (swapped) {
+                record.of(slaveRecord, masterRecord);
+            } else {
+                record.of(masterRecord, slaveRecord);
+            }
             slaveChainCursor = null;
             isMapBuilt = false;
         }
