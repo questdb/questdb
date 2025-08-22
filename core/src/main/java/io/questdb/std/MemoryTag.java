@@ -177,5 +177,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_ND_ARRAY, "NATIVE_ND_ARRAY");
         tagNameMap.extendAndSet(NATIVE_ND_ARRAY_DBG1, "NATIVE_ND_ARRAY_DBG1");
         tagNameMap.extendAndSet(NATIVE_ND_ARRAY_DBG2, "NATIVE_ND_ARRAY_DBG2");
+        tagNameMap.extendAndSet(NATIVE_PARQUET_EXPORTER, "NATIVE_PARQUET_EXPORTER");
     }
 }
