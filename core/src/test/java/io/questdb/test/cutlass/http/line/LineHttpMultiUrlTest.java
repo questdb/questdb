@@ -33,8 +33,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public static final Log LOG = LogFactory.getLog(LineHttpMultiUrlTest.class);
     private static final String HOST = "0.0.0.0";
-    private static final int PORT1 = 9020;
-    private static final int PORT2 = 9030;
+    private static final int PORT1 = 9070;
+    private static final int PORT2 = 9080;
     private static Rnd rnd;
     private static long s0;
     private static long s1;
@@ -192,7 +192,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 sender.table("line").longColumn("foo", 123).atNow();
                 sender.flush();
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "Could not flush buffer");
+                TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
                 Assert.assertEquals(61, e.getErrno());
             }
         });

@@ -52,9 +52,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.TCP).address(LOCALHOST);
             try {
                 builder.address("127.0.0.1");
+                builder.build();
                 fail("should not allow double host set");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "already configured");
+                TestUtils.assertContains(e.getMessage(), "mismatch");
             }
         });
     }
@@ -141,18 +142,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testAutoFlushIntervalNotSupportedForTcp() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Sender.builder(Sender.Transport.TCP).address(LOCALHOST).autoFlushIntervalMillis(1).build();
-                fail("auto flush interval should not be supported for TCP");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "auto flush interval is not supported for TCP protocol");
-            }
-        });
-    }
-
-    @Test
     public void testAutoFlushIntervalMustBePositive() {
         try (Sender ignored = Sender.builder(Sender.Transport.HTTP).autoFlushIntervalMillis(0).build()) {
             fail("auto-flush must be positive");
@@ -165,6 +154,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "auto flush interval cannot be negative [autoFlushIntervalMillis=-1]");
         }
+    }
+
+    @Test
+    public void testAutoFlushIntervalNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder(Sender.Transport.TCP).address(LOCALHOST).autoFlushIntervalMillis(1).build();
+                fail("auto flush interval should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush interval is not supported for TCP protocol");
+            }
+        });
     }
 
     @Test
@@ -256,7 +257,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("tcp::addr=localhost;max_buf_size=;", "max_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
             assertConfStrError("tcp::Řaddr=localhost;", "invalid configuration string [error=key must be consist of alpha-numerical ascii characters and underscore, not 'Ř' at position 5]");
-            assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TSL validation disabled, but TLS was not enabled");
+            assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TLS validation disabled, but TLS was not enabled");
             assertConfStrError("http::addr=localhost:8080;tls_verify=bad;", "invalid tls_verify [value=bad, allowed-values=[on, unsafe_off]]");
             assertConfStrError("tcps::addr=localhost;pass=unsafe_off;", "password is not supported for TCP protocol");
             assertConfStrError("tcps::addr=localhost;password=unsafe_off;", "password is not supported for TCP protocol");
@@ -277,8 +278,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_rows=1;", "cannot set auto flush rows when auto-flush is already disabled");
             assertConfStrError("http::addr=localhost;auto_flush_bytes=1024;", "auto_flush_bytes is only supported for TCP transport");
             assertConfStrError("http::addr=localhost;protocol_version=10", "current client only supports protocol version 1(text format for all datatypes), 2(binary format for part datatypes) or explicitly unset");
-            assertConfStrError("http::addr=localhost:48884;auto_flush=off;protocol_version=auto;", "Failed to detect server line protocol version");
-            assertConfStrError("http::addr=localhost:48884;auto_flush=off;", "Failed to detect server line protocol version");
             assertConfStrError("http::addr=localhost:48884;max_name_len=10;", "max_name_len must be at least 16 bytes [max_name_len=10]");
 
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "protocol_version=1");
@@ -843,9 +842,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.TCP).address(LOCALHOST + ":9000");
             try {
                 builder.port(9000);
+                builder.build();
                 fail("should not allow double port set");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "already configured");
+                TestUtils.assertContains(e.getMessage(), "mismatch");
             }
         });
     }
@@ -856,9 +856,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.TCP).port(9000);
             try {
                 builder.address(LOCALHOST + ":9000");
+                builder.build();
                 fail("should not allow double port set");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "already configured");
+                TestUtils.assertContains(e.getMessage(), "mismatch");
             }
         });
     }
@@ -869,9 +870,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.TCP).port(9000);
             try {
                 builder.port(9000);
+                builder.build();
                 fail("should not allow double port set");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "already configured");
+                TestUtils.assertContains(e.getMessage(), "questdb server address not set");
             }
         });
     }
