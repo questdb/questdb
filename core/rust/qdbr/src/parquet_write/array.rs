@@ -618,6 +618,7 @@ impl Levels {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 pub fn calculate_array_shape(
     shape: &mut [u32; ARRAY_NDIMS_LIMIT],
     max_rep_level: u32,
@@ -698,19 +699,20 @@ pub fn calculate_array_shape(
         }
         _ => {
             // General case for higher dimensions
+            let mut last_rep_level = max_rep_level;
+            for dim in 0..max_rep_level {
+                shape[dim] = 1;
+            }
             for &rep_level in rep_levels {
                 let rep_level = rep_level.max(1) as usize;
-
                 // Increment count at the deepest level (where actual values are)
                 counts[rep_level - 1] += 1;
                 shape[rep_level - 1] = shape[rep_level - 1].max(counts[rep_level - 1]);
-
-                for dim in rep_level..max_rep_level {
+                for dim in rep_level..last_rep_level {
                     // Reset counts for dimensions deeper than repetition level
                     counts[dim] = 1;
-                    // Update shape with maximum counts seen so far
-                    shape[dim] = shape[dim].max(1);
                 }
+                last_rep_level = rep_level;
             }
         }
     }
