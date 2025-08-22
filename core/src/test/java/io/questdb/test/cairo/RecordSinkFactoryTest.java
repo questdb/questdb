@@ -120,11 +120,18 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             TestFunction func = (TestFunction) keyFunctions.getQuick(i);
-            if (func.type == ColumnType.LONG128 || func.type == ColumnType.UUID) {
-                // LONG128 and UUID are accessed via two get calls, for low and high parts
-                Assert.assertEquals(2, func.callCount);
-            } else {
-                Assert.assertEquals(1, func.callCount);
+            switch (func.type) {
+                case ColumnType.DECIMAL256:
+                    Assert.assertEquals(4, func.callCount);
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                case ColumnType.DECIMAL128:
+                    Assert.assertEquals(2, func.callCount);
+                    break;
+                default:
+                    Assert.assertEquals(1, func.callCount);
+                    break;
             }
         }
         Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
@@ -156,6 +163,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         columnTypes.add(ColumnType.LONG128);
         columnTypes.add(ColumnType.UUID);
         columnTypes.add(ColumnType.INTERVAL);
+        columnTypes.add(ColumnType.DECIMAL8);
+        columnTypes.add(ColumnType.DECIMAL16);
+        columnTypes.add(ColumnType.DECIMAL32);
+        columnTypes.add(ColumnType.DECIMAL64);
+        columnTypes.add(ColumnType.DECIMAL128);
+        columnTypes.add(ColumnType.DECIMAL256);
         return columnTypes;
     }
 
@@ -185,6 +198,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.LONG128));
         keyFunctions.add(new TestFunction(ColumnType.UUID));
         keyFunctions.add(new TestFunction(ColumnType.INTERVAL));
+        keyFunctions.add(new TestFunction(ColumnType.DECIMAL8));
+        keyFunctions.add(new TestFunction(ColumnType.DECIMAL16));
+        keyFunctions.add(new TestFunction(ColumnType.DECIMAL32));
+        keyFunctions.add(new TestFunction(ColumnType.DECIMAL64));
+        keyFunctions.add(new TestFunction(ColumnType.DECIMAL128));
+        keyFunctions.add(new TestFunction(ColumnType.DECIMAL256));
         return keyFunctions;
     }
 
@@ -233,6 +252,29 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                     expectedGetIndexes.add(i + indexSkew);
                     expectedGetTypes.add(ColumnType.GEOLONG);
                     break;
+                case ColumnType.DECIMAL8:
+                case ColumnType.DECIMAL16:
+                case ColumnType.DECIMAL32:
+                case ColumnType.DECIMAL64:
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetTypes.add(ColumnType.tagOf(type));
+                    break;
+                case ColumnType.DECIMAL128:
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetTypes.add(ColumnType.DECIMAL128);
+                    expectedGetTypes.add(ColumnType.DECIMAL128);
+                    break;
+                case ColumnType.DECIMAL256:
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetIndexes.add(i + indexSkew);
+                    expectedGetTypes.add(ColumnType.DECIMAL256);
+                    expectedGetTypes.add(ColumnType.DECIMAL256);
+                    expectedGetTypes.add(ColumnType.DECIMAL256);
+                    expectedGetTypes.add(ColumnType.DECIMAL256);
+                    break;
                 default:
                     expectedGetIndexes.add(i + indexSkew);
                     expectedGetTypes.add(type);
@@ -259,15 +301,19 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 expectedPutTypes.add(ColumnType.IPv4);
                 break;
             case ColumnType.GEOINT:
+            case ColumnType.DECIMAL32:
                 expectedPutTypes.add(ColumnType.INT);
                 break;
             case ColumnType.GEOBYTE:
+            case ColumnType.DECIMAL8:
                 expectedPutTypes.add(ColumnType.BYTE);
                 break;
             case ColumnType.GEOSHORT:
+            case ColumnType.DECIMAL16:
                 expectedPutTypes.add(ColumnType.SHORT);
                 break;
             case ColumnType.GEOLONG:
+            case ColumnType.DECIMAL64:
                 expectedPutTypes.add(ColumnType.LONG);
                 break;
             default:
@@ -358,6 +404,76 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public long getDate(Record rec) {
             Assert.assertEquals(ColumnType.DATE, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal128Hi(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL128, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal128Lo(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL128, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL16, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256HH(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL256, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256HL(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL256, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256LH(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL256, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256LL(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL256, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL32, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL64, type);
+            callCount++;
+            return 1;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            Assert.assertEquals(ColumnType.DECIMAL8, type);
             callCount++;
             return 1;
         }
@@ -602,6 +718,76 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getDecimal128Hi(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL128);
+            return 1;
+        }
+
+        @Override
+        public long getDecimal128Lo(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL128);
+            return 1;
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL16);
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256HH(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL256);
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256HL(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL256);
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256LH(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL256);
+            return 1;
+        }
+
+        @Override
+        public long getDecimal256LL(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL256);
+            return 1;
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL32);
+            return 1;
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL64);
+            return 1;
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.DECIMAL8);
+            return 1;
+        }
+
+        @Override
         public double getDouble(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.DOUBLE);
@@ -761,6 +947,16 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public void putDate(long value) {
             recordedTypes.add(ColumnType.DATE);
+        }
+
+        @Override
+        public void putDecimal128(long hi, long lo) {
+            recordedTypes.add(ColumnType.DECIMAL128);
+        }
+
+        @Override
+        public void putDecimal256(long hh, long hl, long lh, long ll) {
+            recordedTypes.add(ColumnType.DECIMAL256);
         }
 
         @Override
