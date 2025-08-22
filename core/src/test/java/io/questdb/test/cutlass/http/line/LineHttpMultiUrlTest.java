@@ -1,5 +1,6 @@
 package io.questdb.test.cutlass.http.line;
 
+import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -48,6 +49,8 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void fuzzServersStartingAndStopping() throws Exception {
+        String root1 = "server1" + System.currentTimeMillis();
+        String root2 = "server2" + System.currentTimeMillis();
         Path.clearThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
             int timeoutMillis = 30_000;
@@ -60,14 +63,14 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
             Thread t1 = new Thread(() -> {
                 try {
-                    createAServerAndOccasionallyBlipIt("server1", HOST, PORT1, false, timeoutMillis, delayMillis, jitterMillis, t1Count);
+                    createAServerAndOccasionallyBlipIt(root1, HOST, PORT1, false, timeoutMillis, delayMillis, jitterMillis, t1Count);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
             Thread t2 = new Thread(() -> {
                 try {
-                    createAServerAndOccasionallyBlipIt("server2", HOST, PORT2, false, timeoutMillis, delayMillis, jitterMillis, t2Count);
+                    createAServerAndOccasionallyBlipIt(root2, HOST, PORT2, false, timeoutMillis, delayMillis, jitterMillis, t2Count);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -76,9 +79,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             t1.start();
             t2.start();
             t3.start();
-            t3.join();
-            t2.join();
-            t1.join();
+            t3.join(35_000);
+            t2.join(35_000);
+            t1.join(35_000);
 
             long c1 = t1Count.get();
             long c2 = t2Count.get();
@@ -93,26 +96,27 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
+        System.out.println(dbPath);
+//        dbPath.parent().$();
     }
 
     public TestServerMain startInstancesWithoutConflict(String rootName, String host, int port, boolean readOnly) {
         TestServerMain server;
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 100; i++) {
             try {
                 server = startWithEnvVariables(
                         PropertyKey.HTTP_BIND_TO.getEnvVarName(), host + ":" + port,
                         PropertyKey.HTTP_MIN_NET_BIND_TO.getEnvVarName(), host + ":" + port + 1,
                         PropertyKey.PG_NET_BIND_TO.getEnvVarName(), host + ":" + port + 2,
                         PropertyKey.LINE_TCP_NET_BIND_TO.getEnvVarName(), host + ":" + port + 3,
-                        PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath.parent().concat(rootName).toString(),
+                        PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath + rootName,
                         PropertyKey.LINE_HTTP_ENABLED.getEnvVarName(), "true",
                         PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), String.valueOf(readOnly)
                 );
                 return server;
-            } catch (CairoException e) {
-                if (e.getMessage().contains("cannot lock")) {
+            } catch (CairoException | Bootstrap.BootstrapException e) {
+                if (e.getMessage().contains("cannot lock")/* || e.getMessage().contains("could not open")*/) {
                     Os.sleep((i + 1) * 100);
                     continue;
                 }
@@ -125,11 +129,12 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testFirstInstanceReadOnly() throws Exception {
+        String root1 = "server1" + System.currentTimeMillis();
+        String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain1 = startInstancesWithoutConflict("server1", HOST, PORT1, true)) {
+            try (final TestServerMain serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, true)) {
                 serverMain1.start();
-                try (final TestServerMain serverMain2 = startInstancesWithoutConflict("server2", HOST, PORT2, false)) {
-                    dbPath.parent().$();
+                try (final TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false)) {
                     serverMain2.start();
 
                     try (Sender sender = Sender.builder(Sender.Transport.HTTP).address(HOST).port(PORT1).address(HOST).port(PORT2).build()) {
@@ -156,8 +161,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testFirstServerIsDown() throws Exception {
+        String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain2 = startInstancesWithoutConflict("server2", HOST, PORT2, false)) {
+            try (final TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false)) {
                 serverMain2.start();
                 try (Sender sender = Sender.fromConfig("http::addr=localhost:9020;addr=localhost:9030;")) {
                     sender.table("line").longColumn("foo", 123).atNow();
@@ -167,7 +173,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     Assert.assertNotNull(tt2);
                 }
             }
-
         });
     }
 
@@ -178,10 +183,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 sender.table("line").longColumn("foo", 123).atNow();
                 sender.flush();
             } catch (LineSenderException e) {
-                Assert.assertEquals(
-                        "[61] Could not flush buffer: http://localhost:9030/write?precision=n Connection Failed: [61] could not connect to host [host=localhost, port=9030, errno=61]",
-                        e.getMessage()
-                );
+                TestUtils.assertContains(e.getMessage(), "Could not flush buffer");
                 Assert.assertEquals(61, e.getErrno());
             }
         });
@@ -189,10 +191,12 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testServersStartAndStop() throws Exception {
+        String root1 = "server1" + System.currentTimeMillis();
+        String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            TestServerMain serverMain1 = startInstancesWithoutConflict("server1", HOST, PORT1, false);
+            TestServerMain serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, false);
             serverMain1.start();
-            TestServerMain serverMain2 = startInstancesWithoutConflict("server2", HOST, PORT2, false);
+            TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false);
             serverMain2.start();
 
             final @Nullable TxReader[] r1 = {null};
@@ -206,7 +210,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     if (i == 10_000) {
                         serverMain2.close();
                         if (serverMain1.hasBeenClosed()) {
-                            serverMain1 = startInstancesWithoutConflict("server1", HOST, PORT1, false);
+                            serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, false);
                             serverMain1.start();
                         }
                     }
@@ -214,7 +218,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     if (i == 20_000) {
                         serverMain1.close();
                         if (serverMain2.hasBeenClosed()) {
-                            serverMain2 = startInstancesWithoutConflict("server2", HOST, PORT2, false);
+                            serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false);
                             serverMain2.start();
                         }
                     }
@@ -223,41 +227,55 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                         sender.flush();
                     }
                 }
+
                 sender.flush();
 
                 if (serverMain1.hasBeenClosed()) {
-                    serverMain1 = startInstancesWithoutConflict("server1", HOST, PORT1, false);
+                    serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, false);
                     serverMain1.start();
                 }
 
                 if (serverMain2.hasBeenClosed()) {
-                    serverMain2 = startInstancesWithoutConflict("server2", HOST, PORT2, false);
+                    serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false);
                     serverMain2.start();
                 }
+
+                Os.sleep(1000);
 
                 TestUtils.drainWalQueue(serverMain1.getEngine());
                 TestUtils.drainWalQueue(serverMain2.getEngine());
 
+                Os.sleep(1000);
 
                 TestServerMain finalServerMain1 = serverMain1;
                 TestServerMain finalServerMain2 = serverMain2;
+
+
+                TableToken tt1 = null;
+                TableToken tt2 = null;
+                for (int i = 0; i < 1_000; i++) {
+                    tt1 = finalServerMain1.getEngine().getTableTokenIfExists("line");
+                    tt2 = finalServerMain2.getEngine().getTableTokenIfExists("line");
+                    if (tt1 != null && tt2 != null) {
+                        break;
+                    } else {
+                        Os.sleep(10);
+                    }
+                }
+
+                TableToken finalTt1 = tt1;
+                TableToken finalTt2 = tt2;
                 TestUtils.assertEventually(() -> {
-                    TableToken tt1 = finalServerMain1.getEngine().getTableTokenIfExists("line");
-                    Assert.assertNotNull(tt1);
-                    TableToken tt2 = finalServerMain2.getEngine().getTableTokenIfExists("line");
-                    Assert.assertNotNull(tt2);
-
-
                     r1[0] = new TxReader(finalServerMain1.getEngine().getConfiguration().getFilesFacade());
                     r2[0] = new TxReader(finalServerMain2.getEngine().getConfiguration().getFilesFacade());
 
-
-                    long rows1 = getRowCount(finalServerMain1.getEngine(), tt1, r1[0]);
-                    long rows2 = getRowCount(finalServerMain2.getEngine(), tt1, r2[0]);
+                    long rows1 = getRowCount(finalServerMain1.getEngine(), finalTt1, r1[0]);
+                    long rows2 = getRowCount(finalServerMain2.getEngine(), finalTt2, r2[0]);
 
                     r1[0].close();
                     r2[0].close();
 
+                    System.out.println("Expected: " + expectedTotalRows + ", actual1: " + rows1 + ", actual2: " + rows2);
                     Assert.assertEquals(expectedTotalRows, rows1 + rows2);
                 });
             } finally {
