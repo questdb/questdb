@@ -4783,7 +4783,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
-
                                     ),
                                     keyFunctions,
                                     extractWorkerFunctionsConditionally(

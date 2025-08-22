@@ -6115,6 +6115,114 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolColumnToSymbolInGroupBy1() throws Exception {
+        assertQuery(
+                "timestamp\tID\tEvt1\n",
+                "SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
+                        "FROM 'trades'" +
+                        "ORDER BY 1",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "timestamp\tID\tEvt1\n" +
+                        "1\t1\t1\n" +
+                        "2\t2\t2\n" +
+                        "3\t3\t3\n" +
+                        "4\t4\t4\n" +
+                        "5\t5\t5\n" +
+                        "6\t6\t6\n" +
+                        "7\t7\t7\n" +
+                        "8\t8\t8\n" +
+                        "9\t9\t9\n" +
+                        "10\t10\t10\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInGroupBy2() throws Exception {
+        assertQuery(
+                "cast\tavg\n",
+                "SELECT cast(symbol as SYMBOL), avg(price) " +
+                        "FROM 'trades' " +
+                        "ORDER BY avg(price)",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "cast\tavg\n" +
+                        "1\t1.0\n" +
+                        "2\t2.0\n" +
+                        "3\t3.0\n" +
+                        "4\t4.0\n" +
+                        "5\t5.0\n" +
+                        "6\t6.0\n" +
+                        "7\t7.0\n" +
+                        "8\t8.0\n" +
+                        "9\t9.0\n" +
+                        "10\t10.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInGroupBy3() throws Exception {
+        assertQuery(
+                "coalesce\tavg\n",
+                "SELECT coalesce(cast(symbol as SYMBOL), 'foobar'), avg(price)" +
+                        "FROM 'trades' " +
+                        "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "coalesce\tavg\n" +
+                        "1\t1.0\n" +
+                        "10\t10.0\n" +
+                        "2\t2.0\n" +
+                        "3\t3.0\n" +
+                        "4\t4.0\n" +
+                        "5\t5.0\n" +
+                        "6\t6.0\n" +
+                        "7\t7.0\n" +
+                        "8\t8.0\n" +
+                        "9\t9.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInSampleBy() throws Exception {
+        assertQuery(
+                "timestamp\tID\tEvt1\n",
+                "SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
+                        "FROM 'trades'" +
+                        "SAMPLE BY 1h",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                "timestamp",
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "timestamp\tID\tEvt1\n" +
+                        "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                        "1970-01-01T00:00:00.000000Z\t2\t2\n" +
+                        "1970-01-01T00:00:00.000000Z\t3\t3\n" +
+                        "1970-01-01T00:00:00.000000Z\t4\t4\n" +
+                        "1970-01-01T00:00:00.000000Z\t5\t5\n" +
+                        "1970-01-01T00:00:00.000000Z\t6\t6\n" +
+                        "1970-01-01T00:00:00.000000Z\t7\t7\n" +
+                        "1970-01-01T00:00:00.000000Z\t8\t8\n" +
+                        "1970-01-01T00:00:00.000000Z\t9\t9\n" +
+                        "1970-01-01T00:00:00.000000Z\t10\t10\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testSymbolNocacheToLong256Sort() throws Exception {
         assertQuery(
                 "x\n",
