@@ -401,9 +401,6 @@ public class GroupByUtils {
         return true;
     }
 
-    // prepareGroupByFunctions must be called first to get the idea of how many map values
-    // we will have. Map value count is needed to calculate offsets for map key columns.
-
     public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {
@@ -413,6 +410,8 @@ public class GroupByUtils {
         return true;
     }
 
+    // assembleGroupByFunctions must be called before this call to get the idea of how many map values
+    // we will have. Map value count is needed to calculate offsets for map key columns.
     public static void prepareWorkerGroupByFunctions(
             @NotNull QueryModel model,
             @NotNull RecordMetadata metadata,
