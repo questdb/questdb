@@ -4,13 +4,13 @@
 <p>&nbsp;</p>
 
 <p align="center">
-  <a href="#contribute">
-    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB Open-Source-Mitwirkende"/>
+  <a href="#bijdragen">
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source bijdragers"/>
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/questdb/questdb">English</a> |
+  <a href="../README.md">English</a> |
   <a href="./README.zh-cn.md">简体中文</a> |
   <a href="./README.zh-hk.md">繁體中文</a> |
   <a href="./README.ar-dz.md">العربية</a> |
@@ -19,11 +19,11 @@
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
   <a href="./README.fr-fr.md">Français</a> |
-  Deutsch |
+  <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.ko-kr.md">한국어</a> |
   <a href="./README.he-il.md">עברית</a> |
-  <a href="./README.nl-nl.md">Nederlands</a> |
+  Nederlands |
   <a href="./README.tr-tr.md">Türkçe</a> |
   <a href="./README.hn-in.md">हिंदी</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a> |
@@ -32,103 +32,105 @@
 
 ---
 
-QuestDB ist eine Open-Source-Zeitreihendatenbank, die **blitzschnelle Datenaufnahme** und **dynamische SQL-Abfragen mit
-niedriger Latenz** bietet.
+QuestDB is een open-source tijdreeks database die razendsnelle data-inname
+en dynamische, lage-latentie SQL-queries biedt.
 
-QuestDB liefert eine mehrstufige Speicher-Engine (WAL → nativ → Parquet auf Objektspeicher), und die Kern-Engine ist in
-Zero-GC Java und C++ implementiert; QuestDB Enterprise umfasst zusätzliche Komponenten in Rust.
+QuestDB levert een meerlaagse opslag-engine (WAL → native → Parquet op object storage),
+en de kernengine is geïmplementeerd in zero-GC Java en C++; QuestDB Enterprise bevat extra componenten in Rust.
 
-Wir erreichen hohe Leistung durch ein spaltenorientiertes Speichermodell, parallelisierte Vektorausführung,
-SIMD-Anweisungen und Niedriglatenz-Techniken. Darüber hinaus ist QuestDB hardwareeffizient mit schnellem Setup und
-operativer Effizienz.
+We bereiken hoge prestaties via een kolom-georiënteerd opslagmodel, geparalleliseerde
+vector-uitvoering, SIMD-instructies en technieken voor lage latentie. Bovendien
+is QuestDB hardware-efficiënt, met snelle installatie en operationele efficiëntie.
 
-> Bereit loszulegen? Springe zum Abschnitt [Erste Schritte](#erste-schritte).
+> Klaar om te beginnen? Ga naar de
+> [Aan de slag](#aan-de-slag) sectie.
 
 <p>&nbsp;</p>
 
 <div align="center">
   <a href="https://demo.questdb.com/">
-    <img alt="QuestDB Web Console zeigt eine SQL-Anweisung und ein Abfrageergebnis" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
+    <img alt="QuestDB Web Console toont een SQL-statement en query resultaat" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB Web Console - klicken Sie, um die Demo zu starten</em></p>
+  <p><em>QuestDB Web Console - klik om demo te starten</em></p>
 </div>
 
 <p>&nbsp;</p>
 
-## Vorteile von QuestDB
+## Voordelen van QuestDB
 
-Die Funktionsmerkmale umfassen:
+Functiehoogtepunten zijn onder andere:
 
-- Niedriglatenz-, Hochdurchsatz-Datenaufnahme — von einzelnen Ereignissen bis zu Millionen/Sek
-- Niedriglatenz-SQL mit Zeitreihen-Erweiterungen (ASOF JOIN, SAMPLE BY, LATEST ON)
-- SIMD-beschleunigte, parallele Ausführung; läuft schnell auf bescheidener Hardware
-- Mehrstufiger Speicher: WAL → native spaltenorientiert → Parquet (zeitpartitioniert und zeitgeordnet)
-- Postgres-Protokoll (PGwire) und REST API
-- Materialisierte Ansichten und n-dimensionale Arrays (einschließlich 2D-Arrays für Orderbücher)
-- Webkonsole für Abfragen und Datenmanagement
-- Apache 2.0 Open Source und offene Formate — keine Anbieterabhängigkeit
-- [Finanzfunktionen](https://questdb.com/docs/reference/function/finance/)
-  und [Orderbuch-Analytik](https://questdb.com/docs/guides/order-book/)
+- Lage latentie, hoge doorvoer inname — van enkele events tot miljoenen/sec
+- Lage latentie SQL met tijdreeks uitbreidingen (ASOF JOIN, SAMPLE BY, LATEST ON)
+- SIMD-versnelde, parallelle uitvoering; draait snel op bescheiden hardware
+- Meerlaagse opslag: WAL → native kolomgericht → Parquet (tijd-gepartitioneerd en tijd-geordend)
+- Postgres protocol (PGwire) en REST API
+- Gematerialiseerde views en n-dimensionale arrays (incl. 2D arrays voor orderboeken)
+- Web console voor queries en data beheer
+- Apache 2.0 open source en open formaten — geen vendor lock-in
+- [Financiële functies](https://questdb.com/docs/reference/function/finance/)
+  en [orderboek analytics](https://questdb.com/docs/guides/order-book/)
 
-QuestDB glänzt bei:
+QuestDB blinkt uit met:
 
-- Finanzmarktdaten (Tick-Daten, Trades, Orderbücher, OHLC)
-- Sensor-/Telemetriedaten mit hoher Datenkardinalität
-- Echtzeit-Dashboards und Überwachung
+- financiële marktdata (tick data, trades, orderboeken, OHLC)
+- Sensor/telemetrie data met hoge data cardinaliteit
+- realtime dashboards en monitoring
 
-Und warum eine Zeitreihendatenbank verwenden?
+En waarom een tijdreeks database gebruiken?
 
-Über Leistung und Effizienz hinaus müssen Sie sich mit einer spezialisierten Zeitreihendatenbank keine Sorgen machen
-über:
+Naast prestaties en efficiëntie hoef je je met een gespecialiseerde tijdreeks database
+geen zorgen te maken over:
 
-- Daten außerhalb der Reihenfolge
-- Deduplizierung und Exactly-Once-Semantik
-- Kontinuierliche Streaming-Aufnahme mit vielen gleichzeitigen Abfragen
-- Streaming-Daten (niedrige Latenz)
-- Volatile und "bursty" Daten
-- Hinzufügen neuer Spalten - Schema "on the fly" ändern beim Streaming von Daten
+- data die niet op volgorde binnenkomt
+- deduplicatie en exactly one semantiek
+- Continue streaming inname met veel gelijktijdige queries
+- streaming data (lage latentie)
+- volatiele en "bursty" data
+- toevoegen van nieuwe kolommen - wijzig schema "on the fly" tijdens streaming data
 
-## QuestDB testen, Demo und Dashboards
+## Probeer QuestDB, demo en dashboards
 
-Die [Live-Demo](https://demo.questdb.com/) ist mit der neuesten QuestDB-Version und Beispieldatensätzen ausgestattet:
+De [live, publieke demo](https://demo.questdb.com/) is voorzien van de nieuwste
+QuestDB release en voorbeeld datasets:
 
-- Trades: Live-Krypto-Trades mit über 30M Zeilen pro Monat (OKX Exchange)
-- FX-Orderbuch: Live-Charts mit Orderbuch-FX-Paaren.
-- Trips: 10 Jahre NYC-Taxi-Fahrten mit 1,6 Milliarden Zeilen
+- Trades: live crypto trades met 30M+ rijen per maand (OKX exchange)
+- FX orderboek: live grafieken met orderboek FX paren.
+- Trips: 10 jaar NYC taxi trips met 1.6 miljard rijen
 
-Wir haben auch einige öffentliche Echtzeit-Demo-Dashboards mit
-unserem [nativen Grafana](https://questdb.com/docs/third-party-tools/grafana/)-Plugin:
+We hebben ook enkele publieke, realtime demo dashboards die gebruik maken van
+onze [Grafana-native](https://questdb.com/docs/third-party-tools/grafana/) plugin:
 
-- [Echtzeit-Krypto-Trades:](https://questdb.com/dashboards/crypto/) ausgeführte Trades auf OKX von mehr als 20 Assets in
-  Echtzeit
-- [FX-Orderbuch:](https://questdb.com/dashboards/FX-orderbook/) Live-Tiefe/Ungleichgewichts-Charts für wichtige FX-Paare
+- [Realtime crypto trades:](https://questdb.com/dashboards/crypto/) uitgevoerde
+  trades op OKX van meer dan 20 assets in realtime
+- [FX orderboek:](https://questdb.com/dashboards/FX-orderbook/) live depth/imbalance grafieken voor belangrijke FX paren
 
-### QuestDB-Leistung vs. andere Datenbanken
+### QuestDB prestaties vs. andere databases
 
-QuestDB schneidet sehr gut in Leistungsbenchmarks im Vergleich zu Alternativen ab.
+QuestDB presteert zeer goed in prestatiebenchmarks vergeleken met alternatieven.
 
-Für tiefere Einblicke in die Interna und Leistung siehe die folgenden Blog-Posts:
+Voor diepgaande duikjes in interne werking en prestaties, zie de volgende blog posts:
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
 - [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
-Wie immer ermutigen wir Sie, Ihre eigenen Benchmarks durchzuführen.
+Zoals altijd moedigen we je aan om je eigen benchmarks uit te voeren.
 
 <div align="center">
-  <img alt="Ein Diagramm, das die Aufnahmerate von QuestDB, InfluxDB und TimescaleDB vergleicht." src="../.github/readme-benchmark.png" width="600"/>
+  <img alt="Een grafiek die de inname snelheid van QuestDB, InfluxDB en TimescaleDB vergelijkt." src=".github/readme-benchmark.png" width="600"/>
 </div>
 
-## Erste Schritte
+## Aan de slag
 
-Verwenden Sie [Docker](https://www.docker.com/), um schnell zu starten:
+Gebruik [Docker](https://www.docker.com/) om snel te beginnen:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Oder macOS-Benutzer können Homebrew verwenden:
+Of macOS gebruikers kunnen Homebrew gebruiken:
 
 ```bash
 brew install questdb
@@ -140,12 +142,12 @@ questdb start
 questdb stop
 ```
 
-Alternativ können Sie für die vollständige Onboarding-Reise mit unserem
-prägnanten [Schnellstart-Leitfaden](https://questdb.com/docs/quick-start/) beginnen.
+Als alternatief, om de volledige onboarding reis te starten, begin met onze beknopte
+[quick start gids](https://questdb.com/docs/quick-start/).
 
-### Erstanbieter-Aufnahme-Clients
+### Eigen inname clients
 
-QuestDB-Clients zur Datenaufnahme über das InfluxDB Line Protocol:
+QuestDB clients voor het innemen van data via het InfluxDB Line Protocol:
 
 - [Python](https://questdb.com/docs/clients/ingest-python/)
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
@@ -155,19 +157,22 @@ QuestDB-Clients zur Datenaufnahme über das InfluxDB Line Protocol:
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-### Mit QuestDB verbinden
+### Verbinden met QuestDB
 
-Interagieren Sie mit QuestDB und Ihren Daten über die folgenden Schnittstellen:
+Interacteer met QuestDB en je data via de volgende interfaces:
 
-- [Web Console](https://questdb.com/docs/web-console/) für interaktiven SQL-Editor und CSV-Import auf Port `9000`
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) für Streaming-Aufnahme auf Port `9000`
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) für programmatische Abfragen auf Port
-  `8812`
-- [REST API](https://questdb.com/docs/reference/api/rest/) für CSV-Import und cURL auf Port `9000`
+- [Web Console](https://questdb.com/docs/web-console/) voor een interactieve SQL
+  editor en CSV import op poort `9000`
+- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)
+  voor streaming inname op poort `9000`
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)
+  voor programmatische queries op poort `8812`
+- [REST API](https://questdb.com/docs/reference/api/rest/) voor CSV import en
+  cURL op poort `9000`
 
-### Beliebte Drittanbieter-Tools
+### Populaire third-party tools
 
-Beliebte Tools, die sich mit QuestDB integrieren, umfassen:
+Populaire tools die integreren met QuestDB zijn onder andere:
 
 - [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
@@ -180,85 +185,94 @@ Beliebte Tools, die sich mit QuestDB integrieren, umfassen:
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
 - [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
-### End-to-End-Code-Gerüste
+### End-to-end code scaffolds
 
-Vom Streaming-Ingest bis zur Visualisierung mit Grafana - beginnen Sie mit Code-Gerüsten aus
-unserem [Quickstart-Repository](https://github.com/questdb/questdb-quickstart).
+Van streaming inname tot visualisatie met Grafana, begin met code
+scaffolds uit onze
+[quickstart repository](https://github.com/questdb/questdb-quickstart).
 
-### QuestDB für Produktionsworkloads konfigurieren
+### QuestDB configureren voor productie workloads
 
-Finden Sie unsere [Kapazitätsplanung](https://questdb.com/docs/deployment/capacity-planning/), um QuestDB für
-Produktionsworkloads zu optimieren.
+Vind onze
+[capaciteitsplanning](https://questdb.com/docs/deployment/capacity-planning/) om
+QuestDB af te stemmen voor productie workloads.
 
-## QuestDB Enterprise
+### QuestDB Enterprise
 
-Für sicheren Betrieb in größerem Maßstab oder innerhalb größerer Organisationen.
+Voor veilige werking op grotere schaal of binnen grotere organisaties.
 
-Zusätzliche Funktionen umfassen:
+Extra functies zijn onder andere:
 
-- Hochverfügbarkeit und Lese-Replik(a)
-- Multi-Primär-Aufnahme
-- Kühle Speicherintegration
-- Rollenbasierte Zugriffskontrolle
-- TLS-Verschlüsselung
-- Native Parquet-Dateiabfrage über Objektspeicher
-- Support-SLAs, verbessertes Monitoring und mehr
+- hoge beschikbaarheid en read replica(s)
+- multi-primary inname
+- cold storage integratie
+- role-based access control
+- TLS versleuteling
+- native querying van Parquet bestanden via object storage
+- support SLA's, verbeterde monitoring en meer
 
-Besuchen Sie die [Enterprise-Seite](https://questdb.com/enterprise/) für weitere Details und Kontaktinformationen.
+Bezoek de [Enterprise pagina](https://questdb.com/enterprise/) voor meer details
+en contactinformatie.
 
-## Zusätzliche Ressourcen
+## Extra resources
 
-### 📚 Dokumentation lesen
+### 📚 Lees de docs
 
-- [QuestDB-Dokumentation:](https://questdb.com/docs/) Beginnen Sie die Reise
-- [Produkt-Roadmap:](https://github.com/orgs/questdb/projects/1/views/5) Schauen Sie sich unseren Plan für kommende
-  Releases an
-- [Tutorials:](https://questdb.com/tutorial/) Lernen Sie Schritt für Schritt, was mit QuestDB möglich ist
+- [QuestDB documentatie:](https://questdb.com/docs/) begin de reis
+- [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) bekijk
+  ons plan voor komende releases
+- [Tutorials:](https://questdb.com/tutorial/) leer wat er mogelijk is met QuestDB,
+  stap voor stap
 
-### ❓ Support erhalten
+### ❓ Krijg ondersteuning
 
-- [Community Discourse Forum:](https://community.questdb.com/) Nehmen Sie an technischen Diskussionen teil, stellen Sie
-  Fragen und treffen Sie andere Benutzer!
-- [Öffentlicher Slack:](https://slack.questdb.com/) Chatten Sie mit dem QuestDB-Team und Community-Mitgliedern
-- [GitHub Issues:](https://github.com/questdb/questdb/issues) Melden Sie Bugs oder Probleme mit QuestDB
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) Suchen Sie nach häufigen Lösungen zur
-  Fehlerbehebung
+- [Community Discourse forum:](https://community.questdb.com/) doe mee aan technische
+  discussies, stel vragen en ontmoet andere gebruikers!
+- [Publieke Slack:](https://slack.questdb.com/) chat met het QuestDB team en
+  community leden
+- [GitHub issues:](https://github.com/questdb/questdb/issues) rapporteer bugs of
+  problemen met QuestDB
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) zoek naar
+  veelvoorkomende probleemoplossingen
 
-### 🚢 QuestDB bereitstellen
+### 🚢 Deployen van QuestDB
 
 - [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [Offizielles Docker-Image](https://questdb.com/docs/get-started/docker)
-- [DigitalOcean Droplets](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm Charts](https://questdb.com/docs/guides/kubernetes)
+- [Officiële Docker image](https://questdb.com/docs/get-started/docker)
+- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
+- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
 
-## Mitwirken
+## Bijdragen
 
-Beiträge sind willkommen! Wir schätzen:
+Bijdragen welkom!
 
-- Quellcode
-- Dokumentation (siehe unser [Dokumentations-Repository](https://github.com/questdb/documentation))
-- Bug-Berichte
-- Feature-Anfragen oder Feedback
+We waarderen:
 
-Um mit dem Beitragen zu beginnen:
+- broncode
+- documentatie (zie onze
+  [documentatie repository](https://github.com/questdb/documentation))
+- bug rapportages
+- functie verzoeken of feedback.
 
-- Schauen Sie sich GitHub-Issues mit dem
-  Label "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  an
-- Für Hacktoberfest siehe
-  relevante [markierte Issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-- Lesen Sie den [Beitragsleitfaden](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- Für Details zum Erstellen von QuestDB siehe
-  die [Build-Anweisungen](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [Forken](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) Sie QuestDB und reichen Sie einen
-  Pull Request mit Ihren vorgeschlagenen Änderungen ein
-- Stecken fest? Treten Sie unserem [öffentlichen Slack](https://slack.questdb.com/) für Hilfe bei
+Om te beginnen met bijdragen:
 
-✨ Als Zeichen unserer Dankbarkeit senden wir QuestDB-Merchandise an unsere Mitwirkenden!
+- Bekijk GitHub issues met label
+  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+- Voor Hacktoberfest, zie de relevante
+  [gelabelde issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+- Lees de
+  [bijdrage gids](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- Voor details over het bouwen van QuestDB, zie de
+  [build instructies](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Maak een fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
+  van QuestDB en dien een pull request in met je voorgestelde wijzigingen
+- Vast? Join onze [publieke Slack](https://slack.questdb.com/) voor hulp
 
-Ein großes Dankeschön an die folgenden wunderbaren Menschen, die zu QuestDB beigetragen
-haben ([Emoji-Schlüssel](https://allcontributors.org/docs/en/emoji-key)):
+✨ Als teken van onze dankbaarheid sturen we QuestDB swag naar onze bijdragers!
+
+Een grote dank gaat uit naar de volgende geweldige mensen die hebben bijgedragen aan
+QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -413,5 +427,6 @@ haben ([Emoji-Schlüssel](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Dieses Projekt folgt der [all-contributors](https://github.com/all-contributors/all-contributors) Spezifikation.
-Beiträge jeder Art sind willkommen!
+Dit project houdt zich aan de
+[all-contributors](https://github.com/all-contributors/all-contributors)
+specificatie. Bijdragen van elke soort zijn welkom!
