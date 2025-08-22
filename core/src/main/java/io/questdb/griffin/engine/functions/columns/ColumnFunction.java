@@ -30,6 +30,7 @@ import io.questdb.griffin.PlanSink;
 public interface ColumnFunction extends Function {
     int getColumnIndex();
 
+    @Override
     default void toPlan(PlanSink sink) {
         sink.putColumnName(getColumnIndex());
     }
