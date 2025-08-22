@@ -32,15 +32,15 @@
 
 ---
 
-QuestDB 是一个开源时间序列数据库，提供**超快的数据摄取**和**动态低延迟 SQL 查询**。
+QuestDB 是一个高性能开源时序数据库，提供**低延迟、高吞吐的数据写入**和**低延迟 SQL 查询**服务。
 
-QuestDB 提供多层存储引擎（WAL → 原生 → 对象存储上的 Parquet），核心引擎采用零 GC Java 和 C++ 实现；QuestDB Enterprise 包含用
-Rust 编写的额外组件。
+在存储上，QuestDB 提供多层引擎架构（WAL → 原生 → 对象存储上的 Parquet）。核心引擎基于零 GC 的 Java 和 C++ 实现；企业版还包含采用 Rust 编写的高性能组件。
 
-我们通过列式存储模型、并行化向量执行、SIMD 指令和低延迟技术实现高性能。此外，QuestDB 在硬件效率方面表现出色，具有快速设置和运营效率。
+在查询上，QuestDB 通过列式存储模型、并行化向量执行、SIMD 指令及多种低延迟技术，实现了卓越地查询性能表现。此外，QuestDB
+还具备出色的硬件效率，支持快速部署与高效运维。
 
-> 准备开始了吗？跳转到
-> [快速开始](#快速开始)部分。
+> 准备好了吗？立即前往
+> [快速开始](#快速开始) 部分。
 
 <p>&nbsp;</p>
 
@@ -55,61 +55,61 @@ Rust 编写的额外组件。
 
 ## QuestDB 的优势
 
-功能亮点包括：
+核心功能亮点：
 
-- 低延迟、高吞吐量摄取 — 从单个事件到数百万次/秒
-- 带有时间序列扩展的低延迟 SQL（ASOF JOIN、SAMPLE BY、LATEST ON）
-- SIMD 加速并行执行；在普通硬件上运行速度快
-- 多层存储：WAL → 原生列式 → Parquet（时间分区和时间排序）
-- Postgres 协议（PGwire）和 REST API
-- 物化视图和 n 维数组（包括用于订单簿的 2D 数组）
-- 用于查询和数据管理的 Web 控制台
-- Apache 2.0 开源和开放格式 — 无供应商锁定
-- [金融函数](https://questdb.com/docs/reference/function/finance/)
-  和[订单簿分析](https://questdb.com/docs/guides/order-book/)
+- 低延迟、高吞吐数据写入 — 支持从单条数据到每秒百万条的处理能力
+- 具备时序扩展功能的高效 SQL 查询方言（ASOF JOIN、SAMPLE BY、LATEST ON）
+- SIMD 指令加速的并行执行引擎，在普通硬件上也能实现亚毫秒级查询响应时间
+- 多层存储架构：WAL → 原生列式存储 → Parquet（支持时间分区与时间排序）
+- Postgres 协议（PGwire）和 REST API 接入
+- 物化视图和 n 维数组（含适用于订单簿的二维数组）
+- 用于查询与数据管理的 Web 控制台
+- Apache 2.0 开源协议与开放格式——杜绝供应商绑定
+- 支持多种 [金融函数](https://questdb.com/docs/reference/function/finance/)
+  和 [订单簿分析](https://questdb.com/docs/guides/order-book/)
 
-QuestDB 擅长处理：
+QuestDB 尤其擅长处理：
 
-- 金融市场数据（tick 数据、交易、订单簿、OHLC）
-- 高数据基数的传感器/遥测数据
-- 实时仪表板和监控
+- 金融市场数据（Tick 数据、交易、订单簿、OHLC 数据）
+- 具有高基数特征的传感器/遥测数据
+- 实时仪表盘与监控场景
 
-为什么使用时间序列数据库？
+为什么要使用时序数据库？
 
-除了性能和效率之外，使用专业的时间序列数据库，您无需担心：
+除了优秀的性能与效率之外，专业的时序数据库能让您无需担忧以下问题：
 
-- 无序数据
-- 去重和确切一次语义
-- 持续流摄取与众多并发查询
-- 流数据（低延迟）
-- 波动性和"突发"数据
-- 添加新列 - 在流数据时"即时"更改模式
+- 乱序数据的写入处理
+- 幂等与 exactly-once 保障
+- 高并发查询下的持续流式数据写入
+- 流式数据低延迟查询
+- 高波动与突发型数据写入负载变化
+- 动态添加新列——在数据持续写入时实时变更表结构
 
-## 试用 QuestDB、演示和仪表板
+## 体验 QuestDB 和仪表板
 
-[实时公共演示](https://demo.questdb.com/)配备了最新的 QuestDB 版本和示例数据集：
+我们提供了 [实时公共演示](https://demo.questdb.com/), 该环境基于最新版 QuestDB 并预置了以下示例数据集：
 
-- 交易：实时加密交易，每月超过 3000 万行（OKX 交易所）
-- 外汇订单簿：带有订单簿外汇对的实时图表
-- 行程：纽约出租车行程 10 年数据，16 亿行
+- 交易数据：实时加密货币交易记录，每月新增超3000万条（OKX交易所数据）
+- 外汇订单簿：带有外汇交易对订单簿的实时图表
+- 出行数据：纽约市 10 年出租车行程记录，共 16 亿行数据
 
-我们还有一些使用我们[原生 Grafana](https://questdb.com/docs/third-party-tools/grafana/) 插件的公共实时演示仪表板：
+我们还通过 [原生 Grafana](https://questdb.com/docs/third-party-tools/grafana/) 插件构建了一些公开的实时演示看板：
 
-- [实时加密交易：](https://questdb.com/dashboards/crypto/)OKX 上超过 20 种资产的实时执行交易
-- [外汇订单簿：](https://questdb.com/dashboards/FX-orderbook/)主要外汇对的实时深度/失衡图表
+- [实时加密货币交易看板：](https://questdb.com/dashboards/crypto/)实时展示OKX交易所20余种资产的成交情况
+- [外汇订单簿看板：](https://questdb.com/dashboards/FX-orderbook/)主流外汇交易对的实时深度/不平衡图表
 
 ### QuestDB 与其他数据库的性能比较
 
-QuestDB 在与替代方案的性能基准测试中表现非常出色。
+在多项性能基准测试中，QuestDB 相比其他替代方案表现优异。
 
-有关内部机制和性能的深入分析，请参阅以下博客文章：
+如需深入了解内部机制与性能表现，请参阅以下技术博客：
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
 - [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
-一如既往，我们鼓励您运行自己的基准测试。
+我们推荐您亲自运行基准测试以获得最直观的性能体验。
 
 <div align="center">
   <img alt="比较 QuestDB、InfluxDB 和 TimescaleDB 摄取速率的图表。" src="../.github/readme-benchmark.png" width="600"/>
@@ -123,7 +123,7 @@ QuestDB 在与替代方案的性能基准测试中表现非常出色。
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-或者 macOS 用户可以使用 Homebrew：
+macOS 用户可以使用 Homebrew：
 
 ```bash
 brew install questdb
@@ -135,11 +135,11 @@ questdb start
 questdb stop
 ```
 
-或者，要开始完整的入门之旅，请从我们简洁的[快速入门指南](https://questdb.com/docs/quick-start/)开始。
+若需完整入门指引，建议从我们的简洁版 [快速入门指南](https://questdb.com/docs/quick-start/)开始。
 
-### 第一方摄取客户端
+### 原生数据写入客户端
 
-通过 InfluxDB Line Protocol 摄取数据的 QuestDB 客户端：
+支持通过 InfluxDB Line Protocol（以下简称 ILP 协议） 进行数据写入的 QuestDB 客户端：
 
 - [Python](https://questdb.com/docs/clients/ingest-python/)
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
@@ -149,18 +149,19 @@ questdb stop
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-### 连接到 QuestDB
+### 连接 QuestDB
 
-通过以下接口与 QuestDB 和您的数据进行交互：
+提供多种方式与 QuestDB 交互：
 
-- [Web 控制台](https://questdb.com/docs/web-console/)，在端口 `9000` 上提供交互式 SQL 编辑器和 CSV 导入
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)，在端口 `9000` 上进行流摄取
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)，在端口 `8812` 上进行编程查询
-- [REST API](https://questdb.com/docs/reference/api/rest/)，在端口 `9000` 上进行 CSV 导入和 cURL
+- [Web 控制台](https://questdb.com/docs/web-console/) 提供交互式 SQL 编辑器和 CSV 导入功能
+- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) 支持 ILP 协议格式的流式数据写入
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) 兼容 PG 协议，可使用任意 PG 的客户端对
+  QuestDB 进行连接
+- [REST API](https://questdb.com/docs/reference/api/rest/) 支持通过 HTTP(S) 进行 CSV 导入和运行 SQL 查询
 
-### 流行的第三方工具
+### 常用第三方工具
 
-与 QuestDB 集成的流行工具包括：
+可与 QuestDB 集成的流行工具包括：
 
 - [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
@@ -173,79 +174,76 @@ questdb stop
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
 - [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
-### 端到端代码脚手架
+### 端到端代码示例
 
-从流摄取到使用 Grafana 进行可视化，从我们的[快速开始存储库](https://github.com/questdb/questdb-quickstart)中的代码脚手架开始。
+从流式数据写入到 Grafana 可视化，请从我们的 [快速入门代码](https://github.com/questdb/questdb-quickstart) 获取脚手架代码。
 
-### 为生产工作负载配置 QuestDB
+### 生产环境配置指南
 
-查找我们的[容量规划](https://questdb.com/docs/deployment/capacity-planning/)以针对生产工作负载微调 QuestDB。
+查阅我们的[容量规划推荐](https://questdb.com/docs/deployment/capacity-planning/) 针对生产环境负载优化 QuestDB 配置。
 
 ### QuestDB 企业版
 
-适用于更大规模或更大组织内的安全运营。
+为大规模部署或大型组织生产环境提供安全增强版。
 
-其他功能包括：
+额外功能包括：
 
-- 高可用性和读取副本
-- 多主摄取
+- 高可用性与只读副本查询
+- 多主节点数据写入
 - 冷存储集成
-- 基于角色的访问控制
+- 基于角色的访问控制（RBAC）
 - TLS 加密
-- 通过对象存储本地查询 Parquet 文件
-- 支持 SLA、增强监控等
+- 通过对象存储直接查询 Parquet 文件
+- 服务等级协议（SLA）保障、监控增强等
 
-访问[企业版页面](https://questdb.com/enterprise/)以获取更多详细信息和联系信息。
+访问[企业版页面](https://questdb.com/enterprise/)获取详细信息与联系方式。
 
-## 其他资源
+## 扩展资源
 
-### 📚 阅读文档
+### 📚 查阅文档
 
-- [QuestDB 文档：](https://questdb.com/docs/)开始之旅
-- [产品路线图：](https://github.com/orgs/questdb/projects/1/views/5)查看我们即将发布版本的计划
-- [教程：](https://questdb.com/tutorial/)逐步了解 QuestDB 的可能性
+- [QuestDB 文档：](https://questdb.com/docs/)开始您的探索之旅
+- [产品路线图：](https://github.com/orgs/questdb/projects/1/views/5)了解未来版本规划
+- [教程：](https://questdb.com/tutorial/)通过步骤化教学掌握 QuestDB 的各种应用场景
 
 ### ❓ 获取支持
 
-- [社区讨论论坛：](https://community.questdb.com/)加入技术讨论、提问并与其他用户见面！
-- [公共 Slack：](https://slack.questdb.com/)与 QuestDB 团队和社区成员聊天
-- [GitHub issues：](https://github.com/questdb/questdb/issues)报告 QuestDB 的错误或问题
-- [Stack Overflow：](https://stackoverflow.com/questions/tagged/questdb)寻找常见的故障排除解决方案
+- [社区论坛：](https://community.questdb.com/)参与技术讨论、提问交流、结识其他用户！
+- [公开 Slack：](https://slack.questdb.com/)与 QuestDB 团队和社区成员实时沟通
+- [GitHub issues：](https://github.com/questdb/questdb/issues)报告 QuestDB 使用中遇到的问题
+- [Stack Overflow：](https://stackoverflow.com/questions/tagged/questdb)查找常见问题解决方案
 
 ### 🚢 部署 QuestDB
 
-- [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
+- [AWS AMI 镜像](https://questdb.com/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
 - [官方 Docker 镜像](https://questdb.com/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
+- [DigitalOcean 云服务器](https://questdb.com/docs/guides/digitalocean)
+- [Kubernetes Helm 图表](https://questdb.com/docs/guides/kubernetes)
 
-## 贡献
+## 参与贡献
 
-欢迎贡献！
+欢迎贡献您的力量！
 
-我们赞赏：
+我们珍视以下形式的参与：
 
 - 源代码
-- 文档（请参阅我们的[文档存储库](https://github.com/questdb/documentation)）
-- 错误报告
-- 功能请求或反馈。
+- 文档优化（参见 [文档代码库](https://github.com/questdb/documentation)）
+- Issue 报告
+- 功能建议或反馈
 
-开始贡献：
+贡献指南：
 
--
-查看标有"[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-的 GitHub issues
-- 对于
-  Hacktoberfest，请查看相关的[标记 issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+- 查看标有 "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)" 的 GitHub issues
+- Hacktoberfest 期间请关注 [标记 issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
 - 阅读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- 有关构建 QuestDB 的详细信息，请参阅[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [创建 fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) QuestDB 并提交包含您提议更改的拉取请求
-- 卡住了？加入我们的[公共 Slack](https://slack.questdb.com/) 寻求帮助
+- 构建说明请参见 [构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) QuestDB 并提交包含改进方案的 PR
+- 遇到困难？加入我们的[公开 Slack](https://slack.questdb.com/) 获取帮助
 
-✨ 作为我们感谢的标志，我们向贡献者发送 QuestDB 周边产品！
+✨ 为表谢意，我们将向贡献者赠送 QuestDB 专属纪念品！
 
-特别感谢以下为 QuestDB 做出贡献的优秀人员 [表情符号说明](https://allcontributors.org/docs/en/emoji-key)：
+特别感谢以下为 QuestDB 做出贡献的优秀人员 [emoji](https://allcontributors.org/docs/en/emoji-key)：
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
