@@ -22,6 +22,7 @@ import java.math.RoundingMode;
  * </p>
  */
 public class Decimal256 implements Sinkable {
+    public static final int BYTES = 32;
     /**
      * Maximum allowed scale (number of decimal places)
      */
@@ -29,7 +30,6 @@ public class Decimal256 implements Sinkable {
     public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
     public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE + 1, -1, -1, -1, 0);
     public static final Decimal256 NULL_VALUE = new Decimal256(Long.MIN_VALUE, -1, -1, -1, 0);
-    public static final int BYTES = 32;
     private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
             1L, 15L,
             159L, 1593L, 15930L, 159309L, 1593091L,
@@ -126,6 +126,16 @@ public class Decimal256 implements Sinkable {
             5789604L, 578960L, 57896L, 5789L, 578L,
             57L, 5L,
     };
+    private static final long[] PRECISION_NEGATIVE_THRESHOLD_HH = {0L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -2L, -16L, -160L, -1594L, -15931L, -159310L, -1593092L, -15930920L, -159309192L, -1593091912L, -15930919112L, -159309191114L, -1593091911133L, -15930919111325L, -159309191113246L, -1593091911132453L, -15930919111324523L, -159309191113245228L, -1593091911132452278L,};
+    private static final long[] PRECISION_NEGATIVE_THRESHOLD_HL = {0L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -3L, -30L, -294L, -2939L, -29388L, -293874L, -2938736L, -29387359L, -293873588L, -2938735878L, -29387358771L, -293873587706L, -2938735877056L, -29387358770558L, -293873587705572L, -2938735877055719L, -29387358770557188L, -293873587705571877L, -2938735877055718770L, 7506129376861915532L, 1274317473780948863L, -5703569335900062978L, -1695461137871974931L, 1492132694989802311L, -3525417123811528498L, 1639316909303818258L, -2053574980671369031L, -2089005733004138688L, -2443313256331835255L, -5986388489608800930L, -4523652674959354448L, -8343038602174441245L, 8803334346803345638L, -4200376900514301695L, -5110280857723913710L, 4237423643889517748L, 5480748291476074253L, -532749306367912314L,};
+    private static final long[] PRECISION_NEGATIVE_THRESHOLD_LH = {0L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -6L, -55L, -543L, -5422L, -54211L, -542102L, -5421011L, -54210109L, -542101087L, -5421010863L, -54210108625L, -542101086243L, -5421010862428L, -54210108624276L, -542101086242753L, -5421010862427523L, -54210108624275222L, -542101086242752218L, -5421010862427522171L, 1130123596853433147L, -7145508105175220140L, 2331895243086005066L, 4872208357150499051L, -6618148649623664335L, 7605489798601563119L, 2267921691177424735L, 4232472838064695743L, 5431240233227854203L, -1027829888850112812L, 8168445185208423501L, 7897475557246028546L, 5187779277622078998L, -3462439444907864859L, 2269093698340454643L, 4244192909694994818L, 5548440949530844952L, 144177274179794674L, 1441772741797946748L, -4029016655730084129L, -3396678409881738057L, 2926704048601722662L, -7626447661401876603L, -2477500319180559563L, -6328259118096044007L, -7942358959831785217L, -5636613303479645706L, -1025900813667802212L, 8187735937031529496L, 8090383075477088496L, 7116854459932678496L, -2618431695511421504L, -7737572881404663424L, -3588752519208427776L, 1005962955334825472L, -8387114520361296896L, 8362575164934789120L, -8607968719199866880L,};
+    private static final long[] PRECISION_NEGATIVE_THRESHOLD_LL = {0L, -9L, -99L, -999L, -9999L, -99999L, -999999L, -9999999L, -99999999L, -999999999L, -9999999999L, -99999999999L, -999999999999L, -9999999999999L, -99999999999999L, -999999999999999L, -9999999999999999L, -99999999999999999L, -999999999999999999L, 8446744073709551617L, -7766279631452241919L, -3875820019684212735L, -1864712049423024127L, -200376420520689663L, -2003764205206896639L, -1590897978359414783L, 2537764290115403777L, 6930898827444486145L, -4477988020393345023L, -7886392056514347007L, -5076944270305263615L, 4570789518076018689L, 8814407033341083649L, -4089650035136921599L, -4003012203950112767L, -3136633892082024447L, 5527149226598858753L, -68739955140067327L, -687399551400673279L, -6873995514006732799L, 5047021154770878465L, -4870020673419870207L, 6640025486929952769L, -7386721425538678783L, -80237960548581375L, -802379605485813759L, -8023796054858137599L, -6450984253743169535L, -9169610316303040511L, 537617205517352961L, 5376172055173529601L, -1578511669393358847L, 2661627379775963137L, 8169529724050079745L, 7908320945662590977L, 5296233161787703297L, -2377900603251621887L, -5332261958806667263L, 2017612633061982209L, 1729382256910270465L, -1152921504606846975L, 6917529027641081857L, -4611686018427387903L, -9223372036854775807L, 1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L,};
+    private static final long[] PRECISION_POSITIVE_THRESHOLD_HH = {0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 1L, 15L, 159L, 1593L, 15930L, 159309L, 1593091L, 15930919L, 159309191L, 1593091911L, 15930919111L, 159309191113L, 1593091911132L, 15930919111324L, 159309191113245L, 1593091911132452L, 15930919111324522L, 159309191113245227L, 1593091911132452277L,};
+    private static final long[] PRECISION_POSITIVE_THRESHOLD_HL = {0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 2L, 29L, 293L, 2938L, 29387L, 293873L, 2938735L, 29387358L, 293873587L, 2938735877L, 29387358770L, 293873587705L, 2938735877055L, 29387358770557L, 293873587705571L, 2938735877055718L, 29387358770557187L, 293873587705571876L, 2938735877055718769L, -7506129376861915533L, -1274317473780948864L, 5703569335900062977L, 1695461137871974930L, -1492132694989802312L, 3525417123811528497L, -1639316909303818259L, 2053574980671369030L, 2089005733004138687L, 2443313256331835254L, 5986388489608800929L, 4523652674959354447L, 8343038602174441244L, -8803334346803345639L, 4200376900514301694L, 5110280857723913709L, -4237423643889517749L, -5480748291476074254L, 532749306367912313L,};
+    private static final long[] PRECISION_POSITIVE_THRESHOLD_LH = {0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 5L, 54L, 542L, 5421L, 54210L, 542101L, 5421010L, 54210108L, 542101086L, 5421010862L, 54210108624L, 542101086242L, 5421010862427L, 54210108624275L, 542101086242752L, 5421010862427522L, 54210108624275221L, 542101086242752217L, 5421010862427522170L, -1130123596853433148L, 7145508105175220139L, -2331895243086005067L, -4872208357150499052L, 6618148649623664334L, -7605489798601563120L, -2267921691177424736L, -4232472838064695744L, -5431240233227854204L, 1027829888850112811L, -8168445185208423502L, -7897475557246028547L, -5187779277622078999L, 3462439444907864858L, -2269093698340454644L, -4244192909694994819L, -5548440949530844953L, -144177274179794675L, -1441772741797946749L, 4029016655730084128L, 3396678409881738056L, -2926704048601722663L, 7626447661401876602L, 2477500319180559562L, 6328259118096044006L, 7942358959831785216L, 5636613303479645705L, 1025900813667802211L, -8187735937031529497L, -8090383075477088497L, -7116854459932678497L, 2618431695511421503L, 7737572881404663423L, 3588752519208427775L, -1005962955334825473L, 8387114520361296895L, -8362575164934789121L, 8607968719199866879L,};
+    // Positive precision thresholds, gives the maximum value for a specific
+    // precision.
+    private static final long[] PRECISION_POSITIVE_THRESHOLD_LL = {0L, 9L, 99L, 999L, 9999L, 99999L, 999999L, 9999999L, 99999999L, 999999999L, 9999999999L, 99999999999L, 999999999999L, 9999999999999L, 99999999999999L, 999999999999999L, 9999999999999999L, 99999999999999999L, 999999999999999999L, -8446744073709551617L, 7766279631452241919L, 3875820019684212735L, 1864712049423024127L, 200376420520689663L, 2003764205206896639L, 1590897978359414783L, -2537764290115403777L, -6930898827444486145L, 4477988020393345023L, 7886392056514347007L, 5076944270305263615L, -4570789518076018689L, -8814407033341083649L, 4089650035136921599L, 4003012203950112767L, 3136633892082024447L, -5527149226598858753L, 68739955140067327L, 687399551400673279L, 6873995514006732799L, -5047021154770878465L, 4870020673419870207L, -6640025486929952769L, 7386721425538678783L, 80237960548581375L, 802379605485813759L, 8023796054858137599L, 6450984253743169535L, 9169610316303040511L, -537617205517352961L, -5376172055173529601L, 1578511669393358847L, -2661627379775963137L, -8169529724050079745L, -7908320945662590977L, -5296233161787703297L, 2377900603251621887L, 5332261958806667263L, -2017612633061982209L, -1729382256910270465L, 1152921504606846975L, -6917529027641081857L, 4611686018427387903L, 9223372036854775807L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L,};
     private static final BigDecimal[] ZERO_SCALED = new BigDecimal[32];
     // holders for in-place mutations that doesn't have a mutable structure available
     private static final ThreadLocal<Decimal256> tl = new ThreadLocal<>(Decimal256::new);
@@ -450,6 +460,33 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Compare the decimal precision with the other.
+     *
+     * @return true if the decimal precision is smaller or equal to the given precision, false otherwise.
+     */
+    public boolean comparePrecision(int precision) {
+        if (precision > MAX_SCALE) {
+            return true;
+        } else if (precision < 0) {
+            return false;
+        }
+
+        if (hh >= 0) {
+            final long thresholdHH = PRECISION_POSITIVE_THRESHOLD_HH[precision];
+            final long thresholdHL = PRECISION_POSITIVE_THRESHOLD_HL[precision];
+            final long thresholdLH = PRECISION_POSITIVE_THRESHOLD_LH[precision];
+            final long thresholdLL = PRECISION_POSITIVE_THRESHOLD_LL[precision];
+            return compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) <= 0;
+        } else {
+            final long thresholdHH = PRECISION_NEGATIVE_THRESHOLD_HH[precision];
+            final long thresholdHL = PRECISION_NEGATIVE_THRESHOLD_HL[precision];
+            final long thresholdLH = PRECISION_NEGATIVE_THRESHOLD_LH[precision];
+            final long thresholdLL = PRECISION_NEGATIVE_THRESHOLD_LL[precision];
+            return compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) >= 0;
+        }
+    }
+
+    /**
      * Compare this Decimal256 with another.
      *
      * @param other the Decimal256 to compare with
@@ -676,6 +713,51 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Gets the storage size of the value in pow2 bytes.
+     * E.g., 100 can be stored in 1 byte and gives us 0.
+     * The minimum value for each possible size is considered to take more space. The point being
+     * that we actually use the minimum value for each possible size as a sentinel value for NULL.
+     */
+    public int getStorageSize() {
+        if (hh >= 0) {
+            if (hh == 0 && hl == 0 && lh >= 0) {
+                if (lh == 0 && ll >= 0) {
+                    if ((ll & 0xFFFFFFFF80000000L) == 0) {
+                        if ((ll & 0xFFFF8000L) == 0) {
+                            if ((ll & 0xFF80L) == 0) {
+                                return 0; // 8-bit
+                            }
+                            return 1; // 16-bit
+                        }
+                        return 2; // 32-bit
+                    }
+                    return 3; // 64-bit
+                }
+                return 4; // 128-bit
+            }
+            return 5; // 256-bit
+        } else {
+            if (hh == -1 && hl == -1 && lh < 0 && (lh != Long.MIN_VALUE || ll != 0)) {
+                if (lh == -1 && ll < 0 && ll != Long.MIN_VALUE) {
+                    final long c = ll - 1;
+                    if ((c & 0xFFFFFFFF80000000L) == 0xFFFFFFFF80000000L) {
+                        if ((c & 0xFFFF8000L) == 0xFFFF8000L) {
+                            if ((c & 0xFF80L) == 0xFF80L) {
+                                return 0; // 8-bit
+                            }
+                            return 1; // 16-bit
+                        }
+                        return 2; // 32-bit
+                    }
+                    return 3; // 64-bit
+                }
+                return 4; // 128-bit
+            }
+            return 5; // 256-bit
+        }
+    }
+
+    /**
      * Returns the hash code for this Decimal256.
      * The hash code is computed based on all 256 bits of the value and the scale.
      *
@@ -899,7 +981,8 @@ public class Decimal256 implements Sinkable {
         }
 
         if (newScale < scale) {
-            throw NumericException.instance().put("New scale must be >= current scale");
+            round(newScale, RoundingMode.UNNECESSARY);
+            return;
         }
 
         rescale0(newScale);
@@ -924,11 +1007,6 @@ public class Decimal256 implements Sinkable {
 
         validateScale(targetScale);
 
-        if (roundingMode == RoundingMode.UNNECESSARY) {
-            // UNNECESSARY mode is a no-op in this implementation
-            return;
-        }
-
         if (isZero()) {
             this.scale = targetScale;
             return;
@@ -951,11 +1029,12 @@ public class Decimal256 implements Sinkable {
             return;
         }
 
+        // TODO: optimize the rounding logic by replacing the division by a multiply + shift
         divide(divider, hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
     }
 
     /**
-     * Set this Decimal256 from a long value with specified scale.
+     * Set this Decimal256 from a long value with the specified scale.
      *
      * @param value the long value
      * @param scale the desired scale
@@ -965,9 +1044,10 @@ public class Decimal256 implements Sinkable {
 
         this.scale = scale;
         this.ll = value;
-        this.lh = value < 0 ? -1L : 0L;  // Sign extension
-        this.hl = value < 0 ? -1L : 0L;
-        this.hh = value < 0 ? -1L : 0L;
+        final long s = value < 0 ? -1L : 0L;
+        this.lh = s;
+        this.hl = s;
+        this.hh = s;
     }
 
     /**
