@@ -24,33 +24,13 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 
-public class StrColumn extends StrFunction implements ColumnFunction {
-    private final int columnIndex;
+public interface ColumnFunction extends Function {
+    int getColumnIndex();
 
-    public StrColumn(int columnIndex) {
-        this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return columnIndex;
-    }
-
-    @Override
-    public CharSequence getStrA(Record rec) {
-        return rec.getStrA(columnIndex);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return rec.getStrB(columnIndex);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return rec.getStrLen(columnIndex);
+    default void toPlan(PlanSink sink) {
+        sink.putColumnName(getColumnIndex());
     }
 }

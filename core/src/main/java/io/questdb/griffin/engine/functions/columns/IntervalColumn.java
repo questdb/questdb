@@ -24,10 +24,8 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
@@ -35,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class IntervalColumn extends IntervalFunction implements Function, FunctionExtension {
+public class IntervalColumn extends IntervalFunction implements FunctionExtension {
     private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -83,11 +81,6 @@ public class IntervalColumn extends IntervalFunction implements Function, Functi
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {

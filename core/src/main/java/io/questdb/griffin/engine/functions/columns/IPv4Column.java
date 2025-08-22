@@ -25,16 +25,19 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Numbers;
 
-public class IPv4Column extends IPv4Function implements Function {
+public class IPv4Column extends IPv4Function implements ColumnFunction {
     private final int columnIndex;
 
     public IPv4Column(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -43,15 +46,5 @@ public class IPv4Column extends IPv4Function implements Function {
             return Numbers.IPv4_NULL;
         }
         return rec.getIPv4(columnIndex);
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 }

@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
@@ -59,7 +60,6 @@ import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
@@ -616,14 +616,14 @@ public class GroupByUtils {
     /**
      * Returns the column index from the given base metadata in two cases:
      * 1. it's a column literal
-     * 2. cast(symbol_column as symbol) which is compiled as symbol_column (the case is no-op)
+     * 2. cast(a_column as same_type) which is compiled as a_column (the case is no-op)
      */
     private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
         if (node.type == LITERAL) {
             return baseMetadata.getColumnIndexQuiet(node.token);
         }
-        if (SqlKeywords.isCastKeyword(node.token) && func instanceof SymbolColumn) {
-            return ((SymbolColumn) func).getColumnIndex();
+        if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
+            return ((ColumnFunction) func).getColumnIndex();
         }
         return -1;
     }
