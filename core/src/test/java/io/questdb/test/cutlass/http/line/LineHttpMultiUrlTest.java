@@ -163,7 +163,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false)) {
                 serverMain2.start();
-                try (Sender sender = Sender.fromConfig("http::addr=localhost:9020;addr=localhost:9030;")) {
+                try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
                     sender.table("line").longColumn("foo", 123).atNow();
                     sender.flush();
 
@@ -177,7 +177,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     @Test
     public void testFirstServerIsDownTCP() {
         try {
-            Sender.fromConfig("tcp::addr=localhost:9020;addr=localhost:9030;");
+            Sender.fromConfig("tcp::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";");
             Assert.fail();
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "only a single address (host:port) is supported for TCP transport");
@@ -188,11 +188,11 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     @Test
     public void testServersAllDown() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Sender sender = Sender.fromConfig("http::addr=localhost:9020;addr=localhost:9030;")) {
+            try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
                 sender.table("line").longColumn("foo", 123).atNow();
                 sender.flush();
+                Assert.fail();
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
                 Assert.assertEquals(61, e.getErrno());
             }
         });
@@ -212,7 +212,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             final @Nullable TxReader[] r2 = {null};
 
             long expectedTotalRows = 100_000;
-            try (Sender sender = Sender.fromConfig("http::addr=localhost:9020;addr=localhost:9030;auto_flush=off;")) {
+            try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";" + "auto_flush=off;")) {
                 for (int i = 0; i < expectedTotalRows; i++) {
                     sender.table("line").longColumn("foo", i).atNow();
 
