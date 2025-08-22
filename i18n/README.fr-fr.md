@@ -32,8 +32,8 @@
 
 ---
 
-QuestDB est une base de données de séries temporelles open source offrant une **ingestion ultra-rapide**
-et des **requêtes SQL dynamiques à faible latence**.
+QuestDB est une base de données de séries temporelles open source offrant une ingestion ultra-rapide
+et des requêtes SQL dynamiques à faible latence.
 
 Nous atteignons de hautes performances grâce à un modèle de stockage orienté colonnes,
 une exécution vectorielle parallélisée, des instructions SIMD et des techniques de faible latence.
@@ -41,8 +41,7 @@ De plus, QuestDB est efficace en ressources matérielles, avec une configuration
 
 QuestDB implémente ANSI SQL avec des extensions SQL natives pour les séries temporelles.
 
-QuestDB fournit un moteur de stockage multi-niveaux (WAL → natif → Parquet sur stockage objet), et le moteur principal
-est implémenté en Java sans garbage collection et C++; QuestDB Enterprise inclut des composants supplémentaires en Rust.
+QuestDB propose une architecture de stockage multi-niveaux (WAL → stockage colonnaire natif → Parquet sur stockage objet). Le noyau est implémenté en Java sans GC et en C++. Des composants supplémentaires en Rust sont disponibles dans QuestDB Enterprise.
 
 > Prêt à commencer ? Rendez-vous à la section
 > [Démarrage](#démarrage).
@@ -64,10 +63,10 @@ Les fonctionnalités principales incluent :
 
 - Ingestion haute fréquence, faible latence — d'événements uniques à des millions/sec
 - SQL faible latence avec extensions de séries temporelles (ASOF JOIN, SAMPLE BY, LATEST ON)
-- Exécution parallèle accélérée SIMD ; fonctionne rapidement sur du matériel modeste
+- Exécution vectorisée (SIMD) et parallèle
 - Stockage multi-niveaux : WAL → colonnes natives → Parquet (partitionné et ordonné par temps)
 - Protocole Postgres (PGwire) et API REST
-- Vues matérialisées et tableaux n-dimensionnels (y compris tableaux 2D pour les carnets d'ordres)
+- Vues matérialisées et **arrays** n-dimensionnels (dont 2D pour carnets d’ordres)
 - Console web pour les requêtes et la gestion des données
 - Apache 2.0 open source et formats ouverts — aucun verrouillage fournisseur
 - [Fonctions financières](https://questdb.com/docs/reference/function/finance/)
@@ -85,8 +84,8 @@ Au-delà des performances et de l'efficacité, avec une base de données de sér
 n'avez pas à vous soucier de :
 
 - données dans le désordre
-- déduplication et sémantique exactement-une-fois
-- Ingestion en streaming continu avec de nombreuses requêtes simultanées
+- Événements hors ordre d’arrivée (out-of-order)
+- Déduplication et sémantique « exactly-once »
 - données de streaming (faible latence)
 - données volatiles et "en rafales"
 - ajout de nouvelles colonnes - changer le schéma "à la volée" pendant le streaming de données
