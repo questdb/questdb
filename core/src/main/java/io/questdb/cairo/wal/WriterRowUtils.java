@@ -38,28 +38,32 @@ public class WriterRowUtils {
     private WriterRowUtils() {
     }
 
+    public static void putNullDecimal(TableWriter.Row row, int col, int toType) {
+        switch (ColumnType.tagOf(toType)) {
+            case ColumnType.DECIMAL8:
+                row.putByte(col, Byte.MIN_VALUE);
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(col, Short.MIN_VALUE);
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(col, Integer.MIN_VALUE);
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(col, Long.MIN_VALUE);
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(col, Long.MIN_VALUE, -1);
+                break;
+            case ColumnType.DECIMAL256:
+                row.putDecimal256(col, Long.MIN_VALUE, -1, -1, -1);
+                break;
+        }
+    }
+
     public static void putDecimal(int index, Decimal256 value, int columnType, TableWriter.Row row) {
         if (value.isNull()) {
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.DECIMAL8:
-                    row.putByte(index, Byte.MIN_VALUE);
-                    break;
-                case ColumnType.DECIMAL16:
-                    row.putShort(index, Short.MIN_VALUE);
-                    break;
-                case ColumnType.DECIMAL32:
-                    row.putInt(index, Integer.MIN_VALUE);
-                    break;
-                case ColumnType.DECIMAL64:
-                    row.putLong(index, Long.MIN_VALUE);
-                    break;
-                case ColumnType.DECIMAL128:
-                    row.putDecimal128(index, Long.MIN_VALUE, -1);
-                    break;
-                case ColumnType.DECIMAL256:
-                    row.putDecimal256(index, Long.MIN_VALUE, -1, -1, -1);
-                    break;
-            }
+            putNullDecimal(row, index, columnType);
             return;
         }
         short tag = ColumnType.tagOf(columnType);
