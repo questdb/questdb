@@ -34,29 +34,35 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Nn)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function var = args.getQuick(0);
-        int leftTimestampType = args.getQuick(0).getType();
-        int rightTimestampType = args.getQuick(1).getType();
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function arg = args.getQuick(0);
+        final int leftTimestampType = args.getQuick(0).getType();
+        final int rightTimestampType = args.getQuick(1).getType();
         if (!ColumnType.isTimestamp(leftTimestampType) || leftTimestampType == rightTimestampType) {
-            return new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(args.getQuick(0), rightTimestampType);
+            return new CastLongToTimestampFunctionFactory.Func(args.getQuick(0), rightTimestampType);
         }
-
-        return new CastTimestampToTimestampFunction(var, leftTimestampType, rightTimestampType);
+        return new Func(arg, leftTimestampType, rightTimestampType);
     }
 
-    public static class CastTimestampToTimestampFunction extends AbstractCastToTimestampFunction {
+    public static class Func extends AbstractCastToTimestampFunction {
         private final int leftTimestampType;
 
-        public CastTimestampToTimestampFunction(Function arg, int leftTimestamp, int rightTimestampType) {
+        public Func(Function arg, int leftTimestampType, int rightTimestampType) {
             super(arg, rightTimestampType);
-            this.leftTimestampType = leftTimestamp;
+            this.leftTimestampType = leftTimestampType;
         }
 
         @Override

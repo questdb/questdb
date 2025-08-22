@@ -29,6 +29,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 
 public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction {
+
     protected AbstractCastToTimestampFunction(Function arg, int timestampType) {
         super(arg, timestampType);
     }

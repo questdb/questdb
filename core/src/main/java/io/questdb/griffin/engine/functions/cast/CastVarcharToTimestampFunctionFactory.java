@@ -53,6 +53,7 @@ public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends AbstractCastToTimestampFunction {
+
         public Func(Function arg, int timestampType) {
             super(arg, timestampType);
         }

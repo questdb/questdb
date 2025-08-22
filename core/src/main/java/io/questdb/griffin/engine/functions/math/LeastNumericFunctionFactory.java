@@ -122,11 +122,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         }
 
         if (set.contains(ColumnType.TIMESTAMP_NANO)) {
-            return new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_NANO);
+            return new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_NANO);
         }
 
         if (set.contains(ColumnType.TIMESTAMP_MICRO)) {
-            return new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_MICRO);
+            return new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_MICRO);
         }
 
         if (set.contains(ColumnType.INT)) {

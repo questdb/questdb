@@ -34,18 +34,26 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastFloatToTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Fn)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastFloatToTimestampFunction(args.getQuick(0), args.getQuick(1).getType());
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    public static class CastFloatToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastFloatToTimestampFunction(Function arg, int timestampType) {
+    public static class Func extends AbstractCastToTimestampFunction {
+
+        public Func(Function arg, int timestampType) {
             super(arg, timestampType);
         }
 
