@@ -62,7 +62,7 @@ Feature highlights include:
 
 - Low-latency, high-throughput ingestion — from single events to millions/sec
 - Low-latency SQL with time-series extensions (ASOF JOIN, SAMPLE BY, LATEST ON)
-- SIMD-accelerated, parallel execution; runs fast on modest hardware
+- SIMD-accelerated, parallel execution
 - Multi-tier storage: WAL → native columnar → Parquet (time-partitioned and time-ordered)
 - Postgres protocol (PGwire) and REST API
 - Materialized views and n-dimensional arrays (incl. 2D arrays for order books)
