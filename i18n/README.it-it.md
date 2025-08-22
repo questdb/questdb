@@ -32,15 +32,12 @@
 
 ---
 
-QuestDB è un database di serie temporali open-source che offre **ingestione dei dati ultra-veloce** e **query SQL
-dinamiche a bassa latenza**.
+QuestDB è un database di serie temporali open-source che offre ingestione dei dati ultra-veloce e query SQL
+dinamiche a bassa latenza.
 
-QuestDB fornisce un motore di archiviazione multi-livello (WAL → nativo → Parquet su object storage), e il motore
-principale è implementato in Java zero-GC e C++; QuestDB Enterprise include componenti aggiuntivi in Rust.
+QuestDB adotta un’architettura multi-tier storage (WAL → native columnar → Parquet on object storage). Il core è implementato in Java senza GC e C++; moduli aggiuntivi in Rust sono disponibili in QuestDB Enterprise.
 
-Raggiungiamo alte prestazioni attraverso un modello di storage orientato alle colonne, esecuzione vettoriale
-parallelizzata, istruzioni SIMD e tecniche a bassa latenza. Inoltre, QuestDB è efficiente nell'hardware, con
-configurazione rapida ed efficienza operativa.
+Le prestazioni derivano da uno storage colonnare, esecuzione vettoriale e parallela (SIMD) e tecniche a bassa latenza. Inoltre, QuestDB è efficiente nelle risorse, con setup rapido e gestione operativa semplificata.
 
 > Pronto per iniziare? Vai alla sezione
 > [Inizia](#inizia).
@@ -62,7 +59,7 @@ Le caratteristiche principali includono:
 
 - Ingestione a bassa latenza e alta velocità — da eventi singoli a milioni/sec
 - SQL a bassa latenza con estensioni per serie temporali (ASOF JOIN, SAMPLE BY, LATEST ON)
-- Esecuzione parallela accelerata SIMD; funziona velocemente su hardware modesto
+- Esecuzione parallela vettoriale (SIMD)
 - Storage multi-livello: WAL → colonnare nativo → Parquet (partizionato e ordinato per tempo)
 - Protocollo Postgres (PGwire) e REST API
 - Viste materializzate e array n-dimensionali (inclusi array 2D per order book)
@@ -81,20 +78,20 @@ E perché utilizzare un database di serie temporali?
 
 Oltre alle prestazioni e all'efficienza, con un database di serie temporali specializzato, non devi preoccuparti di:
 
-- dati fuori ordine
+- eventi out-of-order (arrivi fuori sequenza) 
 - deduplicazione e semantica exactly-once
 - Ingestione streaming continua con molte query concorrenti
 - dati streaming (bassa latenza)
-- dati volatili e "a raffica"
+- traffico volatile e a picchi (burst)
 - aggiungere nuove colonne - modificare lo schema "al volo" durante lo streaming dei dati
 
 ## Prova QuestDB, demo e dashboard
 
 La [demo pubblica live](https://demo.questdb.com/) è dotata dell'ultima versione di QuestDB e dataset di esempio:
 
-- Trade: trade cripto dal vivo con oltre 30M di righe al mese (exchange OKX)
-- Order book FX: grafici dal vivo con coppie FX order book.
-- Viaggi: 10 anni di viaggi taxi NYC con 1,6 miliardi di righe
+- Trades — operazioni cripto in tempo reale dall’exchange OKX (~30 M di record/mese)
+- FX order book — grafici dell’order book FX in tempo reale per le principali coppie
+- Trips — 10 anni di corse taxi NYC (1,6 miliardi di record)
 
 Abbiamo anche alcune dashboard demo pubbliche in tempo reale utilizzando il nostro
 plugin [nativo Grafana](https://questdb.com/docs/third-party-tools/grafana/):
