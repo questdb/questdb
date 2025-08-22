@@ -647,9 +647,9 @@ pub fn calculate_array_shape(
                     counts[1] += 1;
                 }
 
-                shape[0] = shape[0].max(counts[0]);
                 shape[1] = shape[1].max(counts[1]);
             }
+            shape[0] = shape[0].max(counts[0]);
         }
         3 => {
             for &rep_level in rep_levels {
@@ -666,10 +666,10 @@ pub fn calculate_array_shape(
                     counts[2] += 1;
                 }
 
-                shape[0] = shape[0].max(counts[0]);
                 shape[1] = shape[1].max(counts[1]);
                 shape[2] = shape[2].max(counts[2]);
             }
+            shape[0] = shape[0].max(counts[0]);
         }
         4 => {
             for &rep_level in rep_levels {
@@ -690,11 +690,11 @@ pub fn calculate_array_shape(
                     counts[3] += 1;
                 }
 
-                shape[0] = shape[0].max(counts[0]);
                 shape[1] = shape[1].max(counts[1]);
                 shape[2] = shape[2].max(counts[2]);
                 shape[3] = shape[3].max(counts[3]);
             }
+            shape[0] = shape[0].max(counts[0]);
         }
         _ => {
             // General case for higher dimensions
@@ -709,7 +709,7 @@ pub fn calculate_array_shape(
                     // Reset counts for dimensions deeper than repetition level
                     counts[dim] = 1;
                     // Update shape with maximum counts seen so far
-                    shape[dim] = shape[dim].max(counts[dim]);
+                    shape[dim] = shape[dim].max(1);
                 }
             }
         }
