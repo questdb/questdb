@@ -96,8 +96,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
-        System.out.println(dbPath);
-//        dbPath.parent().$();
     }
 
     public TestServerMain startInstancesWithoutConflict(String rootName, String host, int port, boolean readOnly) {
@@ -174,6 +172,17 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testFirstServerIsDownTCP() {
+        try {
+            Sender.fromConfig("tcp::addr=localhost:9020;addr=localhost:9030;");
+            Assert.fail();
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "only a single address (host:port) is supported for TCP transport");
+        }
+
     }
 
     @Test

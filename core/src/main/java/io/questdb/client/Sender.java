@@ -679,7 +679,13 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 return AbstractLineHttpSender.createLineSender(hosts, ports, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
                         username, password, maxNameLength, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
             }
+
             assert protocol == PROTOCOL_TCP;
+
+            if (hosts.size() != 1 || ports.size() != 1) {
+                throw new LineSenderException("only a single address (host:port) is supported for TCP transport");
+            }
+            
             assert hosts.size() == 1 && ports.size() == 1;
             LineChannel channel = new PlainTcpLineChannel(nf, hosts.getQuick(0), ports.getQuick(0), bufferCapacity * 2);
             AbstractLineTcpSender sender;
