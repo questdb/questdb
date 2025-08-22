@@ -227,7 +227,8 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     /**
-     * Unsupported columns are included into the metadata, but with Undefined column type.
+     * Note: low-level parquet metadata tracks all columns (unsupported are tagged as Undefined),
+     * but higher-level GenericRecordMetadata produced via copyToSansUnsupported() omits them.
      */
     public class Metadata {
         private final ObjList<DirectString> columnNames = new ObjList<>();
@@ -244,6 +245,10 @@ public class PartitionDecoder implements QuietCloseable {
             return columnNames.getQuick(columnIndex);
         }
 
+        /**
+         * Copies supported columns into the provided metadata, skipping any with Undefined type.
+         * If treatSymbolsAsVarchar is true, symbol columns are exposed as VARCHAR.
+         */
         public void copyToSansUnsupported(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
             metadata.clear();
             final int columnCount = columnCount();

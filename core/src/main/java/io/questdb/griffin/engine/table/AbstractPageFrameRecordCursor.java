@@ -62,6 +62,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         Misc.free(frameMemoryPool);
         Misc.free(recordA);
         Misc.free(recordB);
+        frameAddressCache.clear();
         frameCursor = Misc.free(frameCursor);
     }
 

@@ -123,11 +123,19 @@ mod tests {
             (ColumnTypeTag::Long128.into_type(), "long128"),
             (ColumnTypeTag::IPv4.into_type(), "ipv4"),
             (ColumnTypeTag::Varchar.into_type(), "varchar"),
+            (ColumnTypeTag::Array.into_type(), "array"),
         ];
         for (col_type, exp_descr) in cases.iter().copied() {
             let driver = try_lookup_driver(col_type).unwrap();
             let actual_descr = driver.descr();
             assert_eq!(actual_descr, exp_descr);
         }
+    }
+
+    #[test]
+    fn test_lookup_driver_undefined_errors() {
+        // Undefined via code 0 should error
+        let undefined = ColumnType::new(ColumnTypeTag::Undefined, 0);
+        assert!(try_lookup_driver(undefined).is_err());
     }
 }

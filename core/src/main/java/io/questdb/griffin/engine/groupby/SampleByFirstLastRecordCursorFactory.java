@@ -350,8 +350,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void close() {
-            frameAddressCache.clear();
             Misc.free(frameMemoryPool);
+            frameAddressCache.clear();
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }

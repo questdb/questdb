@@ -217,6 +217,8 @@ public class PageFrameAddressCache implements Mutable {
     }
 
     public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes, boolean external) {
+        // Reset frame-derived state and external flag first.
+        clear();
         this.columnCount = metadata.getColumnCount();
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -224,7 +226,6 @@ public class PageFrameAddressCache implements Mutable {
         }
         this.columnIndexes.clear();
         this.columnIndexes.addAll(columnIndexes);
-        clear(); // also clears external flag
         this.external = external;
     }
 }

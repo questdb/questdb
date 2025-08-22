@@ -804,9 +804,11 @@ fn chunk_to_primitive_page(
                 primitive_type,
             )
         }
-        ColumnTypeTag::Symbol => {
-            panic!("Symbol type is encoded in column_chunk_to_pages()")
-        }
+        ColumnTypeTag::Symbol => Err(fmt_err!(
+            InvalidType,
+            "unexpected symbol type in primitive encoder for column {} (should be handled earlier)",
+            column.name,
+        )),
         _ => Err(fmt_err!(
             InvalidType,
             "unexpected type {} for column {}",

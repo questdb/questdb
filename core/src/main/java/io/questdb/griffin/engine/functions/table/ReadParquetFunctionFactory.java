@@ -86,6 +86,10 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyToSansUnsupported(metadata, true);
+                if (metadata.getColumnCount() == 0) {
+                    throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
+                }
+
                 if (context.isParallelReadParquetEnabled()) {
                     return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(configuration, path, metadata));
                 } else {

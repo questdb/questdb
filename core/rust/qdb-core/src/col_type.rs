@@ -29,6 +29,8 @@ use std::fmt::{Debug, Display, Formatter};
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnTypeTag {
+    /// Placeholder for unsupported/unknown types.
+    /// Note: ColumnType::try_from(i32) rejects code <= 0, so Undefined is not a valid serialized code.
     Undefined = 0,
     Boolean = 1,
     Byte = 2,
@@ -181,7 +183,6 @@ impl TryFrom<u8> for ColumnTypeTag {
             17 => Ok(ColumnTypeTag::GeoLong),
             18 => Ok(ColumnTypeTag::Binary),
             19 => Ok(ColumnTypeTag::Uuid),
-            21 => Ok(ColumnTypeTag::IPv4),
             24 => Ok(ColumnTypeTag::Long128),
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
