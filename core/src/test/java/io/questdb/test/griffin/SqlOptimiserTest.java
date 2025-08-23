@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -3055,45 +3056,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testRewriteTrivialExpressionsBasic() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table hits (\n" +
-                            "    ClientIP ipv4,\n" +
-                            "    EventTime timestamp\n" +
-                            ") timestamp(EventTime) partition by day wal;"
-            );
+        testRewriteTrivialExpressionsBasic(false);
+    }
 
-            final String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c " +
-                    "FROM hits " +
-                    "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 " +
-                    "ORDER BY c DESC LIMIT 10;";
-            final String target = "SELECT ClientIP, ClientIP - 1 \"column\", ClientIP - 2 column1, ClientIP - 3 column2, c " +
-                    "FROM (select ClientIP, COUNT() c " +
-                    "FROM hits " +
-                    "ORDER BY c DESC LIMIT 10)";
-            final String model = "select-virtual ClientIP, ClientIP - 1 column, ClientIP - 2 column1, ClientIP - 3 column2, c " +
-                    "from (select-group-by [ClientIP, COUNT() c] ClientIP, COUNT() c " +
-                    "from (select [ClientIP] from hits timestamp (EventTime)) " +
-                    "order by c desc limit 10)";
-
-            assertModel(model, original, ExecutionModel.QUERY);
-            assertModel(model, target, ExecutionModel.QUERY);
-
-            final String plan = "VirtualRecord\n" +
-                    "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
-                    "    Long Top K lo: 10\n" +
-                    "      keys: [c desc]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ClientIP]\n" +
-                    "          values: [count(*)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: hits\n";
-
-            assertPlanNoLeakCheck(original, plan);
-            assertPlanNoLeakCheck(target, plan);
-        });
+    @Test
+    public void testRewriteTrivialExpressionsBasic_aliasExpressionsEnabled() throws Exception {
+        testRewriteTrivialExpressionsBasic(true);
     }
 
     @Test
@@ -4725,6 +4693,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:00.000003Z\tB\t3.0\t3\t3\tnull\t8.0\t3\n" +
                 "1970-01-01T00:00:00.000002Z\tA\t2.0\t2\t2\t1.0\t9.0\t2\n" +
                 "1970-01-01T00:00:00.000001Z\tA\t1.0\t3\t3\tnull\t2.0\t3\n", q6);
+    }
+
+    private void testRewriteTrivialExpressionsBasic(boolean aliasExpressionsEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table hits (\n" +
+                            "    ClientIP ipv4,\n" +
+                            "    EventTime timestamp\n" +
+                            ") timestamp(EventTime) partition by day wal;"
+            );
+
+            final String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c " +
+                    "FROM hits " +
+                    "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 " +
+                    "ORDER BY c DESC LIMIT 10;";
+            final String target = "SELECT ClientIP, ClientIP - 1 \"column\", ClientIP - 2 column1, ClientIP - 3 column2, c " +
+                    "FROM (select ClientIP, COUNT() c " +
+                    "FROM hits " +
+                    "ORDER BY c DESC LIMIT 10)";
+            final String model = "select-virtual ClientIP, ClientIP - 1 column, ClientIP - 2 column1, ClientIP - 3 column2, c " +
+                    "from (select-group-by [ClientIP, COUNT() c] ClientIP, COUNT() c " +
+                    "from (select [ClientIP] from hits timestamp (EventTime)) " +
+                    "order by c desc limit 10)";
+
+            assertModel(model, original, ExecutionModel.QUERY);
+            assertModel(model, target, ExecutionModel.QUERY);
+
+            final String plan = "VirtualRecord\n" +
+                    "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
+                    "    Long Top K lo: 10\n" +
+                    "      keys: [c desc]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ClientIP]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: hits\n";
+
+            assertPlanNoLeakCheck(original, plan);
+            assertPlanNoLeakCheck(target, plan);
+        });
     }
 
     protected QueryModel compileModel(String query) throws SqlException {
