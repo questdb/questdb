@@ -3359,10 +3359,9 @@ public class SqlOptimiser implements Mutable {
         }
 
         QueryModel temporaryModel = model;
-        while (temporaryModel != null) {
+        if (temporaryModel != null) {
             optimiseModelsWithASOFJoins(executionContext, temporaryModel.getNestedModel());
             optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
-            temporaryModel = temporaryModel.getNestedModel();
         }
 
         QueryModel targetModel = model.getNestedModel();
@@ -4404,9 +4403,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Rewrite:
-// sum(x*10) into sum(x) * 10, etc.
-// sum(x+10) into sum(x) + count(x)*10
-// sum(x-10) into sum(x) - count(x)*10
+    // sum(x*10) into sum(x) * 10, etc.
+    // sum(x+10) into sum(x) + count(x)*10
+    // sum(x-10) into sum(x) - count(x)*10
     private ExpressionNode rewriteAggregate(ExpressionNode agg, QueryModel model) {
         if (agg == null) {
             return null;
@@ -7323,6 +7322,40 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static class ChildTableColumnFinder implements PostOrderTreeTraversalAlgo.Visitor {
+        private boolean found;
+        private QueryModel targetModel;
+
+        public ChildTableColumnFinder(QueryModel targetModel, boolean found) {
+            this.targetModel = targetModel;
+            this.found = found;
+        }
+
+        @Override
+        public void visit(ExpressionNode node) throws SqlException {
+            if (node.type == LITERAL) {
+                if (node.token.equals("column")) {
+                    found = true;
+                    return;
+                }
+                CharSequence clauseColumn = node.token;
+                int dot = Chars.indexOfLastUnquoted(clauseColumn, '.');
+                CharSequence clauseColumnName = clauseColumn.subSequence(dot + 1, clauseColumn.length());
+                //check with column in between clause should be of master table
+                if (dot != -1) {
+                    CharSequence whereClauseAlias = clauseColumn.subSequence(0, dot);
+                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                            targetModel.getTableNameExpr().token;
+                    if (!Chars.equalsIgnoreCase(whereClauseAlias, masterTableAlias))
+                        found = true;
+                } else {
+                    if (!targetModel.getAliasToColumnMap().contains(clauseColumnName))
+                        found = true;
+                }
+            }
+        }
+    }
+
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
         private LowerCaseCharSequenceObjHashMap<QueryColumn> nameTypeMap;
 
@@ -7375,36 +7408,6 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
-    }
-
-    private class ChildTableColumnFinder implements PostOrderTreeTraversalAlgo.Visitor {
-        private boolean found;
-        private QueryModel targetModel;
-
-        public ChildTableColumnFinder(QueryModel targetModel, boolean found) {
-            this.targetModel = targetModel;
-            this.found = found;
-        }
-
-        @Override
-        public void visit(ExpressionNode node) throws SqlException {
-            if (node.type == LITERAL) {
-                CharSequence clauseColumn = node.token;
-                int dot = Chars.indexOfLastUnquoted(clauseColumn, '.');
-                CharSequence clauseColumnName = clauseColumn.subSequence(dot + 1, clauseColumn.length());
-                //check with column in between clause should be of master table
-                if (dot != -1) {
-                    CharSequence whereClauseAlias = clauseColumn.subSequence(0, dot);
-                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                            targetModel.getTableNameExpr().token;
-                    if (!Chars.equals(whereClauseAlias, masterTableAlias))
-                        found = true;
-                } else {
-                    if (!targetModel.getAliasToColumnMap().contains(clauseColumnName))
-                        found = true;
-                }
-            }
-        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
