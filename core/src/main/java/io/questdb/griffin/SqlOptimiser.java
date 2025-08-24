@@ -3358,9 +3358,8 @@ public class SqlOptimiser implements Mutable {
             optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
         }
 
-        QueryModel temporaryModel = model;
-        if (temporaryModel != null) {
-            optimiseModelsWithASOFJoins(executionContext, temporaryModel.getNestedModel());
+        if (model != null) {
+            optimiseModelsWithASOFJoins(executionContext, model.getNestedModel());
             optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
         }
 
