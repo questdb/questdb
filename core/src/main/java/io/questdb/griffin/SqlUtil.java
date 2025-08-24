@@ -158,22 +158,8 @@ public class SqlUtil {
     }
 
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -228,22 +214,8 @@ public class SqlUtil {
     }
 
     public static long expectSeconds(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -1072,6 +1044,23 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
+    }
+
+    private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
+        int k = -1;
+        // look for end of digits
+        for (int i = 0; i < tokLen; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
+        }
+        return k;
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
