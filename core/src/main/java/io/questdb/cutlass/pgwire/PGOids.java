@@ -50,8 +50,24 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
+    public static final int PG_ARR_BOOL = 1000;
+    public static final int PG_ARR_BYTEA = 1001;
+    public static final int PG_ARR_DATE = 1182;
+    public static final int PG_ARR_FLOAT4 = 1021;
     public static final int PG_ARR_FLOAT8 = 1022;
+    public static final int PG_ARR_INET = 1041;
+    public static final int PG_ARR_INT2 = 1005;
+    public static final int PG_ARR_INT4 = 1007;
     public static final int PG_ARR_INT8 = 1016;
+    public static final int PG_ARR_INTERVAL = 1187;
+    public static final int PG_ARR_JSONB = 3807;
+    public static final int PG_ARR_NUMERIC = 1231;
+    public static final int PG_ARR_TEXT = 1009;
+    public static final int PG_ARR_TIME = 1183;
+    public static final int PG_ARR_TIMESTAMP = 1115;
+    public static final int PG_ARR_TIMESTAMP_TZ = 1185;
+    public static final int PG_ARR_UUID = 2951;
+    public static final int PG_ARR_VARCHAR = 1015;
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
@@ -60,13 +76,18 @@ public class PGOids {
     public static final int PG_DATE = 1082;
     public static final int PG_FLOAT4 = 700;
     public static final int PG_FLOAT8 = 701;
+    public static final int PG_INET = 869;
     public static final int PG_INT2 = 21;
     public static final int PG_INT4 = 23;
     public static final int PG_INT8 = 20;
     public static final int PG_INTERNAL = 2281;
+    public static final int PG_INTERVAL = 1186;
+    public static final int PG_JSONB = 3802;
     public static final int PG_NAMESPACE_OID = 2615;
+    public static final int PG_NUMERIC = 1700;
     public static final int PG_OID = 26;
     public static final int PG_PUBLIC_OID = 2200;
+    public static final int PG_TIME = 1083;
     public static final int PG_TIMESTAMP = 1114;
     public static final int PG_TIMESTAMP_TZ = 1184;
     public static final IntList PG_TYPE_OIDS = new IntList();
@@ -83,15 +104,46 @@ public class PGOids {
     public static final int PG_VARCHAR = 1043;
     public static final int PG_VOID = 2278;
     @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_BOOL = ((PG_ARR_BOOL >> 24) & 0xff) | ((PG_ARR_BOOL << 8) & 0xff0000) | ((PG_ARR_BOOL >> 8) & 0xff00) | ((PG_ARR_BOOL << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_BYTEA = ((PG_ARR_BYTEA >> 24) & 0xff) | ((PG_ARR_BYTEA << 8) & 0xff0000) | ((PG_ARR_BYTEA >> 8) & 0xff00) | ((PG_ARR_BYTEA << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_DATE = ((PG_ARR_DATE >> 24) & 0xff) | ((PG_ARR_DATE << 8) & 0xff0000) | ((PG_ARR_DATE >> 8) & 0xff00) | ((PG_ARR_DATE << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_FLOAT4 = ((PG_ARR_FLOAT4 >> 24) & 0xff) | ((PG_ARR_FLOAT4 << 8) & 0xff0000) | ((PG_ARR_FLOAT4 >> 8) & 0xff00) | ((PG_ARR_FLOAT4 << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
     public static final int X_PG_ARR_FLOAT8 = ((PG_ARR_FLOAT8 >> 24) & 0xff) | ((PG_ARR_FLOAT8 << 8) & 0xff0000) | ((PG_ARR_FLOAT8 >> 8) & 0xff00) | ((PG_ARR_FLOAT8 << 24) & 0xff000000);
-    public static final int X_B_PG_ARR_FLOAT8 = 1 | X_PG_ARR_FLOAT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_INET = ((PG_ARR_INET >> 24) & 0xff) | ((PG_ARR_INET << 8) & 0xff0000) | ((PG_ARR_INET >> 8) & 0xff00) | ((PG_ARR_INET << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_INT2 = ((PG_ARR_INT2 >> 24) & 0xff) | ((PG_ARR_INT2 << 8) & 0xff0000) | ((PG_ARR_INT2 >> 8) & 0xff00) | ((PG_ARR_INT2 << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_INT4 = ((PG_ARR_INT4 >> 24) & 0xff) | ((PG_ARR_INT4 << 8) & 0xff0000) | ((PG_ARR_INT4 >> 8) & 0xff00) | ((PG_ARR_INT4 << 24) & 0xff000000);
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_ARR_INT8 = ((PG_ARR_INT8 >> 24) & 0xff) | ((PG_ARR_INT8 << 8) & 0xff0000) | ((PG_ARR_INT8 >> 8) & 0xff00) | ((PG_ARR_INT8 << 24) & 0xff000000);
-    public static final int X_X_PG_ARR_INT8 = 1 | X_PG_ARR_INT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_INTERVAL = ((PG_ARR_INTERVAL >> 24) & 0xff) | ((PG_ARR_INTERVAL << 8) & 0xff0000) | ((PG_ARR_INTERVAL >> 8) & 0xff00) | ((PG_ARR_INTERVAL << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_JSONB = ((PG_ARR_JSONB >> 24) & 0xff) | ((PG_ARR_JSONB << 8) & 0xff0000) | ((PG_ARR_JSONB >> 8) & 0xff00) | ((PG_ARR_JSONB << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_NUMERIC = ((PG_ARR_NUMERIC >> 24) & 0xff) | ((PG_ARR_NUMERIC << 8) & 0xff0000) | ((PG_ARR_NUMERIC >> 8) & 0xff00) | ((PG_ARR_NUMERIC << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_TEXT = ((PG_ARR_TEXT >> 24) & 0xff) | ((PG_ARR_TEXT << 8) & 0xff0000) | ((PG_ARR_TEXT >> 8) & 0xff00) | ((PG_ARR_TEXT << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_TIME = ((PG_ARR_TIME >> 24) & 0xff) | ((PG_ARR_TIME << 8) & 0xff0000) | ((PG_ARR_TIME >> 8) & 0xff00) | ((PG_ARR_TIME << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_TIMESTAMP = ((PG_ARR_TIMESTAMP >> 24) & 0xff) | ((PG_ARR_TIMESTAMP << 8) & 0xff0000) | ((PG_ARR_TIMESTAMP >> 8) & 0xff00) | ((PG_ARR_TIMESTAMP << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_TIMESTAMP_TZ = ((PG_ARR_TIMESTAMP_TZ >> 24) & 0xff) | ((PG_ARR_TIMESTAMP_TZ << 8) & 0xff0000) | ((PG_ARR_TIMESTAMP_TZ >> 8) & 0xff00) | ((PG_ARR_TIMESTAMP_TZ << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_UUID = ((PG_ARR_UUID >> 24) & 0xff) | ((PG_ARR_UUID << 8) & 0xff0000) | ((PG_ARR_UUID >> 8) & 0xff00) | ((PG_ARR_UUID << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_ARR_VARCHAR = ((PG_ARR_VARCHAR >> 24) & 0xff) | ((PG_ARR_VARCHAR << 8) & 0xff0000) | ((PG_ARR_VARCHAR >> 8) & 0xff00) | ((PG_ARR_VARCHAR << 24) & 0xff000000);
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
     public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
+    @SuppressWarnings("NumericOverflow")
     public static final int X_PG_CHAR = ((PG_CHAR >> 24) & 0xff) | ((PG_CHAR << 8) & 0xff0000) | ((PG_CHAR >> 8) & 0xff00) | ((PG_CHAR << 24) & 0xff000000);
     public static final int X_B_PG_CHAR = 1 | X_PG_CHAR;
     @SuppressWarnings("NumericOverflow")
@@ -103,12 +155,22 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
     public static final int X_B_PG_FLOAT8 = 1 | X_PG_FLOAT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_INET = ((PG_INET >> 24) & 0xff) | ((PG_INET << 8) & 0xff0000) | ((PG_INET >> 8) & 0xff00) | ((PG_INET << 24) & 0xff000000);
     public static final int X_PG_INT2 = ((PG_INT2 >> 24) & 0xff) | ((PG_INT2 << 8) & 0xff0000) | ((PG_INT2 >> 8) & 0xff00) | ((PG_INT2 << 24) & 0xff000000);
     public static final int X_B_PG_INT2 = 1 | X_PG_INT2;
     public static final int X_PG_INT4 = ((PG_INT4 >> 24) & 0xff) | ((PG_INT4 << 8) & 0xff0000) | ((PG_INT4 >> 8) & 0xff00) | ((PG_INT4 << 24) & 0xff000000);
     public static final int X_B_PG_INT4 = 1 | X_PG_INT4;
     public static final int X_PG_INT8 = ((PG_INT8 >> 24) & 0xff) | ((PG_INT8 << 8) & 0xff0000) | ((PG_INT8 >> 8) & 0xff00) | ((PG_INT8 << 24) & 0xff000000);
     public static final int X_B_PG_INT8 = 1 | X_PG_INT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_INTERVAL = ((PG_INTERVAL >> 24) & 0xff) | ((PG_INTERVAL << 8) & 0xff0000) | ((PG_INTERVAL >> 8) & 0xff00) | ((PG_INTERVAL << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_JSONB = ((PG_JSONB >> 24) & 0xff) | ((PG_JSONB << 8) & 0xff0000) | ((PG_JSONB >> 8) & 0xff00) | ((PG_JSONB << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_NUMERIC = ((PG_NUMERIC >> 24) & 0xff) | ((PG_NUMERIC << 8) & 0xff0000) | ((PG_NUMERIC >> 8) & 0xff00) | ((PG_NUMERIC << 24) & 0xff000000);
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_TIME = ((PG_TIME >> 24) & 0xff) | ((PG_TIME << 8) & 0xff0000) | ((PG_TIME >> 8) & 0xff00) | ((PG_TIME << 24) & 0xff000000);
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
@@ -187,8 +249,24 @@ public class PGOids {
      */
     public static int pgToArrayOid(int pgOid) {
         switch (pgOid) {
+            case PG_BOOL:
+                return PG_ARR_BOOL;
+            case PG_INT2:
+                return PG_ARR_INT2;
+            case PG_INT4:
+                return PG_ARR_INT4;
+            case PG_INT8:
+                return PG_ARR_INT8;
+            case PG_FLOAT4:
+                return PG_ARR_FLOAT4;
             case PG_FLOAT8:
                 return PG_ARR_FLOAT8;
+            case PG_TIMESTAMP:
+                return PG_ARR_TIMESTAMP;
+            case PG_TIMESTAMP_TZ:
+                return PG_ARR_TIMESTAMP_TZ;
+            case PG_VARCHAR:
+                return PG_ARR_VARCHAR;
             default:
                 return 0;
         }
