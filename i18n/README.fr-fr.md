@@ -18,33 +18,33 @@
   <a href="./README.ua-ua.md">Українська</a> |
   <a href="./README.es-es.md">Español</a> |
   <a href="./README.pt.md">Português</a> |
-  <a href="./README.fr-fr.md">Français</a> |
+  Français |
   <a href="./README.de-de.md">Deutsch</a> |
   <a href="./README.ja-ja.md">日本語</a> |
   <a href="./README.ko-kr.md">한국어</a> |
   <a href="./README.he-il.md">עברית</a> |
   <a href="./README.nl-nl.md">Nederlands</a> |
   <a href="./README.tr-tr.md">Türkçe</a> |
-  हिंदी |
+  <a href="./README.hn-in.md">हिंदी</a> |
   <a href="./README.vi-vn.md">Tiếng Việt</a> |
   <a href="./README.ms-my.md">Bahasa Melayu</a>
 </p>
 
 ---
 
-QuestDB एक ओपन-सोर्स टाइम-सीरीज़ डेटाबेस है जो **अति तेज़ इन्जेशन** और **डायनामिक, कम-विलंबता SQL क्वेरीज़** प्रदान करता
-है।
+QuestDB est une base de données de séries temporelles open source offrant une ingestion ultra-rapide
+et des requêtes SQL dynamiques à faible latence.
 
-हम कॉलमन-ओरिएंटेड स्टोरेज मॉडल, पैरेलल वेक्टर एक्जीक्यूशन, SIMD इंस्ट्रक्शन्स और कम-विलंबता तकनीकों के माध्यम से उच्च
-प्रदर्शन प्राप्त करते हैं। इसके अतिरिक्त, QuestDB हार्डवेयर कुशल है, जो त्वरित सेटअप और ऑपरेशनल दक्षता के साथ आता है।
+Nous atteignons de hautes performances grâce à un modèle de stockage orienté colonnes,
+une exécution vectorielle parallélisée, des instructions SIMD et des techniques de faible latence.
+De plus, QuestDB est efficace en ressources matérielles, avec une configuration rapide et une efficacité opérationnelle.
 
-QuestDB नेटिव टाइम-सीरीज़ SQL एक्सटेंशन के साथ ANSI SQL को लागू करता है।
+QuestDB implémente ANSI SQL avec des extensions SQL natives pour les séries temporelles.
 
-QuestDB एक मल्टी-टियर स्टोरेज इंजन (WAL → नेटिव → ऑब्जेक्ट स्टोरेज पर Parquet) प्रदान करता है, और मुख्य इंजन
-शून्य-GC Java और C++ में लागू किया गया है; QuestDB Enterprise में Rust में लिखे गए अतिरिक्त घटक शामिल हैं।
+QuestDB propose une architecture de stockage multi-niveaux (WAL → stockage colonnaire natif → Parquet sur stockage objet). Le noyau est implémenté en Java sans GC et en C++. Des composants supplémentaires en Rust sont disponibles dans QuestDB Enterprise.
 
-> शुरू करने के लिए तैयार हैं?
-> [शुरुआत करें](#get-started) सेक्शन पर जाएं।
+> Prêt à commencer ? Rendez-vous à la section
+> [Démarrage](#démarrage).
 
 <p>&nbsp;</p>
 
@@ -52,84 +52,87 @@ QuestDB एक मल्टी-टियर स्टोरेज इंजन (
   <a href="https://demo.questdb.com/">
     <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB वेब कंसोल - डेमो लॉन्च करने के लिए क्लिक करें</em></p>
+  <p><em>Console Web QuestDB - cliquez pour lancer la démo</em></p>
 </div>
 
 <p>&nbsp;</p>
 
-## QuestDB के फायदे
+## Avantages de QuestDB
 
-फीचर हाइलाइट्स में शामिल हैं:
+Les fonctionnalités principales incluent :
 
-- कम-विलंबता, उच्च-थ्रूपुट इन्जेशन — एकल इवेंट्स से लेकर लाखों/सेकंड तक
-- टाइम-सीरीज़ एक्सटेंशन के साथ कम-विलंबता SQL (ASOF JOIN, SAMPLE BY, LATEST ON)
-- SIMD-एक्सेलेरेटेड, पैरेलल एक्जीक्यूशन; मामूली हार्डवेयर पर तेज़ी से चलता है
-- मल्टी-टियर स्टोरेज: WAL → नेटिव कॉलमनर → Parquet (टाइम-पार्टिशन्ड और टाइम-ऑर्डर्ड)
-- Postgres प्रोटोकॉल (PGwire) और REST API
-- मैटेरियलाइज़्ड व्यूज़ और n-डायमेंशनल ऐरेज़ (ऑर्डर बुक्स के लिए 2D ऐरेज़ सहित)
-- क्वेरीज़ और डेटा मैनेजमेंट के लिए वेब कंसोल
-- Apache 2.0 ओपन सोर्स और ओपन फॉर्मेट्स — कोई वेंडर लॉक-इन नहीं
-- [वित्तीय फ़ंक्शन्स](https://questdb.com/docs/reference/function/finance/)
-  और [ऑर्डर बुक एनालिटिक्स](https://questdb.com/docs/guides/order-book/)
+- Ingestion haute fréquence, faible latence — d'événements uniques à des millions/sec
+- SQL faible latence avec extensions de séries temporelles (ASOF JOIN, SAMPLE BY, LATEST ON)
+- Exécution vectorisée (SIMD) et parallèle
+- Stockage multi-niveaux : WAL → colonnes natives → Parquet (partitionné et ordonné par temps)
+- Protocole Postgres (PGwire) et API REST
+- Vues matérialisées et **arrays** n-dimensionnels (dont 2D pour carnets d’ordres)
+- Console web pour les requêtes et la gestion des données
+- Apache 2.0 open source et formats ouverts — aucun verrouillage fournisseur
+- [Fonctions financières](https://questdb.com/docs/reference/function/finance/)
+  et [analyses de carnets d'ordres](https://questdb.com/docs/guides/order-book/)
 
-QuestDB इसमें बेहतरीन है:
+QuestDB excelle avec :
 
-- वित्तीय बाज़ार डेटा (टिक डेटा, ट्रेड्स, ऑर्डर बुक्स, OHLC)
-- उच्च डेटा कार्डिनैलिटी के साथ सेंसर/टेलीमेट्री डेटा
-- रियल-टाइम डैशबोर्ड और मॉनिटरिंग
+- les données de marchés financiers (données tick, transactions, carnets d'ordres, OHLC)
+- Les données de capteurs/télémétrie avec une cardinalité de données élevée
+- les tableaux de bord et la surveillance en temps réel
 
-और टाइम-सीरीज़ डेटाबेस का उपयोग क्यों करें?
+Et pourquoi utiliser une base de données de séries temporelles ?
 
-प्रदर्शन और दक्षता से परे, एक विशेषीकृत टाइम-सीरीज़ डेटाबेस के साथ, आपको इनकी चिंता नहीं करनी पड़ती:
+Au-delà des performances et de l'efficacité, avec une base de données de séries temporelles spécialisée, vous
+n'avez pas à vous soucier de :
 
-- आउट-ऑफ-ऑर्डर डेटा
-- डुप्लिकेशन रिमूवल और एक्जेक्टली वन सेमेंटिक्स
-- कई समवर्ती क्वेरीज़ के साथ निरंतर स्ट्रीमिंग इन्जेस्ट
-- स्ट्रीमिंग डेटा (कम विलंबता)
-- अस्थिर और "बर्स्टी" डेटा
-- नए कॉलम जोड़ना - डेटा स्ट्रीमिंग के दौरान स्कीमा को "ऑन द फ्लाई" बदलना
+- données dans le désordre
+- Événements hors ordre d’arrivée (out-of-order)
+- Déduplication et sémantique « exactly-once »
+- données de streaming (faible latence)
+- données volatiles et "en rafales"
+- ajout de nouvelles colonnes - changer le schéma "à la volée" pendant le streaming de données
 
-## QuestDB आज़माएं, डेमो और डैशबोर्ड
+## Essayer QuestDB, démo et tableaux de bord
 
-[लाइव, पब्लिक डेमो](https://demo.questdb.com/) नवीनतम QuestDB रिलीज़ और नमूना डेटासेट के साथ प्रावधान किया गया है:
+La [démo publique en direct](https://demo.questdb.com/) est provisionnée avec la dernière
+version de QuestDB et des jeux de données d'exemple :
 
-- ट्रेड्स: प्रति महीने 30M+ पंक्तियों के साथ लाइव क्रिप्टो ट्रेड्स (OKX एक्सचेंज)
-- FX ऑर्डर बुक: ऑर्डर बुक FX पेयर्स के साथ लाइव चार्ट्स।
-- ट्रिप्स: 1.6 बिलियन पंक्तियों के साथ NYC टैक्सी ट्रिप्स के 10 साल
+- Transactions : transactions crypto en direct avec 30M+ lignes par mois (bourse OKX)
+- Carnet d'ordres FX : graphiques en direct avec paires FX de carnets d'ordres
+- Trajets : 10 ans de trajets de taxis NYC avec 1,6 milliard de lignes
 
-हमारे [Grafana-नेटिव](https://questdb.com/docs/third-party-tools/grafana/) प्लगइन का उपयोग करके हमारे पास कुछ पब्लिक,
-रियल-टाइम डेमो डैशबोर्ड भी हैं:
+Nous avons également des tableaux de bord de démonstration publics en temps réel utilisant
+notre plugin [natif Grafana](https://questdb.com/docs/third-party-tools/grafana/) :
 
-- [रियल-टाइम क्रिप्टो ट्रेड्स:](https://questdb.com/dashboards/crypto/) रियल टाइम में 20+ एसेट्स से OKX पर एक्जीक्यूटेड
-  ट्रेड्स
-- [FX ऑर्डर बुक:](https://questdb.com/dashboards/FX-orderbook/) मुख्य पेयर्स के लिए लाइव डेप्थ/इम्बैलेंस चार्ट्स
+- [Transactions crypto en temps réel :](https://questdb.com/dashboards/crypto/) transactions exécutées
+  sur OKX à partir de plus de 20 actifs en temps réel
+- [Carnet d'ordres FX :](https://questdb.com/dashboards/FX-orderbook/) graphiques de profondeur/déséquilibre en direct
+  pour les paires principales
 
-### अन्य डेटाबेसेस बनाम QuestDB प्रदर्शन
+### Performance de QuestDB vs autres bases de données
 
-QuestDB विकल्पों की तुलना में प्रदर्शन बेंचमार्क में बहुत अच्छा प्रदर्शन करता है।
+QuestDB performe très bien dans les benchmarks de performance comparé aux alternatives.
 
-इंटरनल्स और प्रदर्शन में गहरी डाइविंग के लिए, निम्नलिखित ब्लॉग पोस्ट देखें:
+Pour des analyses approfondies des internels et des performances, consultez les articles de blog suivants :
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
 - [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
-हमेशा की तरह, हम आपको अपने स्वयं के बेंचमार्क चलाने के लिए प्रोत्साहित करते हैं।
+Comme toujours, nous vous encourageons à exécuter vos propres benchmarks.
 
 <div align="center">
-  <img alt="QuestDB, InfluxDB और TimescaleDB की इन्जेशन दर की तुलना करने वाला चार्ट।" src="../.github/readme-benchmark.png" width="600"/>
+  <img alt="Un graphique comparant le taux d'ingestion de QuestDB, InfluxDB et TimescaleDB." src="../.github/readme-benchmark.png" width="600"/>
 </div>
 
-## शुरुआत करें
+## Démarrage
 
-तेज़ी से शुरुआत के लिए [Docker](https://www.docker.com/) का उपयोग करें:
+Utilisez [Docker](https://www.docker.com/) pour commencer rapidement :
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-या macOS उपयोगकर्ता Homebrew का उपयोग कर सकते हैं:
+Ou les utilisateurs macOS peuvent utiliser Homebrew :
 
 ```bash
 brew install questdb
@@ -141,12 +144,12 @@ questdb start
 questdb stop
 ```
 
-वैकल्पिक रूप से, संपूर्ण ऑनबोर्डिंग यात्रा शुरू करने के लिए, हमारे
-संक्षिप्त [त्वरित प्रारंभ गाइड](https://questdb.com/docs/quick-start/) से शुरू करें।
+Alternativement, pour démarrer le parcours d'intégration complet, commencez avec notre
+[guide de démarrage rapide](https://questdb.com/docs/quick-start/) concis.
 
-### प्रथम-पक्ष इन्जेशन क्लाइंट्स
+### Clients d'ingestion first-party
 
-InfluxDB लाइन प्रोटोकॉल के माध्यम से डेटा इन्जेस्ट करने के लिए QuestDB क्लाइंट्स:
+Clients QuestDB pour ingérer des données via le protocole InfluxDB Line Protocol :
 
 - [Python](https://questdb.com/docs/clients/ingest-python/)
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
@@ -156,20 +159,22 @@ InfluxDB लाइन प्रोटोकॉल के माध्यम स�
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-### QuestDB से कनेक्ट करें
+### Se connecter à QuestDB
 
-निम्नलिखित इंटरफेसेज़ के माध्यम से QuestDB और आपके डेटा के साथ इंटरैक्ट करें:
+Interagissez avec QuestDB et vos données via les interfaces suivantes :
 
-- इंटरैक्टिव SQL एडिटर और पोर्ट `9000` पर CSV इम्पोर्ट के लिए [वेब कंसोल](https://questdb.com/docs/web-console/)
-- पोर्ट `9000` पर स्ट्रीमिंग इन्जेशन के
-  लिए [InfluxDB लाइन प्रोटोकॉल](https://questdb.com/docs/reference/api/ilp/overview/)
-- पोर्ट `8812` पर प्रोग्रामैटिक क्वेरीज़ के
-  लिए [PostgreSQL वायर प्रोटोकॉल](https://questdb.com/docs/reference/api/postgres/)
-- पोर्ट `9000` पर CSV इम्पोर्ट और cURL के लिए [REST API](https://questdb.com/docs/reference/api/rest/)
+- [Console Web](https://questdb.com/docs/web-console/) pour un éditeur SQL interactif
+  et l'import CSV sur le port `9000`
+- [Protocole InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)
+  pour l'ingestion streaming sur le port `9000`
+- [Protocole PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)
+  pour les requêtes programmatiques sur le port `8812`
+- [API REST](https://questdb.com/docs/reference/api/rest/) pour l'import CSV et
+  cURL sur le port `9000`
 
-### लोकप्रिय थर्ड-पार्टी टूल्स
+### Outils tiers populaires
 
-QuestDB के साथ इंटीग्रेट होने वाले लोकप्रिय टूल्स में शामिल हैं:
+Les outils populaires qui s'intègrent avec QuestDB incluent :
 
 - [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
 - [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
@@ -182,85 +187,93 @@ QuestDB के साथ इंटीग्रेट होने वाले �
 - [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
 - [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
-### एंड-टू-एंड कोड स्कैफोल्ड्स
+### Échafaudages de code de bout en bout
 
-स्ट्रीमिंग इन्जेशन से Grafana के साथ विज़ुअलाइज़ेशन तक,
-हमारे [क्विकस्टार्ट रिपॉजिटरी](https://github.com/questdb/questdb-quickstart) से कोड स्कैफोल्ड्स के साथ शुरू करें।
+Du streaming d'ingestion à la visualisation avec Grafana, commencez avec des échafaudages de code
+de notre [dépôt de démarrage rapide](https://github.com/questdb/questdb-quickstart).
 
-### प्रोडक्शन वर्कलोड्स के लिए QuestDB कॉन्फ़िगर करें
+### Configurer QuestDB pour les charges de travail de production
 
-प्रोडक्शन वर्कलोड्स के लिए QuestDB को फ़ाइन-ट्यून करने के लिए
-हमारी [क्षमता योजना](https://questdb.com/docs/deployment/capacity-planning/) खोजें।
+Trouvez notre [planification de capacité](https://questdb.com/docs/deployment/capacity-planning/) pour
+ajuster finement QuestDB pour les charges de travail de production.
 
 ### QuestDB Enterprise
 
-बड़े पैमाने पर या बड़े संगठनों के भीतर सुरक्षित संचालन के लिए।
+Pour une opération sécurisée à plus grande échelle ou au sein d'organisations plus importantes.
 
-अतिरिक्त सुविधाओं में शामिल हैं:
+Les fonctionnalités supplémentaires incluent :
 
-- उच्च उपलब्धता और रीड रेप्लिका(s)
-- मल्टी-प्राइमरी इन्जेशन
-- कोल्ड स्टोरेज इंटीग्रेशन
-- रोल-बेस्ड एक्सेस कंट्रोल
-- TLS एन्क्रिप्शन
-- ऑब्जेक्ट स्टोरेज के माध्यम से Parquet फ़ाइलों की नेटिव क्वेरीइंग
-- समर्थन SLAs, एन्हांस्ड मॉनिटरिंग और बहुत कुछ
+- haute disponibilité et réplique(s) en lecture
+- ingestion multi-primaire
+- intégration du stockage froid
+- contrôle d'accès basé sur les rôles
+- chiffrement TLS
+- requête native de fichiers Parquet via le stockage objet
+- support SLA, surveillance améliorée et plus
 
-और विवरण और संपर्क जानकारी के लिए [Enterprise पेज](https://questdb.com/enterprise/) पर जाएं।
+Visitez la [page Enterprise](https://questdb.com/enterprise/) pour plus de détails
+et informations de contact.
 
-## अतिरिक्त संसाधन
+## Ressources supplémentaires
 
-### 📚 दस्तावेज़ पढ़ें
+### 📚 Lire la documentation
 
-- [QuestDB दस्तावेज़ीकरण:](https://questdb.com/docs/) यात्रा शुरू करें
-- [उत्पाद रोडमैप:](https://github.com/orgs/questdb/projects/1/views/5) आगामी रिलीज़ों के लिए हमारी योजना देखें
-- [ट्यूटोरियल:](https://questdb.com/tutorial/) QuestDB के साथ क्या संभव है, चरण दर चरण जानें
+- [Documentation QuestDB :](https://questdb.com/docs/) commencer le parcours
+- [Feuille de route produit :](https://github.com/orgs/questdb/projects/1/views/5) consulter
+  notre plan pour les versions à venir
+- [Tutoriels :](https://questdb.com/tutorial/) apprendre ce qui est possible avec QuestDB,
+  étape par étape
 
-### ❓ सहायता प्राप्त करें
+### ❓ Obtenir du support
 
-- [कम्युनिटी डिस्कोर्स फ़ोरम:](https://community.questdb.com/) तकनीकी चर्चाओं में शामिल हों, प्रश्न पूछें, और अन्य
-  उपयोगकर्ताओं से मिलें!
-- [पब्लिक Slack:](https://slack.questdb.com/) QuestDB टीम और कम्युनिटी सदस्यों के साथ चैट करें
-- [GitHub issues:](https://github.com/questdb/questdb/issues) QuestDB के साथ बग या समस्याओं की रिपोर्ट करें
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) सामान्य ट्रबलशूटिंग समाधान खोजें
+- [Forum de discussion communautaire :](https://community.questdb.com/) rejoindre les discussions techniques,
+  poser des questions, et rencontrer d'autres utilisateurs !
+- [Slack public :](https://slack.questdb.com/) discuter avec l'équipe QuestDB et
+  les membres de la communauté
+- [Issues GitHub :](https://github.com/questdb/questdb/issues) signaler des bugs ou
+  des problèmes avec QuestDB
+- [Stack Overflow :](https://stackoverflow.com/questions/tagged/questdb) chercher des
+  solutions de dépannage communes
 
-### 🚢 QuestDB डिप्लॉय करें
+### 🚢 Déployer QuestDB
 
 - [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [आधिकारिक Docker इमेज](https://questdb.com/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
+- [Image Docker officielle](https://questdb.com/docs/get-started/docker)
+- [Droplets DigitalOcean](https://questdb.com/docs/guides/digitalocean)
+- [Charts Kubernetes Helm](https://questdb.com/docs/guides/kubernetes)
 
-## योगदान करें
+## Contribuer
 
-योगदान स्वागत है!
+Les contributions sont les bienvenues !
 
-हम इसकी सराहना करते हैं:
+Nous apprécions :
 
-- स्रोत कोड
-- दस्तावेज़ीकरण (हमारी [दस्तावेज़ीकरण रिपॉजिटरी](https://github.com/questdb/documentation) देखें)
-- बग रिपोर्ट्स
-- फ़ीचर अनुरोध या फ़ीडबैक।
+- le code source
+- la documentation (voir notre
+  [dépôt de documentation](https://github.com/questdb/documentation))
+- les rapports de bugs
+- les demandes de fonctionnalités ou les commentaires.
 
-योगदान शुरू करने के लिए:
+Pour commencer à contribuer :
 
-- "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  लेबल वाले GitHub issues पर एक नज़र डालें
-- Hacktoberfest के लिए,
-  संबंधित [लेबल किए गए issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-  देखें
-- [योगदान गाइड](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md) पढ़ें
-- QuestDB बिल्डिंग के विवरण के लिए, [बिल्ड इंस्ट्रक्शन्स](https://github.com/questdb/questdb/blob/master/core/README.md)
-  देखें
-- QuestDB का [एक फ़ोर्क बनाएं](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) और अपने
-  प्रस्तावित परिवर्तनों के साथ एक पुल रिक्वेस्ट सबमिट करें
-- फंसे हुए हैं? सहायता के लिए हमारे [पब्लिक Slack](https://slack.questdb.com/) में शामिल हों
+- Jetez un œil aux issues GitHub étiquetées
+  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+- Pour Hacktoberfest, voir les
+  [issues étiquetées](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+  pertinentes
+- Lire le
+  [guide de contribution](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- Pour les détails sur la construction de QuestDB, voir les
+  [instructions de construction](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Créer un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
+  de QuestDB et soumettre une pull request avec vos changements proposés
+- Bloqué ? Rejoignez notre [Slack public](https://slack.questdb.com/) pour de l'aide
 
-✨ हमारी कृतज्ञता के संकेत के रूप में, हम अपने योगदानकर्ताओं को QuestDB स्वैग भेजते हैं!
+✨ En signe de notre gratitude, nous envoyons des goodies QuestDB à nos contributeurs !
 
-QuestDB में योगदान देने वाले निम्नलिखित अद्भुत लोगों का बहुत
-आभार ([इमोजी की](https://allcontributors.org/docs/en/emoji-key)):
+Un grand merci aux personnes merveilleuses suivantes qui ont contribué à
+QuestDB [clé emoji](https://allcontributors.org/docs/en/emoji-key) :
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -415,5 +428,5 @@ QuestDB में योगदान देने वाले निम्न�
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-यह परियोजना [सभी-योगदानकर्ताओं](https://github.com/all-contributors/all-contributors) के विनिर्देश का पालन करती है। किसी
-भी प्रकार के योगदान का स्वागत है!
+Ce projet adhère à la spécification [all-contributors](https://github.com/all-contributors/all-contributors).
+Les contributions de toute nature sont les bienvenues !

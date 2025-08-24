@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.com/" target="blank"><img alt="QuestDB Logo" src="https://questdb.com/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
@@ -18,26 +18,29 @@
   <a href="./i18n/README.ua-ua.md">Українська</a> |
   <a href="./i18n/README.es-es.md">Español</a> |
   <a href="./i18n/README.pt.md">Português</a> |
+  <a href="./i18n/README.fr-fr.md">Français</a> |
+  <a href="./i18n/README.de-de.md">Deutsch</a> |
   <a href="./i18n/README.ja-ja.md">日本語</a> |
+  <a href="./i18n/README.ko-kr.md">한국어</a> |
+  <a href="./i18n/README.he-il.md">עברית</a> |
+  <a href="./i18n/README.nl-nl.md">Nederlands</a> |
   <a href="./i18n/README.tr-tr.md">Türkçe</a> |
   <a href="./i18n/README.hn-in.md">हिंदी</a> |
-  <a href="./i18n/README.vi-vn.md">Tiếng Việt</a>
+  <a href="./i18n/README.vi-vn.md">Tiếng Việt</a> |
+  <a href="./i18n/README.ms-my.md">Bahasa Melayu</a>
 </p>
 
 ---
 
-QuestDB is the fastest growing open-source time-series database offering **blazingly fast, high
-throughput ingestion** and **dynamic, low-latency SQL queries**. The entire high-performance
-codebase is built from the ground up in Java, C++ and Rust with no dependencies
-and zero garbage collection.
+QuestDB is an open-source time-series database offering blazingly fast ingestion
+and dynamic, low-latency SQL queries.
+
+QuestDB delivers a multi-tier storage engine (WAL → native → Parquet on object storage), 
+and the core engine is implemented in zero-GC Java and C++; QuestDB Enterprise includes additional components in Rust.
 
 We achieve high performance via a column-oriented storage model, parallelized
 vector execution, SIMD instructions, and low-latency techniques. In addition,
 QuestDB is hardware efficient, with quick setup and operational efficiency.
-
-QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
-extensions make it simple to analyze, filter and downsample data, or to
-correlate data from multiple sources using relational and time-series joins.
 
 > Ready to go? Jump to the
 > [Get started](#get-started) section.
@@ -45,7 +48,7 @@ correlate data from multiple sources using relational and time-series joins.
 <p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.io/">
+  <a href="https://demo.questdb.com/">
     <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
   <p><em>QuestDB Web Console - click to launch demo</em></p>
@@ -55,78 +58,62 @@ correlate data from multiple sources using relational and time-series joins.
 
 ## Benefits of QuestDB
 
-QuestDB excels with:
-
-- financial market data
-- IoT sensors with high data cardinality
-- real-time dashboards
-
 Feature highlights include:
 
-- SQL with powerful, SIMD-optimized time-series extensions
-- High-speed ingestion via the InfluxDB Line Protocol
-- Strong and efficient performance on limited hardware
-- Columnar storage format (native or
-  [Apache Parquet](https://questdb.io/glossary/apache-parquet/)), partitioned
-  and ordered by time
-- Responsive and intuitive Web Console for query and data management, with error
-  handling
-- Excellent performance with
-  [high data cardinality](https://questdb.io/glossary/high-cardinality/) - see
-  [benchmarks](#questdb-performance-vs-other-oss-databases)
+- Low-latency, high-throughput ingestion — from single events to millions/sec
+- Low-latency SQL with time-series extensions (ASOF JOIN, SAMPLE BY, LATEST ON)
+- SIMD-accelerated, parallel execution
+- Multi-tier storage: WAL → native columnar → Parquet (time-partitioned and time-ordered)
+- Postgres protocol (PGwire) and REST API
+- Materialized views and n-dimensional arrays (incl. 2D arrays for order books)
+- Web console for queries and data management
+- Apache 2.0 open source and open formats — no vendor lock-in
+- [Finance functions](https://questdb.com/docs/reference/function/finance/) and [orderbook analytics](https://questdb.com/docs/guides/order-book/)
+
+QuestDB excels with:
+
+- financial market data (tick data, trades, order books, OHLC)
+- Sensor/telemetry data with high data cardinality
+- real-time dashboards and monitoring
 
 And why use a time-series database?
 
-Beyond performance and efficiency, with a specialized
-[time-series database](https://questdb.io/glossary/time-series-database/), you
+Beyond performance and efficiency, with a specialized time-series database, you
 don't need to worry about:
 
 - out-of-order data
-- duplicates
-- exactly one semantics
+- deduplication and exactly one semantics
+- Continuous streaming ingest with many concurrent queries
 - streaming data (low latency)
-- high volumes of concurrent requests
 - volatile and "bursty" data
 - adding new columns - change schema "on the fly" while streaming data
 
 ## Try QuestDB, demo and dashboards
 
-The [live, public demo](https://demo.questdb.io/) is provisioned with the latest
+The [live, public demo](https://demo.questdb.com/) is provisioned with the latest
 QuestDB release and sample datasets:
 
+- Trades: live crypto trades with 30M+ rows per month (OKX exchange)
+- FX order book: live charts with orderbook FX pairs.
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
-- Trades: live crypto market data with 30M+ rows per month
-- Pos: geolocations of 250k unique ships over time
-
-Use example queries or write your own!
-
-_The public demo queries over 1.6BN rows and uses a `r6a.12xlarge` 48 vCPU and 348GB RAM instance._
-
-| Query                                                                         | Execution time                                                                                                                                                                                      |
-|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades WHERE symbol IN ('BTC-USD', 'ETH-USD') LATEST ON timestamp PARTITION BY symbol, side` | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20%2A%20FROM%20trades%20WHERE%20symbol%20IN%20%28%27BTC-USD%27%2C%20%27ETH-USD%27%29%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol%2C%20side;&executeQuery=true) |
 
 We also have some public, real-time demo dashboards using
-our [Grafana-native](https://questdb.io/docs/third-party-tools/grafana/) plugin:
+our [Grafana-native](https://questdb.com/docs/third-party-tools/grafana/) plugin:
 
-- [Real-time crypto trades:](https://questdb.io/dashboards/crypto/) executed
+- [Real-time crypto trades:](https://questdb.com/dashboards/crypto/) executed
   trades on OKX from more than 20 assets in real time
-- [NYC taxi geolocation data:](https://questdb.io/dashboards/taxi/) real-time
-  replay of 146,393,317 taxi rides across New York City in 2016
+- [FX order book:](https://questdb.com/dashboards/FX-orderbook/) live depth/imbalance charts for major FX pairs
 
-### QuestDB performance vs. other oss databases
+### QuestDB performance vs. other databases
 
 QuestDB performs very well in performance benchmarks compared to alternatives.
 
 For deep dives into internals and performance, see the following blog posts:
 
-- [QuestDB vs InfluxDB](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs TimescaleDB](https://questdb.io/blog/timescaledb-vs-questdb-comparison/)
-- [QuestDB vs MongoDB](https://questdb.io/blog/mongodb-time-series-benchmark-review/)
+- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
+- [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
 As always, we encourage you to run your own benchmarks.
 
@@ -155,44 +142,47 @@ questdb stop
 ```
 
 Alternatively, to kickoff the full onboarding journey, start with our concise
-[quick start guide](https://questdb.io/docs/quick-start/).
+[quick start guide](https://questdb.com/docs/quick-start/).
 
 ### First-party ingestion clients
 
 QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 
-- [Python](https://questdb.io/docs/clients/ingest-python/)
-- [.NET](https://questdb.io/docs/clients/ingest-dotnet/)
-- [C/C++](https://questdb.io/docs/clients/ingest-c-and-cpp/)
-- [Go](https://questdb.io/docs/clients/ingest-go/)
-- [Java](https://questdb.io/docs/clients/java_ilp/)
-- [NodeJS](https://questdb.io/docs/clients/ingest-node/)
-- [Rust](https://questdb.io/docs/clients/ingest-rust/)
+- [Python](https://questdb.com/docs/clients/ingest-python/)
+- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
+- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
+- [Go](https://questdb.com/docs/clients/ingest-go/)
+- [Java](https://questdb.com/docs/clients/java_ilp/)
+- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
+- [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
 ### Connect to QuestDB
 
 Interact with QuestDB and your data via the following interfaces:
 
-- [Web Console](https://questdb.io/docs/web-console/) for an interactive SQL
+- [Web Console](https://questdb.com/docs/web-console/) for an interactive SQL
   editor and CSV import on port `9000`
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)
+- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)
   for streaming ingestion on port `9000`
-- [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/)
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)
   for programmatic queries on port `8812`
-- [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and
+- [REST API](https://questdb.com/docs/reference/api/rest/) for CSV import and
   cURL on port `9000`
 
 ### Popular third-party tools
 
 Popular tools that integrate with QuestDB include:
 
-- [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/)
-- [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
-- [Superset](https://questdb.io/docs/third-party-tools/superset/)
-- [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)
-- [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
-- [qStudio](https://questdb.io/docs/third-party-tools/qstudio/)
-- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
+- [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
+- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
+- [Grafana](https://questdb.com/docs/third-party-tools/grafana/)
+- [Polars](https://questdb.com/docs/third-party-tools/polars/)
+- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
+- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
+- [Superset](https://questdb.com/docs/third-party-tools/superset/)
+- [Apache Flink](https://questdb.com/docs/third-party-tools/flink/)
+- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
+- [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
 ### End-to-end code scaffolds
 
@@ -203,7 +193,7 @@ scaffolds in from our
 ### Configure QuestDB for production workloads
 
 Find our
-[capacity planning](https://questdb.io/docs/deployment/capacity-planning/) to
+[capacity planning](https://questdb.com/docs/deployment/capacity-planning/) to
 fine-tune QuestDB for production workloads.
 
 ### QuestDB Enterprise
@@ -212,32 +202,32 @@ For secure operation at greater scale or within larger organizations.
 
 Additional features include:
 
+- high Availablity and read replica(s)
 - multi-primary ingestion
-- read replica(s)
 - cold storage integration
 - role-based access control
 - TLS encryption
 - native querying of Parquet files via object storage
 - support SLAs, enhanced monitoring and more
 
-Visit the [Enterprise page](https://questdb.io/enterprise/) for further details
+Visit the [Enterprise page](https://questdb.com/enterprise/) for further details
 and contact information.
 
 ## Additional resources
 
 ### 📚 Read the docs
 
-- [QuestDB documentation:](https://questdb.io/docs/) begin the journey
+- [QuestDB documentation:](https://questdb.com/docs/) begin the journey
 - [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check
   out our plan for upcoming releases
-- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB,
+- [Tutorials:](https://questdb.com/tutorial/) learn what's possible with QuestDB,
   step by step
 
 ### ❓ Get support
 
-- [Community Discourse forum:](https://community.questdb.io/) join technical
+- [Community Discourse forum:](https://community.questdb.com/) join technical
   discussions, ask questions, and meet other users!
-- [Public Slack:](https://slack.questdb.io/) chat with the QuestDB team and
+- [Public Slack:](https://slack.questdb.com/) chat with the QuestDB team and
   community members
 - [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
   issues with QuestDB
@@ -246,11 +236,11 @@ and contact information.
 
 ### 🚢 Deploy QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+- [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
+- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
+- [Official Docker image](https://questdb.com/docs/get-started/docker)
+- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
+- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
 
 ## Contribute
 
@@ -276,10 +266,9 @@ To get started with contributing:
   [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md)
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   of QuestDB and submit a pull request with your proposed changes
-- Stuck? Join our [public Slack](https://slack.questdb.io/) for assistance
+- Stuck? Join our [public Slack](https://slack.questdb.com/) for assistance
 
-✨ As a sign of our gratitude, we send
-**[QuestDB swag](https://questdb.io/community)** to our contributors!
+✨ As a sign of our gratitude, we send QuestDB swagto our contributors!
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
@@ -320,10 +309,10 @@ QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
       <td align="center" valign="top" width="14.28%"><a href="https://borowski-software.de/"><img src="https://avatars.githubusercontent.com/u/8701341?v=4" width="100px;" alt=""/><br /><sub><b>TimBo93</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ATimBo93" title="Bug reports">🐛</a> <a href="#userTesting-TimBo93" title="User Testing">📓</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://zikani.me"><img src="https://avatars.githubusercontent.com/u/1501387?v=4" width="100px;" alt=""/><br /><sub><b>zikani03</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=zikani03" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/jaugsburger"><img src="https://avatars.githubusercontent.com/u/10787042?v=4" width="100px;" alt=""/><br /><sub><b>jaugsburger</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=jaugsburger" title="Code">💻</a> <a href="#maintenance-jaugsburger" title="Maintenance">🚧</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.questdb.io"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://www.questdb.com"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://davidgs.com"><img src="https://avatars.githubusercontent.com/u/2071898?v=4" width="100px;" alt=""/><br /><sub><b>davidgs</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Adavidgs" title="Bug reports">🐛</a> <a href="#content-davidgs" title="Content">🖋</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://redalemeden.com"><img src="https://avatars.githubusercontent.com/u/519433?v=4" width="100px;" alt=""/><br /><sub><b>kaishin</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=kaishin" title="Code">💻</a> <a href="#example-kaishin" title="Examples">💡</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://questdb.io"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://questdb.com"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
     </tr>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="http://patrick.spacesurfer.com/"><img src="https://avatars.githubusercontent.com/u/29952889?v=4" width="100px;" alt=""/><br /><sub><b>patrickSpaceSurfer</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Code">💻</a> <a href="#maintenance-patrickSpaceSurfer" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Tests">⚠️</a></td>
