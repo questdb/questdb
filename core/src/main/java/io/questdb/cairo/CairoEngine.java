@@ -76,7 +76,8 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.cutlass.text.CopyContext;
+import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -144,7 +145,8 @@ public class CairoEngine implements Closeable, WriterSource {
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final DatabaseCheckpointAgent checkpointAgent;
-    private final CopyContext copyContext;
+    private final CopyExportContext copyExportContext;
+    private final CopyImportContext copyImportContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -187,7 +189,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
-            this.copyContext = new CopyContext(configuration);
+            this.copyImportContext = new CopyImportContext(configuration);
+            this.copyExportContext = new CopyExportContext(configuration);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
@@ -659,8 +662,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration;
     }
 
-    public CopyContext getCopyContext() {
-        return copyContext;
+    public CopyExportContext getCopyExportContext() {
+        return copyExportContext;
+    }
+
+    public CopyImportContext getCopyImportContext() {
+        return copyImportContext;
     }
 
     public DataID getDataID() {
