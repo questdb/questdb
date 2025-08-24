@@ -4441,8 +4441,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     // This rewrite should be invoked before the select rewrite!
-// Rewrites the following:
-// select count(constant) ... -> select count() ...
+    // Rewrites the following:
+    // select count(constant) ... -> select count() ...
     private void rewriteCount(QueryModel model) {
         if (model == null) {
             return;
@@ -4646,7 +4646,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
-// raise error if raw column usage doesn't match one of expressions on group by list
+    // raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
             final @Transient ExpressionNode topLevelNode,
             QueryModel groupByModel,
