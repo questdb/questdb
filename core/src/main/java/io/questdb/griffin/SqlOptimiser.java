@@ -6638,7 +6638,10 @@ public class SqlOptimiser implements Mutable {
         final QueryModel nestedModel = model.getNestedModel();
         if (nestedModel != null
                 && model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY
+                && nestedModel.getJoinModels().size() == 1
+                && nestedModel.getUnionModel() == null
+                && nestedModel.getSampleBy() == null) {
             trivialExpressions.clear();
             final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
 
