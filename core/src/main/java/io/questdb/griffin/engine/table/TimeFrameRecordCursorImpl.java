@@ -81,6 +81,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+        frameAddressCache.clear();
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -142,7 +143,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     public TimeFrameRecordCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);
@@ -219,8 +220,8 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     private void buildFrameCache() {
-        // TODO: bulding page frame cache assumes opening all partitions;
-        //       would be great if we could open partitions lazily
+        // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
+        //                  we should open partitions lazily
         if (!isFrameCacheBuilt) {
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {

@@ -350,8 +350,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void close() {
-            frameAddressCache.clear();
             Misc.free(frameMemoryPool);
+            frameAddressCache.clear();
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }
@@ -717,7 +717,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;
