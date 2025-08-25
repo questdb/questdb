@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class IPv4MinusIPv4StrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "-(Xs)";
@@ -45,7 +46,7 @@ public class IPv4MinusIPv4StrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new IPv4MinusIPv4FunctionFactory.IPv4MinusIPv4Function(args.getQuick(0), args.getQuick(1));
+        return new IPv4MinusIPv4FunctionFactory.Func(args.getQuick(0), args.getQuick(1));
     }
 
     @Override

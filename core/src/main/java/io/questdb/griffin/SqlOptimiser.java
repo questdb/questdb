@@ -169,6 +169,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final LowerCaseCharSequenceIntHashMap trivialExpressions = new LowerCaseCharSequenceIntHashMap();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
     private OperatorExpression opAnd;
@@ -300,6 +301,19 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    private static boolean isRewriteTrivialExpressionsValidOp(char token) {
+        switch (token) {
+            case '-':
+            case '+':
+            case '/':
+            case '*':
+            case '%':
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static boolean isSymbolColumn(ExpressionNode countDistinctExpr, QueryModel nested) {
@@ -6585,6 +6599,137 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Looks for models with trivial expressions over the same column, and lifts them from the group by.
+     * <p>
+     * For now, this rewrite is very specific and only kicks in for queries similar to ClickBench's Q35:
+     * <pre>
+     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c
+     * FROM hits
+     * GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3
+     * ORDER BY c DESC
+     * LIMIT 10;
+     * </pre>
+     * The above query gets effectively rewritten into:
+     * <p>
+     * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+     * FROM (<br>
+     * SELECT ClientIP, COUNT() c<br>
+     * FROM hits <br>
+     * ORDER BY c DESC<br>
+     * LIMIT 10<br>
+     * )
+     * <pre>
+     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c
+     * FROM (
+     *   SELECT ClientIP, COUNT(*) AS c
+     *   FROM hits
+     *   GROUP BY ClientIP
+     *   ORDER BY c DESC
+     *   LIMIT 10
+     * );
+     * </pre>
+     */
+    private void rewriteTrivialGroupByExpressions(QueryModel model) {
+        if (model == null) {
+            return;
+        }
+
+        // First we want to see if this is an appropriate model to make this transformation.
+        final QueryModel nestedModel = model.getNestedModel();
+        if (nestedModel != null
+                && model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY
+                && nestedModel.getJoinModels().size() == 1
+                && nestedModel.getUnionModel() == null
+                && nestedModel.getSampleBy() == null) {
+            trivialExpressions.clear();
+            final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
+
+            for (int i = 0, n = nestedColumns.size(); i < n; i++) {
+                final QueryColumn nestedColumn = nestedColumns.getQuick(i);
+                final ExpressionNode nestedAst = nestedColumn.getAst();
+                if (nestedAst.type == OPERATION && nestedAst.paramCount == 2) {
+                    // Is it an operation we care about?
+                    if (nestedAst.token.length() == 1 && isRewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
+                        // Check if it's a simple pattern i.e A + 1 or 1 + A
+                        final CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT
+                                ? nestedAst.lhs.token
+                                : nestedAst.lhs.type == CONSTANT && nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
+
+                        if (token != null) {
+                            // Add it to candidates list.
+                            trivialExpressions.putIfAbsent(token, 0);
+                            trivialExpressions.increment(token);
+                        }
+                    }
+                }
+
+                // Or if it's a literal, add it, in case we have A, A + 1.
+                if (nestedAst.type == LITERAL) {
+                    trivialExpressions.putIfAbsent(nestedAst.token, 0);
+                    trivialExpressions.increment(nestedAst.token);
+                }
+            }
+
+            boolean anyCandidates = false;
+            for (int i = 0, n = trivialExpressions.size(); i < n; i++) {
+                anyCandidates |= trivialExpressions.get(trivialExpressions.keys().getQuick(i)) > 1;
+            }
+
+            if (anyCandidates) {
+                for (int i = nestedColumns.size() - 1; i > 0; i--) {
+                    final QueryColumn nestedColumn = nestedColumns.getQuick(i);
+                    final ExpressionNode nestedAst = nestedColumn.getAst();
+
+                    // If there is a matching column in this model, we can lift the candidate up.
+                    final CharSequence currentAlias = model.getColumnNameToAliasMap().get(nestedColumn.getAlias());
+                    if (currentAlias != null) {
+                        if (nestedAst.type == FUNCTION) {
+                            // Don't pull a function up.
+                            continue;
+                        }
+
+                        if (nestedAst.type == OPERATION) {
+                            final CharSequence candidate = nestedAst.lhs.type == LITERAL
+                                    ? nestedAst.lhs.token
+                                    : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
+
+                            // Check if the candidates is valid to be pulled up.
+                            if (candidate != null && trivialExpressions.get(candidate) > 1) {
+                                // Remove from current, keep in new.
+                                final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
+                                currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
+
+                                final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
+                                nestedModel.removeColumn(nestedColumnIndex);
+                            }
+                        }
+                    }
+                }
+
+                // If limit is on the virtual model, push it down to the group by.
+                final ExpressionNode lo = model.getLimitLo();
+                final ExpressionNode hi = model.getLimitHi();
+                if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null) {
+                    nestedModel.setLimit(lo, hi);
+                    model.setLimit(null, null);
+                }
+            }
+        }
+
+        // recurse
+        rewriteTrivialGroupByExpressions(nestedModel);
+        final QueryModel union = model.getUnionModel();
+        if (union != null) {
+            rewriteTrivialGroupByExpressions(union);
+        }
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteTrivialGroupByExpressions(joinModels.getQuick(i));
+        }
+    }
+
+    /**
      * Copies the provided order by advice into the given model.
      *
      * @param model                  The target model
@@ -6990,6 +7135,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
