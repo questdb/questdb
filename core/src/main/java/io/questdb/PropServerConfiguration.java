@@ -134,6 +134,7 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
+    public static final String ACCEPTING_WRITES = "accepting.writes"; // todo: accepting reads?
     public static final String ACL_ENABLED = "acl.enabled";
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
@@ -352,9 +353,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
+    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
-    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -2287,6 +2288,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
@@ -3933,6 +3935,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isAcceptingWrites() {
+            return !httpContextConfiguration.readOnlySecurityContext();
+        }
+
+        @Override
         public boolean isCheckpointRecoveryEnabled() {
             return checkpointRecoveryEnabled;
         }
@@ -5221,33 +5228,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
-        @Override
-        public int getBlocks() {
-            return pgSelectCacheBlockCount;
-        }
-
-        @Override
-        public LongGauge getCachedGauge() {
-            return metrics.pgWireMetrics().cachedSelectsGauge();
-        }
-
-        @Override
-        public Counter getHiCounter() {
-            return metrics.pgWireMetrics().selectCacheHitCounter();
-        }
-
-        @Override
-        public Counter getMissCounter() {
-            return metrics.pgWireMetrics().selectCacheMissCounter();
-        }
-
-        @Override
-        public int getRows() {
-            return pgSelectCacheRowCount;
-        }
-    }
-
     private class PropPGConfiguration implements PGConfiguration {
 
         @Override
@@ -5553,6 +5533,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean readOnlySecurityContext() {
             return pgReadOnlySecurityContext || isReadOnlyInstance;
+        }
+    }
+
+    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+        @Override
+        public int getBlocks() {
+            return pgSelectCacheBlockCount;
+        }
+
+        @Override
+        public LongGauge getCachedGauge() {
+            return metrics.pgWireMetrics().cachedSelectsGauge();
+        }
+
+        @Override
+        public Counter getHiCounter() {
+            return metrics.pgWireMetrics().selectCacheHitCounter();
+        }
+
+        @Override
+        public Counter getMissCounter() {
+            return metrics.pgWireMetrics().selectCacheMissCounter();
+        }
+
+        @Override
+        public int getRows() {
+            return pgSelectCacheRowCount;
         }
     }
 

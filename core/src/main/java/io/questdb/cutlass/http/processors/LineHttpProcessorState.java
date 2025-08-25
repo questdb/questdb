@@ -461,7 +461,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         INTERNAL_ERROR("internal error", 500),
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
-        COMMITTED(null, 204);
+        COMMITTED(null, 204),
+        NOT_ACCEPTING_WRITES("not accepting writes", 421);
 
         private final String codeStr;
         private final int responseCode;

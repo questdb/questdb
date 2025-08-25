@@ -477,7 +477,7 @@ public abstract class HttpClient implements QuietCloseable {
             return send(defaultTimeout);
         }
 
-        public ResponseHeaders send(int timeout) {
+        public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
@@ -500,6 +500,10 @@ public abstract class HttpClient implements QuietCloseable {
             }
             responseHeaders.clear();
             return responseHeaders;
+        }
+
+        public ResponseHeaders send(int timeout) {
+            return send(host, port, timeout);
         }
 
         public void sendPartialContent(int maxContentLen, int timeout) {
@@ -609,14 +613,14 @@ public abstract class HttpClient implements QuietCloseable {
                 int errno = nf.errno();
                 nf.freeAddrInfo(addrInfo);
                 disconnect();
-                throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']');
+                throw new HttpClientException("could not connect to host ").put("[host=").put(host).put(", port=").put(port).put(", errno=").put(errno).put(']').errno(errno);
             }
             nf.freeAddrInfo(addrInfo);
 
             if (nf.configureNonBlocking(fd) < 0) {
                 int errno = nf.errno();
                 disconnect();
-                throw new HttpClientException("could not configure socket to be non-blocking [fd=").put(fd).put(", errno=").put(errno).put(']');
+                throw new HttpClientException("could not configure socket to be non-blocking [fd=").put(fd).put(", errno=").put(errno).put(']').errno(errno);
             }
 
             if (socket.supportsTls()) {
@@ -628,7 +632,8 @@ public abstract class HttpClient implements QuietCloseable {
                     throw new HttpClientException("could not start TLS session [fd=").put(fd)
                             .put(", error=").put(e.getFlyweightMessage())
                             .put(", errno=").put(errno)
-                            .put(']');
+                            .put(']')
+                            .errno(errno);
                 }
             }
             setupIoWait();

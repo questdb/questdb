@@ -66,6 +66,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String DEFAULT_PAYLOAD = "{" +
             "\"config\":{" +
             "}," +
+            "\"accepting.writes\":true," +
             "\"preferences.version\":0," +
             "\"preferences\":{" +
             "}" +
@@ -82,6 +83,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"posthog.api.key\":null," +
             "\"cairo.max.file.name.length\":127" +
             "}," +
+            "\"accepting.writes\":true," +
             "\"preferences.version\":0," +
             "\"preferences\":{" +
             "}" +
@@ -95,6 +97,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null" +
             "}," +
+            "\"accepting.writes\":true," +
             "\"preferences.version\":0," +
             "\"preferences\":{" +
             "}" +
@@ -137,6 +140,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":1," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance ❤️\"," +
@@ -158,6 +162,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance ❤️\"," +
@@ -208,6 +213,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
@@ -283,6 +289,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
@@ -317,6 +324,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":1," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"ветер\"," +
@@ -338,6 +346,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"金融\"," +
@@ -383,6 +392,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":3," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
@@ -420,6 +430,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"key1\":\"value1\"," +
@@ -455,6 +466,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +
                             "}" +
@@ -488,6 +500,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +
                             "}" +
@@ -541,6 +554,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":2," +
                             "\"preferences\":{" +
                             "\"instance_name\":\"instance1\"," +
@@ -619,6 +633,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +
                             "}" +
@@ -775,6 +790,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 "\"posthog.enabled\":false," +
                 "\"posthog.api.key\":null," +
                 "\"cairo.max.file.name.length\":127}," +
+                "\"accepting.writes\":true," +
                 "\"preferences.version\":0," +
                 "\"preferences\":{}" +
                 "}");
