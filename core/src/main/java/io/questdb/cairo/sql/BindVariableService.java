@@ -491,7 +491,7 @@ public interface BindVariableService extends Mutable {
     void setStr(CharSequence name, CharSequence value) throws SqlException;
 
     /**
-     * Set type of bind variable by index as timestamp
+     * Set type of bind variable by index as timestamp (microsecond precision)
      *
      * @param index numeric index of the bind variable
      * @throws SqlException is throw when variable has already been defined with type
@@ -500,24 +500,64 @@ public interface BindVariableService extends Mutable {
     void setTimestamp(int index) throws SqlException;
 
     /**
-     * Set type of bind variable by index as timestamp and provide a value
+     * Set type of bind variable by index as timestamp (microsecond precision) and provide a value
      *
      * @param index numeric index of the bind variable
-     * @param value as long
+     * @param value timestamp value in microseconds
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Timestamp
      */
     void setTimestamp(int index, long value) throws SqlException;
 
     /**
-     * Set type of bind variable by name as timestamp and provide a value
+     * Set type of bind variable by name as timestamp (microsecond precision) and provide a value
      *
      * @param name  of the bind variable
-     * @param value as long
+     * @param value timestamp value in microseconds
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Timestamp
      */
     void setTimestamp(CharSequence name, long value) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as timestamp (nanosecond precision) and provide a value
+     *
+     * @param name  of the bind variable
+     * @param value timestamp value in nanoseconds
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Timestamp
+     */
+    void setTimestampNano(CharSequence name, long value) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as timestamp (nanosecond precision)
+     *
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Timestamp
+     */
+    void setTimestampNano(int index) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as timestamp (nanosecond precision) and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param value timestamp value in nanoseconds
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Timestamp
+     */
+    void setTimestampNano(int index, long value) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as timestamp with specified precision type and provide a value
+     *
+     * @param index         numeric index of the bind variable
+     * @param timestampType timestamp columnType ({@link io.questdb.cairo.ColumnType#TIMESTAMP_MICRO} or {@link io.questdb.cairo.ColumnType#TIMESTAMP_NANO})
+     * @param value         timestamp value
+     * @throws SqlException is thrown when variable has already been defined with type
+     *                      that is not compatible with Timestamp
+     */
+    void setTimestampWithType(int index, int timestampType, long value) throws SqlException;
 
     /**
      * Set type of bind variable by index as UUID and provide a value

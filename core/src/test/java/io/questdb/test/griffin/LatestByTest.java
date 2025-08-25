@@ -36,10 +36,29 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class LatestByTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public LatestByTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testLatestByAllFilteredReentrant() throws Exception {
@@ -47,7 +66,7 @@ public class LatestByTest extends AbstractCairoTest {
             execute(
                     "create table zyzy as (\n" +
                             "  select \n" +
-                            "  timestamp_sequence(1,1000) ts,\n" +
+                            "  timestamp_sequence(1,1000)::" + timestampType.getTypeName() + " ts,\n" +
                             "  rnd_int(0,5,0) a,\n" +
                             "  rnd_int(0,5,0) b,\n" +
                             "  rnd_int(0,5,0) c,\n" +
@@ -71,20 +90,24 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
-        assertQuery(
-                "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
-                "SELECT * FROM history_P4v\n" +
-                        "WHERE\n" +
-                        "  devid = 'LLLAHFZHYA'\n" +
-                        "LATEST ON ts PARTITION BY address",
+        executeWithRewriteTimestamp(
                 "CREATE TABLE history_P4v (\n" +
                         "  devid SYMBOL,\n" +
                         "  address SHORT,\n" +
                         "  value SHORT,\n" +
                         "  value_decimal BYTE,\n" +
                         "  created_at DATE,\n" +
-                        "  ts TIMESTAMP\n" +
+                        "  ts #TIMESTAMP\n" +
                         ") timestamp(ts) PARTITION BY DAY;",
+                timestampType.getTypeName()
+        );
+
+        assertQuery(
+                "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
+                "SELECT * FROM history_P4v\n" +
+                        "WHERE\n" +
+                        "  devid = 'LLLAHFZHYA'\n" +
+                        "LATEST ON ts PARTITION BY address",
                 "ts",
                 true,
                 false
@@ -95,17 +118,21 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
         final int iterations = 100;
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE e ( \n" +
-                    "  ts TIMESTAMP, \n" +
-                    "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE p ( \n" +
-                    "  ts TIMESTAMP, \n" +
-                    "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
-                    "  lon FLOAT, \n" +
-                    "  lat FLOAT, \n" +
-                    "  g3 geohash(3c) \n" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            executeWithRewriteTimestamp("CREATE TABLE e ( \n" +
+                            "  ts #TIMESTAMP, \n" +
+                            "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp("CREATE TABLE p ( \n" +
+                            "  ts #TIMESTAMP, \n" +
+                            "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
+                            "  lon FLOAT, \n" +
+                            "  lat FLOAT, \n" +
+                            "  g3 geohash(3c) \n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
 
             long timestamp = 1625853700000000L;
             for (int i = 0; i < iterations; i++) {
@@ -153,13 +180,14 @@ public class LatestByTest extends AbstractCairoTest {
         configOverrideUseWithinLatestByOptimisation();
 
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table pos_test\n" +
                             "( \n" +
-                            "  ts timestamp,\n" +
+                            "  ts #TIMESTAMP,\n" +
                             "  device_id symbol index,\n" +
                             "  g8c geohash(8c)\n" +
-                            ") timestamp(ts) partition by day;"
+                            ") timestamp(ts) partition by day;",
+                    timestampType.getTypeName()
             );
 
             execute(
@@ -182,13 +210,15 @@ public class LatestByTest extends AbstractCairoTest {
                             "    Async index backward scan on: device_id workers: 2\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
-                            "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n" :
+                                    "      intervals: [(\"2021-09-02T00:00:00.000000000Z\",\"2021-09-02T23:59:59.999999999Z\")]\n")
             );
 
             // prefix filter is applied AFTER latest on
             assertQuery(
                     "ts\tdevice_id\tg8c\n" +
-                            "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",
+                            "2021-09-02T00:00:00.000001" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_2\t46swgj10\n",
                     query,
                     "ts",
                     true,
@@ -212,13 +242,14 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\tb\n",
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tb\n",
                     "select ts, s from t " +
                             "where s in ('a', 'b') " +
                             "latest on ts partition by s",
@@ -244,14 +275,15 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
             execute("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "1970-01-02T18:00:00.000000Z\td\ta\n" +
-                            "1970-01-02T23:00:00.000000Z\tc\ta\n",
+                            "1970-01-02T18:00:00.000000" + suffix + "\td\ta\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n",
                     "select ts, s2, s from t " +
                             "where s = 'a' and s2 in ('c', 'd') " +
                             "latest on ts partition by s, s2",
@@ -277,14 +309,15 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
             execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "1970-01-02T23:00:00.000000Z\tc\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\tc\tb\n",
+                            "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\tb\n",
                     "select ts, s2, s from t " +
                             "where s2 = 'c' " +
                             "latest on ts partition by s, s2",
@@ -310,16 +343,17 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
             execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "s\ts2\tts\n" +
-                            "a\tc\t1970-01-02T23:00:00.000000Z\n" +
-                            "b\tc\t1970-01-03T00:00:00.000000Z\n" +
-                            "a\td\t1970-01-02T18:00:00.000000Z\n" +
-                            "b\td\t1970-01-02T19:00:00.000000Z\n",
+                            "a\tc\t1970-01-02T23:00:00.000000" + suffix + "\n" +
+                            "b\tc\t1970-01-03T00:00:00.000000" + suffix + "\n" +
+                            "a\td\t1970-01-02T18:00:00.000000" + suffix + "\n" +
+                            "b\td\t1970-01-02T19:00:00.000000" + suffix + "\n",
                     "select * from t where s2 = 'c' latest on ts partition by s, s2 " +
                             "union all " +
                             "select * from t where s2 = 'd' latest on ts partition by s, s2",
@@ -345,15 +379,16 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "1970-01-02T18:00:00.000000Z\td\ta\n" +
-                            "1970-01-02T19:00:00.000000Z\td\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\tc\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\tc\tb\n",
+                            "1970-01-02T18:00:00.000000" + suffix + "\td\ta\n" +
+                            "1970-01-02T19:00:00.000000" + suffix + "\td\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\tb\n",
                     "select ts, s2, s from t " +
                             "latest on ts partition by s, s2",
                     "ts",
@@ -378,24 +413,25 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(100)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "s\ts2\ts3\tts\n" +
-                            "\tc\t\t1970-01-03T19:00:00.000000Z\n" +
-                            "b\tc\t\t1970-01-04T00:00:00.000000Z\n" +
-                            "\t\td\t1970-01-04T05:00:00.000000Z\n" +
-                            "a\t\t\t1970-01-04T07:00:00.000000Z\n" +
-                            "a\t\td\t1970-01-04T11:00:00.000000Z\n" +
-                            "a\tc\t\t1970-01-04T17:00:00.000000Z\n" +
-                            "b\tc\td\t1970-01-04T20:00:00.000000Z\n" +
-                            "b\t\t\t1970-01-04T23:00:00.000000Z\n" +
-                            "\t\t\t1970-01-05T00:00:00.000000Z\n" +
-                            "a\tc\td\t1970-01-05T01:00:00.000000Z\n" +
-                            "b\t\td\t1970-01-05T02:00:00.000000Z\n" +
-                            "\tc\td\t1970-01-05T03:00:00.000000Z\n",
+                            "\tc\t\t1970-01-03T19:00:00.000000" + suffix + "\n" +
+                            "b\tc\t\t1970-01-04T00:00:00.000000" + suffix + "\n" +
+                            "\t\td\t1970-01-04T05:00:00.000000" + suffix + "\n" +
+                            "a\t\t\t1970-01-04T07:00:00.000000" + suffix + "\n" +
+                            "a\t\td\t1970-01-04T11:00:00.000000" + suffix + "\n" +
+                            "a\tc\t\t1970-01-04T17:00:00.000000" + suffix + "\n" +
+                            "b\tc\td\t1970-01-04T20:00:00.000000" + suffix + "\n" +
+                            "b\t\t\t1970-01-04T23:00:00.000000" + suffix + "\n" +
+                            "\t\t\t1970-01-05T00:00:00.000000" + suffix + "\n" +
+                            "a\tc\td\t1970-01-05T01:00:00.000000" + suffix + "\n" +
+                            "b\t\td\t1970-01-05T02:00:00.000000" + suffix + "\n" +
+                            "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n",
                     "t " +
                             "where s in ('a', 'b', null) " +
                             "latest on ts partition by s3, s2, s",
@@ -421,24 +457,25 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(100)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "s\ts2\ts3\tts\n" +
-                            "\tc\t\t1970-01-03T19:00:00.000000Z\n" +
-                            "b\tc\t\t1970-01-04T00:00:00.000000Z\n" +
-                            "\t\td\t1970-01-04T05:00:00.000000Z\n" +
-                            "a\t\t\t1970-01-04T07:00:00.000000Z\n" +
-                            "a\t\td\t1970-01-04T11:00:00.000000Z\n" +
-                            "a\tc\t\t1970-01-04T17:00:00.000000Z\n" +
-                            "b\tc\td\t1970-01-04T20:00:00.000000Z\n" +
-                            "b\t\t\t1970-01-04T23:00:00.000000Z\n" +
-                            "\t\t\t1970-01-05T00:00:00.000000Z\n" +
-                            "a\tc\td\t1970-01-05T01:00:00.000000Z\n" +
-                            "b\t\td\t1970-01-05T02:00:00.000000Z\n" +
-                            "\tc\td\t1970-01-05T03:00:00.000000Z\n",
+                            "\tc\t\t1970-01-03T19:00:00.000000" + suffix + "\n" +
+                            "b\tc\t\t1970-01-04T00:00:00.000000" + suffix + "\n" +
+                            "\t\td\t1970-01-04T05:00:00.000000" + suffix + "\n" +
+                            "a\t\t\t1970-01-04T07:00:00.000000" + suffix + "\n" +
+                            "a\t\td\t1970-01-04T11:00:00.000000" + suffix + "\n" +
+                            "a\tc\t\t1970-01-04T17:00:00.000000" + suffix + "\n" +
+                            "b\tc\td\t1970-01-04T20:00:00.000000" + suffix + "\n" +
+                            "b\t\t\t1970-01-04T23:00:00.000000" + suffix + "\n" +
+                            "\t\t\t1970-01-05T00:00:00.000000" + suffix + "\n" +
+                            "a\tc\td\t1970-01-05T01:00:00.000000" + suffix + "\n" +
+                            "b\t\td\t1970-01-05T02:00:00.000000" + suffix + "\n" +
+                            "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n",
                     "t " +
                             "latest on ts partition by s3, s2, s",
                     "ts",
@@ -461,7 +498,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
+            executeWithRewriteTimestamp("create table forecasts (when #TIMESTAMP, ts #TIMESTAMP, temperature double) timestamp(ts) partition by day", timestampType.getTypeName());
 
             // forecasts for 2020-05-05
             execute("insert into forecasts values " +
@@ -480,12 +517,13 @@ public class LatestByTest extends AbstractCairoTest {
 
             // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
             String query = "select when, ts, temperature from forecasts latest on ts partition by ts";
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             String expected = "when\tts\ttemperature\n" +
-                    "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
-                    "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
-                    "2020-05-06T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t141.0\n" +
-                    "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                    "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
+                    "2020-05-06T00:00:00.000000" + suffix + "\t2020-05-01T00:00:00.000000" + suffix + "\t140.0\n" +
+                    "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-02T00:00:00.000000" + suffix + "\t40.0\n" +
+                    "2020-05-06T00:00:00.000000" + suffix + "\t2020-05-03T00:00:00.000000" + suffix + "\t141.0\n" +
+                    "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-04T00:00:00.000000" + suffix + "\t42.0\n" +
+                    "2020-05-07T00:00:00.000000" + suffix + "\t2020-05-05T00:00:00.000000" + suffix + "\t143.0\n";
 
             assertQuery(expected, query, "ts", true, true);
         });
@@ -524,7 +562,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByPartitionByTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+            executeWithRewriteTimestamp("create table forecasts (when  #TIMESTAMP, version #TIMESTAMP, temperature double) timestamp(version) partition by day", timestampType.getTypeName());
 
             // forecasts for 2020-05-05
             execute("insert into forecasts values " +
@@ -541,9 +579,10 @@ public class LatestByTest extends AbstractCairoTest {
             );
 
             String query = "select when, version, temperature from forecasts latest on version partition by when";
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             String expected = "when\tversion\ttemperature\n" +
-                    "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                    "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
+                    "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-04T00:00:00.000000" + suffix + "\t42.0\n" +
+                    "2020-05-06T00:00:00.000000" + suffix + "\t2020-05-05T00:00:00.000000" + suffix + "\t142.0\n";
 
             assertQuery(expected, query, "version", true, true);
         });
@@ -552,7 +591,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryInitializesSymbolTables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'offer_exchanges' (" +
+            executeWithRewriteTimestamp("CREATE TABLE 'offer_exchanges' (" +
                     "pair SYMBOL CAPACITY 100000 INDEX, " +
                     "rate DOUBLE, " +
                     "volume_a DOUBLE, " +
@@ -565,14 +604,15 @@ public class LatestByTest extends AbstractCairoTest {
                     "tx_hash STRING, " +
                     "ledger_index INT, " +
                     "sequence INT, " +
-                    "ts TIMESTAMP" +
-                    ") TIMESTAMP(ts) PARTITION BY MONTH;");
+                    "ts #TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH;", timestampType.getTypeName());
             execute("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-29T15:00:00.000Z')");
             execute("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-30T15:01:00.000Z')");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
-                            "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000Z\n",
+                            "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000" + suffix + "\n",
                     "WITH first_selection as (" +
                             "  SELECT pair, first(rate) AS open, last(rate) AS close, min(rate) AS low, max(rate) AS high, " +
                             "         sum(volume_a) AS base_volume, sum(volume_b) AS counter_volume, count(*) AS exchanges " +
@@ -604,13 +644,14 @@ public class LatestByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             // we'll use the global 'bindVariableService' to compile the query
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  final RecordCursorFactory factory = CairoEngine.select(compiler, "select ts, s from t " +
                          "where s = :sym " +
@@ -623,10 +664,9 @@ public class LatestByTest extends AbstractCairoTest {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
                     localContext.with(localBindings);
                     localBindings.setStr("sym", "c");
-
                     assertFactoryCursor(
                             "ts\ts\n" +
-                                    "1970-01-03T00:00:00.000000Z\tc\n",
+                                    "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
                             "ts",
                             factory,
                             true,
@@ -645,7 +685,7 @@ public class LatestByTest extends AbstractCairoTest {
 
                     assertFactoryCursor(
                             "ts\ts\n" +
-                                    "1970-01-02T23:00:00.000000Z\ta\n",
+                                    "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                             "ts",
                             factory,
                             true,
@@ -676,7 +716,7 @@ public class LatestByTest extends AbstractCairoTest {
                     "select " +
                     "x, " +
                     "rnd_symbol('g', 'd', 'f') s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(40)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -697,7 +737,7 @@ public class LatestByTest extends AbstractCairoTest {
                     "select " +
                     "x, " +
                     "rnd_symbol(10000, 1, 15, 1000) s, " +
-                    "timestamp_sequence(0, 1000*1000L) ts " +
+                    "timestamp_sequence(0, 1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(1000000)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -717,9 +757,10 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "min\tmax\n" +
-                            "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
+                            "1970-01-11T15:33:16.000000" + suffix + "\t1970-01-12T13:46:39.000000" + suffix + "\n",
                     "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
                     null,
                     false,
@@ -728,7 +769,7 @@ public class LatestByTest extends AbstractCairoTest {
 
             assertQuery(
                     "min\tmax\n" +
-                            "1970-01-11T16:57:53.000000Z\t1970-01-12T13:46:05.000000Z\n",
+                            "1970-01-11T16:57:53.000000" + suffix + "\t1970-01-12T13:46:05.000000" + suffix + "\n",
                     "select min(ts), max(ts) from (" +
                             "select ts, x, s " +
                             "from t " +
@@ -761,15 +802,16 @@ public class LatestByTest extends AbstractCairoTest {
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\tx\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\t47\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\t48\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\t49\t\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\t49\t\n",
                     "select ts, x, s from t latest on ts partition by s",
                     "ts",
                     true,
@@ -797,18 +839,19 @@ public class LatestByTest extends AbstractCairoTest {
                     "  select " +
                     "    x, " +
                     "    rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
-                    "    timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "    timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "  from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\tx\ts\n" +
-                            "1970-01-02T17:00:00.000000Z\t42\td\n" +
-                            "1970-01-02T19:00:00.000000Z\t44\te\n" +
-                            "1970-01-02T21:00:00.000000Z\t46\tc\n" +
-                            "1970-01-02T22:00:00.000000Z\t47\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\t48\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\t49\tf\n",
+                            "1970-01-02T17:00:00.000000" + suffix + "\t42\td\n" +
+                            "1970-01-02T19:00:00.000000" + suffix + "\t44\te\n" +
+                            "1970-01-02T21:00:00.000000" + suffix + "\t46\tc\n" +
+                            "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\t49\tf\n",
                     "select ts, x, s from t latest on ts partition by s",
                     "ts",
                     true,
@@ -817,12 +860,12 @@ public class LatestByTest extends AbstractCairoTest {
 
             assertQuery(
                     "ts\tx\ts\n" +
-                            "1970-01-03T00:00:00.000000Z\t49\tf\n" +
-                            "1970-01-02T19:00:00.000000Z\t44\te\n" +
-                            "1970-01-02T17:00:00.000000Z\t42\td\n" +
-                            "1970-01-02T21:00:00.000000Z\t46\tc\n" +
-                            "1970-01-02T22:00:00.000000Z\t47\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\t48\ta\n",
+                            "1970-01-03T00:00:00.000000" + suffix + "\t49\tf\n" +
+                            "1970-01-02T19:00:00.000000" + suffix + "\t44\te\n" +
+                            "1970-01-02T17:00:00.000000" + suffix + "\t42\td\n" +
+                            "1970-01-02T21:00:00.000000" + suffix + "\t46\tc\n" +
+                            "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n",
                     "select ts, x, s from t latest on ts partition by s order by s desc",
                     null,
                     true,
@@ -833,10 +876,13 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByValueEmptyTableExcludedValueFilter() throws Exception {
+        executeWithRewriteTimestamp(
+                "create table a ( sym symbol, ts #TIMESTAMP ) timestamp(ts) partition by day",
+                timestampType.getTypeName()
+        );
         assertQuery(
                 "sym\tts\n",
                 "select sym, ts from a where sym != 'x' latest on ts partition by sym",
-                "create table a ( sym symbol, ts timestamp ) timestamp(ts) partition by day",
                 "ts",
                 true,
                 false
@@ -845,10 +891,13 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByValueEmptyTableNoFilter() throws Exception {
+        executeWithRewriteTimestamp(
+                "create table a ( sym symbol, ts #TIMESTAMP ) timestamp(ts) partition by day",
+                timestampType.getTypeName()
+        );
         assertQuery(
                 "sym\tts\n",
                 "select sym, ts from a latest on ts partition by sym",
-                "create table a ( sym symbol, ts timestamp ) timestamp(ts) partition by day",
                 "ts",
                 true,
                 false
@@ -857,6 +906,10 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByValuesFilteredResolvesSymbol() throws Exception {
+        executeWithRewriteTimestamp(
+                "create table a ( i int, s symbol, ts #TIMESTAMP ) timestamp(ts)",
+                timestampType.getTypeName()
+        );
         assertQuery(
                 "s\ti\tts\n",
                 "select s, i, ts " +
@@ -864,7 +917,6 @@ public class LatestByTest extends AbstractCairoTest {
                         "where s in (select distinct s from a) " +
                         "and s = 'ABC' " +
                         "latest on ts partition by s",
-                "create table a ( i int, s symbol, ts timestamp ) timestamp(ts)",
                 "ts",
                 true,
                 false
@@ -874,7 +926,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithDeferredNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            executeWithRewriteTimestamp("CREATE TABLE tab (ts #TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n", timestampType.getTypeName());
             execute("insert into tab\n" +
                     "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
                     "from long_sequence(1000);");
@@ -893,16 +945,17 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithInAndNotInAllBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
             bindVariableService.setStr("sym3", "b");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n",
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t " +
                             "where s in (:sym1, :sym2) and s != :sym3 " +
                             "latest on ts partition by s",
@@ -917,7 +970,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithInAndNotInAllBindVariablesEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
@@ -939,16 +992,17 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithInAndNotInAllBindVariablesIndexed() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
             bindVariableService.setStr("sym3", "b");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n",
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t " +
                             "where s in (:sym1, :sym2) and s != :sym3 " +
                             "latest on ts partition by s",
@@ -963,15 +1017,16 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithInAndNotInAllBindVariablesNonEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n",
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t " +
                             "where s = :sym1 and s != :sym2 " +
                             "latest on ts partition by s",
@@ -986,15 +1041,16 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithInAndNotInBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t " +
                             "where s in ('a', 'b', 'c') and s != :sym " +
                             "latest on ts partition by s",
@@ -1009,17 +1065,18 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithNotInAllBindVariablesMultipleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\tc\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
                     "select ts, s from t " +
                             "where s not in (:sym1, :sym2) " +
                             "latest on ts partition by s",
@@ -1033,8 +1090,8 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym2", "a");
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-03T00:00:00.000000Z\tc\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
                     "select ts, s from t " +
                             "where s not in (:sym1, :sym2) " +
                             "latest on ts partition by s",
@@ -1049,18 +1106,19 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithNotInAllBindVariablesMultipleValuesFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
             bindVariableService.setStr("sym3", "d");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T14:00:00.000000Z\ta\n" +
-                            "1970-01-02T16:00:00.000000Z\tb\n" +
-                            "1970-01-02T19:00:00.000000Z\tc\n",
+                            "1970-01-02T14:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-02T16:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T19:00:00.000000" + suffix + "\tc\n",
                     "select ts, s from t " +
                             "where s not in (:sym1, :sym2) and s2 = :sym3 " +
                             "latest on ts partition by s",
@@ -1075,17 +1133,18 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexed() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n" +
-                            "1970-01-03T00:00:00.000000Z\tc\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
                     "select ts, s from t " +
                             "where s not in (:sym1, :sym2) " +
                             "latest on ts partition by s",
@@ -1099,8 +1158,8 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym2", "a");
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-03T00:00:00.000000Z\tc\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
                     "select ts, s from t " +
                             "where s not in (:sym1, :sym2) " +
                             "latest on ts partition by s",
@@ -1115,18 +1174,19 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexedFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     "), index(s), index(s2) timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
             bindVariableService.setStr("sym3", "d");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T14:00:00.000000Z\ta\n" +
-                            "1970-01-02T16:00:00.000000Z\tb\n" +
-                            "1970-01-02T19:00:00.000000Z\tc\n",
+                            "1970-01-02T14:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-02T16:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T19:00:00.000000" + suffix + "\tc\n",
                     "select ts, s from t " +
                             "where s not in (:sym1, :sym2) and s2 = :sym3 " +
                             "latest on ts partition by s",
@@ -1141,15 +1201,16 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithNotInAllBindVariablesSingleValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t " +
                             "where s <> :sym " +
                             "latest on ts partition by s",
@@ -1164,15 +1225,16 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithNotInAllBindVariablesSingleValueIndexed() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
-                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T22:00:00.000000Z\tb\n" +
-                            "1970-01-02T23:00:00.000000Z\ta\n",
+                            "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t " +
                             "where s <> :sym " +
                             "latest on ts partition by s",
@@ -1218,10 +1280,11 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOnVarchar() throws Exception {
+        String suffix = getTimestampSuffix(timestampType.getTypeName());
         assertQuery(
                 "x\tv\tts\n" +
-                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                        "42\tb\t1970-01-02T17:00:00.000000" + suffix + "\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
                 "t " +
                         "where v in ('a', 'b', 'd') and x%2 = 0 " +
                         "latest on ts partition by v",
@@ -1229,15 +1292,15 @@ public class LatestByTest extends AbstractCairoTest {
                         "select " +
                         "x, " +
                         "rnd_varchar('a', 'b', 'c', null) v, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                         "from long_sequence(49)" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into t values (1000, 'd', '1970-01-02T20:00')",
                 "x\tv\tts\n" +
-                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
-                        "1000\td\t1970-01-02T20:00:00.000000Z\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                        "42\tb\t1970-01-02T17:00:00.000000" + suffix + "\n" +
+                        "1000\td\t1970-01-02T20:00:00.000000" + suffix + "\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
                 true,
                 true,
                 false
@@ -1246,12 +1309,13 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOnVarcharNonAscii() throws Exception {
+        String suffix = getTimestampSuffix(timestampType.getTypeName());
         assertQuery(
                 "x\tv\tts\n" +
-                        "14\t\t1970-01-01T13:00:00.000000Z\n" +
-                        "17\tраз\t1970-01-01T16:00:00.000000Z\n" +
-                        "19\tдва\t1970-01-01T18:00:00.000000Z\n" +
-                        "20\tтри\t1970-01-01T19:00:00.000000Z\n",
+                        "14\t\t1970-01-01T13:00:00.000000" + suffix + "\n" +
+                        "17\tраз\t1970-01-01T16:00:00.000000" + suffix + "\n" +
+                        "19\tдва\t1970-01-01T18:00:00.000000" + suffix + "\n" +
+                        "20\tтри\t1970-01-01T19:00:00.000000" + suffix + "\n",
                 "select * " +
                         "from t " +
                         "latest on ts partition by v",
@@ -1259,7 +1323,7 @@ public class LatestByTest extends AbstractCairoTest {
                         "select " +
                         "x, " +
                         "rnd_varchar('раз', 'два', 'три', null) v, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                         "from long_sequence(20)" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
@@ -1287,14 +1351,15 @@ public class LatestByTest extends AbstractCairoTest {
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "x\ts\tts\n" +
-                            "44\tb\t1970-01-02T19:00:00.000000Z\n" +
-                            "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                            "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
+                            "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
                     "t " +
                             "where s in ('a', 'b') and x%2 = 0 " +
                             "latest on ts partition by s",
@@ -1319,10 +1384,11 @@ public class LatestByTest extends AbstractCairoTest {
             }
         };
 
+        String suffix = getTimestampSuffix(timestampType.getTypeName());
         assertQuery(
                 "x\ts\tts\n" +
-                        "44\tb\t1970-01-02T19:00:00.000000Z\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                        "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
                 "t " +
                         "where s in ('a', 'b', 'c') and x%2 = 0 " +
                         "latest on ts partition by s",
@@ -1330,15 +1396,15 @@ public class LatestByTest extends AbstractCairoTest {
                         "select " +
                         "x, " +
                         "rnd_symbol('a', 'b', null) s, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                         "from long_sequence(49)" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into t values (1000, 'c', '1970-01-02T20:00')",
                 "x\ts\tts\n" +
-                        "44\tb\t1970-01-02T19:00:00.000000Z\n" +
-                        "1000\tc\t1970-01-02T20:00:00.000000Z\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                        "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
+                        "1000\tc\t1970-01-02T20:00:00.000000" + suffix + "\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
                 true,
                 true,
                 false
@@ -1374,14 +1440,15 @@ public class LatestByTest extends AbstractCairoTest {
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "x\ts\tts\n" +
-                            "48\ta\t1970-01-02T23:00:00.000000Z\n" +
-                            "49\t\t1970-01-03T00:00:00.000000Z\n",
+                            "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n" +
+                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n",
                     "t where s in ('a', null) latest on ts partition by s",
                     "ts",
                     true,
@@ -1409,15 +1476,16 @@ public class LatestByTest extends AbstractCairoTest {
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "x\ts\tts\n" +
-                            "35\ta\t1970-01-02T10:00:00.000000Z\n" +
-                            "47\tb\t1970-01-02T22:00:00.000000Z\n" +
-                            "49\t\t1970-01-03T00:00:00.000000Z\n",
+                            "35\ta\t1970-01-02T10:00:00.000000" + suffix + "\n" +
+                            "47\tb\t1970-01-02T22:00:00.000000" + suffix + "\n" +
+                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n",
                     "t where x%2 = 1 latest on ts partition by s",
                     "ts",
                     true,
@@ -1429,11 +1497,11 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testSymbolInPredicate_singleElement() throws Exception {
         assertMemoryLeak(() -> {
-            String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
-            execute(createStmt);
-            execute("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
+            executeWithRewriteTimestamp("CREATE table trades(symbol symbol, side symbol, timestamp #TIMESTAMP) timestamp(timestamp);", timestampType.getTypeName());
+            execute("insert into trades VALUES ('BTC', 'buy', 1609459199000000::timestamp);");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             String expected = "symbol\tside\ttimestamp\n" +
-                    "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
+                    "BTC\tbuy\t2020-12-31T23:59:59.000000" + suffix + "\n";
             String query = "SELECT * FROM trades\n" +
                     "WHERE symbol in ('BTC') and side in 'buy'\n" +
                     "LATEST ON timestamp PARTITION BY symbol;";
@@ -1460,10 +1528,10 @@ public class LatestByTest extends AbstractCairoTest {
 
     private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table forecasts " +
+            executeWithRewriteTimestamp("create table forecasts " +
                     "( when " + partitionByType + ", " +
-                    "version timestamp, " +
-                    "temperature double) timestamp(version) partition by day");
+                    "version #TIMESTAMP, " +
+                    "temperature double) timestamp(version) partition by day", timestampType.getTypeName());
             execute("insert into forecasts values " +
                     "  (" + valueA + ", '2020-05-02', 40), " +
                     "  (" + valueA + ", '2020-05-03', 41), " +
@@ -1474,9 +1542,10 @@ public class LatestByTest extends AbstractCairoTest {
             );
 
             String query = "select when, version, temperature from forecasts latest on version partition by when";
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             String expected = "when\tversion\ttemperature\n" +
-                    valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                    valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+                    valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000" + suffix + "\t42.0\n" +
+                    valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000" + suffix + "\t142.0\n";
 
             assertQueryNoLeakCheck(expected, query, "version", true, true);
         });
@@ -1484,11 +1553,11 @@ public class LatestByTest extends AbstractCairoTest {
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table r (symbol symbol, value long, ts timestamp)" +
-                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day");
+            executeWithRewriteTimestamp("create table r (symbol symbol, value long, ts #TIMESTAMP)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", timestampType.getTypeName());
             execute("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
-            execute("create table t (symbol symbol, value long, ts timestamp)" +
-                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day");
+            executeWithRewriteTimestamp("create table t (symbol symbol, value long, ts #TIMESTAMP)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", timestampType.getTypeName());
             execute("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
 
             String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +

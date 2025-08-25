@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableToken;
@@ -43,7 +44,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -64,7 +65,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TxnTest extends AbstractCairoTest {
-    protected static final Log LOG = LogFactory.getLog(TxnTest.class);
+    private static final Log LOG = LogFactory.getLog(TxnTest.class);
 
     @Test
     public void testFailedTxWriterDoesNotCorruptTable() throws Exception {
@@ -87,18 +88,18 @@ public class TxnTest extends AbstractCairoTest {
                     TableToken tableToken = engine.verifyTableName(tableName);
                     path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
-                    try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY)) {
                         // Add lots of partitions
                         for (int i = 0; i < testPartitionCount; i++) {
-                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
+                            txWriter.updatePartitionSizeByTimestamp(i * Micros.DAY_MICROS, i + 1);
                         }
-                        txWriter.updateMaxTimestamp(testPartitionCount * Timestamps.DAY_MICROS + 1);
+                        txWriter.updateMaxTimestamp(testPartitionCount * Micros.DAY_MICROS + 1);
                         txWriter.finishPartitionSizeUpdate();
                         txWriter.commit(new ObjList<>());
                     }
 
                     // Reopen without OS errors
-                    try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY)) {
                         // Read lots of partitions
                         Assert.assertEquals(testPartitionCount, txWriter.getPartitionCount());
                         for (int i = 0; i < testPartitionCount - 1; i++) {
@@ -107,14 +108,14 @@ public class TxnTest extends AbstractCairoTest {
                     }
 
                     // Open with OS error to file extend
-                    try (TxWriter ignored = new TxWriter(errorFf, configuration).ofRW(path.$(), PartitionBy.DAY)) {
+                    try (TxWriter ignored = new TxWriter(errorFf, configuration).ofRW(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY)) {
                         Assert.fail("Should not be able to extend on opening");
                     } catch (CairoException ex) {
                         // expected
                     }
 
                     // Reopen without OS errors
-                    try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY)) {
                         // Read lots of partitions
                         Assert.assertEquals(testPartitionCount, txWriter.getPartitionCount());
                         for (int i = 0; i < testPartitionCount - 1; i++) {
@@ -141,11 +142,11 @@ public class TxnTest extends AbstractCairoTest {
                     path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 2;
                     try (TxWriter txWriter = new TxWriter(ff, configuration)) {
-                        txWriter.ofRW(path.$(), PartitionBy.DAY);
+                        txWriter.ofRW(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
                         for (int i = 0; i < testPartitionCount; i++) {
-                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
+                            txWriter.updatePartitionSizeByTimestamp(i * Micros.DAY_MICROS, i + 1);
                         }
-                        txWriter.updateMaxTimestamp(testPartitionCount * Timestamps.DAY_MICROS + 1);
+                        txWriter.updateMaxTimestamp(testPartitionCount * Micros.DAY_MICROS + 1);
                         txWriter.finishPartitionSizeUpdate();
                         txWriter.commit(new ObjList<>());
                     }
@@ -156,13 +157,13 @@ public class TxnTest extends AbstractCairoTest {
                             TxReader txCopyReader = new TxReader(ff);
                             MemoryCARW dumpCopyMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                     ) {
-                        txReader.ofRO(path.$(), PartitionBy.DAY);
+                        txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
 
                         txReader.unsafeLoadAll();
                         final String expected = "{txn: 1, attachedPartitions: [\n" +
-                                "{ts: '1970-01-01T00:00:00.000Z', rowCount: 1, nameTxn: -1},\n" +
-                                "{ts: '1970-01-02T00:00:00.000Z', rowCount: 2, nameTxn: -1}\n" +
-                                "], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775Z', maxTimestamp: '1970-01-03T00:00:00.000Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}";
+                                "{ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},\n" +
+                                "{ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}\n" +
+                                "], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775807Z', maxTimestamp: '1970-01-03T00:00:00.000001Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775807Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}";
                         Assert.assertEquals(expected, txReader.toString());
 
                         txCopyReader.loadAllFrom(txReader);
@@ -219,13 +220,13 @@ public class TxnTest extends AbstractCairoTest {
                     path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 2;
                     try (TxWriter txWriter = new TxWriter(ff, configuration)) {
-                        txWriter.ofRW(path.$(), PartitionBy.DAY);
+                        txWriter.ofRW(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
                         for (int i = 0; i < testPartitionCount; i++) {
-                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
+                            txWriter.updatePartitionSizeByTimestamp(i * Micros.DAY_MICROS, i + 1);
                         }
                         TestUtils.assertContains(txWriter.toString(), "[\n" +
-                                "{ts: '1970-01-01T00:00:00.000Z', rowCount: 1, nameTxn: -1},\n" +
-                                "{ts: '1970-01-02T00:00:00.000Z', rowCount: 2, nameTxn: -1}\n" +
+                                "{ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},\n" +
+                                "{ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}\n" +
                                 "]");
                     }
                 }
@@ -266,7 +267,8 @@ public class TxnTest extends AbstractCairoTest {
                     maxPartitionCount,
                     maxSymbolCount,
                     partitionCountCheck,
-                    truncateIteration
+                    truncateIteration,
+                    TableUtils.getTimestampType(model)
             );
 
             Rnd readerRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
@@ -279,7 +281,7 @@ public class TxnTest extends AbstractCairoTest {
                     ) {
                         TableToken tableToken = engine.verifyTableName(tableName);
                         path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
-                        txReader.ofRO(path.$(), PartitionBy.HOUR);
+                        txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
                         start.await();
@@ -300,7 +302,7 @@ public class TxnTest extends AbstractCairoTest {
                                 reloadCount.incrementAndGet();
                             }
                             if (readerRnd.nextBoolean()) {
-                                txReader.ofRO(path.$(), PartitionBy.HOUR);
+                                txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.HOUR);
                             }
                             Os.pause();
                         }
@@ -361,7 +363,8 @@ public class TxnTest extends AbstractCairoTest {
                     maxPartitionCount,
                     maxSymbolCount,
                     partitionCountCheck,
-                    Integer.MAX_VALUE
+                    Integer.MAX_VALUE,
+                    TableUtils.getTimestampType(model)
             );
 
             Rnd readerRnd = TestUtils.generateRandom(LOG);
@@ -375,7 +378,7 @@ public class TxnTest extends AbstractCairoTest {
                     ) {
                         TableToken tableToken = engine.verifyTableName(tableName);
                         path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
-                        txReader.ofRO(path.$(), PartitionBy.HOUR);
+                        txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
                         start.await();
@@ -414,7 +417,7 @@ public class TxnTest extends AbstractCairoTest {
 
                             if (readerRnd.nextBoolean()) {
                                 // Reopen txn file
-                                txReader.ofRO(path.$(), PartitionBy.HOUR);
+                                txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.HOUR);
                             }
                         }
                         TableUtils.safeReadTxn(txReader, clock, duration);
@@ -454,7 +457,7 @@ public class TxnTest extends AbstractCairoTest {
             java.nio.file.Files.copy(Objects.requireNonNull(is), tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
             p.of(tempFile.toString()).$();
-            tw.ofRW(p.$(), PartitionBy.MONTH);
+            tw.ofRW(p.$(), ColumnType.TIMESTAMP, PartitionBy.MONTH);
             tw.unsafeLoadAll();
         }
     }
@@ -482,7 +485,8 @@ public class TxnTest extends AbstractCairoTest {
             int maxPartitionCount,
             int maxSymbolCount,
             AtomicInteger partitionCountCheck,
-            int truncateIteration
+            int truncateIteration,
+            int timestampType
     ) {
         ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
         ObjList<SymbolCountProvider> zeroSymbolCounts = new ObjList<>();
@@ -493,7 +497,7 @@ public class TxnTest extends AbstractCairoTest {
             ) {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
-                txWriter.ofRW(path.$(), PartitionBy.HOUR);
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
 
                 start.await();
                 for (int j = 0; j < iterations; j++) {
@@ -501,8 +505,8 @@ public class TxnTest extends AbstractCairoTest {
                         txWriter.truncate(0, zeroSymbolCounts);
                         LOG.info().$("writer truncated at ").$(txWriter.getTxn()).$();
                         // Create last partition back.
-                        txWriter.setMaxTimestamp((maxPartitionCount + 1) * Timestamps.HOUR_MICROS);
-                        txWriter.updatePartitionSizeByTimestamp(txWriter.getMaxTimestamp() * Timestamps.HOUR_MICROS, 1);
+                        txWriter.setMaxTimestamp((maxPartitionCount + 1) * Micros.HOUR_MICROS);
+                        txWriter.updatePartitionSizeByTimestamp(txWriter.getMaxTimestamp() * Micros.HOUR_MICROS, 1);
                         txWriter.commit(symbolCounts);
                         partitionCountCheck.set(0);
                     } else {
@@ -526,23 +530,23 @@ public class TxnTest extends AbstractCairoTest {
                         long offset = txWriter.getTxn() + 1 - txWriter.getMetadataVersion();
                         // Add / Update
                         for (int i = 0; i < partitionCount; i++) {
-                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.HOUR_MICROS, offset + i);
+                            txWriter.updatePartitionSizeByTimestamp(i * Micros.HOUR_MICROS, offset + i);
                         }
                         // Remove from the end
                         for (int i = partitionCount; i < partitions; i++) {
-                            txWriter.removeAttachedPartitions(i * Timestamps.HOUR_MICROS);
+                            txWriter.removeAttachedPartitions(i * Micros.HOUR_MICROS);
                         }
                         txWriter.bumpPartitionTableVersion();
                         assert txWriter.getPartitionCount() - 1 == partitionCount;
 
-                        txWriter.setMaxTimestamp(partitionCount * Timestamps.HOUR_MICROS);
+                        txWriter.setMaxTimestamp(partitionCount * Micros.HOUR_MICROS);
                         txWriter.commit(symbolCounts);
                         partitionCountCheck.set(partitionCount);
                     }
 
                     if (rnd.nextBoolean()) {
                         // Reopen txn file for writing
-                        txWriter.ofRW(path.$(), PartitionBy.HOUR);
+                        txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
                     }
 
                     if (!exceptions.isEmpty()) {

@@ -2,6 +2,42 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Test Query Nanoseconds
+    description: Test inserting and selecting data to a table with nanoseconds column.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE nanos (id INT, temperature DOUBLE, timestamp timestamp_ns);"
+    steps:
+      - action: execute
+        query: "INSERT INTO nanos (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        parameters:
+          - value: "1"
+            type: "INT4"
+          - value: "2.5"
+            type: "FLOAT8"
+          - value: "2023-10-01T10:00:00.100000Z"
+            type: "TIMESTAMP"
+      - action: execute
+        query: "INSERT INTO nanos (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        parameters:
+          - value: "2"
+            type: "INT4"
+          - value: "3.5"
+            type: "FLOAT8"
+          - value: "2024-10-01T10:00:00.100000Z"
+            type: "TIMESTAMP"
+      - action: query
+        query: "SELECT * FROM nanos WHERE timestamp = $[1];"
+        parameters:
+          - value: "2023-10-01T10:00:00.100000Z"
+            type: "TIMESTAMP"
+        expect:
+          result:
+            - [ 1, 2.5, "2023-10-01T10:00:00.100000Z" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS nanos;"
+
   - name: Test Empty Array
     description: Test inserting and selecting empty array.
     prepare:

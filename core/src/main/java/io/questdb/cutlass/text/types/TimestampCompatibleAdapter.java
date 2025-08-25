@@ -24,8 +24,9 @@
 
 package io.questdb.cutlass.text.types;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public interface TimestampCompatibleAdapter extends TypeAdapter {
-    long getTimestamp(DirectUtf8Sequence value) throws Exception;
+    long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception;
 }

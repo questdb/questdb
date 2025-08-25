@@ -38,7 +38,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -321,16 +320,16 @@ public class ColumnVersionReader implements Closeable, Mutable {
             sink.put("\n{columnIndex: ").put(columnIndex).put(", ");
             boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
             if (isDefaultPartition) {
-                sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("addedPartition: '");
-                TimestampFormatUtils.appendDateTime(sink, columnTop);
-                sink.put("'}");
+                sink.putAscii("defaultNameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("addedPartition: ");
+                sink.put(columnTop);
+                sink.putAscii('}');
             } else {
-                sink.put("nameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("partition: '");
-                TimestampFormatUtils.appendDateTime(sink, timestamp);
-                sink.put("', ");
-                sink.put("columnTop: ").put(columnTop).put("}");
+                sink.put("nameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("partition: ");
+                sink.put(timestamp);
+                sink.putAscii(", ");
+                sink.putAscii("columnTop: ").put(columnTop).putAscii('}');
             }
         }
         sink.put("\n]}");

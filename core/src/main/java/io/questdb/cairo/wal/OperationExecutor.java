@@ -138,7 +138,7 @@ class OperationExecutor implements Closeable {
         rnd.reset(seed0, seed1);
     }
 
-    public void setNowAndFixClock(long now) {
-        executionContext.setNowAndFixClock(now);
+    public void setNowAndFixClock(long now, int nowTimestampType) {
+        executionContext.setNowAndFixClock(now, nowTimestampType);
     }
 }

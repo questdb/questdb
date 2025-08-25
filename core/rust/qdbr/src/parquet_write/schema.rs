@@ -12,7 +12,7 @@ use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::schema::Repetition;
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 
 pub fn column_type_to_parquet_type(
     column_id: i32,
@@ -83,21 +83,40 @@ pub fn column_type_to_parquet_type(
             }),
             Some(column_id),
         )?),
-        ColumnTypeTag::Timestamp => Ok(ParquetType::try_from_primitive(
-            name,
-            PhysicalType::Int64,
-            if designated_timestamp {
+        ColumnTypeTag::Timestamp => {
+            let repetition = if designated_timestamp {
                 Repetition::Required
             } else {
                 Repetition::Optional
-            },
-            Some(PrimitiveConvertedType::TimestampMicros),
-            Some(PrimitiveLogicalType::Timestamp {
-                unit: TimeUnit::Microseconds,
-                is_adjusted_to_utc: true,
-            }),
-            Some(column_id),
-        )?),
+            };
+            if column_type.code() & QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG
+                == QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG
+            {
+                Ok(ParquetType::try_from_primitive(
+                    name,
+                    PhysicalType::Int64,
+                    repetition,
+                    None,
+                    Some(PrimitiveLogicalType::Timestamp {
+                        unit: TimeUnit::Nanoseconds,
+                        is_adjusted_to_utc: true,
+                    }),
+                    Some(column_id),
+                )?)
+            } else {
+                Ok(ParquetType::try_from_primitive(
+                    name,
+                    PhysicalType::Int64,
+                    repetition,
+                    Some(PrimitiveConvertedType::TimestampMicros),
+                    Some(PrimitiveLogicalType::Timestamp {
+                        unit: TimeUnit::Microseconds,
+                        is_adjusted_to_utc: true,
+                    }),
+                    Some(column_id),
+                )?)
+            }
+        }
         ColumnTypeTag::Float => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Float,

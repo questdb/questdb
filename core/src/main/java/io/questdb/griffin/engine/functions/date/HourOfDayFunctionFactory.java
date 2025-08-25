@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,9 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class HourOfDayFunctionFactory implements FunctionFactory {
 
@@ -46,16 +46,18 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new HourOfDayFunction(arg);
+        return new HourOfDayFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     static final class HourOfDayFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
+        private final TimestampDriver driver;
 
-        public HourOfDayFunction(Function arg) {
+        public HourOfDayFunction(Function arg, TimestampDriver driver) {
             super();
             this.arg = arg;
+            this.driver = driver;
         }
 
         @Override
@@ -66,10 +68,7 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return Numbers.INT_NULL;
-            }
-            return Timestamps.getHourOfDay(value);
+            return driver.getHourOfDay(value);
         }
 
         @Override

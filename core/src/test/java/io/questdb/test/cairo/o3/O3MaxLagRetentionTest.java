@@ -26,10 +26,29 @@ package io.questdb.test.cairo.o3;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class O3MaxLagRetentionTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public O3MaxLagRetentionTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testAddColumn() throws Exception {
@@ -107,7 +126,7 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
     }
 
     private void createTable() throws SqlException {
-        execute("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
-                "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s");
+        executeWithRewriteTimestamp("CREATE TABLE my_table (timestamp #TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
+                "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s", timestampType.getTypeName());
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -56,13 +57,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -95,7 +96,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final SCSequence eventSubSequence = new SCSequence();
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
-    private final NanosecondClock nanosecondClock;
+    private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final StringSink sink = new StringSink();
@@ -136,7 +137,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            NanosecondClock nanosecondClock,
+            Clock nanosecondClock,
             CharSequence keepAliveHeader
     ) {
         this.httpConnectionContext = httpConnectionContext;
@@ -433,13 +434,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (Interval.NULL.equals(interval)) {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').put(interval).putAscii('"');
+        response.putAscii('"').put(interval, intervalType).putAscii('"');
     }
 
     private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
@@ -483,13 +484,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(response, rec.getSymA(col));
     }
 
-    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col, TimestampDriver driver) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').putISODate(t).putAscii('"');
+        response.putAscii('"').putISODate(driver, t).putAscii('"');
     }
 
     private static void putUuidValue(HttpChunkedResponse response, Record rec, int col) {
@@ -666,7 +667,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putDateValue(response, record, columnIdx);
                     break;
                 case ColumnType.TIMESTAMP:
-                    putTimestampValue(response, record, columnIdx);
+                    putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType));
                     break;
                 case ColumnType.SHORT:
                     putShortValue(response, record, columnIdx);
@@ -714,7 +715,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIPv4Value(response, record, columnIdx);
                     break;
                 case ColumnType.INTERVAL:
-                    putIntervalValue(response, record, columnIdx);
+                    putIntervalValue(response, record, columnIdx, columnType);
                     break;
                 case ColumnType.ARRAY:
                     putArrayValue(response, columnIdx, columnType);

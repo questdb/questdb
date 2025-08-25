@@ -35,11 +35,10 @@ import io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory;
 import io.questdb.griffin.engine.table.WriterPoolRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
-
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
@@ -131,7 +130,7 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWriterList() throws Exception {
-        currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+        currentMicros = MicrosFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
         assertMemoryLeak(() -> {
             execute("create table a as (select 1 as u)");
 

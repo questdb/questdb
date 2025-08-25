@@ -36,14 +36,26 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         "2022-03-11T22:00:30.555560Z\n",
                 "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5"
         );
+
+        assertSql(
+                "column\n" +
+                        "2022-03-11T22:00:30.555555560Z\n",
+                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC' + 5"
+        );
     }
 
     @Test
     public void testCast() throws Exception {
         assertSql(
                 "cast\n" +
-                        "1647018030555555\n",
+                        "2022-03-11T17:00:30.555555Z\n",
                 "select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)"
+        );
+
+        assertSql(
+                "cast\n" +
+                        "2022-03-11T17:00:30.555555555Z\n",
+                "select cast('2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'EST' as string)"
         );
     }
 
@@ -59,8 +71,8 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
     @Test
     public void testFail2() throws Exception {
         assertException(
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') at time 'UTC'",
-                59,
+                "select to_timestamp_ns('2022-03-11T22:00:30.555555555Z') at time 'UTC'",
+                65,
                 "did you mean 'at time zone <tz>'?"
         );
     }
@@ -77,8 +89,8 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
     @Test
     public void testFailDangling3() throws Exception {
         assertException(
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') at time",
-                58,
+                "select to_timestamp_ns('2022-03-11T22:00:30.555555555Z') at time",
+                64,
                 "did you mean 'at time zone <tz>'?"
         );
     }
@@ -89,6 +101,12 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                 "date_trunc\n" +
                         "2022-03-11T00:00:00.000000Z\n",
                 "select date_trunc('day', '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC')"
+        );
+
+        assertSql(
+                "date_trunc\n" +
+                        "2022-03-11T00:00:00.000000000Z\n",
+                "select date_trunc('day', '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC')"
         );
     }
 
@@ -103,6 +121,16 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         "   else 'cde'" +
                         "end"
         );
+
+        assertSql(
+                "case\n" +
+                        "abc\n",
+                "select case " +
+                        "   when to_timestamp_ns('2022-03-11T22:00:30.555555555Z') at time zone 'EST' > 0" +
+                        "   then 'abc'" +
+                        "   else 'cde'" +
+                        "end"
+        );
     }
 
     @Test
@@ -111,6 +139,12 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                 "time\n" +
                         "2022-03-11T22:00:30.555555Z\n",
                 "select '2022-03-11T22:00:30.555555Z'::timestamp time"
+        );
+
+        assertSql(
+                "time\n" +
+                        "2022-03-11T22:00:30.555555555Z\n",
+                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns time"
         );
     }
 
@@ -121,6 +155,12 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         "2022-03-11T22:00:30.555555Z\n",
                 "select '2022-03-11T22:00:30.555555Z'::timestamp zone"
         );
+
+        assertSql(
+                "zone\n" +
+                        "2022-03-11T22:00:30.555555555Z\n",
+                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns zone"
+        );
     }
 
     @Test
@@ -129,6 +169,12 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                 "cast\n" +
                         "2022-03-11T22:00:30.555555Z\n",
                 "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'"
+        );
+
+        assertSql(
+                "cast\n" +
+                        "2022-03-11T22:00:30.555555555Z\n",
+                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC'"
         );
     }
 }

@@ -53,8 +53,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -106,7 +106,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp;
             final Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
-                timestamp = TimestampFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
+                timestamp = MicrosFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putInt(0, rnd.nextInt());
@@ -939,17 +939,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolIndexReadByDayAfterAlterSparse() throws Exception {
-        testSymbolIndexReadAfterAlter(PartitionBy.DAY, Timestamps.DAY_MICROS * 2, 3, 10);
+        testSymbolIndexReadAfterAlter(PartitionBy.DAY, Micros.DAY_MICROS * 2, 3, 10);
     }
 
     @Test
     public void testSymbolIndexReadByDayAfterColumnAddAndAlterSparse() throws Exception {
-        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, Timestamps.DAY_MICROS * 2, 3, 10);
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, Micros.DAY_MICROS * 2, 3, 10);
     }
 
     @Test
     public void testSymbolIndexReadByDayAfterColumnAddAndAlterSparse2() throws Exception {
-        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, (long) (Timestamps.DAY_MICROS * 1.5), 3, 30);
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, (long) (Micros.DAY_MICROS * 1.5), 3, 30);
     }
 
     @Test
@@ -964,7 +964,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolIndexReadByMonthAfterColumnAddAndAlterSparse() throws Exception {
-        testSymbolIndexReadColumnAddAndAlter(PartitionBy.MONTH, (long) ((Timestamps.DAY_MICROS * 1.5) * 30), 2, 40);
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.MONTH, (long) ((Micros.DAY_MICROS * 1.5) * 30), 2, 40);
     }
 
     @Test

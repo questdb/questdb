@@ -55,10 +55,10 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -79,7 +79,7 @@ public class HttpQueryTestBuilder {
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
     private MicrosecondClock microsecondClock;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
@@ -347,7 +347,7 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withNanosClock(NanosecondClock nanosecondClock) {
+    public HttpQueryTestBuilder withNanosClock(Clock nanosecondClock) {
         this.nanosecondClock = nanosecondClock;
         return this;
     }

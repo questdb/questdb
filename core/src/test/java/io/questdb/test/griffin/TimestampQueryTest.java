@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -67,6 +67,22 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "2020-12-31T23:59:59.000000Z\tu33d8b12\n";
             String query = "select time, \"cast\" from xyz;";
             assertSql(expected, query);
+        });
+    }
+
+    @Test
+    public void testConstantFunctionExtractionNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab(i int, ts timestamp_ns) timestamp(ts) partition by DAY;");
+            execute("INSERT INTO tab VALUES(0, '2000-01-01T00:00:00.000000000Z')");
+
+
+            String expected = "i\tts\n" +
+                    "0\t2000-01-01T00:00:00.000000000Z\n";
+            // constant function
+            String query = "select * from tab where ts = 946684800000000000 + 0;";
+
+            assertQueryNoLeakCheck(expected, query, "ts", true, false);
         });
     }
 
@@ -418,6 +434,139 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMicrosecondVsNanosecondTimestampAsOfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for AS OF JOIN test
+            execute("create table micro_events (id int, ts_micro timestamp, value int) timestamp(ts_micro)");
+            execute("create table nano_events (id int, ts_nano timestamp_ns, price double) timestamp(ts_nano)");
+
+            // Insert test data with various timestamp precisions
+            long baseMicros = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long baseNanos = baseMicros * 1000; // 2020-01-01T00:00:00.123456000
+
+            execute("insert into micro_events values (1, " + baseMicros + ", 100)");
+            execute("insert into micro_events values (2, " + (baseMicros + 1000) + ", 200)"); // +1ms
+
+            execute("insert into nano_events values (1, " + baseNanos + ", 10.5)");
+            execute("insert into nano_events values (2, " + (baseNanos + 500_000) + ", 20.5)"); // +500µs
+            execute("insert into nano_events values (3, " + (baseNanos + 1_000_123) + ", 30.5)"); // +1ms+123ns
+
+            // Test AS OF JOIN with mixed timestamp precisions
+            assertSql("id\tts_micro\tvalue\tid1\tts_nano\tprice\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t100\t1\t2020-01-01T00:00:00.123456000Z\t10.5\n" + // Connect rows 1 to 1 (same timestamp)
+                            "2\t2020-01-01T00:00:00.124456Z\t200\t2\t2020-01-01T00:00:00.123956000Z\t20.5\n", // Connect 2 to 2 (ts_nano in 3 is beyond ts_micro in 2)
+                    "select * from micro_events m asof join nano_events n");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for JOIN test
+            execute("create table micro_table (id int, ts_micro timestamp) timestamp(ts_micro)");
+            execute("create table nano_table (id int, ts_nano timestamp_ns) timestamp(ts_nano)");
+
+            // Insert test data: one microsecond value, two nanosecond values (one matching, one with extra precision)
+            long micros = 1577836800123456L; // 2020-01-01T00:00:00.123456
+            long nanosMatching = micros * 1000; // 2020-01-01T00:00:00.123456000 (matching)
+            long nanosWithExtra = nanosMatching + 789; // 2020-01-01T00:00:00.123456789 (extra precision)
+
+            execute("insert into micro_table values (1, " + micros + ")");
+            execute("insert into nano_table values (1, " + nanosMatching + "), (2, " + nanosWithExtra + ")");
+
+            // Test 1: JOIN with explicit nanos->micros cast (should work with both nano rows)
+            assertSql("id\tts_micro\tid1\tts_nano\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t2\t2020-01-01T00:00:00.123456789Z\n",
+                    "select * from micro_table m join nano_table n on m.ts_micro = CAST(n.ts_nano as timestamp)");
+
+            // Test 2: JOIN without explicit cast (should succeed with implicit casting)
+            // Only the matching precision row should join
+            assertSql("id\tts_micro\tid1\tts_nano\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z\n",
+                    "select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampLtJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for LT JOIN test
+            execute("create table micro_orders (order_id int, ts_micro timestamp, amount int) timestamp(ts_micro)");
+            execute("create table nano_trades (trade_id int, ts_nano timestamp_ns, quantity double) timestamp(ts_nano)");
+
+            // Insert test data
+            long orderTime = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long tradeTime1 = orderTime * 1000 - 1_000_000; // 1ms before order
+            long tradeTime2 = orderTime * 1000 + 500_000; // 500µs after order
+
+            execute("insert into micro_orders values (1, " + orderTime + ", 1000)");
+            execute("insert into nano_trades values (1, " + tradeTime1 + ", 100.0)");
+            execute("insert into nano_trades values (2, " + tradeTime2 + ", 200.0)");
+
+            // Test LT JOIN with mixed timestamp precisions
+            assertSql("order_id\tts_micro\tamount\ttrade_id\tts_nano\tquantity\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t1000\t1\t2020-01-01T00:00:00.122456000Z\t100.0\n",
+                    "select * from micro_orders m lt join nano_trades t");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampSpliceJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables for SPLICE JOIN test
+            execute("create table micro_base (id int, ts_micro timestamp, status symbol) timestamp(ts_micro)");
+            execute("create table nano_updates (id int, ts_nano timestamp_ns, flag symbol) timestamp(ts_nano)");
+
+            // Insert test data with correct timestamp arithmetic
+            long baseTime = 1_577_836_800_000_000L; // 2020-01-01T00:00:00.000000 (microseconds)
+            execute("insert into micro_base values (1, " + baseTime + ", 'A')");
+            execute("insert into micro_base values (2, " + (baseTime + 2_000) + ", 'B')"); // +2ms
+
+            execute("insert into nano_updates values (1, " + (baseTime * 1000 + 1_000_000) + ", 'X')"); // +1ms
+            execute("insert into nano_updates values (2, " + (baseTime * 1000 + 3_000_000) + ", 'Y')"); // +3ms
+
+            // Test SPLICE JOIN with mixed timestamp precisions (no ON clause - true SPLICE JOIN semantics)
+            // SPLICE JOIN returns all records from both tables with prevailing records
+            // Expected: 4 rows total (2 from each table with their prevailing counterparts)
+            assertSql("id\tts_micro\tstatus\tid1\tts_nano\tflag\n" +
+                            "1\t2020-01-01T00:00:00.000000Z\tA\tnull\t\t\n" + // micro record A: no prevailing nano record
+                            "1\t2020-01-01T00:00:00.000000Z\tA\t1\t2020-01-01T00:00:00.001000000Z\tX\n" + // nano record X, A is prevailing micro
+                            "2\t2020-01-01T00:00:00.002000Z\tB\t1\t2020-01-01T00:00:00.001000000Z\tX\n" + // micro record B: X is prevailing nano
+                            "2\t2020-01-01T00:00:00.002000Z\tB\t2\t2020-01-01T00:00:00.003000000Z\tY\n", // nano record Y: B is prevailing micro
+                    "select * from micro_base m splice join nano_updates n");
+        });
+    }
+
+    @Test
+    public void testMicrosecondVsNanosecondTimestampWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table for WHERE clause test
+            execute("create table ts_table (id int, ts_micro timestamp, ts_nano timestamp_ns)");
+
+            // Insert test data: one microsecond value, two nanosecond values (one matching, one with extra precision)
+            long micros = 1577836800123456L; // 2020-01-01T00:00:00.123456
+            long nanosMatching = micros * 1000; // 2020-01-01T00:00:00.123456000 (matching)
+            long nanosWithExtra = nanosMatching + 789; // 2020-01-01T00:00:00.123456789 (extra precision)
+
+            execute("insert into ts_table values (1, " + micros + ", " + nanosMatching + ")");
+            execute("insert into ts_table values (2, " + micros + ", " + nanosWithExtra + ")");
+
+            // Test 1: WHERE clause with explicit nanos->micros cast (should work with both rows)
+            assertSql("id\tts_micro\tts_nano\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z\n" +
+                            "2\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456789Z\n",
+                    "select * from ts_table where ts_micro = CAST(ts_nano as timestamp)");
+
+            // Test 2: WHERE clause without explicit cast
+            // Row 1 has matching precision: microseconds convert to same nanoseconds
+            assertSql("id\tts_micro\tts_nano\n" +
+                            "1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z\n",
+                    "select * from ts_table where ts_micro = ts_nano");
+        });
+    }
+
+    @Test
     public void testMinOnTimestampEmptyResutlSetIsNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
@@ -540,7 +689,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             final int count = 32;
             final int skip = 48;
             final int iterations = 10;
-            final long hour = Timestamps.HOUR_MICROS;
+            final long hour = Micros.HOUR_MICROS;
 
             String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
             execute(createStmt);
@@ -616,7 +765,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
             List<Object[]> datesArr = dates.collect(Collectors.toList());
 
-            final long hour = Timestamps.HOUR_MICROS;
+            final long hour = Micros.HOUR_MICROS;
             final long day = 24 * hour;
             compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
@@ -736,7 +885,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-20T00:00:00.000000Z\n" +
@@ -759,7 +908,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS * 30 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-12-19T00:00:00.000000Z\n" +
@@ -782,7 +931,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
+                    Micros.WEEK_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-26T00:00:00.000000Z\n" +
@@ -805,7 +954,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS * 365 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2023-11-19T00:00:00.000000Z\n" +
@@ -839,6 +988,29 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testTimestampNanoWithTimezone() throws Exception {
+        // with constant
+        assertSql("ts\n" +
+                        "2020-01-01T00:00:00.000000001Z\n",
+                "select '2020-01-01T00:00:00.000000001Z'::timestamp_ns with time zone ts");
+
+        // with function
+        assertSql("ts\n" +
+                        "2020-01-01T01:02:03.123456789Z\n",
+                "select concat('2020-01-01T','01:02:03.123456789Z')::timestamp_ns with time zone ts");
+
+        // with column
+        assertMemoryLeak(() -> {
+            execute("create table tt (vch varchar, ts timestamp_ns)");
+            execute("insert into tt values ('2020-01-01T00:00:00.000000123Z', '2020-01-01T00:00:00.000000123Z'::timestamp_ns with time zone)");
+
+            assertSql("ts\n" +
+                            "2020-01-01T00:00:00.000000123Z\n",
+                    "select vch::timestamp_ns with time zone ts from tt");
+        });
     }
 
     @Test

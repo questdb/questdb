@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -209,6 +210,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         if (dus != null) {
             putNonAscii(dus.lo(), dus.hi());
         }
+        return this;
+    }
+
+    default Utf8Sink put(Interval interval, int intervalType) {
+        interval.toSink(this, intervalType);
         return this;
     }
 

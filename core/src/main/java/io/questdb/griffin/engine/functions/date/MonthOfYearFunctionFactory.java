@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,9 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class MonthOfYearFunctionFactory implements FunctionFactory {
 
@@ -46,15 +46,17 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new MonthOfYearFunction(arg);
+        return new MonthOfYearFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     public static final class MonthOfYearFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
+        private final TimestampDriver driver;
 
-        public MonthOfYearFunction(Function arg) {
+        public MonthOfYearFunction(Function arg, TimestampDriver driver) {
             this.arg = arg;
+            this.driver = driver;
         }
 
         @Override
@@ -65,12 +67,7 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NULL) {
-                final int year = Timestamps.getYear(value);
-                final boolean isLeap = Timestamps.isLeapYear(year);
-                return Timestamps.getMonthOfYear(value, year, isLeap);
-            }
-            return Numbers.INT_NULL;
+            return driver.getMonthOfYear(value);
         }
 
         @Override

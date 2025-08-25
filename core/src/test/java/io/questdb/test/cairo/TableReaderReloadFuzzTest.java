@@ -29,6 +29,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -54,7 +55,6 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private static final int MAX_NUM_OF_STRUCTURE_CHANGES = 10;
     private static final int MIN_NUM_OF_INSERTS = 1;
     private static final int MIN_NUM_OF_STRUCTURE_CHANGES = 5;
-    private static final long ONE_DAY = 24 * 60 * 60 * 1000L * 1000L;
     private static final long ONE_YEAR = 365 * 24 * 60 * 60 * 1000L * 1000L;
     private static final int REMOVE = 1;
     private static final int RENAME = 2;
@@ -62,11 +62,15 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private final ObjList<Column> columns = new ObjList<>();
     private final IntList removableColumns = new IntList();
     private Rnd random;
+    private TimestampDriver timestampDriver;
+    private int timestampType;
 
     @Before
     public void setUp() {
         super.setUp();
         random = TestUtils.generateRandom(LOG);
+        timestampType = random.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+        timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Test
@@ -100,7 +104,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
 
                 for (int i = 0; i < 64; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);
-                    row = writer.newRow(i * ONE_DAY);
+                    row = writer.newRow(timestampDriver.fromDays(i));
                     row.append();
                 }
                 writer.commit();
@@ -186,7 +190,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
 
     private void createTable() {
         TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.DAY);
-        model.timestamp();
+        model.timestamp(timestampType);
         AbstractCairoTest.create(model);
     }
 
@@ -205,7 +209,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private void ingest(TableWriter writer) {
         final int numOfInserts = MIN_NUM_OF_INSERTS + random.nextInt(MAX_NUM_OF_INSERTS - MIN_NUM_OF_INSERTS);
         for (int i = 0; i < numOfInserts; i++) {
-            final TableWriter.Row row = writer.newRow(random.nextLong(ONE_YEAR));
+            final TableWriter.Row row = writer.newRow(random.nextLong(timestampDriver.fromMicros(ONE_YEAR)));
             row.append();
         }
         writer.commit();

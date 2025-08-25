@@ -502,6 +502,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         (int) extraInfo.getQuick(i * 2 + 1),
                         attachDetachStatus,
                         tableToken,
+                        svc.getTimestampType(),
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
@@ -525,7 +526,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         .put(toParquet ? "parquet" : "native")
                         .put("[table=")
                         .put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
                         .position((int) extraInfo.getQuick(i * 2 + 1));
@@ -542,6 +543,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         (int) extraInfo.getQuick(i * 2 + 1),
                         attachDetachStatus,
                         tableToken,
+                        svc.getTimestampType(),
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
@@ -573,7 +575,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             if (!svc.removePartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
                         .put("could not remove partition [table=").put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
                         .position((int) extraInfo.getQuick(i * 2 + 1));
@@ -695,7 +697,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         final int refreshType = (int) extraInfo.get(0);
         final int timerInterval = (int) extraInfo.get(1);
         final char timerUnit = (char) extraInfo.get(2);
-        final long timerStart = extraInfo.get(3);
+        final long timerStartUs = extraInfo.get(3);
         final int periodLength = (int) extraInfo.get(4);
         final char periodLengthUnit = (char) extraInfo.get(5);
         final int periodDelay = (int) extraInfo.get(6);
@@ -706,7 +708,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 refreshType,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 timerTimeZone,
                 periodLength,
                 periodLengthUnit,
@@ -726,11 +728,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void setMatViewRefreshTimer(MetadataService svc) {
-        final long start = extraInfo.get(0);
+        final long startUs = extraInfo.get(0);
         final int interval = (int) extraInfo.get(1);
         final char unit = (char) extraInfo.get(2);
         try {
-            svc.setMatViewRefreshTimer(start, interval, unit);
+            svc.setMatViewRefreshTimer(startUs, interval, unit);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;
