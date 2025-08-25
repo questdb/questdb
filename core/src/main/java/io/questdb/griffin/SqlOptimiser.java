@@ -169,6 +169,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final LowerCaseCharSequenceIntHashMap trivialExpressions = new LowerCaseCharSequenceIntHashMap();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
     private OperatorExpression opAnd;
@@ -2579,6 +2580,19 @@ public class SqlOptimiser implements Mutable {
             return true;
         } catch (NumericException ne) {
             return false;
+        }
+    }
+
+    private boolean isRewriteTrivialExpressionsValidOp(char token) {
+        switch (token) {
+            case '-':
+            case '+':
+            case '/':
+            case '*':
+            case '%':
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -6626,7 +6640,6 @@ public class SqlOptimiser implements Mutable {
      */
     private void rewriteTrivialExpressions(QueryModel model) {
         final QueryModel nestedModel = model.getNestedModel();
-
         if (nestedModel == null) {
             return;
         }
@@ -6634,8 +6647,7 @@ public class SqlOptimiser implements Mutable {
         // first we want to see if this is an appropriate model to make this transformation
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
                 && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
-            // TODO(puzpuzpuz): move to an optimizer's field
-            CharSequenceIntHashMap nestedCandidates = new CharSequenceIntHashMap();
+            trivialExpressions.clear();
             final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
             boolean anyCandidates = false;
 
@@ -6644,7 +6656,7 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode nestedAst = nestedColumn.getAst();
                 if (nestedAst.type == OPERATION && nestedAst.paramCount == 2) {
                     // If it's an operation we care about
-                    if (nestedAst.token.length() == 1 && rewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
+                    if (nestedAst.token.length() == 1 && isRewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
                         // Check if it's a simple pattern i.e A + 1 or 1 + A
                         final CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT
                                 ? nestedAst.lhs.token
@@ -6652,8 +6664,8 @@ public class SqlOptimiser implements Mutable {
 
                         if (token != null) {
                             // Add it to candidates list
-                            nestedCandidates.putIfAbsent(token, 0);
-                            nestedCandidates.increment(token);
+                            trivialExpressions.putIfAbsent(token, 0);
+                            trivialExpressions.increment(token);
                             anyCandidates = true;
                         }
                     }
@@ -6661,8 +6673,8 @@ public class SqlOptimiser implements Mutable {
 
                 // or if it's a literal, add it, in case we have A, A + 1.
                 if (nestedAst.type == LITERAL) {
-                    nestedCandidates.putIfAbsent(nestedAst.token, 0);
-                    nestedCandidates.increment(nestedAst.token);
+                    trivialExpressions.putIfAbsent(nestedAst.token, 0);
+                    trivialExpressions.increment(nestedAst.token);
                 }
             }
 
@@ -6672,7 +6684,8 @@ public class SqlOptimiser implements Mutable {
                     final ExpressionNode nestedAst = nestedColumn.getAst();
 
                     // if there is a matching column in this model, we can lift the candidate up
-                    if (model.getColumnAliasIndex(nestedColumn.getAlias()) > -1) {
+                    final CharSequence currentAlias = model.getColumnNameToAliasMap().get(nestedColumn.getAlias());
+                    if (currentAlias != null) {
                         if (nestedAst.type == FUNCTION) {
                             // don't pull a function up
                             continue;
@@ -6685,11 +6698,9 @@ public class SqlOptimiser implements Mutable {
                             assert candidate != null;
 
                             // check if the candidates is valid to be pulled up
-                            if (nestedCandidates.contains(candidate) && nestedCandidates.get(candidate) >= 2) {
+                            if (trivialExpressions.contains(candidate) && trivialExpressions.get(candidate) > 1) {
                                 // remove from current, keep in new
-                                final QueryColumn currentColumn = model.getAliasToColumnMap().get(nestedColumn.getAlias());
-                                assert Chars.equals(currentColumn.getAlias(), nestedColumn.getAlias());
-
+                                final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
                                 currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
 
                                 final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
@@ -6709,21 +6720,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // TODO(puzpuzpuz): call on joined and unioned models
         // recurse
         rewriteTrivialExpressions(nestedModel);
-    }
-
-    private boolean rewriteTrivialExpressionsValidOp(char token) {
-        switch (token) {
-            case '-':
-            case '+':
-            case '/':
-            case '*':
-            case '%':
-                return true;
-            default:
-                return false;
+        final QueryModel union = model.getUnionModel();
+        if (union != null) {
+            rewriteTrivialExpressions(union);
+        }
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteTrivialExpressions(joinModels.getQuick(i));
         }
     }
 

@@ -4699,22 +4699,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
         assertMemoryLeak(() -> {
             execute(
-                    "create table hits (\n" +
+                    "CREATE TABLE hits (\n" +
                             "    ClientIP ipv4,\n" +
                             "    EventTime timestamp\n" +
-                            ") timestamp(EventTime) partition by day wal;"
+                            ") TIMESTAMP(EventTime) PARTITION BY DAY;"
             );
+            execute("INSERT INTO hits VALUES('198.162.0.11', '2021-01-01T12:34:00');");
+            execute("INSERT INTO hits VALUES('198.162.0.12', '2021-01-01T12:35:00');");
 
-            final String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c " +
+            final String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, count(*) AS c " +
                     "FROM hits " +
                     "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 " +
                     "ORDER BY c DESC LIMIT 10;";
-            final String target = "SELECT ClientIP, ClientIP - 1 \"column\", ClientIP - 2 column1, ClientIP - 3 column2, c " +
-                    "FROM (select ClientIP, COUNT() c " +
-                    "FROM hits " +
-                    "ORDER BY c DESC LIMIT 10)";
-            final String model = "select-virtual ClientIP, ClientIP - 1 column, ClientIP - 2 column1, ClientIP - 3 column2, c " +
-                    "from (select-group-by [ClientIP, COUNT() c] ClientIP, COUNT() c " +
+            final String target = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c " +
+                    "FROM (" +
+                    "  SELECT ClientIP, count() c " +
+                    "  FROM hits " +
+                    "  ORDER BY c DESC LIMIT 10" +
+                    ")";
+            final String select = aliasExpressionsEnabled
+                    ? "select-virtual ClientIP, ClientIP - 1 'ClientIP - 1', ClientIP - 2 'ClientIP - 2', ClientIP - 3 'ClientIP - 3', c "
+                    : "select-virtual ClientIP, ClientIP - 1 column, ClientIP - 2 column1, ClientIP - 3 column2, c ";
+            final String model = select +
+                    "from (select-group-by [ClientIP, count() c] ClientIP, count() c " +
                     "from (select [ClientIP] from hits timestamp (EventTime)) " +
                     "order by c desc limit 10)";
 
@@ -4735,6 +4742,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(original, plan);
             assertPlanNoLeakCheck(target, plan);
+
+            final String expectedColumns = aliasExpressionsEnabled
+                    ? "ClientIP\tClientIP - 1\tClientIP - 2\tClientIP - 3\tc\n"
+                    : "ClientIP\tcolumn\tcolumn1\tcolumn2\tc\n";
+            assertQueryNoLeakCheck(
+                    expectedColumns +
+                            "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
+                            "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n",
+                    original,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 

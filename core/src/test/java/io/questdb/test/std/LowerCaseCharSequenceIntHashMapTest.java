@@ -69,6 +69,22 @@ public class LowerCaseCharSequenceIntHashMapTest {
     }
 
     @Test
+    public void testIncrement() {
+        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
+
+        lowerCaseMap.put("a", 0);
+        lowerCaseMap.increment("A");
+        lowerCaseMap.increment("A");
+        lowerCaseMap.increment("A");
+        lowerCaseMap.put("B", 42);
+        lowerCaseMap.increment("b");
+
+        Assert.assertEquals(3, lowerCaseMap.get("a"));
+        Assert.assertEquals(43, lowerCaseMap.get("b"));
+        Assert.assertEquals(2, lowerCaseMap.size());
+    }
+
+    @Test
     public void testPutMutableCharSequence() {
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 
@@ -113,7 +129,6 @@ public class LowerCaseCharSequenceIntHashMapTest {
 
     @Test
     public void testSaturation() {
-
         final int N = 10_000;
         final Rnd rnd = new Rnd();
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
