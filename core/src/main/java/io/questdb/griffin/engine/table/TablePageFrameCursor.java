@@ -28,9 +28,17 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 
+/**
+ * Defines a page frame cursor backed with an in-house database table.
+ */
 public interface TablePageFrameCursor extends PageFrameCursor {
 
     TableReader getTableReader();
+
+    @Override
+    default boolean isExternal() {
+        return false;
+    }
 
     TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 }

@@ -31,7 +31,7 @@ mod string;
 mod varchar;
 
 use crate::col_type::{ColumnType, ColumnTypeTag};
-use crate::error::CoreResult;
+use crate::error::{CoreResult, fmt_err};
 
 pub use array::*;
 pub use binary::*;
@@ -57,32 +57,33 @@ pub trait ColumnDriver {
 }
 
 /// Obtain a type driver from the provided column type.
-pub fn lookup_driver(col_type: ColumnType) -> &'static dyn ColumnDriver {
+pub fn try_lookup_driver(col_type: ColumnType) -> CoreResult<&'static dyn ColumnDriver> {
     match (col_type.tag(), col_type.is_designated()) {
-        (ColumnTypeTag::Boolean, _) => &BooleanDriver,
-        (ColumnTypeTag::Byte, _) => &ByteDriver,
-        (ColumnTypeTag::Short, _) => &ShortDriver,
-        (ColumnTypeTag::Char, _) => &CharDriver,
-        (ColumnTypeTag::Int, _) => &IntDriver,
-        (ColumnTypeTag::Long, _) => &LongDriver,
-        (ColumnTypeTag::Date, _) => &DateDriver,
-        (ColumnTypeTag::Timestamp, false) => &TimestampDriver,
-        (ColumnTypeTag::Timestamp, true) => &DesignatedTimestampDriver,
-        (ColumnTypeTag::Float, _) => &FloatDriver,
-        (ColumnTypeTag::Double, _) => &DoubleDriver,
-        (ColumnTypeTag::String, _) => &StringDriver,
-        (ColumnTypeTag::Symbol, _) => &SymbolDriver,
-        (ColumnTypeTag::Long256, _) => &Long256Driver,
-        (ColumnTypeTag::GeoByte, _) => &GeoByteDriver,
-        (ColumnTypeTag::GeoShort, _) => &GeoShortDriver,
-        (ColumnTypeTag::GeoInt, _) => &GeoIntDriver,
-        (ColumnTypeTag::GeoLong, _) => &GeoLongDriver,
-        (ColumnTypeTag::Binary, _) => &BinaryDriver,
-        (ColumnTypeTag::Uuid, _) => &UuidDriver,
-        (ColumnTypeTag::Long128, _) => &Long128Driver,
-        (ColumnTypeTag::IPv4, _) => &IPv4Driver,
-        (ColumnTypeTag::Varchar, _) => &VarcharDriver,
-        (ColumnTypeTag::Array, _) => &ArrayDriver,
+        (ColumnTypeTag::Boolean, _) => Ok(&BooleanDriver),
+        (ColumnTypeTag::Byte, _) => Ok(&ByteDriver),
+        (ColumnTypeTag::Short, _) => Ok(&ShortDriver),
+        (ColumnTypeTag::Char, _) => Ok(&CharDriver),
+        (ColumnTypeTag::Int, _) => Ok(&IntDriver),
+        (ColumnTypeTag::Long, _) => Ok(&LongDriver),
+        (ColumnTypeTag::Date, _) => Ok(&DateDriver),
+        (ColumnTypeTag::Timestamp, false) => Ok(&TimestampDriver),
+        (ColumnTypeTag::Timestamp, true) => Ok(&DesignatedTimestampDriver),
+        (ColumnTypeTag::Float, _) => Ok(&FloatDriver),
+        (ColumnTypeTag::Double, _) => Ok(&DoubleDriver),
+        (ColumnTypeTag::String, _) => Ok(&StringDriver),
+        (ColumnTypeTag::Symbol, _) => Ok(&SymbolDriver),
+        (ColumnTypeTag::Long256, _) => Ok(&Long256Driver),
+        (ColumnTypeTag::GeoByte, _) => Ok(&GeoByteDriver),
+        (ColumnTypeTag::GeoShort, _) => Ok(&GeoShortDriver),
+        (ColumnTypeTag::GeoInt, _) => Ok(&GeoIntDriver),
+        (ColumnTypeTag::GeoLong, _) => Ok(&GeoLongDriver),
+        (ColumnTypeTag::Binary, _) => Ok(&BinaryDriver),
+        (ColumnTypeTag::Uuid, _) => Ok(&UuidDriver),
+        (ColumnTypeTag::Long128, _) => Ok(&Long128Driver),
+        (ColumnTypeTag::IPv4, _) => Ok(&IPv4Driver),
+        (ColumnTypeTag::Varchar, _) => Ok(&VarcharDriver),
+        (ColumnTypeTag::Array, _) => Ok(&ArrayDriver),
+        _ => Err(fmt_err!(InvalidType, "unexpected column type {}", col_type,)),
     }
 }
 
@@ -122,11 +123,19 @@ mod tests {
             (ColumnTypeTag::Long128.into_type(), "long128"),
             (ColumnTypeTag::IPv4.into_type(), "ipv4"),
             (ColumnTypeTag::Varchar.into_type(), "varchar"),
+            (ColumnTypeTag::Array.into_type(), "array"),
         ];
         for (col_type, exp_descr) in cases.iter().copied() {
-            let driver = lookup_driver(col_type);
+            let driver = try_lookup_driver(col_type).unwrap();
             let actual_descr = driver.descr();
             assert_eq!(actual_descr, exp_descr);
         }
+    }
+
+    #[test]
+    fn test_lookup_driver_undefined_errors() {
+        // Undefined via code 0 should error
+        let undefined = ColumnType::new(ColumnTypeTag::Undefined, 0);
+        assert!(try_lookup_driver(undefined).is_err());
     }
 }
