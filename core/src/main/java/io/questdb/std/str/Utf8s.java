@@ -495,16 +495,14 @@ public final class Utf8s {
     public static boolean hasDots(DirectUtf8Sequence value) {
         final int len = value.size();
         int i = 0;
-        while (i < len - 7) {
+        for (; i < len - 7; i += 8) {
             final long word = value.longAt(i);
             if (SwarUtils.markZeroBytes(word ^ DOT_WORD) != 0) {
                 return true;
             }
-            i += 8;
         }
-        while (i < len) {
-            byte b = value.byteAt(i++);
-            if (b == '.') {
+        for (; i < len; i++) {
+            if (value.byteAt(i) == '.') {
                 return true;
             }
         }
