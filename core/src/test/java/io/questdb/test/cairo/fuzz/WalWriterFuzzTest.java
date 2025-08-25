@@ -289,7 +289,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataAddDeleteColumnHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 195314497113958L, 1754302923125L);
         setUpScoreboardVersion(rnd);
 
         setFuzzProbabilities(
