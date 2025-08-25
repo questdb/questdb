@@ -303,6 +303,19 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    private static boolean isRewriteTrivialExpressionsValidOp(char token) {
+        switch (token) {
+            case '-':
+            case '+':
+            case '/':
+            case '*':
+            case '%':
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private static boolean isSymbolColumn(ExpressionNode countDistinctExpr, QueryModel nested) {
         return countDistinctExpr.rhs.type == LITERAL
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token) != null
@@ -2580,19 +2593,6 @@ public class SqlOptimiser implements Mutable {
             return true;
         } catch (NumericException ne) {
             return false;
-        }
-    }
-
-    private boolean isRewriteTrivialExpressionsValidOp(char token) {
-        switch (token) {
-            case '-':
-            case '+':
-            case '/':
-            case '*':
-            case '%':
-                return true;
-            default:
-                return false;
         }
     }
 
