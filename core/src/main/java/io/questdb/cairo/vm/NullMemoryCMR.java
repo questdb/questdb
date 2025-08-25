@@ -100,6 +100,56 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
+    public long getDecimal128Hi(long offset) {
+        return Long.MIN_VALUE;
+    }
+
+    @Override
+    public long getDecimal128Lo(long offset) {
+        return -1;
+    }
+
+    @Override
+    public short getDecimal16(long offset) {
+        return Short.MIN_VALUE;
+    }
+
+    @Override
+    public long getDecimal256HH(long offset) {
+        return Long.MIN_VALUE;
+    }
+
+    @Override
+    public long getDecimal256HL(long offset) {
+        return -1;
+    }
+
+    @Override
+    public long getDecimal256LH(long offset) {
+        return -1;
+    }
+
+    @Override
+    public long getDecimal256LL(long offset) {
+        return -1;
+    }
+
+    @Override
+    public int getDecimal32(long offset) {
+        return Integer.MIN_VALUE;
+    }
+
+    @Override
+    public long getDecimal64(long offset) {
+        return Long.MIN_VALUE;
+    }
+
+    @Override
+    public byte getDecimal8(long offset) {
+        return Byte.MIN_VALUE;
+    }
+
+    @Override
     public DirectUtf8Sequence getDirectVarchar(long offset, int size, boolean ascii) {
         return null;
     }
@@ -149,12 +199,7 @@ public class NullMemoryCMR implements MemoryCMR {
 
     @Override
     public void getLong256(long offset, Long256Acceptor sink) {
-        sink.setAll(
-                Long256Impl.NULL_LONG256.getLong0(),
-                Long256Impl.NULL_LONG256.getLong1(),
-                Long256Impl.NULL_LONG256.getLong2(),
-                Long256Impl.NULL_LONG256.getLong3()
-        );
+        sink.setAll(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1(), Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
     }
 
     @Override

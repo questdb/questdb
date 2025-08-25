@@ -273,6 +273,16 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     @Override
+    public void putDecimal128(long hi, long lo) {
+        mem.putDecimal128(hi, lo);
+    }
+
+    @Override
+    public void putDecimal256(long hh, long hl, long lh, long ll) {
+        mem.putDecimal256(hh, hl, lh, ll);
+    }
+
+    @Override
     public void putLong256(Long256 value) {
         mem.putLong256(value);
     }
