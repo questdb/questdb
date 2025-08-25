@@ -6693,10 +6693,9 @@ public class SqlOptimiser implements Mutable {
                             final CharSequence candidate = nestedAst.lhs.type == LITERAL
                                     ? nestedAst.lhs.token
                                     : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
-                            assert candidate != null;
 
                             // Check if the candidates is valid to be pulled up.
-                            if (trivialExpressions.contains(candidate) && trivialExpressions.get(candidate) > 1) {
+                            if (candidate != null && trivialExpressions.get(candidate) > 1) {
                                 // Remove from current, keep in new.
                                 final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
                                 currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
