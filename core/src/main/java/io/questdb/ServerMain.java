@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
@@ -59,6 +60,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.Uuid;
 import io.questdb.std.filewatch.FileWatcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -291,6 +293,11 @@ public class ServerMain implements Closeable {
             }
             workerPoolManager.start(bootstrap.getLog());
             bootstrap.logBannerAndEndpoints(webConsoleSchema());
+            final DataID dataID = engine.getDataID();
+            if (dataID.isInitialized()) {
+                final Uuid uuid = dataID.get();
+                bootstrap.getLog().advisoryW().$("data id: ").$(uuid).$();
+            }
             System.gc(); // final GC
             bootstrap.getLog().advisoryW().$("enjoy").$();
         }
