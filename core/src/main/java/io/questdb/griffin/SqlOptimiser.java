@@ -4343,20 +4343,20 @@ public class SqlOptimiser implements Mutable {
         if (model.isDistinct()) {
             // bingo
             // create wrapper models
-            QueryModel wrapperNested = queryModelPool.next();
+            final QueryModel wrapperNested = queryModelPool.next();
             wrapperNested.setNestedModel(model);
-            QueryModel wrapperModel = queryModelPool.next();
+            final QueryModel wrapperModel = queryModelPool.next();
             wrapperModel.setNestedModel(wrapperNested);
 
-            ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             // Columns might be aliased, if they are, we have to create a new
             // column instance. We also check if we should abandon the rewrite
-            // in case we find counterproductive
+            // in case we find it counterproductive
             boolean abandonRewrite = false;
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-                QueryColumn qc = bottomUpColumns.getQuick(i);
-                ExpressionNode ast = qc.getAst();
-                CharSequence alias = qc.getAlias();
+                final QueryColumn qc = bottomUpColumns.getQuick(i);
+                final ExpressionNode ast = qc.getAst();
+                final CharSequence alias = qc.getAlias();
                 if (qc.isWindowColumn() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
                     abandonRewrite = true;
                     break;
@@ -4376,12 +4376,12 @@ public class SqlOptimiser implements Mutable {
                 // simple group by with an extra column, that wasn't requested. But,
                 // it is a good start.
 
-                ExpressionNode countAst = expressionNodePool.next();
+                final ExpressionNode countAst = expressionNodePool.next();
                 countAst.token = "count";
                 countAst.paramCount = 0;
                 countAst.type = FUNCTION;
 
-                QueryColumn countColumn = queryColumnPool.next();
+                final QueryColumn countColumn = queryColumnPool.next();
                 countColumn.of(
                         createColumnAlias("count", model),
                         countAst,
@@ -6727,7 +6727,7 @@ public class SqlOptimiser implements Mutable {
     /**
      * Validates column reference alias (e.g. that the literal is a reference to an existing column or alias). When
      * the reference is valid, the method returns index of the table where reference is pointing. That is index of
-     * table in the join clause. If the literal refences the current projection, the table index is -1.
+     * table in the join clause. If the literal references the current projection, the table index is -1.
      * <p>
      * The validation order: the innerVirtualModel represent the current projection. If the referenced column is found
      * there first, this is where the search stops. The innerVirtualModel is allowed to be null, in which case the
@@ -6745,7 +6745,7 @@ public class SqlOptimiser implements Mutable {
      *                          reference to the base model.
      * @param position          literal position in the SQL text to aid SQL error reporting
      * @param groupByCall       flag indicating that the return value is required, which is in turn asking to ignore projection lookup.
-     *                          This lookup will be unhandled when the return value is needed to disambigute the column name.
+     *                          This lookup will be unhandled when the return value is needed to disambiguate the column name.
      * @return -1 if literal was matched to the projection, otherwise 0-based index of the join model where it was matched.
      * @throws SqlException exception is throw when literal could not be matched, or it matches several models at the same time (ambiguous).
      */
@@ -6757,11 +6757,11 @@ public class SqlOptimiser implements Mutable {
             int position,
             boolean groupByCall
     ) throws SqlException {
-        ObjList<QueryModel> joinModels = baseModel.getJoinModels();
+        final ObjList<QueryModel> joinModels = baseModel.getJoinModels();
         int index = -1;
         if (dot == -1) {
             if (innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(literal) && !groupByCall) {
-                // Ror now, most places ignore the return values, except one - adding missing table prefixes in group-by
+                // For now, most places ignore the return values, except one - adding missing table prefixes in group-by
                 // cases. We do not yet support projection reference in group-by. When we do, we will need to deal with
                 // -1 there.
                 return -1;

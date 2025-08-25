@@ -67,6 +67,12 @@ public class SqlUtilTest {
                     '"' + token + '"',
                     SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true).toString()
             );
+
+            token = token.toUpperCase();
+            Assert.assertEquals(
+                    '"' + token + '"',
+                    SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true).toString()
+            );
         }
     }
 
@@ -114,6 +120,67 @@ public class SqlUtilTest {
                 "longstr",
                 SqlUtil.createExprColumnAlias(store, "longstring", aliasMap, 7).toString()
         );
+    }
+
+    @Test
+    public void testExprNonLiteral() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "\"quoted\"",
+                SqlUtil.createExprColumnAlias(store, "\"quoted\"", aliasMap, 64, true).toString()
+        );
+        Assert.assertEquals(
+                "\"prefix.nonliteral\"",
+                SqlUtil.createExprColumnAlias(store, "prefix.nonliteral", aliasMap, 64, true).toString()
+        );
+        Assert.assertEquals(
+                "\"prefix.\"",
+                SqlUtil.createExprColumnAlias(store, "prefix.", aliasMap, 64, true).toString()
+        );
+    }
+
+    @Test
+    public void testExprPrefixedColumn() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "basic",
+                SqlUtil.createExprColumnAlias(store, "table.basic", aliasMap, 64).toString()
+        );
+        aliasMap.put("basic", null);
+        Assert.assertEquals(
+                "\"between\"",
+                SqlUtil.createExprColumnAlias(store, "table.between", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted\"",
+                SqlUtil.createExprColumnAlias(store, "\"table\".\"quoted\"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted.table\"",
+                SqlUtil.createExprColumnAlias(store, "\"quoted.table\"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "spaces",
+                SqlUtil.createExprColumnAlias(store, "table.spaces   ", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted spaces   \"",
+                SqlUtil.createExprColumnAlias(store, "table.\"quoted spaces   \"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"table.\"",
+                SqlUtil.createExprColumnAlias(store, "table.", aliasMap, 64).toString()
+        );
+
+        for (int i = 0; i < 100; i++) {
+            Assert.assertEquals(
+                    "basic_" + (i + 2),
+                    SqlUtil.createExprColumnAlias(store, "table.basic", aliasMap, 64).toString()
+            );
+            aliasMap.put("basic_" + (i + 2), null);
+        }
     }
 
     @Test
