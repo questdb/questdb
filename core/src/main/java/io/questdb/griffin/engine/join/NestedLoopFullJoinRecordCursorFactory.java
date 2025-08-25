@@ -1,0 +1,251 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
+
+/**
+ * Nested Loop with filter join.
+ * Iterates on master factory in outer loop and on slave factory in inner loop
+ * and returns all row pairs matching filter plus all unmatched rows from master and slave factory.
+ */
+public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private static final ArrayColumnTypes RECORD_ID_COLUMN_TYPE = new ArrayColumnTypes();
+    private static final RecordSink RECORD_ID_SINK = new RecordIdSink();
+    private final Function filter;
+    private NestedLoopFullRecordCursor cursor;
+
+    public NestedLoopFullJoinRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            int columnSplit,
+            @NotNull Function filter,
+            @NotNull Record masterNullRecord,
+            @NotNull Record slaveNullRecord
+    ) {
+        super(metadata, null, masterFactory, slaveFactory);
+        this.filter = filter;
+        Map matchIdsMap = null;
+        try {
+            matchIdsMap = MapFactory.createUnorderedMap(configuration, RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
+            this.cursor = new NestedLoopFullRecordCursor(columnSplit, filter, matchIdsMap, masterNullRecord, slaveNullRecord);
+        } catch (Throwable e) {
+            Misc.free(matchIdsMap);
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return slaveFactory.followedOrderByAdvice();
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
+        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        RecordCursor slaveCursor = null;
+        try {
+            slaveCursor = slaveFactory.getCursor(executionContext);
+            cursor.of(masterCursor, slaveCursor, executionContext);
+            return cursor;
+        } catch (Throwable ex) {
+            Misc.free(masterCursor);
+            Misc.free(slaveCursor);
+            throw ex;
+        }
+    }
+
+    @Override
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return masterFactory.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Nested Loop Full Join");
+        sink.attr("filter").val(filter);
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(filter);
+    }
+
+    private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
+        private final Function filter;
+        private final FullOuterJoinRecord record;
+        private boolean isMasterHasNextPending;
+        private boolean isMatch;
+        private boolean masterHasNext;
+        private Map matchIdsMap;
+        private Record slaveRecord;
+
+        public NestedLoopFullRecordCursor(int columnSplit, Function filter, Map matchIdsMap, Record masterNullRecord, Record slaveNullRecord) {
+            super(columnSplit);
+            this.record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
+            this.filter = filter;
+            this.isMatch = false;
+            this.matchIdsMap = matchIdsMap;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            matchIdsMap = Misc.free(matchIdsMap);
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (true) {
+                if (isMasterHasNextPending) {
+                    masterHasNext = masterCursor.hasNext();
+                    isMasterHasNextPending = false;
+                }
+
+                if (!masterHasNext) {
+                    while (slaveCursor.hasNext()) {
+                        MapKey keys = matchIdsMap.withKey();
+                        keys.put(slaveRecord, RECORD_ID_SINK);
+                        if (keys.findValue() == null) {
+                            record.hasMaster(false);
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
+                while (slaveCursor.hasNext()) {
+                    if (filter.getBool(record)) {
+                        MapKey keys = matchIdsMap.withKey();
+                        keys.put(slaveRecord, RECORD_ID_SINK);
+                        if (keys.findValue() == null) {
+                            keys.createValue();
+                        }
+                        isMatch = true;
+                        return true;
+                    }
+                }
+
+                if (!isMatch) {
+                    record.hasSlave(false);
+                    return true;
+                }
+
+                isMatch = false;
+                slaveCursor.toTop();
+                record.hasSlave(true);
+                isMasterHasNextPending = true;
+            }
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return masterCursor.preComputedStateSize() + slaveCursor.preComputedStateSize();
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            masterCursor.toTop();
+            slaveCursor.toTop();
+            filter.toTop();
+            isMatch = false;
+            isMasterHasNextPending = true;
+            record.hasMaster(true);
+            matchIdsMap.clear();
+        }
+
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            filter.init(this, executionContext);
+            this.slaveRecord = slaveCursor.getRecord();
+            record.of(masterCursor.getRecord(), this.slaveRecord);
+            isMasterHasNextPending = true;
+            matchIdsMap.clear();
+        }
+    }
+
+    private static class RecordIdSink implements RecordSink {
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putLong(r.getRowId());
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+        }
+    }
+
+    static {
+        RECORD_ID_COLUMN_TYPE.add(ColumnType.LONG);
+    }
+}

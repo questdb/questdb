@@ -26,16 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -1338,32 +1332,6 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
-    }
-
-    public static void populateRecordHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map map,
-            RecordSink recordSink,
-            RecordChain chain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                long offset = chain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
-            } else {
-                value.putLong(1, chain.put(record, value.getLong(1)));
-                value.addLong(2, 1);
-            }
-        }
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
