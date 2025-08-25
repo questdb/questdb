@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -34,7 +32,7 @@ import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class Long256Column extends Long256Function implements Function {
+public class Long256Column extends Long256Function implements ColumnFunction {
     private static final ObjList<Long256Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -50,6 +48,11 @@ public class Long256Column extends Long256Function implements Function {
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public void getLong256(Record rec, CharSink<?> sink) {
         rec.getLong256(columnIndex, sink);
     }
@@ -62,11 +65,6 @@ public class Long256Column extends Long256Function implements Function {
     @Override
     public Long256 getLong256B(Record rec) {
         return rec.getLong256B(columnIndex);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {

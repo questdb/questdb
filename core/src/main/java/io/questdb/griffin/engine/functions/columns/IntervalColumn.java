@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -35,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class IntervalColumn extends IntervalFunction implements Function, FunctionExtension {
+public class IntervalColumn extends IntervalFunction implements FunctionExtension {
     private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 

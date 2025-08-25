@@ -26,15 +26,12 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoIntFunction;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class GeoIntColumn extends GeoIntFunction {
+public class GeoIntColumn extends GeoIntFunction implements ColumnFunction {
     private static final GeoIntColumn[] COLUMNS;
-
     protected final int columnIndex;
 
     private GeoIntColumn(int columnIndex, int columnType) {
@@ -55,7 +52,7 @@ public class GeoIntColumn extends GeoIntFunction {
         return new GeoIntColumn(columnIndex, columnType);
     }
 
-    @TestOnly
+    @Override
     public int getColumnIndex() {
         return columnIndex;
     }
@@ -68,11 +65,6 @@ public class GeoIntColumn extends GeoIntFunction {
     @Override
     public boolean isThreadSafe() {
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {
