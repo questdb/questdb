@@ -192,6 +192,49 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBetweenWithMixedTimestampPrecisions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mixed_timestamps(id INT, arg_ts TIMESTAMP_NS, from_ts TIMESTAMP, to_ts TIMESTAMP)");
+
+            execute("INSERT INTO mixed_timestamps VALUES(1, '1970-01-01T10:00:00.123456789Z', '1970-01-01T10:00:00.120000Z', '1970-01-01T10:00:00.125000Z')");
+            execute("INSERT INTO mixed_timestamps VALUES(2, '1970-01-01T10:00:00.150000000Z', '1970-01-01T10:00:00.149999Z', '1970-01-01T10:00:00.150000Z')");
+            execute("INSERT INTO mixed_timestamps VALUES(3, '1970-01-01T10:00:00.200000000Z', '1970-01-01T10:00:00.180000Z', '1970-01-01T10:00:00.199999Z')");
+            execute("INSERT INTO mixed_timestamps VALUES(4, '1970-01-01T10:00:00.250000000Z', '1970-01-01T10:00:00.250001Z', '1970-01-01T10:00:00.260000Z')");
+            execute("INSERT INTO mixed_timestamps VALUES(4, null, '1970-01-01T10:00:00.250001Z', '1970-01-01T10:00:00.260000Z')");
+            execute("INSERT INTO mixed_timestamps VALUES(4, '1970-01-01T10:00:00.250000000Z', null, '1970-01-01T10:00:00.260000Z')");
+            execute("INSERT INTO mixed_timestamps VALUES(4, '1970-01-01T10:00:00.250000000Z', '1970-01-01T10:00:00.250001Z', null)");
+
+            String expected = "id\targ_ts\tfrom_ts\tto_ts\tin_range\n" +
+                    "1\t1970-01-01T10:00:00.123456789Z\t1970-01-01T10:00:00.120000Z\t1970-01-01T10:00:00.125000Z\ttrue\n" +
+                    "2\t1970-01-01T10:00:00.150000000Z\t1970-01-01T10:00:00.149999Z\t1970-01-01T10:00:00.150000Z\ttrue\n" +
+                    "3\t1970-01-01T10:00:00.200000000Z\t1970-01-01T10:00:00.180000Z\t1970-01-01T10:00:00.199999Z\tfalse\n" +
+                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
+                    "4\t\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
+                    "4\t1970-01-01T10:00:00.250000000Z\t\t1970-01-01T10:00:00.260000Z\tfalse\n" +
+                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t\tfalse\n";
+
+            String query = "SELECT id, arg_ts, from_ts, to_ts, " +
+                    "arg_ts between from_ts AND to_ts in_range " +
+                    "FROM mixed_timestamps";
+            assertQuery(expected, query, null, true, true);
+
+            String expectedReverse = "id\targ_ts\tfrom_ts\tto_ts\tin_range_rev\n" +
+                    "1\t1970-01-01T10:00:00.123456789Z\t1970-01-01T10:00:00.120000Z\t1970-01-01T10:00:00.125000Z\ttrue\n" +
+                    "2\t1970-01-01T10:00:00.150000000Z\t1970-01-01T10:00:00.149999Z\t1970-01-01T10:00:00.150000Z\ttrue\n" +
+                    "3\t1970-01-01T10:00:00.200000000Z\t1970-01-01T10:00:00.180000Z\t1970-01-01T10:00:00.199999Z\tfalse\n" +
+                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
+                    "4\t\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
+                    "4\t1970-01-01T10:00:00.250000000Z\t\t1970-01-01T10:00:00.260000Z\tfalse\n" +
+                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t\tfalse\n";
+
+            String queryReverse = "SELECT id, arg_ts, from_ts, to_ts, " +
+                    "arg_ts between to_ts AND from_ts in_range_rev " +
+                    "FROM mixed_timestamps";
+            assertQuery(expectedReverse, queryReverse, null, true, true);
+        });
+    }
+
+    @Test
     public void testCTE() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades(id INT, symbol symbol, price DOUBLE, time TIMESTAMP_NS) TIMESTAMP(time) PARTITION BY DAY");
