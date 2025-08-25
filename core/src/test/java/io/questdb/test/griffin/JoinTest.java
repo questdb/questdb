@@ -2497,20 +2497,20 @@ public class JoinTest extends AbstractCairoTest {
     public void testJoinInnerPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\td\tcolumn\n" +
-                    "1\t120\t6\t0\t126\n" +
-                    "1\t120\t71\t0\t191\n" +
-                    "1\t120\t42\t0\t162\n" +
                     "1\t120\t39\t0\t159\n" +
-                    "1\t120\t6\t50\t126\n" +
-                    "1\t120\t71\t50\t191\n" +
-                    "1\t120\t42\t50\t162\n" +
+                    "1\t120\t42\t0\t162\n" +
+                    "1\t120\t71\t0\t191\n" +
+                    "1\t120\t6\t0\t126\n" +
                     "1\t120\t39\t50\t159\n" +
-                    "5\t251\t7\t198\t258\n" +
-                    "5\t251\t44\t198\t295\n" +
+                    "1\t120\t42\t50\t162\n" +
+                    "1\t120\t71\t50\t191\n" +
+                    "1\t120\t6\t50\t126\n" +
                     "5\t251\t47\t198\t298\n" +
-                    "5\t251\t7\t279\t258\n" +
+                    "5\t251\t44\t198\t295\n" +
+                    "5\t251\t7\t198\t258\n" +
+                    "5\t251\t47\t279\t298\n" +
                     "5\t251\t44\t279\t295\n" +
-                    "5\t251\t47\t279\t298\n";
+                    "5\t251\t7\t279\t258\n";
 
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
@@ -2525,18 +2525,18 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     expected +
-                            "7\t253\t14\t228\t267\n" +
                             "7\t253\t35\t228\t288\n" +
-                            "7\t253\t14\t723\t267\n" +
+                            "7\t253\t14\t228\t267\n" +
                             "7\t253\t35\t723\t288\n" +
-                            "9\t100\t8\t456\t108\n" +
-                            "9\t100\t38\t456\t138\n" +
-                            "9\t100\t19\t456\t119\n" +
+                            "7\t253\t14\t723\t267\n" +
                             "9\t100\t63\t456\t163\n" +
-                            "9\t100\t8\t667\t108\n" +
-                            "9\t100\t38\t667\t138\n" +
+                            "9\t100\t19\t456\t119\n" +
+                            "9\t100\t38\t456\t138\n" +
+                            "9\t100\t8\t456\t108\n" +
+                            "9\t100\t63\t667\t163\n" +
                             "9\t100\t19\t667\t119\n" +
-                            "9\t100\t63\t667\t163\n",
+                            "9\t100\t38\t667\t138\n" +
+                            "9\t100\t8\t667\t108\n",
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d",
                     null,
                     true,
