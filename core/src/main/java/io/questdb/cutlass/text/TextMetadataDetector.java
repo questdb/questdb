@@ -189,7 +189,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
      * It can happen because of two reasons.
      * <p>
      * Probes are compatible, for example INT is compatible with DOUBLE in a sense that DOUBLE probe will positively
-     * validate every INT. If this the case we will use order of probes as priority. The first probe wins.
+     * validate every INT. If this the case we will use order of probes as priority. First probe wins.
      * <p>
      * It is possible to have mixed types in same column, in which case column has to become string.
      * To establish if we have mixed column we check if probe count + blank values add up to total number of rows.
