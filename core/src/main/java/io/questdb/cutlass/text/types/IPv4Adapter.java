@@ -29,12 +29,11 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.SwarUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 public final class IPv4Adapter extends AbstractTypeAdapter {
     public static final IPv4Adapter INSTANCE = new IPv4Adapter();
-    private static final long DOT_WORD = SwarUtils.broadcast((byte) '.');
 
     private IPv4Adapter() {
     }
@@ -75,28 +74,8 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
         row.putIPv4(column, SqlKeywords.isNullKeyword(value) ? Numbers.IPv4_NULL : parseIPv4(value));
     }
 
-    private static boolean hasDots(DirectUtf8Sequence value) {
-        final int len = value.size();
-        int i = 0;
-        while (i < len) {
-            if (i < len - 7) {
-                final long word = value.longAt(i);
-                if (SwarUtils.markZeroBytes(word ^ DOT_WORD) != 0) {
-                    return true;
-                }
-                i += 8;
-            }
-
-            byte b = value.byteAt(i++);
-            if (b == '.') {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private int parseIPv4(DirectUtf8Sequence value) throws NumericException {
-        final boolean hasDots = hasDots(value);
+        final boolean hasDots = Utf8s.hasDots(value);
         if (hasDots) {
             return Numbers.parseIPv4(value);
         } else {
