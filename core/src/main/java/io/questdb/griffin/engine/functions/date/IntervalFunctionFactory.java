@@ -81,7 +81,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
             return IntervalConstant.newInstance(lo, hi, intervalType);
         }
         if ((loFunc.isConstant() || loFunc.isRuntimeConstant())
-                || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
+                && (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
             return new RuntimeConstFunc(position, loFunc, hiFunc, intervalType, driver, leftTimestampType, rightTimestampType);
         }
         if (leftTimestampType == rightTimestampType) {
