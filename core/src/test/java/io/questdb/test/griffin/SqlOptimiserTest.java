@@ -3055,23 +3055,118 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testRewriteTrivialExpressionsBasic() throws Exception {
-        testRewriteTrivialExpressionsBasic(false);
+    public void testRewriteTrivialExpressions() throws Exception {
+        testRewriteTrivialExpressions(false);
     }
 
     @Test
-    public void testRewriteTrivialExpressionsBasic_aliasExpressionsEnabled() throws Exception {
-        testRewriteTrivialExpressionsBasic(true);
+    public void testRewriteTrivialExpressionsInOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, '2021-01-01T12:35:00');");
+
+            final String query = "WITH x1 AS ( " +
+                    "  SELECT id id0, id / 2 id1, count(*) AS c " +
+                    "  FROM x " +
+                    "  GROUP BY id, id / 2 " +
+                    "  ORDER BY c DESC" +
+                    ") " +
+                    "SELECT * " +
+                    "FROM x x0 " +
+                    "JOIN x1 ON x0.id = x1.id0;";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: x1.id0=x0.id\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n" +
+                            "        Hash\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [c desc]\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [id,id/2,c]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [id]\n" +
+                            "                      values: [count(*)]\n" +
+                            "                      filter: null\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id\tts\tid0\tid1\tc\n" +
+                            "1\t2021-01-01T12:34:00.000000Z\t1\t0\t1\n" +
+                            "2\t2021-01-01T12:35:00.000000Z\t2\t1\t1\n",
+                    query,
+                    "ts"
+            );
+        });
     }
 
     @Test
-    public void testRewriteTrivialExpressionsCaseInsensitivity() throws Exception {
-        testRewriteTrivialExpressionsCaseInsensitivity(false);
+    public void testRewriteTrivialExpressionsInOuterUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, '2021-01-01T12:35:00');");
+
+            final String query = "SELECT 1 id0, 2 id1, 1 c FROM long_sequence(1) " +
+                    "UNION ALL " +
+                    "(SELECT id id0, id * 2 id1, count(*) AS c " +
+                    "FROM x " +
+                    "GROUP BY id, id * 2 " +
+                    "ORDER BY c DESC);";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Union All\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1,2,1]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [c desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [id,id*2,c]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [id]\n" +
+                            "              values: [count(*)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id0\tid1\tc\n" +
+                            "1\t2\t1\n" +
+                            "2\t4\t1\n" +
+                            "1\t2\t1\n",
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
     }
 
     @Test
-    public void testRewriteTrivialExpressionsCaseInsensitivity_aliasExpressionsEnabled() throws Exception {
-        testRewriteTrivialExpressionsCaseInsensitivity(true);
+    public void testRewriteTrivialExpressions_aliasExpressionsEnabled() throws Exception {
+        testRewriteTrivialExpressions(true);
     }
 
     @Test
@@ -4705,7 +4800,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:00.000001Z\tA\t1.0\t3\t3\tnull\t2.0\t3\n", q6);
     }
 
-    private void testRewriteTrivialExpressionsBasic(boolean aliasExpressionsEnabled) throws Exception {
+    private void testRewriteTrivialExpressions(boolean aliasExpressionsEnabled) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
         assertMemoryLeak(() -> {
             execute(
@@ -4717,70 +4812,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("INSERT INTO hits VALUES('198.162.0.11', '2021-01-01T12:34:00');");
             execute("INSERT INTO hits VALUES('198.162.0.12', '2021-01-01T12:35:00');");
 
-            final String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, count(*) AS c " +
-                    "FROM hits " +
-                    "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 " +
-                    "ORDER BY c DESC LIMIT 10;";
-            final String target = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c " +
-                    "FROM (" +
-                    "  SELECT ClientIP, count() c " +
-                    "  FROM hits " +
-                    "  ORDER BY c DESC LIMIT 10" +
-                    ")";
-            final String select = aliasExpressionsEnabled
-                    ? "select-virtual ClientIP, ClientIP - 1 'ClientIP - 1', ClientIP - 2 'ClientIP - 2', ClientIP - 3 'ClientIP - 3', c "
-                    : "select-virtual ClientIP, ClientIP - 1 column, ClientIP - 2 column1, ClientIP - 3 column2, c ";
-            final String model = select +
-                    "from (select-group-by [ClientIP, count() c] ClientIP, count() c " +
-                    "from (select [ClientIP] from hits timestamp (EventTime)) " +
-                    "order by c desc limit 10)";
-
-            assertModel(model, original, ExecutionModel.QUERY);
-            assertModel(model, target, ExecutionModel.QUERY);
-
-            final String plan = "VirtualRecord\n" +
-                    "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
-                    "    Long Top K lo: 10\n" +
-                    "      keys: [c desc]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ClientIP]\n" +
-                    "          values: [count(*)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: hits\n";
-
-            assertPlanNoLeakCheck(original, plan);
-            assertPlanNoLeakCheck(target, plan);
-
-            final String expectedColumns = aliasExpressionsEnabled
-                    ? "ClientIP\tClientIP - 1\tClientIP - 2\tClientIP - 3\tc\n"
-                    : "ClientIP\tcolumn\tcolumn1\tcolumn2\tc\n";
-            assertQueryNoLeakCheck(
-                    expectedColumns +
-                            "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
-                            "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n",
-                    original,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    private void testRewriteTrivialExpressionsCaseInsensitivity(boolean aliasExpressionsEnabled) throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE hits (\n" +
-                            "    ClientIP ipv4,\n" +
-                            "    EventTime timestamp\n" +
-                            ") TIMESTAMP(EventTime) PARTITION BY DAY;"
-            );
-            execute("INSERT INTO hits VALUES('198.162.0.11', '2021-01-01T12:34:00');");
-            execute("INSERT INTO hits VALUES('198.162.0.12', '2021-01-01T12:35:00');");
-
-            final String query = "SELECT ClientIP, clientip - 1, clientIP - 2, -3 + Clientip cip3, count(*) AS c " +
+            final String query = "SELECT ClientIP, clientip - 1, ClientIP - 2, -3 + Clientip cip3, count(*) AS c " +
                     "FROM hits " +
                     "GROUP BY ClientIP, clientip - 1, clientIP - 2, -3 + Clientip " +
                     "ORDER BY c DESC " +
@@ -4802,7 +4834,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
 
             final String expectedColumns = aliasExpressionsEnabled
-                    ? "ClientIP\tclientip - 1\tclientIP - 2\tcip3\tc\n"
+                    ? "ClientIP\tclientip - 1\tClientIP - 2\tcip3\tc\n"
                     : "ClientIP\tcolumn\tcolumn1\tcip3\tc\n";
             assertQueryNoLeakCheck(
                     expectedColumns +

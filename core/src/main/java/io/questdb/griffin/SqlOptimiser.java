@@ -6599,35 +6599,18 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
+     * Looks for models with trivial expressions over the same column, and lifts them from the group by.
      * <p>
-     * We are looking for patterns like: <br>
-     * <code>(select-virtual (select-group-by (select-none)))</code>
+     * For now, this rewrite is very specific and only kicks in for queries similar to ClickBench's Q35:
+     * <pre>
+     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c
+     * FROM hits
+     * GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3
+     * ORDER BY c DESC
+     * LIMIT 10;
+     * </pre>
+     * The above query gets effectively rewritten into:
      * <p>
-     * For a query such as this:<br>
-     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
-     * FROM hits<br>
-     * GROUP BY ClientIP, ClientIP - 1<br>
-     * ORDER BY c DESC LIMIT 10;</code>
-     * <p>
-     * We begin with this model:
-     * <p>
-     * <code>
-     * (select-virtual ClientIP, column, c<br>
-     * from (select-group-by ClientIP, ClientIP - 1 column, COUNT() c<br>
-     * from (hits order by c desc))<br>
-     * limit 10)</code>
-     * <p>
-     * And re-write it to:
-     * <p>
-     * <code>
-     * (select-virtual ClientIP, ClientIP - 1 column, c<br>
-     * from (select-group-by ClientIP, COUNT() c<br>
-     * from (hits order by c desc) <br>
-     * limit 10))</code>
-     * <p>
-     * Which is effectively:<br>
-     * <code>
      * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
      * FROM (<br>
      * SELECT ClientIP, COUNT() c<br>
@@ -6635,33 +6618,35 @@ public class SqlOptimiser implements Mutable {
      * ORDER BY c DESC<br>
      * LIMIT 10<br>
      * )
-     *
-     * @param model the input query model
+     * <pre>
+     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c
+     * FROM (
+     *   SELECT ClientIP, COUNT(*) AS c
+     *   FROM hits
+     *   GROUP BY ClientIP
+     *   ORDER BY c DESC
+     *   LIMIT 10
+     * );
+     * </pre>
      */
-    private void rewriteTrivialExpressions(QueryModel model) {
-        final QueryModel nestedModel = model.getNestedModel();
-        if (nestedModel == null) {
+    private void rewriteTrivialGroupByExpressions(QueryModel model) {
+        if (model == null) {
             return;
         }
 
-        // first we want to see if this is an appropriate model to make this transformation
-        StringSink ss = new StringSink();
-        model.toSink(ss);
-        System.out.println(">>> " + ss);
-        final int modelType = model.getSelectModelType();
-        final int nestedModelType = nestedModel.getSelectModelType();
-        // GROUP BY clause may be present or absent
-        if ((modelType == QueryModel.SELECT_MODEL_VIRTUAL && nestedModelType == QueryModel.SELECT_MODEL_GROUP_BY)
-                || (modelType == QueryModel.SELECT_MODEL_GROUP_BY && nestedModelType == SELECT_MODEL_NONE)) {
+        // First we want to see if this is an appropriate model to make this transformation.
+        final QueryModel nestedModel = model.getNestedModel();
+        if (nestedModel != null
+                && model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
             trivialExpressions.clear();
             final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
-            boolean anyCandidates = false;
 
             for (int i = 0, n = nestedColumns.size(); i < n; i++) {
                 final QueryColumn nestedColumn = nestedColumns.getQuick(i);
                 final ExpressionNode nestedAst = nestedColumn.getAst();
                 if (nestedAst.type == OPERATION && nestedAst.paramCount == 2) {
-                    // If it's an operation we care about
+                    // Is it an operation we care about?
                     if (nestedAst.token.length() == 1 && isRewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
                         // Check if it's a simple pattern i.e A + 1 or 1 + A
                         final CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT
@@ -6669,19 +6654,23 @@ public class SqlOptimiser implements Mutable {
                                 : nestedAst.lhs.type == CONSTANT && nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
 
                         if (token != null) {
-                            // Add it to candidates list
+                            // Add it to candidates list.
                             trivialExpressions.putIfAbsent(token, 0);
                             trivialExpressions.increment(token);
-                            anyCandidates = true;
                         }
                     }
                 }
 
-                // or if it's a literal, add it, in case we have A, A + 1.
+                // Or if it's a literal, add it, in case we have A, A + 1.
                 if (nestedAst.type == LITERAL) {
                     trivialExpressions.putIfAbsent(nestedAst.token, 0);
                     trivialExpressions.increment(nestedAst.token);
                 }
+            }
+
+            boolean anyCandidates = false;
+            for (int i = 0, n = trivialExpressions.size(); i < n; i++) {
+                anyCandidates |= trivialExpressions.get(trivialExpressions.keys().getQuick(i)) > 1;
             }
 
             if (anyCandidates) {
@@ -6689,11 +6678,11 @@ public class SqlOptimiser implements Mutable {
                     final QueryColumn nestedColumn = nestedColumns.getQuick(i);
                     final ExpressionNode nestedAst = nestedColumn.getAst();
 
-                    // if there is a matching column in this model, we can lift the candidate up
+                    // If there is a matching column in this model, we can lift the candidate up.
                     final CharSequence currentAlias = model.getColumnNameToAliasMap().get(nestedColumn.getAlias());
                     if (currentAlias != null) {
                         if (nestedAst.type == FUNCTION) {
-                            // don't pull a function up
+                            // Don't pull a function up.
                             continue;
                         }
 
@@ -6703,9 +6692,9 @@ public class SqlOptimiser implements Mutable {
                                     : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
                             assert candidate != null;
 
-                            // check if the candidates is valid to be pulled up
+                            // Check if the candidates is valid to be pulled up.
                             if (trivialExpressions.contains(candidate) && trivialExpressions.get(candidate) > 1) {
-                                // remove from current, keep in new
+                                // Remove from current, keep in new.
                                 final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
                                 currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
 
@@ -6716,7 +6705,7 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                // if limit is on the virtual, push it down to the group by
+                // If limit is on the virtual model, push it down to the group by.
                 final ExpressionNode lo = model.getLimitLo();
                 final ExpressionNode hi = model.getLimitHi();
                 if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null) {
@@ -6727,14 +6716,14 @@ public class SqlOptimiser implements Mutable {
         }
 
         // recurse
-        rewriteTrivialExpressions(nestedModel);
+        rewriteTrivialGroupByExpressions(nestedModel);
         final QueryModel union = model.getUnionModel();
         if (union != null) {
-            rewriteTrivialExpressions(union);
+            rewriteTrivialGroupByExpressions(union);
         }
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            rewriteTrivialExpressions(joinModels.getQuick(i));
+            rewriteTrivialGroupByExpressions(joinModels.getQuick(i));
         }
     }
 
@@ -7144,7 +7133,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            rewriteTrivialExpressions(rewrittenModel);
+            rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
