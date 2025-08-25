@@ -3065,6 +3065,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteTrivialExpressionsCaseInsensitivity() throws Exception {
+        testRewriteTrivialExpressionsCaseInsensitivity(false);
+    }
+
+    @Test
+    public void testRewriteTrivialExpressionsCaseInsensitivity_aliasExpressionsEnabled() throws Exception {
+        testRewriteTrivialExpressionsCaseInsensitivity(true);
+    }
+
+    @Test
     public void testSampleByExpressionDependOtherColumn() throws Exception {
         execute("create table t (\n" +
                 "  timestamp TIMESTAMP,\n" +
@@ -4751,6 +4761,54 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
                             "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n",
                     original,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    private void testRewriteTrivialExpressionsCaseInsensitivity(boolean aliasExpressionsEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE hits (\n" +
+                            "    ClientIP ipv4,\n" +
+                            "    EventTime timestamp\n" +
+                            ") TIMESTAMP(EventTime) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO hits VALUES('198.162.0.11', '2021-01-01T12:34:00');");
+            execute("INSERT INTO hits VALUES('198.162.0.12', '2021-01-01T12:35:00');");
+
+            final String query = "SELECT ClientIP, clientip - 1, clientIP - 2, -3 + Clientip cip3, count(*) AS c " +
+                    "FROM hits " +
+                    "GROUP BY ClientIP, clientip - 1, clientIP - 2, -3 + Clientip " +
+                    "ORDER BY c DESC " +
+                    "LIMIT 10;";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "VirtualRecord\n" +
+                            "  functions: [ClientIP,ClientIP-1,ClientIP-2,-3+ClientIP,c]\n" +
+                            "    Long Top K lo: 10\n" +
+                            "      keys: [c desc]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ClientIP]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: hits\n"
+            );
+
+            final String expectedColumns = aliasExpressionsEnabled
+                    ? "ClientIP\tclientip - 1\tclientIP - 2\tcip3\tc\n"
+                    : "ClientIP\tcolumn\tcolumn1\tcip3\tc\n";
+            assertQueryNoLeakCheck(
+                    expectedColumns +
+                            "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
+                            "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n",
+                    query,
                     null,
                     true,
                     true

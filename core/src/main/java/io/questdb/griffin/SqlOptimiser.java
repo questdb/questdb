@@ -6645,8 +6645,14 @@ public class SqlOptimiser implements Mutable {
         }
 
         // first we want to see if this is an appropriate model to make this transformation
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+        StringSink ss = new StringSink();
+        model.toSink(ss);
+        System.out.println(">>> " + ss);
+        final int modelType = model.getSelectModelType();
+        final int nestedModelType = nestedModel.getSelectModelType();
+        // GROUP BY clause may be present or absent
+        if ((modelType == QueryModel.SELECT_MODEL_VIRTUAL && nestedModelType == QueryModel.SELECT_MODEL_GROUP_BY)
+                || (modelType == QueryModel.SELECT_MODEL_GROUP_BY && nestedModelType == SELECT_MODEL_NONE)) {
             trivialExpressions.clear();
             final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
             boolean anyCandidates = false;
