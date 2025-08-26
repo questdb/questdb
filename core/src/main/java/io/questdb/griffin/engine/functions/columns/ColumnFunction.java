@@ -27,7 +27,15 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 
+/**
+ * Stands for functions that represent a physical table column, such as {@link IntColumn}.
+ * Should not be implemented by types that can't be used for columns, e.g. {@link IntervalColumn}.
+ */
 public interface ColumnFunction extends Function {
+
+    /**
+     * Returns index of the column in the table metadata.
+     */
     int getColumnIndex();
 
     @Override

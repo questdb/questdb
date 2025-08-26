@@ -78,7 +78,6 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
-
     public static final int PROJECTION_FUNCTION_FLAG_ANY = -1;
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
