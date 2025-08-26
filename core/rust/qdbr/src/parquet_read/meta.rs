@@ -88,37 +88,33 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let mut asc_column_index = -1_i32;
         for row_group in &metadata.row_groups {
             if let Some(sorting_columns) = row_group.sorting_columns() {
-                if let Some(sorting_column) = sorting_columns.get(0) {
-                    if !sorting_column.descending {
-                        if asc_column_index == -1 || asc_column_index == sorting_column.column_idx {
-                            asc_column_index = sorting_column.column_idx;
-                            continue;
-                        }
+                if let Some(sorting_column) = sorting_columns.first() {
+                    if !sorting_column.descending
+                        && (asc_column_index == -1 || asc_column_index == sorting_column.column_idx)
+                    {
+                        asc_column_index = sorting_column.column_idx;
+                        continue;
                     }
                 }
             }
             asc_column_index = -1;
             break;
         }
-        // Looks like we have a candidate for designated timestamp. Let's check its types and nullability.
+        // If we have a candidate for designated timestamp, let's check its type and nullability.
         let mut timestamp_index = -1_i32;
         if asc_column_index > -1 {
-            if let Some(column) = metadata.schema_descr.columns().get(asc_column_index as usize) {
-                timestamp_index = match (
-                    column.descriptor.primitive_type.physical_type,
-                    column.descriptor.primitive_type.logical_type,
-                    column.descriptor.primitive_type.field_info.repetition,
-                ) {
-                    (
-                        PhysicalType::Int64,
-                        Some(Timestamp {
-                            unit: TimeUnit::Microseconds,
-                            is_adjusted_to_utc: _,
-                        })
-                        | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
-                        Repetition::Required,
-                    ) => asc_column_index,
-                    _ => -1,
+            if let Some(column) = columns.get(asc_column_index as usize) {
+                if let Some(column_descr) = metadata
+                    .schema_descr
+                    .columns()
+                    .get(asc_column_index as usize)
+                {
+                    if column.column_type.tag() == ColumnTypeTag::Timestamp
+                        && column_descr.descriptor.primitive_type.field_info.repetition
+                            == Repetition::Required
+                    {
+                        timestamp_index = asc_column_index
+                    }
                 }
             }
         }
