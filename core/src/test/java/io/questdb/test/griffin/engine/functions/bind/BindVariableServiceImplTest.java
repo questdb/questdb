@@ -32,11 +32,14 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -1129,6 +1132,318 @@ public class BindVariableServiceImplTest {
             bindVariableService.setTimestamp(0);
             bindVariableService.setTimestampNano(0, 99999000001L);
             Assert.assertEquals(99999000, bindVariableService.getFunction(0).getTimestamp(null));
+        });
+    }
+
+    @Test
+    public void testVarcharClearResetsState() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setStr(0, "some value");
+            Assert.assertNotNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(10, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.clear();
+
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharGetStrABConsistency() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setStr(0, "consistent");
+
+            TestUtils.assertEquals("consistent", bindVariableService.getFunction(0).getStrA(null));
+            TestUtils.assertEquals("consistent", bindVariableService.getFunction(0).getStrB(null));
+            Assert.assertEquals(10, bindVariableService.getFunction(0).getStrLen(null));
+
+            bindVariableService.setStr(0, null);
+            Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
+            Assert.assertNull(bindVariableService.getFunction(0).getStrB(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getStrLen(null));
+        });
+    }
+
+    @Test
+    public void testVarcharIndexedVariableSetToMultipleTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setVarchar(0);
+
+            bindVariableService.setInt(0, 999);
+            TestUtils.assertEquals("999", bindVariableService.getFunction(0).getVarcharA(null));
+
+            bindVariableService.setChar(0, 'Z');
+            TestUtils.assertEquals("Z", bindVariableService.getFunction(0).getVarcharA(null));
+
+            bindVariableService.setLong(0, 123456789L);
+            TestUtils.assertEquals("123456789", bindVariableService.getFunction(0).getVarcharA(null));
+
+            bindVariableService.setBoolean(0, false);
+            TestUtils.assertEquals("false", bindVariableService.getFunction(0).getVarcharA(null));
+        });
+    }
+
+    @Test
+    public void testVarcharMultipleUpdates() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+
+            bindVariableService.setInt(0, 123);
+            TestUtils.assertEquals("123", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(3, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setStr(0, "text");
+            TestUtils.assertEquals("text", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(4, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setDouble(0, 456.789);
+            TestUtils.assertEquals("456.789", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setBoolean(0, true);
+            TestUtils.assertEquals("true", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(4, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setVarchar(0, new Utf8String("foo"));
+            TestUtils.assertEquals("foo", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(3, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setBoolean(0, true);
+            TestUtils.assertEquals("true", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(4, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setBoolean(0, false);
+            TestUtils.assertEquals("false", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(5, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToByte() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setByte(0, (byte) 127);
+            TestUtils.assertEquals("127", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(3, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setByte(0, (byte) -128);
+            TestUtils.assertEquals("-128", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(4, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setByte(0, (byte) 0);
+            TestUtils.assertEquals("0", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToChar() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setChar(0, 'A');
+            TestUtils.assertEquals("A", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(1, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setChar(0, '9');
+            TestUtils.assertEquals("9", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(1, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setChar(0, '\u03B1'); // Greek alpha
+            TestUtils.assertEquals("α", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(2, bindVariableService.getFunction(0).getVarcharSize(null)); // UTF-8 encoding
+        });
+    }
+
+    @Test
+    public void testVarcharSetToDate() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setDate(0, 1609459200000L); // 2021-01-01 (in millis)
+
+            Assert.assertNotNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setDate(0, Numbers.LONG_NULL);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setDouble(0, 3.141592653589793);
+            TestUtils.assertEquals("3.141592653589793", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setDouble(0, -1.23456789E-100);
+            TestUtils.assertEquals("-1.23456789E-100", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setDouble(0, Double.NaN);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setDouble(0, Double.NEGATIVE_INFINITY);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setFloat(0, 3.14159f);
+            TestUtils.assertEquals("3.14159", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setFloat(0, -0.0001f);
+            TestUtils.assertEquals("-1.0E-4", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setFloat(0, Float.NaN);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setFloat(0, Float.POSITIVE_INFINITY);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setInt(0, 2147483647);
+            TestUtils.assertEquals("2147483647", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(10, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setInt(0, -1234567890);
+            TestUtils.assertEquals("-1234567890", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(11, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setLong(0, 9223372036854775807L);
+            TestUtils.assertEquals("9223372036854775807", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(19, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setLong(0, -1234567890123456789L);
+            TestUtils.assertEquals("-1234567890123456789", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(20, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setLong(0, Numbers.LONG_NULL);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setLong256(0, 888, 777, 6666, 5555);
+            TestUtils.assertEquals("0x15b30000000000001a0a00000000000003090000000000000378", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(54, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setLong256(0, 0, 0, 0, 0);
+            TestUtils.assertEquals("0x00", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(4, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToShort() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setShort(0, (short) 32767);
+            TestUtils.assertEquals("32767", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(5, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setShort(0, (short) -32768);
+            TestUtils.assertEquals("-32768", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(6, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setShort(0, (short) 0);
+            TestUtils.assertEquals("0", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToString() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setStr(0, "Hello World!");
+            TestUtils.assertEquals("Hello World!", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(12, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setStr(0, "");
+            TestUtils.assertEquals("", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(0, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setStr(0, null);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setStr(0, "Hello 世界 🌍");
+            TestUtils.assertEquals("Hello 世界 🌍", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals("Hello 世界 🌍".getBytes(StandardCharsets.UTF_8).length, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setTimestamp(0, 1609459200000000L); // 2021-01-01 00:00:00.000000
+
+            Assert.assertNotNull(bindVariableService.getFunction(0).getVarcharA(null));
+            TestUtils.assertEquals("2021-01-01T00:00:00.000000Z", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertTrue(bindVariableService.getFunction(0).getVarcharSize(null) > 0);
+
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
+        });
+    }
+
+    @Test
+    public void testVarcharSetToUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            bindVariableService.setUuid(0, 0x550e8400e29b41d4L, 0xa7164d67e84bcL);
+            TestUtils.assertEquals("000a7164-d67e-84bc-550e-8400e29b41d4", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(36, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setUuid(0, 0L, 0L);
+            TestUtils.assertEquals("00000000-0000-0000-0000-000000000000", bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(36, bindVariableService.getFunction(0).getVarcharSize(null));
+
+            bindVariableService.setUuid(0, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
+            Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
         });
     }
 }

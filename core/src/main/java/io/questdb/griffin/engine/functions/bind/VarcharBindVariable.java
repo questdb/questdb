@@ -105,9 +105,7 @@ public class VarcharBindVariable extends VarcharFunction implements Mutable {
 
     public void setUuidValue(long lo, long hi) {
         utf8Sink.clear();
-        if (SqlUtil.implicitCastUuidAsStr(lo, hi, utf8Sink)) {
-            isNull = false;
-        }
+        isNull = !SqlUtil.implicitCastUuidAsStr(lo, hi, utf8Sink);
     }
 
     public void setValue(boolean value) {
