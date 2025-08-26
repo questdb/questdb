@@ -99,18 +99,18 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     public static boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
         final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
-        if (metadata.getColumnCount() > parquetMetadata.columnCount()) {
+        if (metadata.getColumnCount() > parquetMetadata.getColumnCount()) {
             return true;
         }
 
         int metadataIndex = 0;
-        for (int parquetIndex = 0, n = parquetMetadata.columnCount(); parquetIndex < n; parquetIndex++) {
+        for (int parquetIndex = 0, n = parquetMetadata.getColumnCount(); parquetIndex < n; parquetIndex++) {
             final int parquetType = parquetMetadata.getColumnType(parquetIndex);
             // If the column is not recognized by the decoder, we have to skip it.
             if (ColumnType.isUndefined(parquetType)) {
                 continue;
             }
-            if (!Chars.equalsIgnoreCase(parquetMetadata.columnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
+            if (!Chars.equalsIgnoreCase(parquetMetadata.getColumnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
                 return true;
             }
             final int metadataType = metadata.getColumnType(metadataIndex);
@@ -172,7 +172,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             rowGroupBuffers.reopen();
             columns.reopen();
             final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
-            for (int i = 0, n = parquetMetadata.columnCount(); i < n; i++) {
+            for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
                 final int columnType = parquetMetadata.getColumnType(i);
                 if (!ColumnType.isUndefined(columnType)) {
                     columns.add(i);
@@ -192,7 +192,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public long size() throws DataUnavailableException {
-        return decoder.metadata().rowCount();
+        return decoder.metadata().getRowCount();
     }
 
     @Override
@@ -212,8 +212,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private boolean switchToNextRowGroup() {
         dataPtrs.clear();
         auxPtrs.clear();
-        if (++rowGroupIndex < decoder.metadata().rowGroupCount()) {
-            final int rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
+        if (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
+            final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
             rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
 
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

@@ -52,6 +52,7 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
+    private static final long TIMESTAMP_INDEX_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
@@ -103,17 +104,17 @@ public class PartitionDecoder implements QuietCloseable {
      * position is at the end of a row group or between two row groups, the
      * {@link #decodeNoNeedToDecodeFlag(long)} method will return true.
      *
-     * @param timestamp            timestamp value to search for
-     * @param rowLo                row lo, inclusive
-     * @param rowHi                row hi, inclusive
-     * @param timestampColumnIndex timestamp column index within the Parquet file
+     * @param timestamp      timestamp value to search for
+     * @param rowLo          row lo, inclusive
+     * @param rowHi          row hi, inclusive
+     * @param timestampIndex timestamp column index within the Parquet file
      * @return encoded row group index and "no need to decode" flag
      */
     public long findRowGroupByTimestamp(
             long timestamp,
             long rowLo,
             long rowHi,
-            int timestampColumnIndex
+            int timestampIndex
     ) {
         assert ptr != 0;
         return findRowGroupByTimestamp( // throws CairoException on error
@@ -121,7 +122,7 @@ public class PartitionDecoder implements QuietCloseable {
                 timestamp,
                 rowLo,
                 rowHi,
-                timestampColumnIndex
+                timestampIndex
         );
     }
 
@@ -200,7 +201,7 @@ public class PartitionDecoder implements QuietCloseable {
             long rowLo,
             long rowHi,
             long timestamp,
-            int timestampColumnIndex
+            int timestampIndex
     );
 
     private static native long readRowGroupStats(
@@ -216,6 +217,8 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long rowGroupCountOffset();
 
     private static native long rowGroupSizesPtrOffset();
+
+    private static native long timestampIndexOffset();
 
     private void destroy() {
         if (ptr != 0) {
@@ -233,27 +236,16 @@ public class PartitionDecoder implements QuietCloseable {
     public class Metadata {
         private final ObjList<DirectString> columnNames = new ObjList<>();
 
-        public int columnCount() {
-            return Unsafe.getUnsafe().getInt(ptr + COLUMN_COUNT_OFFSET);
-        }
-
-        public int columnId(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_IDS_OFFSET);
-        }
-
-        public CharSequence columnName(int columnIndex) {
-            return columnNames.getQuick(columnIndex);
-        }
-
         /**
          * Copies supported columns into the provided metadata, skipping any with Undefined type.
          * If treatSymbolsAsVarchar is true, symbol columns are exposed as VARCHAR.
          */
         public void copyToSansUnsupported(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
             metadata.clear();
-            final int columnCount = columnCount();
-            for (int i = 0; i < columnCount; i++) {
-                final String columnName = Chars.toString(columnName(i));
+            final int timestampIndex = getTimestampIndex();
+            int copyTimestampIndex = -1;
+            for (int i = 0, n = getColumnCount(); i < n; i++) {
+                final String columnName = Chars.toString(getColumnName(i));
                 final int columnType = getColumnType(i);
 
                 if (ColumnType.isUndefined(columnType)) {
@@ -276,31 +268,53 @@ public class PartitionDecoder implements QuietCloseable {
                     }
                 } else {
                     metadata.add(new TableColumnMetadata(columnName, columnType));
+                    // Check for designated timestamp's local index.
+                    if (ColumnType.isTimestamp(columnType) && i == timestampIndex) {
+                        copyTimestampIndex = metadata.getColumnCount() - 1;
+                    }
                 }
             }
+
+            metadata.setTimestampIndex(copyTimestampIndex);
+        }
+
+        public int getColumnCount() {
+            return Unsafe.getUnsafe().getInt(ptr + COLUMN_COUNT_OFFSET);
+        }
+
+        public int getColumnId(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_IDS_OFFSET);
+        }
+
+        public CharSequence getColumnName(int columnIndex) {
+            return columnNames.getQuick(columnIndex);
         }
 
         public int getColumnType(int columnIndex) {
             return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_RECORD_TYPE_OFFSET);
         }
 
-        public long rowCount() {
+        public long getRowCount() {
             return Unsafe.getUnsafe().getLong(ptr + ROW_COUNT_OFFSET);
         }
 
-        public int rowGroupCount() {
+        public int getRowGroupCount() {
             return Unsafe.getUnsafe().getInt(ptr + ROW_GROUP_COUNT_OFFSET);
         }
 
-        public int rowGroupSize(int rowGroupIndex) {
+        public int getRowGroupSize(int rowGroupIndex) {
             return Unsafe.getUnsafe().getInt(rowGroupSizesPtr + 4L * rowGroupIndex);
+        }
+
+        public int getTimestampIndex() {
+            return Unsafe.getUnsafe().getInt(ptr + TIMESTAMP_INDEX_OFFSET);
         }
 
         private void init() {
             columnNames.clear();
             directStringPool.clear();
 
-            final long columnCount = columnCount();
+            final long columnCount = getColumnCount();
             long currentColumnPtr = columnsPtr;
             for (long i = 0; i < columnCount; i++) {
                 DirectString str = directStringPool.next();
@@ -325,6 +339,7 @@ public class PartitionDecoder implements QuietCloseable {
         COLUMN_RECORD_NAME_PTR_OFFSET = columnRecordNamePtrOffset();
         ROW_GROUP_SIZES_PTR_OFFSET = rowGroupSizesPtrOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
+        TIMESTAMP_INDEX_OFFSET = timestampIndexOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
     }
 }

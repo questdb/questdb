@@ -22,6 +22,7 @@ where
     pub row_group_count: u32,
     pub row_group_sizes_ptr: *const i32,
     pub row_group_sizes: AcVec<i32>,
+    pub timestamp_index: i32, // -1 when there is no designated timestamp
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
     reader: R,

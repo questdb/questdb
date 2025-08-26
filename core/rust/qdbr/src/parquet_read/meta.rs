@@ -83,6 +83,46 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             }
         }
 
+        // Check for the designated timestamp column.
+        // First, find the first ASC order column, if it's the same across all row groups.
+        let mut asc_column_index = -1_i32;
+        for row_group in &metadata.row_groups {
+            if let Some(sorting_columns) = row_group.sorting_columns() {
+                if let Some(sorting_column) = sorting_columns.get(0) {
+                    if !sorting_column.descending {
+                        if asc_column_index == -1 || asc_column_index == sorting_column.column_idx {
+                            asc_column_index = sorting_column.column_idx;
+                            continue;
+                        }
+                    }
+                }
+            }
+            asc_column_index = -1;
+            break;
+        }
+        // Looks like we have a candidate for designated timestamp. Let's check its types and nullability.
+        let mut timestamp_index = -1_i32;
+        if asc_column_index > -1 {
+            if let Some(column) = metadata.schema_descr.columns().get(asc_column_index as usize) {
+                timestamp_index = match (
+                    column.descriptor.primitive_type.physical_type,
+                    column.descriptor.primitive_type.logical_type,
+                    column.descriptor.primitive_type.field_info.repetition,
+                ) {
+                    (
+                        PhysicalType::Int64,
+                        Some(Timestamp {
+                            unit: TimeUnit::Microseconds,
+                            is_adjusted_to_utc: _,
+                        })
+                        | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                        Repetition::Required,
+                    ) => asc_column_index,
+                    _ => -1,
+                }
+            }
+        }
+
         // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
@@ -91,6 +131,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             row_group_count: metadata.row_groups.len() as u32,
             row_group_sizes_ptr: row_group_sizes.as_ptr(),
             row_group_sizes,
+            timestamp_index,
             reader,
             metadata,
             qdb_meta,

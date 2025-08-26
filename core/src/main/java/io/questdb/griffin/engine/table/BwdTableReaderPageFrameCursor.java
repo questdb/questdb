@@ -249,13 +249,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
-        final int rowGroupCount = metadata.rowGroupCount();
+        final int rowGroupCount = metadata.getRowGroupCount();
 
         long rowCount = 0;
         int rowGroupIndex = 0;
         for (int i = 0; i < rowGroupCount; i++) {
             rowGroupIndex = i;
-            long rowGroupSize = metadata.rowGroupSize(i);
+            long rowGroupSize = metadata.getRowGroupSize(i);
             if (partitionHi <= rowCount + rowGroupSize) {
                 break;
             }
