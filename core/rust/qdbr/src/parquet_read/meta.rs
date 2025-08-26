@@ -58,18 +58,26 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             // Primitive type fields have the same primitive type as the base type.
             // That's why we're using the base type.
 
-            // Some types are not supported, this will skip them.
+            let base_field = column.base_type.get_field_info();
+            let name_str = &base_field.name;
+            let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
+            name.extend(name_str.encode_utf16())?;
+
             if let Some(column_type) =
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
-                let base_field = column.base_type.get_field_info();
-                let name_str = &base_field.name;
-                let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
-                name.extend(name_str.encode_utf16())?;
-
                 columns.push(ColumnMeta {
                     column_type,
-                    id: base_field.id.unwrap_or(index as i32),
+                    id: base_field.id.unwrap_or(-1_i32),
+                    name_size: name.len() as i32,
+                    name_ptr: name.as_ptr(),
+                    name_vec: name,
+                })?;
+            } else {
+                // The type is not supported, Java code will have to skip it.
+                columns.push(ColumnMeta {
+                    column_type: ColumnType::new(ColumnTypeTag::Undefined, 0),
+                    id: -1,
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
@@ -141,10 +149,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
-            (PhysicalType::Int64, None, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
-            (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Long, 0))
-            }
+            (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
                 Some(ColumnType::new(ColumnTypeTag::Int, 0))
             }
@@ -152,13 +157,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
                 Some(ColumnType::new(ColumnTypeTag::Double, 0))
             }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Short, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Int, 0))
-            }
-            (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
                 Some(ColumnType::new(ColumnTypeTag::Short, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
@@ -169,33 +169,28 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
                 Some(ColumnType::new(ColumnTypeTag::Date, 0))
             }
-            (PhysicalType::Int32, None, _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int32)) => {
-                Some(ColumnType::new(ColumnTypeTag::Int, 0))
-            }
-            (PhysicalType::Boolean, None, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
-            (PhysicalType::Double, None, _) => match array_column_type(&column.base_type) {
+            (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
+            (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
+            (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {
                 Some(array_type) => Some(array_type),
                 None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
             },
-            (PhysicalType::Float, None, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
+            (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
             (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
                 Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
             }
-            (PhysicalType::FixedLenByteArray(16), None, None) => {
+            (PhysicalType::FixedLenByteArray(16), _, _) => {
                 Some(ColumnType::new(ColumnTypeTag::Long128, 0))
             }
-            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
-            }
-            (PhysicalType::FixedLenByteArray(32), None, _) => {
+            (PhysicalType::FixedLenByteArray(32), _, _) => {
                 Some(ColumnType::new(ColumnTypeTag::Long256, 0))
             }
-            (PhysicalType::ByteArray, None, Some(PrimitiveConvertedType::Utf8)) => {
+            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
+            | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
                 Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
             }
-            (PhysicalType::ByteArray, None, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
-            (PhysicalType::Int96, None, None) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
+            (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
+            (PhysicalType::Int96, _, None) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (_, _, _) => None,
         }
     }

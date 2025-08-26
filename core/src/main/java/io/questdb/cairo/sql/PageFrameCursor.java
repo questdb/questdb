@@ -85,6 +85,23 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     StaticSymbolTable getSymbolTable(int columnIndex);
 
     /**
+     * Returns true if the cursor belongs to an external parquet file, false in case of table partition files.
+     */
+    boolean isExternal();
+
+    /**
+     * Fetches the next page frame without skipping any rows.
+     * <p>
+     * This is a convenience method equivalent to calling {@link #next(long)} with a skip target of 0.
+     *
+     * @return the next page frame, or {@code null} if no more frames are available
+     * @see #next(long)
+     */
+    default PageFrame next() {
+        return next(0);
+    }
+
+    /**
      * Fetches the next page frame taking into account the skip target. The skip target is the
      * number of rows the outer code is looking to skip. This typically occurs in "limit" queries
      * where not all rows of the dataset are fetched.
@@ -106,18 +123,6 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * @return either a fully populated or lightweight frame, or {@code null} if no more frames are available
      */
     @Nullable PageFrame next(long skipTarget);
-
-    /**
-     * Fetches the next page frame without skipping any rows.
-     * <p>
-     * This is a convenience method equivalent to calling {@link #next(long)} with a skip target of 0.
-     *
-     * @return the next page frame, or {@code null} if no more frames are available
-     * @see #next(long)
-     */
-    default PageFrame next() {
-        return next(0);
-    }
 
     /**
      * @return number of rows in all page frames

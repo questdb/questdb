@@ -1617,7 +1617,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-            parquetMetadata.copyTo(metadata, false);
+            parquetMetadata.copyToSansUnsupported(metadata, false);
 
             parquetColumnIdsAndTypes.clear();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

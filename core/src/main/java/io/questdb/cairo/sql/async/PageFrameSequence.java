@@ -391,7 +391,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
