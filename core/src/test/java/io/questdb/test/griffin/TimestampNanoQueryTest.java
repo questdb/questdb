@@ -658,6 +658,42 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualityWithBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mixed_ts(id INT, nano_time TIMESTAMP_NS, micro_time TIMESTAMP) TIMESTAMP(nano_time) PARTITION BY DAY");
+            execute("INSERT INTO mixed_ts VALUES(1, '2021-01-01T09:00:00.000100000Z', '2021-01-01T09:00:00.000100Z')");
+            execute("INSERT INTO mixed_ts VALUES(2, '2021-01-01T10:00:00.000200000Z', '2021-01-01T10:00:00.000200Z')");
+            execute("INSERT INTO mixed_ts VALUES(3, '2021-01-02T09:00:00.000300000Z', '2021-01-02T09:00:00.000300Z')");
+            final long tsLong = 1_609_491_600_000_100L; // '2021-01-01T09:00:00.000100Z' in microseconds
+
+            // Test RightRunTimeConstFunc - TIMESTAMP_NS column = :timestamp_micro_bind_variable
+            // This triggers RightRunTimeConstFunc because:
+            // - left: nano_time (TIMESTAMP_NS) - higher precision
+            // - right: bind variable (TIMESTAMP - microsecond) - lower precision, runtime constant
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("micro_bind", tsLong);
+
+            String expected = "id\tnano_time\tmicro_time\tequals\n" +
+                    "1\t2021-01-01T09:00:00.000100000Z\t2021-01-01T09:00:00.000100Z\ttrue\n" +
+                    "2\t2021-01-01T10:00:00.000200000Z\t2021-01-01T10:00:00.000200Z\tfalse\n" +
+                    "3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\tfalse\n";
+            String query = "SELECT id, nano_time, micro_time, nano_time = :micro_bind equals FROM mixed_ts";
+            assertQuery(expected, query, "nano_time", true, true);
+
+            // Test inequality as well to cover the negated path
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("micro_bind", tsLong);
+
+            String expected2 = "id\tnano_time\tmicro_time\tequals\n" +
+                    "1\t2021-01-01T09:00:00.000100000Z\t2021-01-01T09:00:00.000100Z\tfalse\n" +
+                    "2\t2021-01-01T10:00:00.000200000Z\t2021-01-01T10:00:00.000200Z\ttrue\n" +
+                    "3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\ttrue\n";
+            String query2 = "SELECT id, nano_time, micro_time, nano_time != :micro_bind equals FROM mixed_ts";
+            assertQuery(expected2, query2, "nano_time", true, true);
+        });
+    }
+
+    @Test
     public void testUpdateOperations() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango(id INT, time TIMESTAMP_NS, value DOUBLE) TIMESTAMP(time) PARTITION BY DAY");
