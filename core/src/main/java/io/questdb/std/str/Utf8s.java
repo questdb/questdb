@@ -492,7 +492,7 @@ public final class Utf8s {
         return ll > rl;
     }
 
-    public static boolean hasDots(DirectUtf8Sequence value) {
+    public static boolean hasDots(Utf8Sequence value) {
         final int len = value.size();
         int i = 0;
         for (; i < len - 7; i += 8) {
