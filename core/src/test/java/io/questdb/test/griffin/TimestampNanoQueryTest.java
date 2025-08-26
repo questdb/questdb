@@ -445,6 +445,37 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_test(id INT, nano_time TIMESTAMP_NS) TIMESTAMP(nano_time) PARTITION BY DAY");
+            execute("INSERT INTO interval_test VALUES(1, '2021-01-01T09:00:00.000000100Z'::TIMESTAMP_NS)");
+            execute("INSERT INTO interval_test VALUES(2, '2021-01-01T10:00:00.000000200Z'::TIMESTAMP_NS)");
+            execute("INSERT INTO interval_test VALUES(3, '2021-01-02T09:00:00.000000300Z'::TIMESTAMP_NS)");
+
+            // Test ConstCheckFunc - comparing interval function to constant interval
+            String expected = "id\tnano_time\tis_constant_interval\n" +
+                    "1\t2021-01-01T09:00:00.000000100Z\ttrue\n" +
+                    "2\t2021-01-01T10:00:00.000000200Z\ttrue\n" +
+                    "3\t2021-01-02T09:00:00.000000300Z\tfalse\n";
+            String query = "SELECT id, nano_time, " +
+                    "interval(date_trunc('day', nano_time), dateadd('d', 1, date_trunc('day', nano_time))) = " +
+                    "interval('2021-01-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-01-02T00:00:00.000000000Z'::TIMESTAMP_NS) as is_constant_interval " +
+                    "FROM interval_test ORDER BY nano_time";
+            assertQuery(expected, query, "nano_time", true, true);
+
+            String expected2 = "id\tnano_time\tis_not_constant_interval\n" +
+                    "1\t2021-01-01T09:00:00.000000100Z\tfalse\n" +
+                    "2\t2021-01-01T10:00:00.000000200Z\tfalse\n" +
+                    "3\t2021-01-02T09:00:00.000000300Z\ttrue\n";
+            String query2 = "SELECT id, nano_time, " +
+                    "interval(date_trunc('day', nano_time), dateadd('d', 1, date_trunc('day', nano_time))) != " +
+                    "interval('2021-01-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-01-02T00:00:00.000000000Z'::TIMESTAMP_NS) as is_not_constant_interval " +
+                    "FROM interval_test ORDER BY nano_time";
+            assertQuery(expected2, query2, "nano_time", true, true);
+        });
+    }
+
+    @Test
     public void testInvalidTimestampFormat() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango(id INT, time TIMESTAMP_NS) TIMESTAMP(time) PARTITION BY DAY");

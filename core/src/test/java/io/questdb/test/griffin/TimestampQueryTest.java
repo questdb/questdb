@@ -268,6 +268,48 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_test_micro(id INT, micro_time TIMESTAMP) TIMESTAMP(micro_time) PARTITION BY DAY");
+            execute("INSERT INTO interval_test_micro VALUES(1, '2021-01-01T09:00:00.000100Z'::TIMESTAMP)");
+            execute("INSERT INTO interval_test_micro VALUES(2, '2021-01-01T10:00:00.000200Z'::TIMESTAMP)");
+            execute("INSERT INTO interval_test_micro VALUES(3, '2021-01-02T09:00:00.000300Z'::TIMESTAMP)");
+
+            // Test ConstCheckFunc with microsecond intervals - comparing interval function to constant interval
+            String expected = "id\tmicro_time\tis_constant_interval\n" +
+                    "1\t2021-01-01T09:00:00.000100Z\ttrue\n" +
+                    "2\t2021-01-01T10:00:00.000200Z\ttrue\n" +
+                    "3\t2021-01-02T09:00:00.000300Z\tfalse\n";
+            String query = "SELECT id, micro_time, " +
+                    "interval(date_trunc('day', micro_time), dateadd('d', 1, date_trunc('day', micro_time))) = " +
+                    "interval('2021-01-01T00:00:00.000000Z'::TIMESTAMP, '2021-01-02T00:00:00.000000Z'::TIMESTAMP) as is_constant_interval " +
+                    "FROM interval_test_micro ORDER BY micro_time";
+            assertQuery(expected, query, "micro_time", true, true);
+
+            // Test NullCheckFunc with microsecond intervals - comparing interval function to null interval
+            String expected2 = "id\tmicro_time\tis_null_interval\n" +
+                    "1\t2021-01-01T09:00:00.000100Z\tfalse\n" +
+                    "2\t2021-01-01T10:00:00.000200Z\tfalse\n" +
+                    "3\t2021-01-02T09:00:00.000300Z\tfalse\n";
+            String query2 = "SELECT id, micro_time, " +
+                    "interval(date_trunc('day', micro_time), dateadd('d', 1, date_trunc('day', micro_time))) = " +
+                    "null::interval as is_null_interval " +
+                    "FROM interval_test_micro ORDER BY micro_time";
+            assertQuery(expected2, query2, "micro_time", true, true);
+
+            String expected3 = "id\tmicro_time\tis_not_null_interval\n" +
+                    "1\t2021-01-01T09:00:00.000100Z\ttrue\n" +
+                    "2\t2021-01-01T10:00:00.000200Z\ttrue\n" +
+                    "3\t2021-01-02T09:00:00.000300Z\ttrue\n";
+            String query3 = "SELECT id, micro_time, " +
+                    "interval(date_trunc('day', micro_time), dateadd('d', 1, date_trunc('day', micro_time))) != " +
+                    "null::interval as is_not_null_interval " +
+                    "FROM interval_test_micro ORDER BY micro_time";
+            assertQuery(expected3, query3, "micro_time", true, true);
+        });
+    }
+
+    @Test
     public void testLMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
