@@ -340,6 +340,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean isExternal() {
+            return baseCursor.isExternal();
+        }
+
+        @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
