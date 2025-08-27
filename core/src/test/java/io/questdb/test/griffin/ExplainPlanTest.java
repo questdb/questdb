@@ -1232,7 +1232,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                        Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: order_book"
+                            "                Frame forward scan on: order_book\n"
             );
         });
     }
