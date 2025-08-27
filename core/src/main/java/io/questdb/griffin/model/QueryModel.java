@@ -1139,7 +1139,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      *
      * @param baseModel baseModel containing columns mapped into the referenced baseModel.
      */
-    public void mergePartially(QueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) throws SqlException {
+    public void mergePartially(QueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
