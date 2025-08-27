@@ -666,6 +666,9 @@ public class SqlOptimiser implements Mutable {
 
     private void addOrderByClausesToModel(QueryModel originalModel, QueryModel targetModel) {
         for (int i = 0; i < originalModel.getOrderBy().size(); i++) {
+            if (Chars.equals(originalModel.getOrderBy().get(i).token, "column")) {
+                //check how to implement this
+            }
             targetModel.addOrderBy(originalModel.getOrderBy().get(i), originalModel.getOrderByDirection().getQuick(i));
         }
     }
@@ -2338,8 +2341,6 @@ public class SqlOptimiser implements Mutable {
 
     private boolean findIfnodeExpressionContainsChildTableRef(ExpressionNode node, QueryModel targetModel) throws SqlException {
         ChildTableColumnFinder childTableColumnFinder = new ChildTableColumnFinder(targetModel, false);
-        childTableColumnFinder.targetModel = targetModel;
-        childTableColumnFinder.found = false;
         traversalAlgo.traverse(node, childTableColumnFinder);
         return childTableColumnFinder.found;
     }
@@ -2622,15 +2623,27 @@ public class SqlOptimiser implements Mutable {
       1- If order-by and limit clause are present, order-by should be on master table columns only.
       2- If where clause is present, it should be on master table columns only.
      */
-    private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) throws SqlException {
+    private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel,
+                                                           QueryModel parent, QueryModel sourceModel) throws SqlException {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
+        QueryModel virtualModel = null;
         if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
                 targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
 
             for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
                 isOrderByPresent = true;
-                boolean found = findIfnodeExpressionContainsChildTableRef(targetModel.getOrderBy().get(i), targetModel);
+                ExpressionNode investigatedNode = targetModel.getOrderBy().get(i);
+                if (Chars.equals(targetModel.getOrderBy().get(i).token, "column")) {
+                    QueryModel temp = sourceModel;
+                    while (temp.getNestedModel().getNestedModel() != targetModel) {
+                        temp = temp.getNestedModel();
+                    }
+                    virtualModel = temp;
+                    ExpressionNode ast = temp.getAliasToColumnMap().get("column").getAst();
+                    investigatedNode = ast;
+                }
+                boolean found = findIfnodeExpressionContainsChildTableRef(investigatedNode, targetModel);
                 if (found)
                     return false;
             }
@@ -2640,7 +2653,9 @@ public class SqlOptimiser implements Mutable {
                 if (found)
                     return false;
             }
-            isLimitPresent = parent.getLimitLo() != null && parent.getSelectModelType() != SELECT_MODEL_GROUP_BY;
+            isLimitPresent = (virtualModel != null && virtualModel.getLimitLo() != null) ||
+                    parent.getLimitLo() != null && parent.getSelectModelType() != SELECT_MODEL_GROUP_BY;
+
             return isOrderByPresent && isLimitPresent;
         }
         return false;
@@ -3349,18 +3364,19 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model the query model to optimise
      */
-    private void optimiseModelsWithASOFJoins(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
+    private void optimiseModelsWithASOFJoins(SqlExecutionContext executionContext, QueryModel model,
+                                             QueryModel originalModel) throws SqlException {
         if (model == null)
             return;
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i));
+            optimiseModelsWithASOFJoins(executionContext, joinModels.getQuick(i), originalModel);
         }
 
         if (model != null) {
-            optimiseModelsWithASOFJoins(executionContext, model.getNestedModel());
-            optimiseModelsWithASOFJoins(executionContext, model.getUnionModel());
+            optimiseModelsWithASOFJoins(executionContext, model.getNestedModel(), originalModel);
+            optimiseModelsWithASOFJoins(executionContext, model.getUnionModel(), originalModel);
         }
 
         QueryModel targetModel = model.getNestedModel();
@@ -3374,7 +3390,7 @@ public class SqlOptimiser implements Mutable {
             targetModel = targetModel.getNestedModel();
         }
 
-        if (!isModelEligibleForASOFJoinOptimisation(executionContext, targetModel, parentModel))
+        if (!isModelEligibleForASOFJoinOptimisation(executionContext, targetModel, parentModel, originalModel))
             return;
 
         QueryModel baseTableModel = model;
@@ -3435,6 +3451,7 @@ public class SqlOptimiser implements Mutable {
          */
         QueryModel level3 = queryModelPool.next();
         level3.setSelectModelType(SELECT_MODEL_CHOOSE);
+        // if order by is an expression, limit should be populated by virtual model
         level3.setLimit(parentModel.getLimitLo(), null);
         propagateColumnsFromLowerToHigherModel(level2, level3, true);
         level3.setNestedModel(level2);
@@ -7247,7 +7264,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel);
+            optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel, rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
@@ -7364,19 +7381,15 @@ public class SqlOptimiser implements Mutable {
         @Override
         public void visit(ExpressionNode node) throws SqlException {
             if (node.type == LITERAL) {
-                if (node.token.equals("column")) {
-                    found = true;
-                    return;
-                }
                 CharSequence clauseColumn = node.token;
                 int dot = Chars.indexOfLastUnquoted(clauseColumn, '.');
                 CharSequence clauseColumnName = clauseColumn.subSequence(dot + 1, clauseColumn.length());
                 //check with column in between clause should be of master table
                 if (dot != -1) {
-                    CharSequence whereClauseAlias = clauseColumn.subSequence(0, dot);
+                    CharSequence nodeAlias = clauseColumn.subSequence(0, dot);
                     CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
                             targetModel.getTableNameExpr().token;
-                    if (!Chars.equalsIgnoreCase(whereClauseAlias, masterTableAlias))
+                    if (!Chars.equalsIgnoreCase(nodeAlias, masterTableAlias))
                         found = true;
                 } else {
                     if (!targetModel.getAliasToColumnMap().contains(clauseColumnName))
