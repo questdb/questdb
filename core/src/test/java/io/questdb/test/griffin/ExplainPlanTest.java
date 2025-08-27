@@ -1232,7 +1232,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          filter: bid_price=189.4\n" +
                             "            Radix sort light\n" +
                             "              keys: [timestamp]\n" +
-                            "                Async Top K lo: 6 workers: 1\n" +
+                            "                Async JIT Top K lo: 6 workers: 1\n" +
                             "                  filter: price=184.0\n" +
                             "                  keys: [size, price]\n" +
                             "                    PageFrame\n" +
