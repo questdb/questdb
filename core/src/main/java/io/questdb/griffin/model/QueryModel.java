@@ -1139,11 +1139,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      *
      * @param baseModel baseModel containing columns mapped into the referenced baseModel.
      */
-    public void mergePartially(QueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) {
+    public void mergePartially(QueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) throws SqlException {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
                 QueryColumn thatColumn = baseModel.getAliasToColumnMap().get(thisColumn.getAst().token);
+                // skip if baseModel does not have this column
+                if (thatColumn == null) {
+                    continue;
+                }
                 // We cannot mutate the column on this baseModel, because columns might be shared between
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference
