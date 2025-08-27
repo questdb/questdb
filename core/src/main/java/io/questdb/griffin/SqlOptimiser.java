@@ -2640,7 +2640,7 @@ public class SqlOptimiser implements Mutable {
                 if (found)
                     return false;
             }
-            isLimitPresent = parent.getLimitLo() != null;
+            isLimitPresent = parent.getLimitLo() != null && parent.getSelectModelType() != SELECT_MODEL_GROUP_BY;
             return isOrderByPresent && isLimitPresent;
         }
         return false;
@@ -3447,6 +3447,7 @@ public class SqlOptimiser implements Mutable {
             final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
             final ExpressionNode timestampNode = expressionNodePool.next();
             timestampNode.token = timestampColumn;
+            level4.setTimestamp(baseTableModel.getTimestamp());
             level4.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
         propagateColumnsFromLowerToHigherModel(level3, level4, false);
@@ -3458,7 +3459,39 @@ public class SqlOptimiser implements Mutable {
         QueryModel level5 = queryModelPool.next();
         level5.setSelectModelType(SELECT_MODEL_CHOOSE);
         propagateColumnsFromLowerToHigherModel(level4, level5, true);
+        boolean timestampColumnPresentInQuery = false;
+        /*
+         If timestamp column is not present in the query, add it to the top-down columns of level-5 model
+         else it doesn't recognise timestamp column in level-4 model
+        */
+        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+            QueryColumn c = model.getBottomUpColumns().getQuick(i);
+            ExpressionNode timestampColumnAst = c.getAst();
+            int dot = Chars.indexOfLastUnquoted(timestampColumnAst.token, '.');
+            /*
+            ast of timestamp column for parent model will always contain reference to alias/tableNameExpr child tables
+            else it will be ambiguous reference
+            */
+            if (dot > -1) {
+                CharSequence tableAlias = timestampColumnAst.token.subSequence(0, dot);
+                if (((
+                        (targetModel.getTableNameExpr() != null
+                                && Chars.equals(tableAlias, targetModel.getTableNameExpr().token)) ||
+                                (targetModel.getAlias() != null
+                                        && Chars.equals(tableAlias, targetModel.getAlias().token))))
+                        && (Chars.equals(c.getAlias(), baseTableModel.getTimestamp().token))) {
+                    timestampColumnPresentInQuery = true;
+                    break;
+                }
+            }
+        }
+        if (!timestampColumnPresentInQuery) {
+            QueryColumn newQC = queryColumnPool.next();
+            newQC.of(baseTableModel.getTimestamp().token, baseTableModel.getTimestamp());
+            level5.getTopDownColumns().add(newQC);
+        }
         level5.setNestedModel(level4);
+
 
         /*
         changes in target model
@@ -3727,7 +3760,6 @@ public class SqlOptimiser implements Mutable {
                     higher.getBottomUpColumns().add(newQc);
                 }
             }
-
         }
     }
 
@@ -3752,8 +3784,7 @@ public class SqlOptimiser implements Mutable {
     private void propagateTimestampColumnFromBaseModelToLevel0(QueryModel baseTableModel, QueryModel targetModel) {
         if (targetModel.getNestedModel() == null || targetModel == baseTableModel || baseTableModel.getTimestamp() == null)
             return;
-        targetModel = targetModel.getNestedModel();
-        propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, targetModel);
+        propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, targetModel.getNestedModel());
         createAndAddTimestampColumn(baseTableModel, targetModel);
     }
 

@@ -680,6 +680,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShoulNotdWorkWithAggregateFunctionIncludedInBaseQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select size, price, count() from trades a ASOF JOIN order_book o\n" +
+                            "order by a.price\n" +
+                            "limit 5",
+                    "Sort light lo: 5\n" +
+                            "  keys: [price]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [size,price]\n" +
+                            "      values: [count(*)]\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
     public void testAsofJoinOptimisationShouldNotWorkWithOrderByClauseOnChildTableWithAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
@@ -794,6 +832,50 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShouldWorkWithAggregateFunctionOverSimpleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select size, count() from (\n" +
+                            "select a.size, a.price from trades a ASOF JOIN order_book o\n" +
+                            "order by a.price\n" +
+                            "limit 5)  order by size limit 4",
+                    "Sort light lo: 4\n" +
+                            "  keys: [size]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [size]\n" +
+                            "      values: [count(*)]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "                SelectedRecord\n" +
+                            "                    Async Top K lo: 5 workers: 1\n" +
+                            "                      filter: null\n" +
+                            "                      keys: [price]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
     public void testAsofJoinOptimisationShouldWorkWithNestedJoinClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
@@ -829,8 +911,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                  keys: [size]\n" +
                             "                    SelectedRecord\n" +
                             "                        AsOf Join Fast Scan\n" +
-                            "                            Radix sort light\n" +
-                            "                              keys: [timestamp]\n" +
+                            "                            SelectedRecord\n" +
                             "                                Async Top K lo: 5 workers: 1\n" +
                             "                                  filter: null\n" +
                             "                                  keys: [size]\n" +
@@ -844,8 +925,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                  keys: [size]\n" +
                             "                    SelectedRecord\n" +
                             "                        AsOf Join Fast Scan\n" +
-                            "                            Radix sort light\n" +
-                            "                              keys: [timestamp]\n" +
+                            "                            SelectedRecord\n" +
                             "                                Async Top K lo: 7 workers: 1\n" +
                             "                                  filter: null\n" +
                             "                                  keys: [size]\n" +
@@ -893,8 +973,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          keys: [size]\n" +
                             "            SelectedRecord\n" +
                             "                AsOf Join Fast Scan\n" +
-                            "                    Radix sort light\n" +
-                            "                      keys: [timestamp]\n" +
+                            "                    SelectedRecord\n" +
                             "                        Async Top K lo: 5 workers: 1\n" +
                             "                          filter: null\n" +
                             "                          keys: [size]\n" +
@@ -908,8 +987,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          keys: [size]\n" +
                             "            SelectedRecord\n" +
                             "                AsOf Join Fast Scan\n" +
-                            "                    Radix sort light\n" +
-                            "                      keys: [timestamp]\n" +
+                            "                    SelectedRecord\n" +
                             "                        Async Top K lo: 7 workers: 1\n" +
                             "                          filter: null\n" +
                             "                          keys: [size]\n" +
@@ -980,8 +1058,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [size]\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            Radix sort light\n" +
-                            "              keys: [timestamp]\n" +
+                            "            SelectedRecord\n" +
                             "                Async Top K lo: 5 workers: 1\n" +
                             "                  filter: null\n" +
                             "                  keys: [size]\n" +
@@ -1024,8 +1101,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
                             "          condition: t2.s=t1.s\n" +
-                            "            Radix sort light\n" +
-                            "              keys: [ts]\n" +
+                            "            SelectedRecord\n" +
                             "                Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                             "                    SortedSymbolIndex\n" +
                             "                        Index forward scan on: s\n" +
@@ -1065,11 +1141,50 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [price, size, timestamp]\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            Radix sort light\n" +
-                            "              keys: [timestamp]\n" +
+                            "            SelectedRecord\n" +
                             "                Async Top K lo: 5 workers: 1\n" +
                             "                  filter: price='184.0'\n" +
                             "                  keys: [price, size, timestamp]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationWithSimpleQueryWithSelectExcludingTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    " select price, size from trades ASOF JOIN order_book\n" +
+                            " where price = '184.0'\n" +
+                            "order by price, size limit 5",
+                    "Sort\n" +
+                            "  keys: [price, size]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            SelectedRecord\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: price='184.0'\n" +
+                            "                  keys: [price, size]\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: trades\n" +
@@ -1108,9 +1223,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
                             "          filter: bid_price=189.4\n" +
-                            "            Radix sort light\n" +
-                            "              keys: [timestamp]\n" +
-                            "                Async JIT Top K lo: 6 workers: 1\n" +
+                            "            SelectedRecord\n" +
+                            "                Async Top K lo: 6 workers: 1\n" +
                             "                  filter: price=184.0\n" +
                             "                  keys: [size, price]\n" +
                             "                    PageFrame\n" +
@@ -1119,6 +1233,48 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithOptimisationInNestedQueryWithAliasWithoutTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select a.price, b.bid_price from (select price,size from trades order by trades.timestamp) a \n" +
+                            "  asof join (select bid_price,bid_size,ask_price from order_book where bid_price = 189.4 order by timestamp) b \n" +
+                            "  order by a.size, a.price asc limit 6",
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [size, price]\n" +
+                            "        SelectedRecord\n" +
+                            "            Filtered AsOf Join Fast Scan\n" +
+                            "              filter: bid_price=189.4\n" +
+                            "                SelectedRecord\n" +
+                            "                    Async Top K lo: 6 workers: 1\n" +
+                            "                      filter: null\n" +
+                            "                      keys: [size, price]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: order_book\n"
             );
         });
     }
