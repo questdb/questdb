@@ -1224,7 +1224,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Filtered AsOf Join Fast Scan\n" +
                             "          filter: bid_price=189.4\n" +
                             "            SelectedRecord\n" +
-                            "                Async Top K lo: 6 workers: 1\n" +
+                            "                Async JIT Top K lo: 6 workers: 1\n" +
                             "                  filter: price=184.0\n" +
                             "                  keys: [size, price]\n" +
                             "                    PageFrame\n" +
@@ -1232,7 +1232,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                        Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: order_book\n"
+                            "                Frame forward scan on: order_book"
             );
         });
     }
