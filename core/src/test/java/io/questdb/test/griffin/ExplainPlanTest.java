@@ -911,7 +911,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                  keys: [size]\n" +
                             "                    SelectedRecord\n" +
                             "                        AsOf Join Fast Scan\n" +
-                            "                            SelectedRecord\n" +
+                            "                            Radix sort light\n" +
+                            "                              keys: [timestamp]\n" +
                             "                                Async Top K lo: 5 workers: 1\n" +
                             "                                  filter: null\n" +
                             "                                  keys: [size]\n" +
@@ -925,7 +926,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                  keys: [size]\n" +
                             "                    SelectedRecord\n" +
                             "                        AsOf Join Fast Scan\n" +
-                            "                            SelectedRecord\n" +
+                            "                            Radix sort light\n" +
+                            "                              keys: [timestamp]\n" +
                             "                                Async Top K lo: 7 workers: 1\n" +
                             "                                  filter: null\n" +
                             "                                  keys: [size]\n" +
@@ -973,7 +975,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          keys: [size]\n" +
                             "            SelectedRecord\n" +
                             "                AsOf Join Fast Scan\n" +
-                            "                    SelectedRecord\n" +
+                            "                    Radix sort light\n" +
+                            "                      keys: [timestamp]\n" +
                             "                        Async Top K lo: 5 workers: 1\n" +
                             "                          filter: null\n" +
                             "                          keys: [size]\n" +
@@ -987,7 +990,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          keys: [size]\n" +
                             "            SelectedRecord\n" +
                             "                AsOf Join Fast Scan\n" +
-                            "                    SelectedRecord\n" +
+                            "                    Radix sort light\n" +
+                            "                      keys: [timestamp]\n" +
                             "                        Async Top K lo: 7 workers: 1\n" +
                             "                          filter: null\n" +
                             "                          keys: [size]\n" +
@@ -1058,7 +1062,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [size]\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            SelectedRecord\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
                             "                Async Top K lo: 5 workers: 1\n" +
                             "                  filter: null\n" +
                             "                  keys: [size]\n" +
@@ -1101,7 +1106,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
                             "          condition: t2.s=t1.s\n" +
-                            "            SelectedRecord\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [ts]\n" +
                             "                Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                             "                    SortedSymbolIndex\n" +
                             "                        Index forward scan on: s\n" +
@@ -1141,7 +1147,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [price, size, timestamp]\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            SelectedRecord\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
                             "                Async Top K lo: 5 workers: 1\n" +
                             "                  filter: price='184.0'\n" +
                             "                  keys: [price, size, timestamp]\n" +
@@ -1223,8 +1230,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
                             "          filter: bid_price=189.4\n" +
-                            "            SelectedRecord\n" +
-                            "                Async JIT Top K lo: 6 workers: 1\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Async Top K lo: 6 workers: 1\n" +
                             "                  filter: price=184.0\n" +
                             "                  keys: [size, price]\n" +
                             "                    PageFrame\n" +

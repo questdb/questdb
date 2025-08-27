@@ -1075,14 +1075,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "ORDER BY t1.s, t1.ts\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] s, ts from (select-choose [ts, s] s, ts from (select-choose [ts, s] s, ts from (select [ts, s] from t1 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000) timestamp (ts) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] s, ts from (select-choose [s, ts] s, ts from (select-choose [s, ts] s, ts from (select [s, ts] from t1 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
             assertPlanNoLeakCheck(query,
                     "Sort\n" +
                             "  keys: [s, ts]\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
                             "          condition: t2.s=t1.s\n" +
-                            "            SelectedRecord\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [ts]\n" +
                             "                Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "                    SortedSymbolIndex\n" +
                             "                        Index forward scan on: s\n" +
@@ -1113,7 +1114,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "ORDER BY t1.ts, t1.s\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] s, ts from (select-choose [ts, s] s, ts from (select-choose [ts, s] s, ts from (select [ts, s] from t1 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000) timestamp (ts) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by ts, s", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] s, ts from (select-choose [s, ts] s, ts from (select-choose [s, ts] s, ts from (select [s, ts] from t1 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by ts, s", query);
             assertPlanNoLeakCheck(query,
                     "Sort\n" +
                             "  keys: [ts, s]\n" +
@@ -1229,7 +1230,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
                             "          condition: t2.s=t1.s\n" +
-                            "            SelectedRecord\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [ts]\n" +
                             "                Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "                    SortedSymbolIndex\n" +
                             "                        Index forward scan on: s\n" +
@@ -1239,12 +1241,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t2\n");
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] s, ts from (select-choose [ts, s] s, ts from (select-choose [ts, s] s, ts from (select [ts, s] from t1 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z'))) order by s, ts limit 1000000) timestamp (ts) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] s, ts from (select-choose [s, ts] s, ts from (select-choose [s, ts] s, ts from (select [s, ts] from t1 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z'))) order by s, ts limit 1000000) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
                     "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
                     "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
                     "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
                     "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n", query);

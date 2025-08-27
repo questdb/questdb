@@ -3464,7 +3464,6 @@ public class SqlOptimiser implements Mutable {
             final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
             final ExpressionNode timestampNode = expressionNodePool.next();
             timestampNode.token = timestampColumn;
-            level4.setTimestamp(baseTableModel.getTimestamp());
             level4.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
         propagateColumnsFromLowerToHigherModel(level3, level4, false);
@@ -3505,6 +3504,7 @@ public class SqlOptimiser implements Mutable {
         if (!timestampColumnPresentInQuery) {
             QueryColumn newQC = queryColumnPool.next();
             newQC.of(baseTableModel.getTimestamp().token, baseTableModel.getTimestamp());
+            level4.setTimestamp(baseTableModel.getTimestamp());
             level5.getTopDownColumns().add(newQC);
         }
         level5.setNestedModel(level4);
