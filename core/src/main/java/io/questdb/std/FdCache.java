@@ -29,7 +29,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
