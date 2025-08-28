@@ -56,6 +56,7 @@ public class MmapCache {
             if (fdMapIndex < 0) {
                 MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
                 if (record.length >= len) {
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache";
                     record.count++;
                     mmapReuseCount++;
                     return record.address;
