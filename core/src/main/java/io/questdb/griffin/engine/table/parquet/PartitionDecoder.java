@@ -268,7 +268,7 @@ public class PartitionDecoder implements QuietCloseable {
                     }
                 } else {
                     metadata.add(new TableColumnMetadata(columnName, columnType));
-                    // Check for designated timestamp's local index.
+                    // Determine designated timestamp's index within the copy.
                     if (ColumnType.isTimestamp(columnType) && i == timestampIndex) {
                         copyTimestampIndex = metadata.getColumnCount() - 1;
                     }

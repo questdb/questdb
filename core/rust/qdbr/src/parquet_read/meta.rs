@@ -68,7 +68,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             {
                 if column_type.is_designated() {
                     timestamp_index = index as i32;
-                    // Clear designated bit as the designated timestamp is reported in timestamp_index.
+                    // Clear the bit as designated timestamp is reported in timestamp_index.
                     column_type = column_type.into_non_designated()?;
                 }
                 columns.push(ColumnMeta {
@@ -91,7 +91,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         if timestamp_index == -1 {
-            // There was no designated timestamp flag in the metadata, so let's try finding it.
+            // There was no designated timestamp flag in the metadata, so let's detect it.
             // First, find the first ASC order column, if it's the same across all row groups.
             let mut asc_column_index = -1_i32;
             for row_group in &metadata.row_groups {
@@ -110,7 +110,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 break;
             }
             if asc_column_index > -1 {
-                // We have a designated timestamp candidate, let's check its type and nullability.
+                // We have a candidate, let's check its type and nullability.
                 if let Some(column) = columns.get(asc_column_index as usize) {
                     if let Some(column_descr) = metadata
                         .schema_descr
