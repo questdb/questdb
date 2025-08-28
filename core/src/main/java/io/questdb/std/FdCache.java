@@ -29,6 +29,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
@@ -102,22 +103,42 @@ public class FdCache {
      */
     public synchronized long createUniqueFdNonCached(int fd) {
         if (fd > -1) {
-            int index = fdCounter.getAndIncrement();
-            long markedFd = Numbers.encodeLowHighInts(index | NON_CACHED, fd);
-            openFdMapByFd.put(markedFd, FdCacheRecord.EMPTY);
+            long markedFd;
+            int keyIndex;
+
+            // loop to avoid collisions when index wraps over
+            do {
+                markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED, fd);
+                keyIndex = openFdMapByFd.keyIndex(markedFd);
+            } while (keyIndex < 0);
+
+            openFdMapByFd.putAt(keyIndex, markedFd, FdCacheRecord.EMPTY);
             OPEN_OS_FILE_COUNT.incrementAndGet();
             return markedFd;
         }
         return fd;
     }
 
+    private int nextIndex() {
+        int raw = fdCounter.getAndIncrement();
+        // mask out the top two bits to avoid collision with RO and RW fds
+        return raw & 0x3F_FF_FF_FF;
+    }
+
     /**
      * Creates unique file descriptor wrapper for stdout without validation checks.
      */
     public synchronized long createUniqueFdNonCachedStdOut(int fd) {
-        int index = fdCounter.getAndIncrement();
-        long markedFd = Numbers.encodeLowHighInts(index | NON_CACHED, fd);
-        openFdMapByFd.put(markedFd, FdCacheRecord.EMPTY);
+        long markedFd;
+        int keyIndex;
+
+        // loop to avoid collisions when the index generator wraps over
+        do {
+            markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED, fd);
+            keyIndex = openFdMapByFd.keyIndex(markedFd);
+        } while (keyIndex < 0);
+
+        openFdMapByFd.putAt(keyIndex, markedFd, FdCacheRecord.EMPTY);
         return markedFd;
     }
 
@@ -177,8 +198,16 @@ public class FdCache {
         }
 
         holder.count++;
-        long uniqROFd = createUniqueFdRO(holder.osFd);
-        openFdMapByFd.put(uniqROFd, holder);
+
+        // find a unique key even if the index generator wrapped over
+        long uniqROFd;
+        int keyIndex;
+        do {
+            uniqROFd = Numbers.encodeLowHighInts(nextIndex() | RO_MASK, holder.osFd);
+            keyIndex = openFdMapByFd.keyIndex(uniqROFd);
+        } while (keyIndex < 0);
+
+        openFdMapByFd.putAt(keyIndex, uniqROFd, holder);
 
         return uniqROFd;
     }
@@ -257,11 +286,6 @@ public class FdCache {
         return holder;
     }
 
-    private long createUniqueFdRO(int fd) {
-        int index = fdCounter.getAndIncrement();
-        return Numbers.encodeLowHighInts(index | RO_MASK, fd);
-    }
-
     @Nullable
     private FdCacheRecord getFdCacheRecord(LPSZ lpsz) {
         int keyIndex = openFdMapByPath.keyIndex(lpsz);
@@ -274,7 +298,9 @@ public class FdCache {
             } else {
                 OPEN_OS_FILE_COUNT.incrementAndGet();
                 Utf8String path = Utf8String.newInstance(lpsz);
-                holder = createFdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
+                // todo: explore if potentially dup keys are an issue here
+                // it appears to me that it's OK here
+                holder = createFdCacheRecord(path, Numbers.encodeLowHighInts(nextIndex(), osFd));
                 holder.osFd = osFd;
                 openFdMapByPath.putAt(keyIndex, lpsz, holder);
             }

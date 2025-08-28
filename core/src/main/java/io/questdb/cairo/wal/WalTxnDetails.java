@@ -740,6 +740,7 @@ public class WalTxnDetails implements QuietCloseable {
             txnList.add(long1);
             txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
         }
+        assert txn > 0;
         Vect.radixSortLongIndexAscChecked(
                 txnList.getAddress(),
                 txn,
