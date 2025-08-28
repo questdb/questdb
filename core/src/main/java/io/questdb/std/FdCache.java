@@ -40,7 +40,7 @@ import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 public class FdCache {
     static final AtomicInteger OPEN_OS_FILE_COUNT = new AtomicInteger();
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
-    private static final int NON_CACHED = (2 << 30);
+    private static final int NON_CACHED_MASK = 1 << 31;
     private final AtomicInteger fdCounter = new AtomicInteger(1);
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
     private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
@@ -106,7 +106,7 @@ public class FdCache {
 
             // loop to avoid collisions when index wraps over
             do {
-                markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED, fd);
+                markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED_MASK, fd);
                 keyIndex = openFdMapByFd.keyIndex(markedFd);
             } while (keyIndex < 0);
 
@@ -126,7 +126,7 @@ public class FdCache {
 
         // loop to avoid collisions when the index generator wraps over
         do {
-            markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED, fd);
+            markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED_MASK, fd);
             keyIndex = openFdMapByFd.keyIndex(markedFd);
         } while (keyIndex < 0);
 
