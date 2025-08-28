@@ -118,12 +118,6 @@ public class FdCache {
         return fd;
     }
 
-    private int nextIndex() {
-        int raw = fdCounter.getAndIncrement();
-        // mask out the top two bits to avoid collision with RO and RW fds
-        return raw & 0x3F_FF_FF_FF;
-    }
-
     /**
      * Creates unique file descriptor wrapper for stdout without validation checks.
      */
@@ -308,6 +302,12 @@ public class FdCache {
             fdReuseCount++;
         }
         return holder;
+    }
+
+    private int nextIndex() {
+        int raw = fdCounter.getAndIncrement();
+        // mask out the top two bits to avoid collision with RO and RW fds
+        return raw & 0x3F_FF_FF_FF;
     }
 
     /**
