@@ -58,8 +58,7 @@ public class FdCache {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
 
-        int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3; // Extract bits 30-31
-        if (fdKind > 1) {
+        if ((Numbers.decodeLowInt(fd) & NON_CACHED_MASK) != 0) {
             // NON_CACHED. Simply close the underlying fd.
             int osFd = Numbers.decodeHighInt(fd);
             int res = Files.close0(osFd);
