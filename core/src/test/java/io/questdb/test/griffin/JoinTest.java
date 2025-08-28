@@ -70,6 +70,7 @@ public class JoinTest extends AbstractCairoTest {
 
             execute("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
             execute("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+            execute("insert into table_2 values ( '2022-10-25T04:00:00.000000Z', 'tom',  24, '1 Houston St' )");
 
             // query "2"
             assertQueryNoLeakCheck(
@@ -90,13 +91,14 @@ public class JoinTest extends AbstractCairoTest {
                     "name\tage\tmember\taddress\tts\n" +
                             "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
                             "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
-                            "david\t21\ttrue\t\t\n",
-                    "select a.name, a.age, a.member, b.address, b.ts\n" +
+                            "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                    "select a.name, a.age, a.member, b.address, a.ts\n" +
                             "from table_2 as b \n" +
                             "right join table_1 as a \n" +
                             "   on a.ts = b.ts ",
                     null,
-                    "ts", false,
+                    null
+                    , false,
                     false
             );
 
@@ -104,13 +106,15 @@ public class JoinTest extends AbstractCairoTest {
                     "name\tage\tmember\taddress\tts\n" +
                             "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
                             "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
-                            "david\t21\ttrue\t\t\n",
-                    "select a.name, a.age, a.member, b.address, b.ts\n" +
+                            "\tnull\tfalse\t1 Houston St\t\n" +
+                            "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                    "select a.name, a.age, a.member, b.address, a.ts\n" +
                             "from table_2 as b \n" +
                             "full join table_1 as a \n" +
                             "   on a.ts = b.ts ",
                     null,
-                    "ts", false,
+                    null,
+                    false,
                     false
             );
 
@@ -134,13 +138,13 @@ public class JoinTest extends AbstractCairoTest {
                     "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
                             "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
                             "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
-                            "david\t21\t\t\t\t\n",
-                    "select a.name, a.age, b.address, b.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
                             "from table_2 as b \n" +
                             "right join table_1 as a \n" +
                             "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
                     null,
-                    "ts",
+                    null,
                     false,
                     false
             );
@@ -149,13 +153,14 @@ public class JoinTest extends AbstractCairoTest {
                     "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
                             "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
                             "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
-                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n" +
+                            "\tnull\t1 Houston St\t\t2022-10-25T03:59:00.000000Z\t2022-10-25T04:01:00.000000Z\n",
                     "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
                             "from table_1 as a \n" +
                             "full join table_2 as b \n" +
                             "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
                     null,
-                    "ts",
+                    null,
                     false,
                     false
             );

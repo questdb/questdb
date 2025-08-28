@@ -135,6 +135,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         private final FullOuterJoinRecord record;
         private boolean isMasterHasNextPending;
         private boolean isMatch;
+        private boolean isOpen;
         private boolean masterHasNext;
         private Map matchIdsMap;
         private Record slaveRecord;
@@ -145,12 +146,16 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             this.filter = filter;
             this.isMatch = false;
             this.matchIdsMap = matchIdsMap;
+            isOpen = true;
         }
 
         @Override
         public void close() {
-            super.close();
-            matchIdsMap = Misc.free(matchIdsMap);
+            if (isOpen) {
+                super.close();
+                Misc.free(matchIdsMap);
+                isOpen = false;
+            }
         }
 
         @Override
@@ -191,6 +196,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 }
 
                 if (!isMatch) {
+                    isMatch = true;
                     record.hasSlave(false);
                     return true;
                 }
@@ -230,7 +236,10 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             this.slaveRecord = slaveCursor.getRecord();
             record.of(masterCursor.getRecord(), this.slaveRecord);
             isMasterHasNextPending = true;
-            matchIdsMap.clear();
+            if (!isOpen) {
+                isOpen = true;
+                matchIdsMap.reopen();
+            }
         }
     }
 

@@ -85,6 +85,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
@@ -155,7 +160,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public int getScanDirection() {
-        return masterFactory.getScanDirection();
+        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override

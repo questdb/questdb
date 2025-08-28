@@ -90,7 +90,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
+        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -144,7 +144,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        return masterFactory.getScanDirection();
+        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override

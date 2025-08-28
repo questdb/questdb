@@ -2622,7 +2622,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_CROSS_RIGHT:
                             case JOIN_CROSS_FULL:
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
                                 filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 switch (joinType) {
                                     case JOIN_CROSS_LEFT:
@@ -3045,7 +3045,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }

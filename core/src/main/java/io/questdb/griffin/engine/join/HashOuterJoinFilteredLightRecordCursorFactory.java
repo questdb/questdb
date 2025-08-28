@@ -60,7 +60,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     private final RecordSink slaveKeySink;
     private AbstractHashOuterJoinLightRecordCursor cursor;
     private Map joinKeyMap;
-    private boolean masterDetermined;
     private LongChain slaveChain;
 
     public HashOuterJoinFilteredLightRecordCursorFactory(
@@ -94,8 +93,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     public boolean followedOrderByAdvice() {
-        masterDetermined = true;
-        return masterFactory.followedOrderByAdvice();
+        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -140,7 +138,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (joinType == QueryModel.JOIN_FULL_OUTER && !masterDetermined) {
+            if (joinType == QueryModel.JOIN_FULL_OUTER) {
                 boolean swapped = false;
                 if (masterFactory.recordCursorSupportsRandomAccess()) {
                     long masterSize = masterCursor.size();
@@ -169,8 +167,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     public int getScanDirection() {
-        masterDetermined = true;
-        return masterFactory.getScanDirection();
+        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
