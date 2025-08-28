@@ -251,7 +251,7 @@ impl ColumnType {
                 self
             ));
         }
-        let code = self.code() ^ TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        let code = self.code() & !TYPE_FLAG_DESIGNATED_TIMESTAMP;
         Ok(Self { code })
     }
 
@@ -442,6 +442,11 @@ mod tests {
         let typ = typ.unwrap();
         assert!(!typ.is_designated());
         assert_eq!(typ, ColumnType::new(ColumnTypeTag::Timestamp, 0));
+        // into_non_designated must be idempotent
+        let typ = typ.into_non_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(!typ.is_designated());
     }
 
     #[test]

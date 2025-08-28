@@ -116,6 +116,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
 
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
+                assert rowGroupCount > 0;
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
                 final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
                 assert ColumnType.isTimestamp(timestampColumnType);

@@ -8656,6 +8656,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             attachMinTimestamp = parquetStatBuffers.getMinValueLong(0);
             final int rowGroupCount = parquetDecoder.metadata().getRowGroupCount();
+            assert rowGroupCount > 0;
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, rowGroupCount - 1);
             attachMaxTimestamp = parquetStatBuffers.getMaxValueLong(0);
 

@@ -135,6 +135,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     public long maxTimestampExact() {
         // Read the min value from the stats to avoid decoding.
         final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
+        assert rowGroupCount > 0;
         partitionDecoder.readRowGroupStats(statBuffers, timestampIdAndType, rowGroupCount - 1);
         return statBuffers.getMaxValueLong(0);
     }
