@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
@@ -261,6 +262,104 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testConcurrentWriteAndTruncate() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        runInContext((receiver) -> {
+            String tableName = "concurrent_test";
+            final int iterations = 500;
+            final SOCountDownLatch startLatch = new SOCountDownLatch(2);
+            final SOCountDownLatch finishLatch = new SOCountDownLatch(2);
+            final AtomicInteger errorCount = new AtomicInteger(0);
+            String initialData = tableName + ",location=init_location,symbol=test temperature=20.0 1465839830100000000\n";
+            send(initialData, tableName);
+            mayDrainWalQueue();
+
+            Thread ilpWriteThread = new Thread(() -> {
+                try {
+                    startLatch.countDown();
+                    startLatch.await();
+
+                    try (Socket socket = getSocket()) {
+                        for (int i = 0; i < iterations; i++) {
+                            try {
+                                // Use duplicate timestamp and symbols to trigger metadata operations
+                                String lineData = tableName + ",location=test_location,symbol=sym" + (i % 3) +
+                                        " temperature=" + (20.0 + i) + " " +
+                                        (1465839830102000000L + (i % 5)) + "\n";
+                                sendToSocket(socket, lineData);
+
+                                if (i % 50 == 0) {
+                                    mayDrainWalQueue();
+                                }
+
+                                if (i % 20 == 0) {
+                                    Os.sleep(1);
+                                }
+                            } catch (Throwable e) {
+                                errorCount.incrementAndGet();
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    errorCount.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                    finishLatch.countDown();
+                }
+            });
+
+            Thread truncateThread = new Thread(() -> {
+                try {
+                    startLatch.countDown();
+                    startLatch.await();
+                    boolean drop = false;
+
+                    for (int i = 0; i < iterations; i++) {
+                        try {
+                            // Alternate between truncate and drop operations
+                            if (i % 15 == 0) {
+                                TableToken tt = engine.getTableTokenIfExists(tableName);
+                                if (tt != null) {
+                                    try (TableWriterAPI writer = getTableWriterAPI(tableName)) {
+                                        writer.truncateSoft();
+                                    }
+                                    mayDrainWalQueue();
+                                    drop = true;
+                                }
+                            } else if (i % 25 == 0 && drop) {
+                                TableToken tt = engine.getTableTokenIfExists(tableName);
+                                if (tt != null) {
+                                    engine.dropTableOrMatView(path, tt);
+                                    drop = false;
+                                }
+                            }
+                            Os.sleep(2);
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                        }
+                    }
+                } catch (Throwable e) {
+                    errorCount.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                    finishLatch.countDown();
+                }
+            });
+
+            ilpWriteThread.start();
+            truncateThread.start();
+
+            try {
+                finishLatch.await();
+                Assert.assertEquals(0, errorCount.get());
+            } finally {
+                ilpWriteThread.interrupt();
+                truncateThread.interrupt();
+            }
+        });
+    }
+
+    @Test
     public void testCreationAttemptNonPartitionedTableWithWal() throws Exception {
         Assume.assumeTrue(walEnabled);
         partitionByDefault = PartitionBy.NONE;
@@ -362,7 +461,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -370,7 +469,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 ) {
                     dropWeatherTable();
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
         };
 
@@ -700,7 +799,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && count.decrementAndGet() == 0
@@ -708,7 +807,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
         };
 
@@ -756,7 +855,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -764,7 +863,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 ) {
                     renameTable(weather, meteorology);
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
         };
 

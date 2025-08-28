@@ -58,7 +58,6 @@ public class PGArraysTest extends BasePGTest {
     private final boolean walEnabled;
 
     public PGArraysTest(WalMode walMode) {
-        super(LegacyMode.MODERN);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 

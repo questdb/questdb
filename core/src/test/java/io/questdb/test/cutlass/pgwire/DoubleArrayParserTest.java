@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

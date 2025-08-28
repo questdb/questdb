@@ -659,7 +659,7 @@ public class IODispatcherTest extends AbstractTest {
         getSimpleTester().run((engine, sqlExecutionContext) ->
                 testHttpClient.assertGet(
                         "{" +
-                                "\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\"," +
+                                "\"query\":\"select simulate_crash('P') \\n\\rfrom\\tlong_sequence(" + (numOfRows + 5) + ")\"," +
                                 "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
@@ -667,7 +667,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"error\":\"simulated cairo exception\", " +
                                 "\"errorPos\":222" +
                                 "}",
-                        "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
+                        "select simulate_crash('P') \n\rfrom\tlong_sequence(" + (numOfRows + 5) + ")"
                 )
         );
     }

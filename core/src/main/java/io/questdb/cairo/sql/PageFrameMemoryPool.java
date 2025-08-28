@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -50,7 +51,7 @@ import org.jetbrains.annotations.NotNull;
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
-public class PageFrameMemoryPool implements QuietCloseable, Mutable {
+public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, Mutable {
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
@@ -201,6 +202,13 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         Misc.free(parquetDecoder);
     }
 
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
     // We don't use additional data structures to speed up the lookups
     // such as <frame_index, buffers> hash table. That's because we don't
     // expect the cache size to be large.
@@ -267,9 +275,22 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         }
         // Prepare table reader to parquet column index mappings.
         toParquetColumnIndexes.clear();
-        for (int i = 0, n = parquetMetadata.columnCount(); i < n; i++) {
-            final int columnIndex = parquetMetadata.columnId(i);
-            toParquetColumnIndexes.extendAndSet(columnIndex, i);
+        int metadataIndex = 0;
+        for (int parquetIndex = 0, n = parquetMetadata.columnCount(); parquetIndex < n; parquetIndex++) {
+            final int parquetColumnType = parquetMetadata.getColumnType(parquetIndex);
+            // If the column is not recognized by the decoder, we have to skip it.
+            if (ColumnType.isUndefined(parquetColumnType)) {
+                continue;
+            }
+            if (!addressCache.isExternal()) {
+                // We can only trust column ids in case of partition files.
+                final int columnId = parquetMetadata.columnId(parquetIndex);
+                assert columnId > -1 : "negative column id value for " + parquetMetadata.columnName(parquetIndex);
+                toParquetColumnIndexes.extendAndSet(columnId, parquetIndex);
+            } else {
+                toParquetColumnIndexes.extendAndSet(metadataIndex, parquetIndex);
+            }
+            metadataIndex++;
         }
         // Now do the final remapping.
         parquetColumns.clear();

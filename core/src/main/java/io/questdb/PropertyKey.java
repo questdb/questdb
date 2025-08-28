@@ -99,6 +99,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_FILTER_ENABLED("cairo.sql.parallel.filter.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED("cairo.sql.parallel.filter.pretouch.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD("cairo.sql.parallel.filter.pretouch.threshold"),
+    CAIRO_SQL_PARALLEL_TOP_K_ENABLED("cairo.sql.parallel.topk.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
@@ -541,6 +542,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe"),
     CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),
     CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED("cairo.partition.encoder.parquet.statistics.enabled"),
+    CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED("cairo.partition.encoder.parquet.raw.array.encoding.enabled"),
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC("cairo.partition.encoder.parquet.compression.codec"),
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
     CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
@@ -583,7 +585,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
-    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size");
+    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
+    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
