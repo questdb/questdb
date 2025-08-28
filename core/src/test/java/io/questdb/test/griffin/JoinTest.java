@@ -86,6 +86,34 @@ public class JoinTest extends AbstractCairoTest {
                     false
             );
 
+            assertQueryNoLeakCheck(
+                    "name\tage\tmember\taddress\tts\n" +
+                            "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                            "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                            "david\t21\ttrue\t\t\n",
+                    "select a.name, a.age, a.member, b.address, b.ts\n" +
+                            "from table_2 as b \n" +
+                            "right join table_1 as a \n" +
+                            "   on a.ts = b.ts ",
+                    null,
+                    "ts", false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\tmember\taddress\tts\n" +
+                            "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                            "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                            "david\t21\ttrue\t\t\n",
+                    "select a.name, a.age, a.member, b.address, b.ts\n" +
+                            "from table_2 as b \n" +
+                            "full join table_1 as a \n" +
+                            "   on a.ts = b.ts ",
+                    null,
+                    "ts", false,
+                    false
+            );
+
             // query "3"
             assertQueryNoLeakCheck(
                     "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
@@ -95,6 +123,36 @@ public class JoinTest extends AbstractCairoTest {
                     "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
                             "from table_1 as a \n" +
                             "left join table_2 as b \n" +
+                            "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
+                    null,
+                    "ts",
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t\t\t\n",
+                    "select a.name, a.age, b.address, b.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_2 as b \n" +
+                            "right join table_1 as a \n" +
+                            "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
+                    null,
+                    "ts",
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_1 as a \n" +
+                            "full join table_2 as b \n" +
                             "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
                     null,
                     "ts",
