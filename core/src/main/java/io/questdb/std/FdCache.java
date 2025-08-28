@@ -304,8 +304,8 @@ public class FdCache {
 
     private int nextIndex() {
         int raw = fdCounter.getAndIncrement();
-        // mask out the top two bits to avoid collision with RO and RW fds
-        return raw & 0x3F_FF_FF_FF;
+        // mask out the non-cached bit
+        return raw & ~NON_CACHED_MASK;
     }
 
     /**
