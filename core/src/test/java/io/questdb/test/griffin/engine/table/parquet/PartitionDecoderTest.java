@@ -104,7 +104,10 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 Assert.assertEquals(rows, partitionDecoder.metadata().getRowCount());
                 Assert.assertEquals(1, partitionDecoder.metadata().getRowGroupCount());
                 // designated timestamp is the last column
-                Assert.assertEquals(partitionDecoder.metadata().getColumnCount() - 1, partitionDecoder.metadata().getTimestampIndex());
+                final int timestampIndex = partitionDecoder.metadata().getTimestampIndex();
+                Assert.assertEquals(partitionDecoder.metadata().getColumnCount() - 1, timestampIndex);
+                // and its name matches the designated column used in DDL
+                TestUtils.assertEquals("designated_ts", partitionDecoder.metadata().getColumnName(timestampIndex));
 
                 TableReaderMetadata readerMeta = reader.getMetadata();
                 Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.metadata().getColumnCount());

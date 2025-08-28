@@ -240,8 +240,8 @@ public class PartitionDecoder implements QuietCloseable {
          * Copies supported columns into the provided metadata, skipping any with Undefined type.
          * If treatSymbolsAsVarchar is true, symbol columns are exposed as VARCHAR.
          */
-        public void copyToSansUnsupported(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
-            metadata.clear();
+        public void copyToSansUnsupported(GenericRecordMetadata dest, boolean treatSymbolsAsVarchar) {
+            dest.clear();
             final int timestampIndex = getTimestampIndex();
             int copyTimestampIndex = -1;
             for (int i = 0, n = getColumnCount(); i < n; i++) {
@@ -255,9 +255,9 @@ public class PartitionDecoder implements QuietCloseable {
 
                 if (ColumnType.isSymbol(columnType)) {
                     if (treatSymbolsAsVarchar) {
-                        metadata.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
+                        dest.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
                     } else {
-                        metadata.add(new TableColumnMetadata(
+                        dest.add(new TableColumnMetadata(
                                 columnName,
                                 columnType,
                                 false,
@@ -267,15 +267,15 @@ public class PartitionDecoder implements QuietCloseable {
                         ));
                     }
                 } else {
-                    metadata.add(new TableColumnMetadata(columnName, columnType));
+                    dest.add(new TableColumnMetadata(columnName, columnType));
                     // Determine designated timestamp's index within the copy.
                     if (ColumnType.isTimestamp(columnType) && i == timestampIndex) {
-                        copyTimestampIndex = metadata.getColumnCount() - 1;
+                        copyTimestampIndex = dest.getColumnCount() - 1;
                     }
                 }
             }
 
-            metadata.setTimestampIndex(copyTimestampIndex);
+            dest.setTimestampIndex(copyTimestampIndex);
         }
 
         public int getColumnCount() {

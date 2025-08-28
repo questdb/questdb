@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/designated_ts_detection.test
+# name: test/parquet/designated_ts_detection.test
 # description: Designated timestamp should be detected even in 3rd-party files
 # group: [parquet]
 

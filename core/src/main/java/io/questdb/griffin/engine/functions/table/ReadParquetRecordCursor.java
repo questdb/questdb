@@ -172,6 +172,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             rowGroupBuffers.reopen();
             columns.reopen();
             final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+            columns.setCapacity(2L * parquetMetadata.getColumnCount());
             for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
                 final int columnType = parquetMetadata.getColumnType(i);
                 if (!ColumnType.isUndefined(columnType)) {

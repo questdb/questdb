@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/parquet_1589.test
+# name: test/parquet/parquet_1589.test
 # description: Test boolean filters
 # group: [parquet]
 

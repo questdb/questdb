@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/test_aws_files.test
+# name: test/parquet/test_aws_files.test
 # description: Test Parquet files created by some internal AWS process
 # group: [parquet]
 

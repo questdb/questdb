@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/timestamp_decode.test
+# name: test/parquet/timestamp_decode.test
 # description: recognise that column is of time timestamp type and decode it correctly
 
 query I

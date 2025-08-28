@@ -376,10 +376,11 @@ pub fn to_parquet_schema(
             None
         };
 
-        let mut column_type = column.data_type;
-        if column.designated_timestamp {
-            column_type = column_type.into_designated()?;
-        }
+        let column_type = if column.designated_timestamp {
+            column.data_type.into_designated()?
+        } else {
+            column.data_type
+        };
         qdb_meta
             .schema
             .push(QdbMetaCol { column_type, column_top: column.column_top, format });

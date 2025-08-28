@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/broken_parquet.test
+# name: test/parquet/broken_parquet.test
 # description: Read several broken parquet files
 # group: [parquet]
 

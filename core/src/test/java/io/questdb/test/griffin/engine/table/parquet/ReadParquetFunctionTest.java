@@ -181,10 +181,28 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 Assert.assertTrue(Files.exists(path.$()));
 
                 // No sorting is needed since we recognize the designated timestamp.
+                final String query = "select * from read_parquet('x.parquet') order by ts";
                 final String expectedPlan = parallel ? "parquet page frame scan\n" : "parquet file sequential scan\n";
                 assertPlanNoLeakCheck(
-                        "select * from read_parquet('x.parquet') order by ts",
+                        query,
                         expectedPlan
+                );
+                assertQueryNoLeakCheck(
+                        "id\tts\n" +
+                                "1\t1970-01-01T00:00:01.000000Z\n" +
+                                "2\t1970-01-01T00:00:02.000000Z\n" +
+                                "3\t1970-01-01T00:00:03.000000Z\n" +
+                                "4\t1970-01-01T00:00:04.000000Z\n" +
+                                "5\t1970-01-01T00:00:05.000000Z\n" +
+                                "6\t1970-01-01T00:00:06.000000Z\n" +
+                                "7\t1970-01-01T00:00:07.000000Z\n" +
+                                "8\t1970-01-01T00:00:08.000000Z\n" +
+                                "9\t1970-01-01T00:00:09.000000Z\n" +
+                                "10\t1970-01-01T00:00:10.000000Z\n",
+                        query + " limit 10",
+                        "ts",
+                        parallel,
+                        true
                 );
             }
         });
