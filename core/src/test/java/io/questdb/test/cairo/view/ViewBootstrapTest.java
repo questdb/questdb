@@ -112,12 +112,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    VIEW1,
+                    VIEW1 + " order by ts",
                     HTTP_OK,
                     "{" +
-                            "\"query\":\"view1\"," +
+                            "\"query\":\"view1 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
-                            "\"timestamp\":-1," +
+                            "\"timestamp\":0," +
                             "\"dataset\":[" +
                             "[\"1970-01-01T00:00:50.000000Z\",\"k5\",5]," +
                             "[\"1970-01-01T00:01:00.000000Z\",\"k6\",6]," +
@@ -130,12 +130,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    VIEW2,
+                    VIEW2 + " order by ts",
                     HTTP_OK,
                     "{" +
-                            "\"query\":\"view2\"," +
+                            "\"query\":\"view2 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k2\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
-                            "\"timestamp\":-1," +
+                            "\"timestamp\":0," +
                             "\"dataset\":[" +
                             "[\"1970-01-01T00:01:10.000000Z\",\"k2_7\",7]," +
                             "[\"1970-01-01T00:01:20.000000Z\",\"k2_8\",8]" +
@@ -152,12 +152,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
             assertExecRequest(
                     httpClient,
-                    VIEW1,
+                    VIEW1 + " order by ts",
                     HTTP_OK,
                     "{" +
-                            "\"query\":\"view1\"," +
+                            "\"query\":\"view1 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
-                            "\"timestamp\":-1," +
+                            "\"timestamp\":0," +
                             "\"dataset\":[" +
                             "[\"1970-01-01T00:00:50.000000Z\",\"k5\",5]," +
                             "[\"1970-01-01T00:01:00.000000Z\",\"k6\",6]," +
@@ -170,12 +170,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    VIEW2,
+                    VIEW2 + " order by ts",
                     HTTP_OK,
                     "{" +
-                            "\"query\":\"view2\"," +
+                            "\"query\":\"view2 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k2\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
-                            "\"timestamp\":-1," +
+                            "\"timestamp\":0," +
                             "\"dataset\":[" +
                             "[\"1970-01-01T00:01:10.000000Z\",\"k2_7\",7]," +
                             "[\"1970-01-01T00:01:20.000000Z\",\"k2_8\",8]" +
@@ -337,11 +337,22 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertNotNull(definition1);
             assertEquals(query1, definition1.getViewSql());
             Assert.assertEquals(1, definition1.getDependencies().size());
-            assertEquals(TABLE1, definition1.getDependencies().getQuick(0));
+            assertTrue(definition1.getDependencies().contains(TABLE1));
+            // Check that column dependencies are collected for view1 (ts, k, v from table1)
+            Assert.assertEquals(3, definition1.getDependencies().get(TABLE1).size());
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("ts"));
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("k"));
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
+
             assertNotNull(definition2);
             assertEquals(query2, definition2.getViewSql());
             Assert.assertEquals(1, definition2.getDependencies().size());
-            assertEquals(TABLE2, definition2.getDependencies().getQuick(0));
+            assertTrue(definition2.getDependencies().contains(TABLE2));
+            // Check that column dependencies are collected for view2 (ts, k2, v from table2)
+            Assert.assertEquals(3, definition2.getDependencies().get(TABLE2).size());
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("ts"));
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("k2"));
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("v"));
 
             assertExecRequest(
                     httpClient,
@@ -423,11 +434,22 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             assertNotNull(definition1);
             assertEquals(query1, definition1.getViewSql());
             Assert.assertEquals(1, definition1.getDependencies().size());
-            assertEquals(TABLE1, definition1.getDependencies().getQuick(0));
+            assertTrue(definition1.getDependencies().contains(TABLE1));
+            // Check that column dependencies are collected for view1 (ts, k, v from table1)
+            Assert.assertEquals(3, definition1.getDependencies().get(TABLE1).size());
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("ts"));
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("k"));
+            Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
+
             assertNotNull(definition2);
             assertEquals(query2, definition2.getViewSql());
             Assert.assertEquals(1, definition2.getDependencies().size());
-            assertEquals(TABLE2, definition2.getDependencies().getQuick(0));
+            assertTrue(definition2.getDependencies().contains(TABLE2));
+            // Check that column dependencies are collected for view2 (ts, k2, v from table2)
+            Assert.assertEquals(3, definition2.getDependencies().get(TABLE2).size());
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("ts"));
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("k2"));
+            Assert.assertTrue(definition2.getDependencies().get(TABLE2).contains("v"));
 
             assertExecRequest(
                     httpClient,
@@ -466,12 +488,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    VIEW1,
+                    VIEW1 + " order by ts",
                     HTTP_OK,
                     "{" +
-                            "\"query\":\"view1\"," +
+                            "\"query\":\"view1 order by ts\"," +
                             "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
-                            "\"timestamp\":-1," +
+                            "\"timestamp\":0," +
                             "\"dataset\":[" +
                             "[\"1970-01-01T00:00:50.000000Z\",\"k5\",5]," +
                             "[\"1970-01-01T00:01:00.000000Z\",\"k6\",6]," +
@@ -491,7 +513,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
         // existing view still readable
         assertSqlViaPG(
-                VIEW1,
+                VIEW1 + " order by ts",
                 "ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]\n" +
                         "1970-01-01 00:00:50.0,k5,5\n" +
                         "1970-01-01 00:01:00.0,k6,6\n" +

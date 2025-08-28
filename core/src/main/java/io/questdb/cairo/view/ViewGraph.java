@@ -26,6 +26,8 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
@@ -51,9 +53,10 @@ public class ViewGraph implements Mutable {
         final TableToken viewToken = viewDefinition.getViewToken();
         final ViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
 
-        final ObjList<String> dependencies = viewDefinition.getDependencies();
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            final ViewDependencyList list = getOrCreateDependentViews(dependencies.getQuick(i));
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final ViewDependencyList list = getOrCreateDependentViews(tableNames.getQuick(i));
             final ObjList<TableToken> dependentViews = list.lockForWrite();
             try {
                 dependentViews.add(viewToken);
@@ -99,9 +102,10 @@ public class ViewGraph implements Mutable {
             return;
         }
 
-        final ObjList<String> dependencies = viewDefinition.getDependencies();
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            final ViewDependencyList list = getOrCreateDependentViews(dependencies.getQuick(i));
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final ViewDependencyList list = getOrCreateDependentViews(tableNames.getQuick(i));
             final ObjList<TableToken> dependentViews = list.lockForWrite();
             try {
                 dependentViews.remove(viewToken);

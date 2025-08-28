@@ -28,7 +28,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.std.ObjList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 
 public interface CreateViewOperationBuilder extends ExecutionModel {
 
@@ -38,7 +39,7 @@ public interface CreateViewOperationBuilder extends ExecutionModel {
             CharSequence sqlText
     ) throws SqlException;
 
-    ObjList<CharSequence> getDependencies();
+    LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> getDependencies();
 
     @Override
     default int getModelType() {

@@ -32,7 +32,8 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.ObjList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -73,11 +74,13 @@ class AbstractViewTest extends AbstractCairoTest {
         assertEquals(query, viewDefinition.getViewSql());
 
         if (expectedDependencies != null && expectedDependencies.length > 0) {
-            final ObjList<String> dependencies = viewDefinition.getDependencies();
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
             assertNotNull(dependencies);
             assertEquals(expectedDependencies.length, dependencies.size());
             for (int i = 0, n = expectedDependencies.length; i < n; i++) {
-                assertTrue(dependencies.contains(expectedDependencies[i]));
+                if (!dependencies.contains(expectedDependencies[i])) {
+                    fail(expectedDependencies[i] + " not in " + dependencies);
+                }
             }
         }
     }

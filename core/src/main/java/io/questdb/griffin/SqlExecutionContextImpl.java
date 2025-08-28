@@ -41,7 +41,7 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.ObjList;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final LowerCaseCharSequenceHashSet implicitAccessList = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> implicitAccessList = new LowerCaseCharSequenceObjHashMap<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -292,10 +292,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void recordView(ViewDefinition viewDefinition) {
-        final ObjList<String> dependencies = viewDefinition.getDependencies();
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            implicitAccessList.add(dependencies.getQuick(i));
-        }
+        implicitAccessList.putAll(viewDefinition.getDependencies());
     }
 
     @Override

@@ -41,6 +41,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -56,15 +57,13 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public CreateViewOperationImpl(
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
-            @NotNull ObjList<CharSequence> dependencies
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
-        final ObjList<String> deps = viewDefinition.getDependencies();
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            final CharSequence tableName = dependencies.getQuick(i);
-            deps.add(tableName.toString());
-        }
+
+        viewDefinition.getDependencies().putAll(dependencies);
+        dependencies.clear();
     }
 
     @Override

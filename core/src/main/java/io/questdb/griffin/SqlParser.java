@@ -1776,7 +1776,7 @@ public class SqlParser {
             tableOpBuilder.setSelectText(viewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
-            SqlUtil.collectAllTableAndViewNames(queryModel, createViewOperationBuilder.getDependencies(), false);
+            SqlUtil.collectTableAndColumnReferences(queryModel, createViewOperationBuilder.getDependencies());
 
             if (enclosedInParentheses) {
                 expectTok(lexer, ')');

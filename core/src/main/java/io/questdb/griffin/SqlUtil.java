@@ -152,6 +152,87 @@ public class SqlUtil {
         } while (m != null);
     }
 
+    public static void collectTableAndColumnReferences(
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        QueryModel m = model;
+        do {
+            // Process columns in SELECT clause
+            final ObjList<QueryColumn> columns = m.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (column != null && column.getAst() != null) {
+                    collectColumnReferencesFromExpression(column.getAst(), m, depMap);
+                }
+            }
+
+            // Process WHERE clause
+            final ExpressionNode whereClause = m.getWhereClause();
+            if (whereClause != null) {
+                collectColumnReferencesFromExpression(whereClause, m, depMap);
+            }
+
+            // Process JOIN conditions
+            final ObjList<ExpressionNode> joinColumns = m.getJoinColumns();
+            collectColumnReferencesFromJoinColumns(joinColumns, m, depMap);
+
+            // Process GROUP BY
+            final ObjList<ExpressionNode> groupBy = m.getGroupBy();
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                final ExpressionNode groupByExpr = groupBy.getQuick(i);
+                if (groupByExpr != null) {
+                    collectColumnReferencesFromExpression(groupByExpr, m, depMap);
+                }
+            }
+
+            // Process ORDER BY
+            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                final ExpressionNode orderByExpr = orderBy.getQuick(i);
+                if (orderByExpr != null) {
+                    collectColumnReferencesFromExpression(orderByExpr, m, depMap);
+                }
+            }
+
+            // Process tables directly referenced
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                String tableName = unquote(tableNameExpr.token).toString();
+                if (!depMap.contains(tableName)) {
+                    depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+                }
+            }
+
+            // Process views
+            final ExpressionNode viewNameExpr = m.getViewNameExpr();
+            if (viewNameExpr != null) {
+                String viewName = unquote(viewNameExpr.token).toString();
+                if (!depMap.contains(viewName)) {
+                    depMap.put(viewName, new LowerCaseCharSequenceHashSet());
+                }
+            }
+
+            // Process join models
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    collectColumnReferencesFromJoinColumns(joinModel.getJoinColumns(), m, depMap);
+                    collectTableAndColumnReferences(joinModel, depMap);
+                }
+            }
+
+            // Process union models
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectTableAndColumnReferences(unionModel, depMap);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
     public static CharSequence createExprColumnAlias(
             CharacterStore store,
             CharSequence base,
@@ -1140,6 +1221,67 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
+    }
+
+    private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
+        LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
+        if (columns == null) {
+            columns = new LowerCaseCharSequenceHashSet();
+            depMap.put(tableName, columns);
+        }
+        columns.add(columnName);
+    }
+
+    private static void collectColumnReferencesFromExpression(
+            @NotNull ExpressionNode expr,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        // Handle column literals (e.g., table.column or column)
+        if (expr.type == ExpressionNode.LITERAL) {
+            CharSequence token = expr.token;
+            if (token != null) {
+                int dot = Chars.indexOfLastUnquoted(token, '.');
+                if (dot > -1) {
+                    // This is a qualified column reference: table.column
+                    String tableName = unquote(token.subSequence(0, dot)).toString();
+                    String columnName = unquote(token.subSequence(dot + 1, token.length())).toString();
+                    addDependency(depMap, tableName, columnName);
+                } else {
+                    final QueryModel nestedModel = model.getNestedModel();
+                    final CharSequence tableName = nestedModel != null ? nestedModel.getTableName() : model.getTableName();
+                    if (tableName != null) {
+                        addDependency(depMap, tableName.toString(), expr.token.toString());
+                    }
+                }
+            }
+        }
+
+        // Recursively process function arguments and operators
+        for (int i = 0, n = expr.args.size(); i < n; i++) {
+            collectColumnReferencesFromExpression(expr.args.getQuick(i), model, depMap);
+        }
+
+        // Process left and right hand sides for operators
+        if (expr.lhs != null) {
+            collectColumnReferencesFromExpression(expr.lhs, model, depMap);
+        }
+        if (expr.rhs != null) {
+            collectColumnReferencesFromExpression(expr.rhs, model, depMap);
+        }
+    }
+
+    private static void collectColumnReferencesFromJoinColumns(
+            @NotNull ObjList<ExpressionNode> joinColumns,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        for (int i = 0, n = joinColumns.size(); i < n; i++) {
+            final ExpressionNode joinColumn = joinColumns.getQuick(i);
+            if (joinColumn != null) {
+                collectColumnReferencesFromExpression(joinColumn, model, depMap);
+            }
+        }
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

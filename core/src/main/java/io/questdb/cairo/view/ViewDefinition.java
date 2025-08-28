@@ -32,6 +32,8 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -40,18 +42,28 @@ import org.jetbrains.annotations.NotNull;
 public class ViewDefinition implements Mutable {
     public static final String VIEW_DEFINITION_FILE_NAME = "_view";
     public static final int VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
-    private final ObjList<String> dependencies = new ObjList<>();
+    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
     private String viewSql;
     private TableToken viewToken;
 
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull AppendableBlock block) {
         block.putStr(viewDefinition.getViewSql());
 
-        final ObjList<String> dependencies = viewDefinition.getDependencies();
-        final int numOfDependencies = dependencies.size();
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        final int numOfDependencies = tableNames.size();
         block.putInt(numOfDependencies);
         for (int i = 0; i < numOfDependencies; i++) {
-            block.putStr(dependencies.getQuick(i));
+            final CharSequence tableName = tableNames.getQuick(i);
+            block.putStr(tableName);
+            final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+            block.putInt(columns.size());
+            for (int j = 0; j < columns.getKeyCount(); j++) {
+                final CharSequence key = columns.getKey(j);
+                if (key != null) {
+                    block.putStr(key);
+                }
+            }
         }
     }
 
@@ -91,7 +103,7 @@ public class ViewDefinition implements Mutable {
         dependencies.clear();
     }
 
-    public ObjList<String> getDependencies() {
+    public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> getDependencies() {
         return dependencies;
     }
 
@@ -130,16 +142,25 @@ public class ViewDefinition implements Mutable {
         offset += Vm.getStorageLength(viewSql);
         final String viewSqlStr = Chars.toString(viewSql);
 
-        final ObjList<String> dependencies = destDefinition.getDependencies();
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = destDefinition.getDependencies();
         final int numOfDependencies = block.getInt(offset);
         offset += Integer.BYTES;
 
         for (int i = 0; i < numOfDependencies; i++) {
-            final CharSequence dependency = block.getStr(offset);
-            offset += Vm.getStorageLength(dependency);
+            final String tableName = Chars.toString(block.getStr(offset));
+            offset += Vm.getStorageLength(tableName);
 
-            final String dependencyStr = Chars.toString(dependency);
-            dependencies.add(dependencyStr);
+            final int numOfColumns = block.getInt(offset);
+            offset += Integer.BYTES;
+
+            final LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
+            for (int j = 0; j < numOfColumns; j++) {
+                final CharSequence columnName = block.getStr(offset);
+                offset += Vm.getStorageLength(columnName);
+                columns.add(Chars.toString(columnName));
+            }
+
+            dependencies.put(tableName, columns);
         }
 
         destDefinition.init(

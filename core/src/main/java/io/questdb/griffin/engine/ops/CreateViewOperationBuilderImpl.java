@@ -30,8 +30,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -40,7 +41,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilder, Mutable, Sinkable {
     public static final ObjectFactory<CreateViewOperationBuilderImpl> FACTORY = CreateViewOperationBuilderImpl::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
-    private final ObjList<CharSequence> dependencies = new ObjList<>();
+    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
 
     @Override
     public CreateViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -63,7 +64,7 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     }
 
     @Override
-    public ObjList<CharSequence> getDependencies() {
+    public LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> getDependencies() {
         return dependencies;
     }
 
