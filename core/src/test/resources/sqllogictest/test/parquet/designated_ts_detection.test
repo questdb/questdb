@@ -1,0 +1,11 @@
+# name: test/sql/copy/parquet/designated_ts_detection.test
+# description: Designated timestamp should be detected even in 3rd-party files
+# group: [parquet]
+
+require parquet
+
+# SAMPLE BY requires designated timestamp to be present in metadata
+query I
+SELECT ts, max(id) FROM parquet_scan('data/parquet-testing/sorted.parquet') SAMPLE BY 1h
+----
+1970-01-05 15:00:00 1001

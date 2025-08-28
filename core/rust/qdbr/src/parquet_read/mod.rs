@@ -104,7 +104,7 @@ mod tests {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
-        let mut qdb_meta = QdbMeta::new();
+        let mut qdb_meta = QdbMeta::new(1);
         qdb_meta.schema.insert(
             0,
             QdbMetaCol {

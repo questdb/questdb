@@ -243,6 +243,18 @@ impl ColumnType {
         Ok(Self { code })
     }
 
+    pub fn into_non_designated(self) -> CoreResult<ColumnType> {
+        if self.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only timestamp columns can have designated flag",
+                self
+            ));
+        }
+        let code = self.code() ^ TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        Ok(Self { code })
+    }
+
     pub fn tag(&self) -> ColumnTypeTag {
         let col_tag_num: u8 = tag_of(self.code());
         // Constructing from int should already have validated the tag.
@@ -409,6 +421,27 @@ mod tests {
         let dim = typ.unwrap().array_dimensionality();
         assert!(dim.is_ok());
         assert_eq!(dim.unwrap(), 3);
+    }
+
+    #[test]
+    fn test_designated() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Timestamp {
+                assert!(!ColumnType::new(tag, 0).is_designated());
+                assert!(ColumnType::new(tag, 0).into_designated().is_err());
+                assert!(ColumnType::new(tag, 0).into_non_designated().is_err());
+            }
+        }
+
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0).into_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(typ.is_designated());
+        let typ = typ.into_non_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(!typ.is_designated());
+        assert_eq!(typ, ColumnType::new(ColumnTypeTag::Timestamp, 0));
     }
 
     #[test]
