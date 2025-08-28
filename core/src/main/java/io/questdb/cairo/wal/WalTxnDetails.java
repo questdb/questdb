@@ -106,6 +106,30 @@ public class WalTxnDetails implements QuietCloseable {
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
+    public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
+        txnList.setCapacity(txnCount * 4L);
+
+        // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
+        long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
+        int txn = 0;
+        for (; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
+            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
+            max = Math.max(max, long1);
+            min = Math.min(min, long1);
+            txnList.add(long1);
+            txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
+        }
+        assert txn > 0;
+        Vect.radixSortLongIndexAscChecked(
+                txnList.getAddress(),
+                txn,
+                txnList.getAddress() + txn * 2L * Long.BYTES,
+                min,
+                max
+        );
+        return txn;
+    }
+
     public static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
         WalEventCursor walEventCursor;
         try {
@@ -725,30 +749,6 @@ public class WalTxnDetails implements QuietCloseable {
             txnOrder.resetCapacity();
         }
         return totalRowsLoaded;
-    }
-
-    public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
-        txnList.setCapacity(txnCount * 4L);
-
-        // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
-        long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
-        int txn;
-        for (txn = 0; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
-            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
-            max = Math.max(max, long1);
-            min = Math.min(min, long1);
-            txnList.add(long1);
-            txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
-        }
-        assert txn > 0;
-        Vect.radixSortLongIndexAscChecked(
-                txnList.getAddress(),
-                txn,
-                txnList.getAddress() + txn * 2L * Long.BYTES,
-                min,
-                max
-        );
-        return txn;
     }
 
     private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {
