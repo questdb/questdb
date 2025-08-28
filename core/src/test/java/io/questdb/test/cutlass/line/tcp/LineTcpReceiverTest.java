@@ -329,7 +329,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             } else if (i % 25 == 0 && drop) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
                                 if (tt != null) {
-                                    engine.dropTableOrMatView(path, tt);
+                                    engine.dropTableOrViewOrMatView(path, tt);
                                     drop = false;
                                 }
                             }

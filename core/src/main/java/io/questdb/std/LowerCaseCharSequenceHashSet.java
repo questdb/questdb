@@ -63,10 +63,6 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
         }
     }
 
-    public boolean contains(CharSequence key, int lo, int hi) {
-        return keyIndex(key, lo, hi) < 0;
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

@@ -360,7 +360,6 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayViewWithBindingVars() throws Exception {
-        skipInLegacyMode();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour");
