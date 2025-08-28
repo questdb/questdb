@@ -41,7 +41,6 @@ public class FdCache {
     static final AtomicInteger OPEN_OS_FILE_COUNT = new AtomicInteger();
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private static final int NON_CACHED = (2 << 30);
-    private static final int RO_MASK = 0;
     private final AtomicInteger fdCounter = new AtomicInteger(1);
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
     private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
@@ -196,7 +195,7 @@ public class FdCache {
         long uniqROFd;
         int keyIndex;
         do {
-            uniqROFd = Numbers.encodeLowHighInts(nextIndex() | RO_MASK, holder.osFd);
+            uniqROFd = Numbers.encodeLowHighInts(nextIndex(), holder.osFd);
             keyIndex = openFdMapByFd.keyIndex(uniqROFd);
         } while (keyIndex < 0);
 
