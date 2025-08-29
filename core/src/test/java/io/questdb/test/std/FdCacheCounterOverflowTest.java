@@ -112,7 +112,6 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                             long readFd = -1;
                             try {
                                 readFd = openRO(testFileA);
-                                // Read the first byte to verify file content
                                 long size = Files.length(readFd);
                                 long addr = Files.mmap(readFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                                 try {
