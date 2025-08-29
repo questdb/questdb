@@ -146,6 +146,18 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
             shouldStop.set(true);
             writerThread.join(60_000);
 
+            boolean someThreadIsHanging = false;
+            for (int i = 0; i < readerThreads.length; i++) {
+                if (readerThreads[i].isAlive()) {
+                    someThreadIsHanging = true;
+                    System.out.println("Reader thread " + i + " did not finish within timeout");
+                }
+            }
+            if (writerThread.isAlive()) {
+                someThreadIsHanging = true;
+                System.out.println("Writer thread did not finish within timeout");
+            }
+
             Throwable lastException = null;
             // Check for exceptions
             for (Throwable e : exceptions) {
@@ -157,6 +169,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
             if (lastException != null) {
                 throw new AssertionError(lastException);
             }
+            Assert.assertFalse("Some threads didn't finish within timeout", someThreadIsHanging);
         });
     }
 
