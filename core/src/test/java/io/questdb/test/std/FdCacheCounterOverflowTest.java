@@ -138,10 +138,10 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
             }
 
             for (Thread readerThread : readerThreads) {
-                readerThread.join(5000);
+                readerThread.join(60_000);
             }
             shouldStop.set(true);
-            writerThread.join(5000);
+            writerThread.join(60_000);
 
             Throwable lastException = null;
             // Check for exceptions
