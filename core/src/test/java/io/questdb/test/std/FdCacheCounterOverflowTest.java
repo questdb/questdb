@@ -71,11 +71,11 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
         // Concurrent test that spawns a single writer that writes an append-only file, and multiple workers.
         // It sets the FD counter near the overflow initially, and the reader threads actively open/read/close the file.
 
-        Files.setFDCacheCounter(Integer.MAX_VALUE - 100);
+        Files.setFDCacheCounter(Integer.MAX_VALUE - 50);
 
         assertMemoryLeak(() -> {
             final int numReaderThreads = 4;
-            final int testDurationMs = 5000;
+            final int numIterations = 1000;
             final Thread[] readerThreads = new Thread[numReaderThreads];
             final Throwable[] exceptions = new Throwable[numReaderThreads + 1];
             final AtomicBoolean shouldStop = new AtomicBoolean(false);
@@ -104,22 +104,25 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
             });
 
             // Reader threads - continuously open/read/close file A
-            for (int i = 0; i < numReaderThreads; i++) {
-                final int threadIndex = i;
-                readerThreads[i] = new Thread(() -> {
+            for (int threadIdx = 0; threadIdx < numReaderThreads; threadIdx++) {
+                final int threadIndex = threadIdx;
+                readerThreads[threadIdx] = new Thread(() -> {
                     try {
-                        while (!shouldStop.get()) {
+                        for (int i = 0; i < numIterations; i++) {
                             long readFd = -1;
                             try {
                                 readFd = openRO(testFileA);
+                                // Read the first byte to verify file content
                                 long size = Files.length(readFd);
                                 long addr = Files.mmap(readFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                                Assert.assertTrue("Memory mapping failed", addr > 0);
-                                // Read the last byte to verify file content
-                                byte content = Unsafe.getUnsafe().getByte(addr + size - 1);
-                                Assert.assertEquals("File content mismatch in reader thread " + threadIndex, CONTENT_A, content);
-                                Files.munmap(addr, 1, MemoryTag.MMAP_DEFAULT);
-                                Os.sleep(5);
+                                try {
+                                    Assert.assertTrue("Memory mapping failed", addr > 0);
+                                    byte content = Unsafe.getUnsafe().getByte(addr + size - 1);
+                                    Assert.assertEquals("File content mismatch in reader thread " + threadIndex, CONTENT_A, content);
+                                } finally {
+                                    Files.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                                }
+                                Os.sleep(1);
                             } finally {
                                 close(readFd);
                             }
@@ -130,28 +133,27 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                 });
             }
 
-            // Start all threads
             writerThread.start();
             for (Thread readerThread : readerThreads) {
                 readerThread.start();
             }
 
-            // Let them run for the specified duration
-            Thread.sleep(testDurationMs);
-
-            // Signal stop and wait for completion
-            shouldStop.set(true);
-
-            writerThread.join(5000);
             for (Thread readerThread : readerThreads) {
                 readerThread.join(5000);
             }
+            shouldStop.set(true);
+            writerThread.join(5000);
 
+            Throwable lastException = null;
             // Check for exceptions
-            for (int i = 0; i <= numReaderThreads; i++) {
-                if (exceptions[i] != null) {
-                    throw new RuntimeException("Exception in thread " + i, exceptions[i]);
+            for (Throwable e : exceptions) {
+                if (e != null) {
+                    e.printStackTrace(System.out);
+                    lastException = e;
                 }
+            }
+            if (lastException != null) {
+                throw new AssertionError(lastException);
             }
         });
     }
