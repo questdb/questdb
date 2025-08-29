@@ -301,10 +301,9 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
     }
 
     private static void assertFdCanBeMmapedAndAssertContent(long fd1, byte expectedContent) {
-        long addr = 0;
+        long addr = Files.mmap(fd1, FILE_SIZE, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+        Assert.assertTrue("failed to mmap", addr > 0);
         try {
-            addr = Files.mmap(fd1, FILE_SIZE, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-            Assert.assertTrue("failed to mmap", addr > 0);
             for (int i = 0; i < FILE_SIZE; i++) {
                 Assert.assertEquals(expectedContent, Unsafe.getUnsafe().getByte(addr + i));
             }
