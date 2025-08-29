@@ -24,12 +24,12 @@
 
 package io.questdb;
 
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 
 public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
     public long getDbSizeEstimateTimeout() {
-        return Timestamps.SECOND_MILLIS;
+        return Micros.SECOND_MILLIS;
     }
 
     @Override

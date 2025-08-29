@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
@@ -61,6 +62,9 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
     ) {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
+        if (a.getType() != b.getType()) {
+            return BooleanConstant.FALSE;
+        }
 
         if (a.isConstant()) {
             return createHalfConstantFunc(a, b);
@@ -82,16 +86,18 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         if (Interval.NULL.equals(constValue)) {
             return new NullCheckFunc(varFunc);
         }
-        return new ConstCheckFunc(varFunc, constValue);
+        return new ConstCheckFunc(varFunc, constValue, constFunc.getType());
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final Interval constant;
+        private final int intervalType;
 
-        public ConstCheckFunc(Function arg, @NotNull Interval constant) {
+        public ConstCheckFunc(Function arg, @NotNull Interval constant, int intervalType) {
             this.arg = arg;
             this.constant = constant;
+            this.intervalType = intervalType;
         }
 
         @Override
@@ -110,7 +116,8 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val('!');
             }
-            sink.val("='").val(constant).val('\'');
+
+            sink.val("='").valInterval(constant, intervalType).val('\'');
         }
     }
 

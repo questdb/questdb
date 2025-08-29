@@ -35,9 +35,17 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -153,11 +161,12 @@ public class TextLoader implements Closeable, Mutable {
         this.textMetadataParser.setTableName(tableNameUtf16);
         this.timestampColumn = timestampColumnUtf16;
         if (timestampFormat != null) {
-            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormatUtf16);
+            DateFormat dateFormat = TypeManager.adaptiveGetTimestampFormat(timestampFormatUtf16);
             this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
                     false,
                     dateFormat,
-                    textConfiguration.getDefaultDateLocale()
+                    textConfiguration.getDefaultDateLocale(),
+                    timestampFormat.toString()
             );
         }
 
@@ -241,17 +250,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public void parse(long lo, long hi, SecurityContext securityContext) throws TextException {
         parseMethods.getQuick(state).parse(lo, hi, securityContext);
-    }
-
-    public void prepareTable(
-            SecurityContext ctx,
-            ObjList<CharSequence> names,
-            ObjList<TypeAdapter> types,
-            Path path,
-            TypeManager typeManager,
-            TimestampAdapter timestampAdapter
-    ) throws TextException {
-        textWriter.prepareTable(ctx, names, types, path, typeManager, timestampAdapter);
     }
 
     public final void restart(boolean header) {
@@ -352,11 +350,20 @@ public class TextLoader implements Closeable, Mutable {
                 textMetadataDetector.getColumnNames(),
                 textMetadataDetector.getColumnTypes(),
                 path,
-                typeManager,
-                timestampAdapter
+                typeManager
         );
         parse(lo, hi, Integer.MAX_VALUE);
         state = LOAD_DATA;
+    }
+
+    private void prepareTable(
+            SecurityContext ctx,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager
+    ) throws TextException {
+        textWriter.prepareTable(ctx, names, types, path, typeManager, timestampAdapter);
     }
 
     @FunctionalInterface

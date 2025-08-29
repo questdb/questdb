@@ -37,7 +37,9 @@ public interface DateFormat {
 
     void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink);
 
-    long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException;
+    int getColumnType();
 
     long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException;
+
+    long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException;
 }

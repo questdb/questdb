@@ -837,6 +837,70 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMixedCoalesce() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t\n" +
+                        "1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z\n" +
+                        "\t\t\t\t\n" +
+                        "1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
+                        "from alex",
+                "create table alex as (" +
+                        "select " +
+                        "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as x" +
+                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as a" +
+                        ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+
+        assertQuery(
+                "coalesce\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n",
+                "select coalesce(a, b) from tango",
+                "create table tango as (" +
+                        "select " +
+                        " x::timestamp a," +
+                        " x::timestamp_ns b" +
+                        " from long_sequence(2)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNsCoalesce() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t\n" +
+                        "1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z\n" +
+                        "\t\t\t\t\n" +
+                        "1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t\t1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
+                        "from alex",
+                "create table alex as (" +
+                        "select " +
+                        "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp_NS) ELSE CAST(NULL as Timestamp) END as x" +
+                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as a" +
+                        ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testUnsupportedBindVariables() throws Exception {
         execute("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
         assertException(

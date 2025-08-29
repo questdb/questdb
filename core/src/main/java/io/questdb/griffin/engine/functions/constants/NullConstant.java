@@ -228,7 +228,7 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
 
     @Override
     public long getTimestamp(Record rec) {
-        return TimestampConstant.NULL.getTimestamp(null);
+        return TimestampConstant.TIMESTAMP_MICRO_NULL.getTimestamp(null);
     }
 
     @Override

@@ -217,7 +217,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
-    public void load(LPSZ path) {
+    public void loadMetadata(LPSZ path) {
         try {
             isCopy = false;
             Misc.free(metaCopyMem);
@@ -230,7 +230,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    public void load() {
+    public void loadMetadata() {
         final long spinLockTimeout = configuration.getSpinLockTimeout();
         final MillisecondClock millisecondClock = configuration.getMillisecondClock();
         long deadline = configuration.getMillisecondClock().getTicks() + spinLockTimeout;
@@ -238,7 +238,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         boolean existenceChecked = false;
         while (true) {
             try {
-                load(path.$());
+                loadMetadata(path.$());
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {

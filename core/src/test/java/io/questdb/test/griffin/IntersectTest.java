@@ -224,6 +224,36 @@ public class IntersectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntersectAllWithTimestampNs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades1 (trade_id int, ts_nano timestamp_ns, price double)");
+            execute("create table trades2 (trade_id int, ts_nano timestamp_ns, price double)");
+
+            long baseNanos = 1_609_459_200_000_000_000L; // 2021-01-01T00:00:00.000000000
+
+            // trades1 - with duplicates
+            execute("insert into trades1 values (1, " + baseNanos + ", 100.0)");
+            execute("insert into trades1 values (2, " + (baseNanos + 999_999_999L) + ", 200.0)"); // +999.999999ms
+            execute("insert into trades1 values (2, " + (baseNanos + 999_999_999L) + ", 200.0)"); // duplicate
+            execute("insert into trades1 values (3, " + (baseNanos + 2_000_000_789L) + ", 300.0)"); // +2.000000789s
+            execute("insert into trades1 values (4, " + (baseNanos + 3_000_000_000L) + ", 400.0)"); // +3s
+
+            // trades2 - intersection set (with one duplicate matching)
+            execute("insert into trades2 values (2, " + (baseNanos + 999_999_999L) + ", 200.0)");
+            execute("insert into trades2 values (3, " + (baseNanos + 2_000_000_789L) + ", 300.0)");
+            execute("insert into trades2 values (5, " + (baseNanos + 4_000_000_000L) + ", 500.0)"); // not in trades1
+
+            final String expected = "trade_id\tts_nano\tprice\n" +
+                    "2\t2021-01-01T00:00:00.999999999Z\t200.0\n" +
+                    "2\t2021-01-01T00:00:00.999999999Z\t200.0\n" +
+                    "3\t2021-01-01T00:00:02.000000789Z\t300.0\n";
+
+
+            assertQueryNoLeakCheck(expected, "select * from trades1 intersect all select * from trades2", null, true, false);
+        });
+    }
+
+    @Test
     public void testIntersectCastNoDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
@@ -237,6 +267,44 @@ public class IntersectTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("(select i,s from x) intersect (select i,s from y)")) {
                 assertCursor(expected, factory, true, false);
             }
+        });
+    }
+
+    @Test
+    public void testIntersectMixedTimestampPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table micro_events (id int, ts_micro timestamp, type symbol)");
+            execute("create table nano_events (id int, ts_nano timestamp_ns, type symbol)");
+
+            long baseMicros = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long baseNanos = baseMicros * 1000;
+
+            execute("insert into micro_events values (1, " + baseMicros + ", 'A')");
+            execute("insert into micro_events values (2, " + (baseMicros + 1000) + ", 'B')"); // +1ms
+            execute("insert into micro_events values (3, " + (baseMicros + 2000) + ", 'C')"); // +2ms
+
+            execute("insert into nano_events values (1, " + baseNanos + ", 'A')"); // exact match
+            execute("insert into nano_events values (2, " + ((baseMicros + 1000) * 1000 + 123) + ", 'B')"); // +1ms+123ns
+            execute("insert into nano_events values (4, " + (baseNanos + 5_000_000L) + ", 'D')"); // not in micro_events
+
+            final String expected = "id\tts_micro\ttype\n" +
+                    "1\t2020-01-01T00:00:00.123456Z\tA\n" +
+                    "2\t2020-01-01T00:00:00.124456Z\tB\n";
+
+            // explicit cast to micros truncates nanos: 2 matching rows
+            assertQueryNoLeakCheck(expected,
+                    "select id, ts_micro, type from micro_events " +
+                            "intersect " +
+                            "select id, ts_nano::timestamp as ts_micro, type from nano_events",
+                    null, true, false);
+
+            // implicit cast promotes micros to nanos -> only the first row matches
+            assertQueryNoLeakCheck("id\tts\ttype\n" +
+                            "1\t2020-01-01T00:00:00.123456000Z\tA\n",
+                    "select id, ts_micro as ts, type from micro_events " +
+                            "intersect " +
+                            "select id, ts_nano as ts, type from nano_events",
+                    null, true, false);
         });
     }
 
@@ -359,6 +427,58 @@ public class IntersectTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select * from x intersect y")) {
                 assertCursor(expected2, factory, true, false);
             }
+        });
+    }
+
+    @Test
+    public void testIntersectWithTimestampNs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table events1 (event_id int, ts_nano timestamp_ns, type symbol)");
+            execute("create table events2 (event_id int, ts_nano timestamp_ns, type symbol)");
+
+            long baseNanos = 1_577_836_800_000_000_000L; // 2020-01-01T00:00:00.000000000
+
+            execute("insert into events1 values (1, " + baseNanos + ", 'click')");
+            execute("insert into events1 values (2, " + (baseNanos + 123_456_789L) + ", 'view')"); // +123.456789ms
+            execute("insert into events1 values (3, " + (baseNanos + 500_000_000L) + ", 'scroll')"); // +500ms
+            execute("insert into events1 values (4, " + (baseNanos + 1_000_000_000L) + ", 'click')"); // +1s
+            execute("insert into events1 values (5, " + (baseNanos + 1_500_000_123L) + ", 'close')"); // +1.500000123s
+
+            execute("insert into events2 values (2, " + (baseNanos + 123_456_789L) + ", 'view')");
+            execute("insert into events2 values (4, " + (baseNanos + 1_000_000_000L) + ", 'click')");
+            execute("insert into events2 values (6, " + (baseNanos + 2_000_000_000L) + ", 'exit')"); // not in events1
+
+            final String expected = "event_id\tts_nano\ttype\n" +
+                    "2\t2020-01-01T00:00:00.123456789Z\tview\n" +
+                    "4\t2020-01-01T00:00:01.000000000Z\tclick\n";
+
+            assertQueryNoLeakCheck(expected, "select * from events1 intersect select * from events2", null, true, false);
+        });
+    }
+
+    @Test
+    public void testIntersectWithTimestampNsAndNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sensors1 (sensor_id int, ts_nano timestamp_ns, reading double)");
+            execute("create table sensors2 (sensor_id int, ts_nano timestamp_ns, reading double)");
+
+            long baseNanos = 1_640_995_200_000_000_000L; // 2022-01-01T00:00:00.000000000
+
+            // sensors1 - with nulls
+            execute("insert into sensors1 values (1, " + baseNanos + ", 25.5)");
+            execute("insert into sensors1 values (2, null, 30.0)");
+            execute("insert into sensors1 values (3, " + (baseNanos + 1_111_111_111L) + ", null)"); // +1.111111111s
+            execute("insert into sensors1 values (4, " + (baseNanos + 2_222_222_222L) + ", 35.5)"); // +2.222222222s
+
+            execute("insert into sensors2 values (1, " + baseNanos + ", 25.5)");
+            execute("insert into sensors2 values (2, null, 30.0)");
+            execute("insert into sensors2 values (5, " + (baseNanos + 5_000_000_000L) + ", 40.0)"); // not in sensors1
+
+            final String expected = "sensor_id\tts_nano\treading\n" +
+                    "1\t2022-01-01T00:00:00.000000000Z\t25.5\n" +
+                    "2\t\t30.0\n";
+
+            assertQueryNoLeakCheck(expected, "select * from sensors1 intersect select * from sensors2", null, true, false);
         });
     }
 }

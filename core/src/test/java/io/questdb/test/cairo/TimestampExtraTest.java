@@ -37,5 +37,14 @@ public class TimestampExtraTest {
         Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampColD));
         Assert.assertTrue(ColumnType.isDesignatedTimestamp(timestampColD));
         Assert.assertNotEquals(Integer.toBinaryString(timestampCol), Integer.toBinaryString(timestampColD));
+
+
+        timestampCol = ColumnType.TIMESTAMP_NANO;
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampCol));
+        Assert.assertFalse(ColumnType.isDesignatedTimestamp(timestampCol));
+        timestampColD = ColumnType.setDesignatedTimestampBit(timestampCol, true);
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampColD));
+        Assert.assertTrue(ColumnType.isDesignatedTimestamp(timestampColD));
+        Assert.assertNotEquals(Integer.toBinaryString(timestampCol), Integer.toBinaryString(timestampColD));
     }
 }

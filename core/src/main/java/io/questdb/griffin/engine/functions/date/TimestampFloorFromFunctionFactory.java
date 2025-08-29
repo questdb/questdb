@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -32,7 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.CommonUtils;
 
 
 /**
@@ -55,33 +56,29 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(str, argPositions.getQuick(0));
-        final char unit = Timestamps.getStrideUnit(str, argPositions.getQuick(0));
+        final int stride = CommonUtils.getStrideMultiple(str, argPositions.getQuick(0));
+        final char unit = CommonUtils.getStrideUnit(str, argPositions.getQuick(0));
         final Function timestampFunc = args.getQuick(1);
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
         long from = args.getQuick(2).getTimestamp(null);
         if (from == Numbers.LONG_NULL) {
             from = 0;
+        } else {
+            from = ColumnType.getTimestampDriver(timestampType).from(from, ColumnType.getTimestampType(args.getQuick(2).getType()));
         }
 
         switch (unit) {
             case 'M':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestampFunc, stride, from);
             case 'y':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestampFunc, stride, from);
             case 'w':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestampFunc, stride, from);
             case 'd':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestampFunc, stride, from);
             case 'h':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestampFunc, stride, from);
             case 'm':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestampFunc, stride, from);
             case 's':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestampFunc, stride, from);
             case 'T':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestampFunc, stride, from);
             case 'U':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestampFunc, stride, from);
+            case 'n':
+                return new TimestampFloorOffsetFunction(timestampFunc, unit, stride, from, timestampType);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:

@@ -37,11 +37,11 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
 public class HttpServerConfigurationBuilder {
@@ -54,7 +54,7 @@ public class HttpServerConfigurationBuilder {
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private long multipartIdleSpinCount = -1;
-    private NanosecondClock nanosecondClock = StationaryNanosClock.INSTANCE;
+    private Clock nanosecondClock = StationaryNanosClock.INSTANCE;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
@@ -99,7 +99,7 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public NanosecondClock getNanosecondClock() {
+                public Clock getNanosecondClock() {
                     return nanosecondClock;
                 }
             };
@@ -170,7 +170,7 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return nanosecondClock;
                     }
 
@@ -303,7 +303,7 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withNanosClock(NanosecondClock nanosecondClock) {
+    public HttpServerConfigurationBuilder withNanosClock(Clock nanosecondClock) {
         this.nanosecondClock = nanosecondClock;
         return this;
     }
