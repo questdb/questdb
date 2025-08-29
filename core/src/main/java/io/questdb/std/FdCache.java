@@ -30,6 +30,7 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 
@@ -42,6 +43,7 @@ public class FdCache {
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private static final int NON_CACHED_MASK = 1 << 31;
     private final AtomicInteger fdCounter = new AtomicInteger(1);
+    private final AtomicLong mmapKeyGenerator = new AtomicLong(1);
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
     private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
     private final ObjStack<FdCacheRecord> recordPool = new ObjStack<>();
@@ -291,7 +293,7 @@ public class FdCache {
                 Utf8String path = Utf8String.newInstance(lpsz);
                 // todo: explore if potentially dup keys are an issue here
                 // it appears to me that it's OK here
-                holder = createFdCacheRecord(path, Numbers.encodeLowHighInts(nextIndex(), osFd));
+                holder = createFdCacheRecord(path, mmapKeyGenerator.getAndIncrement());
                 holder.osFd = osFd;
                 openFdMapByPath.putAt(keyIndex, lpsz, holder);
             }
