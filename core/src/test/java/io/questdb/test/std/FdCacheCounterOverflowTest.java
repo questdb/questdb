@@ -112,10 +112,10 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                             long readFd = -1;
                             try {
                                 readFd = openRO(testFileA);
-                                // Read the first byte to verify file content
                                 long size = Files.length(readFd);
                                 long addr = Files.mmap(readFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                                 Assert.assertTrue("Memory mapping failed", addr > 0);
+                                // Read the last byte to verify file content
                                 byte content = Unsafe.getUnsafe().getByte(addr + size - 1);
                                 Assert.assertEquals("File content mismatch in reader thread " + threadIndex, CONTENT_A, content);
                                 Files.munmap(addr, 1, MemoryTag.MMAP_DEFAULT);
