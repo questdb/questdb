@@ -63,6 +63,8 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
     public void tearDown() throws Exception {
         Misc.free(testFileA);
         Misc.free(testFileB);
+        // Reset FD‐cache counter to default (1) to avoid cross-test interference
+        Files.setFDCacheCounter(1);
         super.tearDown();
     }
 
@@ -92,7 +94,8 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                     appendFd = Files.openAppend(testFileA.$());
                     Assert.assertTrue("Failed to open file for appending", appendFd > -1);
                     while (!shouldStop.get()) {
-                        Files.append(appendFd, buf, appendData.length);
+                        final long res = Files.append(appendFd, buf, appendData.length);
+                        Assert.assertTrue("Files.append failed: " + Os.errno(), res > -1);
                         Os.sleep(10);
                     }
                 } catch (Exception e) {
@@ -298,12 +301,16 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
     }
 
     private static void assertFdCanBeMmapedAndAssertContent(long fd1, byte expectedContent) {
-        long addr = Files.mmap(fd1, FILE_SIZE, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-        Assert.assertTrue("failed to mmap", addr > 0);
-        for (int i = 0; i < FILE_SIZE; i++) {
-            Assert.assertEquals(expectedContent, Unsafe.getUnsafe().getByte(addr + i));
+        long addr = 0;
+        try {
+            addr = Files.mmap(fd1, FILE_SIZE, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+            Assert.assertTrue("failed to mmap", addr > 0);
+            for (int i = 0; i < FILE_SIZE; i++) {
+                Assert.assertEquals(expectedContent, Unsafe.getUnsafe().getByte(addr + i));
+            }
+        } finally {
+            Files.munmap(addr, FILE_SIZE, MemoryTag.MMAP_DEFAULT);
         }
-        Files.munmap(addr, FILE_SIZE, MemoryTag.MMAP_DEFAULT);
     }
 
     private static long close(long fd) {
