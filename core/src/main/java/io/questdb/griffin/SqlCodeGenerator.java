@@ -3044,16 +3044,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
-                                if ((joinType == JOIN_LEFT_OUTER || joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER)
-                                        && filter != null && filter.isConstant() && !filter.getBool(null)) {
-                                    Misc.free(slave);
-                                    slave = new EmptyTableRecordCursorFactory(slaveMetadata);
+                                if (filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                    if (joinType == JOIN_LEFT_OUTER) {
+                                        Misc.free(slave);
+                                        slave = new EmptyTableRecordCursorFactory(slaveMetadata);
+                                    } else if (joinType == JOIN_INNER) {
+                                        Misc.free(master);
+                                        Misc.free(slave);
+                                        return new EmptyTableRecordCursorFactory(joinMetadata);
+                                    } else if (joinType == JOIN_RIGHT_OUTER) {
+                                        Misc.free(master);
+                                        master = new EmptyTableRecordCursorFactory(masterMetadata);
+                                    }
                                 }
 
                                 if (joinType == JOIN_INNER) {

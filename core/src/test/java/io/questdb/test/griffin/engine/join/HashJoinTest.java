@@ -119,7 +119,7 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHashOuterLeftJoinWithFilter() throws Exception {
+    public void testHashOuterJoinWithFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table taba (i long, locale_name symbol )");
             execute("create table tabb (i long, state symbol, city symbol)");
@@ -129,6 +129,9 @@ public class HashJoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck("i\tlocale_name\ti1\tstate\tcity\n" +
                     "1\tpl\t1\ta\tpl\n", "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
+            assertQueryNoLeakCheck("i\tlocale_name\ti1\tstate\tcity\n" +
+                    "1\tpl\t1\ta\tpl\n" +
+                    "null\t\t1\tb\tb\n", "select * from taba right join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
         });
     }
 

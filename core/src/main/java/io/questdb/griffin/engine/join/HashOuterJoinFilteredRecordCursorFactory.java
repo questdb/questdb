@@ -259,12 +259,12 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 if (value != null) {
                     slaveChain.of(value.getInt(0));
                     useSlaveCursor = true;
+                    record.hasSlave(true);
                     while (slaveChain.hasNext()) {
                         if (filter.getBool(record)) {
                             MapKey keys = matchIdsMap.withKey();
                             keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
                             keys.createValue();
-                            record.hasSlave(true);
                             return true;
                         }
                     }

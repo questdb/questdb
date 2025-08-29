@@ -666,7 +666,7 @@ public class SqlOptimiser implements Mutable {
 
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
-        // add dependency to prevent previous model reordering (left joins are not symmetric)
+        // add dependency to prevent previous model reordering (left/right outer joins are not symmetric)
         if (joinIndex > 0) {
             linkDependencies(parent, joinIndex - 1, joinIndex);
         }
@@ -866,8 +866,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     //checks join equality condition and pushes it to optimal join contexts (could be a different join context)
-    //NOTE on LEFT JOIN :
-    // - left join condition MUST remain as is otherwise it'll produce wrong results
+    //NOTE on LEFT/RIGHT JOIN :
+    // - left/right join condition MUST remain as is otherwise it'll produce wrong results
     // - only predicates relating to LEFT table may be pushed down
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
@@ -925,7 +925,7 @@ public class SqlOptimiser implements Mutable {
                         // single table reference
                         jc.slaveIndex = lhi;
                         if (canMovePredicate) {
-                            // we can't push anything into another left join
+                            // we can't push anything into another left/right join
                             if (jc.slaveIndex != joinIndex &&
                                     joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
@@ -958,7 +958,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     if (canMovePredicate || jc.slaveIndex == joinIndex) {
-                        //we can't push anything into another left join
+                        //we can't push anything into another left/right join
                         if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {

@@ -5938,26 +5938,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
-            String[] joinFactoryTypes = {"Hash Left Outer Join", "Hash Right Outer Join", "Hash Full Outer Join"};
-
-            for (int i = 0; i < joinTypes.length; i++) {
-                String joinType = joinTypes[i];
-                String factoryType = joinFactoryTypes[i];
-
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b2=a2 and b1=a1\n" +
-                                "      filter: false\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            Empty table\n"
-                );
-            }
+            assertPlanNoLeakCheck(
+                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Left Outer Join\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: taba\n" +
+                            "        Hash\n" +
+                            "            Empty table\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Right Outer Join Light\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        Empty table\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tabb\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Full Outer Join Light\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: taba\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tabb\n"
+            );
         });
     }
 
@@ -12014,40 +12032,79 @@ public class ExplainPlanTest extends AbstractCairoTest {
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
         execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-        execute("create table tabb (b1 int, b2 long)");
+        execute("create table tabb (b1 int, b2 long, ts2 timestamp) timestamp(ts2)");
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
-        String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
-        String[] joinFactoryTypes = {"Hash Left Outer Join", "Hash Right Outer Join", "Hash Full Outer Join"};
-
-        for (int i = 0; i < joinTypes.length; i++) {
-            String joinType = joinTypes[i];
-            String factoryType = joinFactoryTypes[i];
-            assertPlanNoLeakCheck(
-                    compiler,
-                    "select * " +
-                            "from taba " +
-                            joinType + " join tabb on a1=b1 " +
-                            "asof join tabc on b1=c1",
-                    "SelectedRecord\n" +
-                            "    AsOf Join" + asofJoinType + "\n" +
-                            "      condition: c1=b1\n" +
-                            "        " + factoryType + (isLight ? " Light" : "") + "\n" +
-                            "          condition: b1=a1\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tabc\n",
-                    sqlExecutionContext
-            );
-        }
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "left join tabb on a1=b1 " +
+                        "asof join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    AsOf Join" + asofJoinType + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            Hash\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tabb\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "asof join tabb on a1=b1 " +
+                        "right join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        AsOf Join" + asofJoinType + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabb\n" +
+                        "        Hash\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "asof join tabb on a1=b1 " +
+                        "full join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        AsOf Join" + asofJoinType + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabb\n" +
+                        "        Hash\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
     }
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {

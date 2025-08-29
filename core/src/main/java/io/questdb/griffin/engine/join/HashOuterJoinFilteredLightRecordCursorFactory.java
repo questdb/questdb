@@ -303,11 +303,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
+                        hasSlave(true);
                         if (filter.getBool(record)) {
                             MapKey keys = matchIdsMap.withKey();
                             keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
                             keys.createValue();
-                            hasSlave(true);
                             return true;
                         }
                     }
