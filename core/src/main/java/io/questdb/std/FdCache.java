@@ -291,8 +291,6 @@ public class FdCache {
             } else {
                 OPEN_OS_FILE_COUNT.incrementAndGet();
                 Utf8String path = Utf8String.newInstance(lpsz);
-                // todo: explore if potentially dup keys are an issue here
-                // it appears to me that it's OK here
                 holder = createFdCacheRecord(path, mmapKeyGenerator.getAndIncrement());
                 holder.osFd = osFd;
                 openFdMapByPath.putAt(keyIndex, lpsz, holder);
