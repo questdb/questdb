@@ -176,7 +176,7 @@ public class MmapCache {
                     // if mmap0() throws then we change nothing
                     newAddress = mmap0(fd, newSize, 0, Files.MAP_RO, memoryTag);
 
-                    // yay, mmap() did not throw! it could still return -1 though
+                    // yay, mmap0() did not throw! it could still return -1 though
                     if (newAddress != -1) {
                         // we decrease reference count of the old record iff mmap0() succeeded.
                         // Q: Why we don't decrease the reference count even in the presence of failures?
