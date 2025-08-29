@@ -181,7 +181,7 @@ public class MmapCache {
                         // we decrease reference count of the old record iff mmap0() succeeded.
                         // Q: Why we don't decrease the reference count even in the presence of failures?
                         // A: Because the semantic of mremap() failure is that the old mapping is still valid
-                        //    and callers are still expecting to eventually close the old mapping
+                        //    and callers are still expected to eventually close the old mapping
                         record.count--;
                         // Cache the new mmap record
                         MmapCacheRecord newRecord = createMmapCacheRecord(fd, fileCacheKey, newSize, newAddress, memoryTag);
