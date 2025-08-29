@@ -159,9 +159,9 @@ public class MmapCache {
 
             if (newAddress == 0) {
                 // We need to extend the mmap
-                record.count--;
-                if (record.count == 0) {
-                    // No one else uses the record, we can use mremap
+                if (record.count == 1) {
+                    // No one else uses the record, we can use mremap.
+                    // it mremap0() throws then we change nothing
                     newAddress = mremap0(fd, record.address, record.length, newSize, offset, Files.MAP_RO, record.memoryTag, memoryTag);
                     if (newAddress != -1) {
                         record.address = newAddress;
@@ -170,11 +170,19 @@ public class MmapCache {
                         mmapAddrCache.removeAt(addrMapIndex);
                         mmapAddrCache.put(newAddress, record);
                     }
-                    record.count = 1;
                 } else {
                     // Someone else is using the record, we need to create a new one
+                    assert record.count > 1 : "invalid reference count in mmap cache";
+                    // if mmap0() throws then we change nothing
                     newAddress = mmap0(fd, newSize, 0, Files.MAP_RO, memoryTag);
+
+                    // yay, mmap0() did not throw! it could still return -1 though
                     if (newAddress != -1) {
+                        // we decrease reference count of the old record iff mmap0() succeeded.
+                        // Q: Why we don't decrease the reference count even in the presence of failures?
+                        // A: Because the semantic of mremap() failure is that the old mapping is still valid
+                        //    and callers are still expected to eventually close the old mapping
+                        record.count--;
                         // Cache the new mmap record
                         MmapCacheRecord newRecord = createMmapCacheRecord(fd, fileCacheKey, newSize, newAddress, memoryTag);
                         if (fdIndex != Integer.MAX_VALUE) {
