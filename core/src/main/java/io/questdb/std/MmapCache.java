@@ -39,20 +39,20 @@ public class MmapCache {
      * Maps file region into memory, reusing existing mapping if available.
      *
      * @param fd           file descriptor to map
-     * @param fileCacheKey unique value that is safe to use as a key for caching the map. Same OS FD is not good enough
-     *                     since FD can be closed after the mapping is created and reused for a different file.
+     * @param mmapCacheKey unique value that is safe to use as a key for caching the map. FD is not good enough
+     *                     since a FD can be closed after the mapping is created and OS can re-use for a different file.
      * @param len          length of the mapping
      * @param offset       offset in the file to start mapping from
      * @param flags        memory mapping flags, e.g., Files.MAP_RO for read-only
      */
-    public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW || len == 0) {
+    public long cacheMmap(int fd, long mmapCacheKey, long len, long offset, int flags, int memoryTag) {
+        if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW || len == 0) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
         synchronized (this) {
 
-            int fdMapIndex = mmapFileCache.keyIndex(fileCacheKey);
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
             if (fdMapIndex < 0) {
                 MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
                 if (record.length >= len) {
@@ -71,8 +71,8 @@ public class MmapCache {
                 return address;
             }
             // Cache the mmap record
-            MmapCacheRecord record = createMmapCacheRecord(fd, fileCacheKey, len, address, memoryTag);
-            mmapFileCache.putAt(fdMapIndex, fileCacheKey, record);
+            MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+            mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
 
             // Point the returned address to the correct offset
             mmapAddrCache.put(address, record);
@@ -99,13 +99,13 @@ public class MmapCache {
     /**
      * Resizes existing memory mapping, reusing or creating new mapping as needed.
      */
-    public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
+    public long mremap(int fd, long mmapCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
         }
         if (previousSize == 0) {
             // If previous size is 0, we cannot remap, just mmap a new region
-            return cacheMmap(fd, fileCacheKey, newSize, offset, flags, memoryTag);
+            return cacheMmap(fd, mmapCacheKey, newSize, offset, flags, memoryTag);
         }
 
         long unmapPtr = 0, unmapLen = 0;
@@ -127,7 +127,7 @@ public class MmapCache {
                 }
 
                 // Check if someone else remapped this to a larger size
-                fdIndex = mmapFileCache.keyIndex(fileCacheKey);
+                fdIndex = mmapFileCache.keyIndex(mmapCacheKey);
                 if (fdIndex < 0) {
                     MmapCacheRecord updatedCacheRecord = mmapFileCache.valueAt(fdIndex);
                     if (updatedCacheRecord.length >= newSize) {
@@ -184,11 +184,11 @@ public class MmapCache {
                         //    and callers are still expected to eventually close the old mapping
                         record.count--;
                         // Cache the new mmap record
-                        MmapCacheRecord newRecord = createMmapCacheRecord(fd, fileCacheKey, newSize, newAddress, memoryTag);
+                        MmapCacheRecord newRecord = createMmapCacheRecord(fd, mmapCacheKey, newSize, newAddress, memoryTag);
                         if (fdIndex != Integer.MAX_VALUE) {
-                            mmapFileCache.putAt(fdIndex, fileCacheKey, newRecord);
+                            mmapFileCache.putAt(fdIndex, mmapCacheKey, newRecord);
                         } else {
-                            mmapFileCache.put(fileCacheKey, newRecord);
+                            mmapFileCache.put(mmapCacheKey, newRecord);
                         }
                         mmapAddrCache.put(newAddress, newRecord);
                     }

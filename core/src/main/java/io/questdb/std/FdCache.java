@@ -62,7 +62,7 @@ public class FdCache {
 
         if ((Numbers.decodeLowInt(fd) & NON_CACHED_MASK) != 0) {
             // NON_CACHED. Simply close the underlying fd.
-            int osFd = Numbers.decodeHighInt(fd);
+            int osFd = openFdMapByFd.valueAtQuick(keyIndex).osFd;
             int res = Files.close0(osFd);
             if (res != 0) {
                 return res;
@@ -235,14 +235,14 @@ public class FdCache {
     }
 
     /**
-     * Retrieves memory map cache file descriptor for given file descriptor.
+     * Retrieves memory map cache key for given file descriptor.
      */
-    public synchronized long toMmapCacheFd(long fd) {
+    public synchronized long toMmapCacheKey(long fd) {
         var cacheRecord = openFdMapByFd.get(fd);
         if (cacheRecord == null) {
             return 0;
         }
-        return cacheRecord.mmapCacheFd;
+        return cacheRecord.mmapCacheKey;
     }
 
     /**
@@ -268,13 +268,13 @@ public class FdCache {
         return toOsFd(fd);
     }
 
-    private FdCacheRecord createFdCacheRecord(Utf8String path, long mmapCacheFd) {
+    private FdCacheRecord createFdCacheRecord(Utf8String path, long mmapCacheKey) {
         FdCacheRecord holder = recordPool.pop();
         if (holder == null) {
-            holder = new FdCacheRecord(path, mmapCacheFd);
+            holder = new FdCacheRecord(path, mmapCacheKey);
         } else {
             holder.path = path;
-            holder.mmapCacheFd = mmapCacheFd;
+            holder.mmapCacheKey = mmapCacheKey;
         }
         return holder;
     }
@@ -313,14 +313,14 @@ public class FdCache {
      */
     private static class FdCacheRecord {
         private static final FdCacheRecord EMPTY = new FdCacheRecord(null, 0);
-        long mmapCacheFd;
+        long mmapCacheKey;
         private int count;
         private int osFd;
         private Utf8String path;
 
-        public FdCacheRecord(Utf8String path, long mmapCacheFd) {
+        public FdCacheRecord(Utf8String path, long mmapCacheKey) {
             this.path = path;
-            this.mmapCacheFd = mmapCacheFd;
+            this.mmapCacheKey = mmapCacheKey;
         }
     }
 }
