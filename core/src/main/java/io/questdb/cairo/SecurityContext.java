@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -113,6 +115,12 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableVacuum(TableToken tableToken);
 
+    void authorizeViewCompile(TableToken tableToken);
+
+    void authorizeViewCreate();
+
+    void authorizeViewDrop(TableToken tableToken);
+
     /**
      * Should throw an exception if:
      * - logged in as a user and the user has been disabled, or it has no permissions to connect via the endpoint used,
@@ -162,4 +170,7 @@ public interface SecurityContext extends Mutable {
     }
 
     boolean isSystemAdmin();
+
+    default void setImplicitAccessList(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> implicitAccessList) {
+    }
 }

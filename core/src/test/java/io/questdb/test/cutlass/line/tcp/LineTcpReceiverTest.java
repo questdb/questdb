@@ -329,7 +329,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             } else if (i % 25 == 0 && drop) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
                                 if (tt != null) {
-                                    engine.dropTableOrMatView(path, tt);
+                                    engine.dropTableOrViewOrMatView(path, tt);
                                     drop = false;
                                 }
                             }
@@ -1927,7 +1927,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.dropTableOrMatView(path, engine.verifyTableName("weather"));
+        engine.dropTableOrViewOrMatView(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {
