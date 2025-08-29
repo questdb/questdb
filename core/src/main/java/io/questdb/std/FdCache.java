@@ -62,7 +62,7 @@ public class FdCache {
 
         if ((Numbers.decodeLowInt(fd) & NON_CACHED_MASK) != 0) {
             // NON_CACHED. Simply close the underlying fd.
-            int osFd = openFdMapByFd.valueAtQuick(keyIndex).osFd;
+            int osFd = Numbers.decodeHighInt(fd);
             int res = Files.close0(osFd);
             if (res != 0) {
                 return res;
