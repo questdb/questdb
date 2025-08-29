@@ -132,7 +132,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
                 value.putLong(0, offset);
                 value.putLong(1, offset);
                 value.putLong(2, 1);
-                value.putBool(3, true);
+                value.putBool(3, false);
             } else {
                 value.putLong(1, chain.put(record, value.getLong(1)));
                 value.addLong(2, 1);

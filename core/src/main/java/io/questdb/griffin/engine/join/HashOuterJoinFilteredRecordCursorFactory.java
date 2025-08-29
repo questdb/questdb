@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -61,6 +63,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     private final RecordSink slaveKeySink;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Map joinKeyMap;
+    private Map matchIdsMap;
     private RecordChain slaveChain;
 
     public HashOuterJoinFilteredRecordCursorFactory(
@@ -89,6 +92,9 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                     configuration.getSqlHashJoinValueMaxPages());
             this.columnSplit = columnSplit;
             this.joinType = joinType;
+            if (joinType != QueryModel.JOIN_LEFT_OUTER) {
+                matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
+            }
             this.filter = filter;
         } catch (Throwable th) {
             close();
@@ -118,6 +124,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
                             joinKeyMap,
+                            matchIdsMap,
                             slaveChain
                     );
                     break;
@@ -127,12 +134,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                             joinKeyMap,
+                            matchIdsMap,
                             slaveChain
                     );
                     break;
             }
             this.joinKeyMap = null;
             this.slaveChain = null;
+            this.matchIdsMap = null;
         }
 
         // Forcefully disable column pre-touch for nested filter queries.
@@ -178,9 +187,11 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         Misc.free(filter);
         Misc.free(joinKeyMap);
         Misc.free(slaveChain);
+        Misc.free(matchIdsMap);
     }
 
     private class HashFullOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
+        private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
         private MapRecordCursor mapCursor;
 
@@ -189,15 +200,20 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 Record masterNullRecord,
                 Record slaveNullRecord,
                 Map joinKeyMap,
+                Map matchIdsMap,
                 RecordChain slaveChain
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
+            this.matchIdsMap = matchIdsMap;
             isOpen = true;
         }
 
         @Override
         public void close() {
+            if (isOpen) {
+                matchIdsMap.close();
+            }
             super.close();
             mapCursor = Misc.free(mapCursor);
         }
@@ -210,7 +226,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                populateRecordHashMapWithMatchFlag(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
                 isMapBuilt = true;
                 record.hasMaster(true);
                 mapCursor = joinKeyMap.getCursor();
@@ -218,8 +234,19 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 do {
-                    if (filter.getBool(record)) {
-                        return true;
+                    if (record.hasMaster()) {
+                        if (filter.getBool(record)) {
+                            MapKey keys = matchIdsMap.withKey();
+                            keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                            keys.createValue();
+                            return true;
+                        }
+                    } else {
+                        MapKey keys = matchIdsMap.withKey();
+                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                        if (keys.findValue() == null) {
+                            return true;
+                        }
                     }
                 } while (slaveChain.hasNext());
                 useSlaveCursor = false;
@@ -232,9 +259,11 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 if (value != null) {
                     slaveChain.of(value.getInt(0));
                     useSlaveCursor = true;
-                    value.putBool(3, true);
                     while (slaveChain.hasNext()) {
                         if (filter.getBool(record)) {
+                            MapKey keys = matchIdsMap.withKey();
+                            keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                            keys.createValue();
                             record.hasSlave(true);
                             return true;
                         }
@@ -250,11 +279,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             record.hasSlave(true);
             while (mapCursor.hasNext()) {
                 MapValue value = mapCursor.getRecord().getValue();
-                if (!value.getBool(3)) {
-                    slaveChain.of(value.getInt(0));
-                    slaveChain.hasNext();
-                    useSlaveCursor = true;
-                    return true;
+                slaveChain.of(value.getInt(0));
+                while (slaveChain.hasNext()) {
+                    MapKey keys = matchIdsMap.withKey();
+                    keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                    if (keys.findValue() == null) {
+                        useSlaveCursor = true;
+                        return true;
+                    }
                 }
             }
 
@@ -269,10 +301,16 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 mapCursor.toTop();
             }
             record.hasMaster(true);
+            if (!isMapBuilt) {
+                matchIdsMap.clear();
+            }
         }
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            if (!isOpen) {
+                matchIdsMap.reopen();
+            }
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             filter.init(this, sqlExecutionContext);
@@ -350,6 +388,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     }
 
     private class HashRightOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
+        private final Map matchIdsMap;
         private final RightOuterJoinRecord record;
         private MapRecordCursor mapCursor;
 
@@ -357,15 +396,20 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 int columnSplit,
                 Record nullRecord,
                 Map joinKeyMap,
+                Map matchIdsMap,
                 RecordChain slaveChain
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
+            this.matchIdsMap = matchIdsMap;
             isOpen = true;
         }
 
         @Override
         public void close() {
+            if (isOpen) {
+                matchIdsMap.close();
+            }
             super.close();
             mapCursor = Misc.free(mapCursor);
         }
@@ -378,7 +422,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                populateRecordHashMapWithMatchFlag(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
                 isMapBuilt = true;
                 record.hasMaster(true);
                 mapCursor = joinKeyMap.getCursor();
@@ -386,8 +430,19 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 do {
-                    if (filter.getBool(record)) {
-                        return true;
+                    if (record.hasMaster()) {
+                        if (filter.getBool(record)) {
+                            MapKey keys = matchIdsMap.withKey();
+                            keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                            keys.createValue();
+                            return true;
+                        }
+                    } else {
+                        MapKey keys = matchIdsMap.withKey();
+                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                        if (keys.findValue() == null) {
+                            return true;
+                        }
                     }
                 } while (slaveChain.hasNext());
             }
@@ -399,9 +454,11 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 if (value != null) {
                     slaveChain.of(value.getInt(0));
                     useSlaveCursor = true;
-                    value.putBool(3, true);
                     while (slaveChain.hasNext()) {
                         if (filter.getBool(record)) {
+                            MapKey keys = matchIdsMap.withKey();
+                            keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                            keys.createValue();
                             return true;
                         }
                     }
@@ -411,11 +468,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
                 MapValue value = mapCursor.getRecord().getValue();
-                if (!value.getBool(3)) {
-                    slaveChain.of(value.getInt(0));
-                    useSlaveCursor = true;
-                    slaveChain.hasNext();
-                    return true;
+                slaveChain.of(value.getInt(0));
+                while (slaveChain.hasNext()) {
+                    MapKey keys = matchIdsMap.withKey();
+                    keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                    if (keys.findValue() == null) {
+                        useSlaveCursor = true;
+                        return true;
+                    }
                 }
             }
 
@@ -430,10 +490,16 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 mapCursor.toTop();
             }
             record.hasMaster(true);
+            if (!isMapBuilt) {
+                matchIdsMap.clear();
+            }
         }
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            if (!isOpen) {
+                matchIdsMap.reopen();
+            }
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             filter.init(this, sqlExecutionContext);

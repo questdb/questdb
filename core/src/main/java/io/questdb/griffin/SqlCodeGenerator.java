@@ -1340,7 +1340,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         valueTypes.add(ColumnType.LONG); // chain head offset
         valueTypes.add(ColumnType.LONG); // chain tail offset
         valueTypes.add(ColumnType.LONG); // record count for the key
-        if (joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER) {
+        if (filter == null && (joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER)) {
             valueTypes.add(BOOLEAN);
         }
 

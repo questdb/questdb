@@ -26,9 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -42,7 +40,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -51,8 +48,6 @@ import org.jetbrains.annotations.NotNull;
  * and returns all row pairs matching filter plus all unmatched rows from master and slave factory.
  */
 public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private static final ArrayColumnTypes RECORD_ID_COLUMN_TYPE = new ArrayColumnTypes();
-    private static final RecordSink RECORD_ID_SINK = new RecordIdSink();
     private final Function filter;
     private NestedLoopFullRecordCursor cursor;
 
@@ -70,7 +65,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         this.filter = filter;
         Map matchIdsMap = null;
         try {
-            matchIdsMap = MapFactory.createUnorderedMap(configuration, RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
+            matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
             this.cursor = new NestedLoopFullRecordCursor(columnSplit, filter, matchIdsMap, masterNullRecord, slaveNullRecord);
         } catch (Throwable e) {
             Misc.free(matchIdsMap);
@@ -132,12 +127,12 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
         private final Function filter;
+        private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
         private boolean isMasterHasNextPending;
         private boolean isMatch;
         private boolean isOpen;
         private boolean masterHasNext;
-        private Map matchIdsMap;
         private Record slaveRecord;
 
         public NestedLoopFullRecordCursor(int columnSplit, Function filter, Map matchIdsMap, Record masterNullRecord, Record slaveNullRecord) {
@@ -174,7 +169,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 if (!masterHasNext) {
                     while (slaveCursor.hasNext()) {
                         MapKey keys = matchIdsMap.withKey();
-                        keys.put(slaveRecord, RECORD_ID_SINK);
+                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
                         if (keys.findValue() == null) {
                             record.hasMaster(false);
                             return true;
@@ -186,7 +181,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 while (slaveCursor.hasNext()) {
                     if (filter.getBool(record)) {
                         MapKey keys = matchIdsMap.withKey();
-                        keys.put(slaveRecord, RECORD_ID_SINK);
+                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
                         if (keys.findValue() == null) {
                             keys.createValue();
                         }
@@ -241,20 +236,5 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 matchIdsMap.reopen();
             }
         }
-    }
-
-    private static class RecordIdSink implements RecordSink {
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putLong(r.getRowId());
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-        }
-    }
-
-    static {
-        RECORD_ID_COLUMN_TYPE.add(ColumnType.LONG);
     }
 }

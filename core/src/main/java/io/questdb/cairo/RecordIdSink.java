@@ -22,37 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.ObjList;
 
-public class RightOuterJoinRecord extends JoinRecord {
-    protected final Record nullRecord;
-    private Record flappingMaster;
+public class RecordIdSink implements RecordSink {
+    public static final ArrayColumnTypes RECORD_ID_COLUMN_TYPE = new ArrayColumnTypes();
+    public static final RecordSink RECORD_ID_SINK = new RecordIdSink();
 
-    public RightOuterJoinRecord(int split, Record nullRecord) {
-        super(split);
-        this.nullRecord = nullRecord;
+    private RecordIdSink() {
     }
 
-    public void of(Record master, Record slave) {
-        super.of(master, slave);
-        this.flappingMaster = master;
+    @Override
+    public void copy(Record r, RecordSinkSPI w) {
+        w.putLong(r.getRowId());
     }
 
-    void hasMaster(boolean value) {
-        if (value) {
-            if (flappingMaster != master) {
-                master = flappingMaster;
-            }
-        } else {
-            if (master != nullRecord) {
-                master = nullRecord;
-            }
-        }
+    @Override
+    public void setFunctions(ObjList<Function> keyFunctions) {
     }
 
-    boolean hasMaster() {
-        return master != nullRecord;
+    static {
+        RECORD_ID_COLUMN_TYPE.add(ColumnType.LONG);
     }
 }
