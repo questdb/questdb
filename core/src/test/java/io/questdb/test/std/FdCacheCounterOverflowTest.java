@@ -27,6 +27,7 @@ package io.questdb.test.std;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
@@ -39,6 +40,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -62,6 +64,96 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
         Misc.free(testFileA);
         Misc.free(testFileB);
         super.tearDown();
+    }
+
+    @Test
+    public void testConcurrentOpenClose() throws Exception {
+        // Concurrent test that spawns a single writer that writes an append-only file, and multiple workers.
+        // It sets the FD counter near the overflow initially, and the reader threads actively open/read/close the file.
+
+        Files.setFDCacheCounter(Integer.MAX_VALUE - 100);
+
+        assertMemoryLeak(() -> {
+            final int numReaderThreads = 4;
+            final int testDurationMs = 5000;
+            final Thread[] readerThreads = new Thread[numReaderThreads];
+            final Throwable[] exceptions = new Throwable[numReaderThreads + 1];
+            final AtomicBoolean shouldStop = new AtomicBoolean(false);
+
+            // Writer thread - continuously appends to file A
+            Thread writerThread = new Thread(() -> {
+                byte[] appendData = new byte[16];
+                Arrays.fill(appendData, CONTENT_A);
+                long buf = Unsafe.getUnsafe().allocateMemory(appendData.length);
+                Unsafe.getUnsafe().copyMemory(appendData, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, null, buf, appendData.length);
+
+                long appendFd = -1;
+                try {
+                    appendFd = Files.openAppend(testFileA.$());
+                    Assert.assertTrue("Failed to open file for appending", appendFd > -1);
+                    while (!shouldStop.get()) {
+                        Files.append(appendFd, buf, appendData.length);
+                        Os.sleep(10);
+                    }
+                } catch (Exception e) {
+                    exceptions[numReaderThreads] = e;
+                } finally {
+                    Unsafe.getUnsafe().freeMemory(buf);
+                    close(appendFd);
+                }
+            });
+
+            // Reader threads - continuously open/read/close file A
+            for (int i = 0; i < numReaderThreads; i++) {
+                final int threadIndex = i;
+                readerThreads[i] = new Thread(() -> {
+                    try {
+                        while (!shouldStop.get()) {
+                            long readFd = -1;
+                            try {
+                                readFd = openRO(testFileA);
+                                // Read the first byte to verify file content
+                                long size = Files.length(readFd);
+                                long addr = Files.mmap(readFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                                Assert.assertTrue("Memory mapping failed", addr > 0);
+                                byte content = Unsafe.getUnsafe().getByte(addr + size - 1);
+                                Assert.assertEquals("File content mismatch in reader thread " + threadIndex, CONTENT_A, content);
+                                Files.munmap(addr, 1, MemoryTag.MMAP_DEFAULT);
+                                Os.sleep(5);
+                            } finally {
+                                close(readFd);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        exceptions[threadIndex] = e;
+                    }
+                });
+            }
+
+            // Start all threads
+            writerThread.start();
+            for (Thread readerThread : readerThreads) {
+                readerThread.start();
+            }
+
+            // Let them run for the specified duration
+            Thread.sleep(testDurationMs);
+
+            // Signal stop and wait for completion
+            shouldStop.set(true);
+
+            writerThread.join(5000);
+            for (Thread readerThread : readerThreads) {
+                readerThread.join(5000);
+            }
+
+            // Check for exceptions
+            for (int i = 0; i <= numReaderThreads; i++) {
+                if (exceptions[i] != null) {
+                    throw new RuntimeException("Exception in thread " + i, exceptions[i]);
+                }
+            }
+        });
     }
 
     @Test
