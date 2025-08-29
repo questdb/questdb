@@ -219,7 +219,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
 
                 roA2 = close(roA2);
 
-                rwB = Files.openRW(testFileB.$());
+                rwB = openRW(testFileB);
                 Assert.assertTrue("Failed to open file B", rwB > -1);
                 assertFdCanBeMmapedAndAssertContent(rwB, CONTENT_B);
 
@@ -277,7 +277,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
             long roA1 = -1;
             long roA2 = -1;
             try {
-                rwA = Files.openRW(testFileA.$());
+                rwA = openRW(testFileA);
                 roA1 = openRO(testFileA);
                 roA2 = openRO(testFileA);
                 Assert.assertTrue("Failed to open file A", rwA > -1 && roA1 > -1 && roA2 > -1);
@@ -285,7 +285,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
 
                 roA1 = close(roA1);
 
-                rwB = Files.openRW(testFileB.$());
+                rwB = openRW(testFileB);
                 Assert.assertTrue("Failed to open file B", rwB > -1);
                 assertFdCanBeMmapedAndAssertContent(rwB, CONTENT_B);
                 assertFdCanBeMmapedAndAssertContent(rwA, CONTENT_A);
