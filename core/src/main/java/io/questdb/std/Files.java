@@ -32,6 +32,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.net.URL;
@@ -531,6 +532,11 @@ public final class Files {
             return rmdir(path.ptr());
         }
         return false;
+    }
+
+    @TestOnly
+    public static void setFDCacheCounter(int newValue) {
+        fdCache.setFDCounter(newValue);
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {

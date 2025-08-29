@@ -28,6 +28,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -306,6 +307,11 @@ public class FdCache {
         int raw = fdCounter.getAndIncrement();
         // mask out the non-cached bit
         return raw & ~NON_CACHED_MASK;
+    }
+
+    @TestOnly
+    void setFDCounter(int newValue) {
+        fdCounter.set(newValue);
     }
 
     /**

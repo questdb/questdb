@@ -24,7 +24,6 @@
 
 package io.questdb.test.std;
 
-import io.questdb.std.FdCache;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -39,9 +38,7 @@ import org.junit.Test;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -260,13 +257,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
     // Sets fdCounter inside FdCache to Integer.MIN_VALUE. This will happen
     // in production after enough file open-close operations have occurred
     // to cause integer wraparound in the counter.
-    private void wraparoundFdCounter() throws Exception {
-        Field fdCacheField = Files.class.getDeclaredField("fdCache");
-        fdCacheField.setAccessible(true);
-        FdCache fdCache = (FdCache) fdCacheField.get(null);
-        Field fdCounterField = FdCache.class.getDeclaredField("fdCounter");
-        fdCounterField.setAccessible(true);
-        AtomicInteger fdCounter = (AtomicInteger) fdCounterField.get(fdCache);
-        fdCounter.set(Integer.MIN_VALUE);
+    private void wraparoundFdCounter() {
+        Files.setFDCacheCounter(Integer.MIN_VALUE);
     }
 }
