@@ -257,10 +257,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            RecordCursor cursor = swapped ? masterCursor : slaveCursor;
             if (columnIndex < columnSplit) {
+                RecordCursor cursor = swapped ? slaveCursor : masterCursor;
                 return cursor.getSymbolTable(columnIndex);
             } else {
+                RecordCursor cursor = swapped ? masterCursor : slaveCursor;
                 return cursor.getSymbolTable(columnIndex - columnSplit);
             }
         }

@@ -182,9 +182,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                     if (filter.getBool(record)) {
                         MapKey keys = matchIdsMap.withKey();
                         keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
-                        if (keys.findValue() == null) {
-                            keys.createValue();
-                        }
+                        keys.createValue();
                         isMatch = true;
                         return true;
                     }
