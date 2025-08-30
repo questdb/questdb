@@ -150,13 +150,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
-    timestamp_column_index: u32,
+    timestamp_index: u32,
 ) -> u64 {
     assert!(!decoder.is_null(), "decoder pointer is null");
 
     let decoder = unsafe { &*decoder };
 
-    match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_column_index) {
+    match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_index) {
         Ok(row_group_index) => row_group_index,
         Err(mut err) => {
             err.add_context(format!("could not find row group by timestamp {timestamp}"));
@@ -196,6 +196,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, row_group_sizes_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_timestampIndexOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, timestamp_index)
 }
 
 #[no_mangle]
