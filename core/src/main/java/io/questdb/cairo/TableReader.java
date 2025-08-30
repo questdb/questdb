@@ -738,8 +738,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Close columns before deleting the objects.
             // FD leak caught by failing fuzz tests.
             Misc.free(columns.get(i));
+            Misc.free(bitmapIndexes.get(i));
         }
         columns.remove(baseIndex, newBaseIndex - 1);
+        bitmapIndexes.remove(baseIndex, newBaseIndex - 1);
 
         int colTopStart = columnBase / 2;
         int columnSlotSize = getColumnBase(1);
