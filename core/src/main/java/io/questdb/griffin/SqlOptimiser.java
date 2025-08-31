@@ -124,6 +124,7 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
+    private final ChildTableColumnFinder childTableColumnFinder = new ChildTableColumnFinder(null, false);
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
     private final CairoConfiguration configuration;
@@ -666,10 +667,11 @@ public class SqlOptimiser implements Mutable {
 
     private void addOrderByClausesToModel(QueryModel originalModel, QueryModel targetModel) {
         for (int i = 0; i < originalModel.getOrderBy().size(); i++) {
-            if (Chars.equals(originalModel.getOrderBy().get(i).token, "column")) {
-                //check how to implement this
-            }
-            targetModel.addOrderBy(originalModel.getOrderBy().get(i), originalModel.getOrderByDirection().getQuick(i));
+            ExpressionNode originalNode = originalModel.getOrderBy().getQuick(i);
+            ExpressionNode cloneNode = expressionNodePool.next();
+            int dot = Chars.indexOfLastUnquoted(originalNode.token, '.');
+            cloneNode.token = originalNode.token.subSequence(dot + 1, originalNode.token.length());
+            targetModel.addOrderBy(cloneNode, originalModel.getOrderByDirection().getQuick(i));
         }
     }
 
@@ -2340,7 +2342,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean findIfnodeExpressionContainsChildTableRef(ExpressionNode node, QueryModel targetModel) throws SqlException {
-        ChildTableColumnFinder childTableColumnFinder = new ChildTableColumnFinder(targetModel, false);
+        childTableColumnFinder.targetModel = targetModel;
         traversalAlgo.traverse(node, childTableColumnFinder);
         return childTableColumnFinder.found;
     }
@@ -2655,6 +2657,13 @@ public class SqlOptimiser implements Mutable {
             }
             isLimitPresent = (virtualModel != null && virtualModel.getLimitLo() != null) ||
                     parent.getLimitLo() != null && parent.getSelectModelType() != SELECT_MODEL_GROUP_BY;
+
+            /*
+              Queries having order by expression as order by col1+43 will be handled
+              in a normal way for now, optimisation to be added later.
+             */
+            if (virtualModel != null)
+                return false;
 
             return isOrderByPresent && isLimitPresent;
         }
@@ -3492,10 +3501,10 @@ public class SqlOptimiser implements Mutable {
                 CharSequence tableAlias = timestampColumnAst.token.subSequence(0, dot);
                 if (((
                         (targetModel.getTableNameExpr() != null
-                                && Chars.equals(tableAlias, targetModel.getTableNameExpr().token)) ||
+                                && Chars.equalsIgnoreCase(tableAlias, targetModel.getTableNameExpr().token)) ||
                                 (targetModel.getAlias() != null
-                                        && Chars.equals(tableAlias, targetModel.getAlias().token))))
-                        && (Chars.equals(c.getAlias(), baseTableModel.getTimestamp().token))) {
+                                        && Chars.equalsIgnoreCase(tableAlias, targetModel.getAlias().token))))
+                        && (Chars.equalsIgnoreCase(c.getAlias(), baseTableModel.getTimestamp().token))) {
                     timestampColumnPresentInQuery = true;
                     break;
                 }

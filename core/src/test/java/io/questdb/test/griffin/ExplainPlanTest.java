@@ -789,6 +789,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
+    //This case will be handled later when we extend support of asof join
+    // optimisation for complex expressions in order by clause
+    @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithOrderByContainingExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 't1' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 't2' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                            "                    FROM t1 \n" +
+                            "                    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                            "                    WHERE \n" +
+                            "                    t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' and\n" +
+                            "                    t1.ts = '2023-09-01T00:00:00.000Z' and\n" +
+                            "                     t1.ts IN ('2023-09-01T00:00:00.000Z')\n" +
+                            "                    and t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' \n" +
+                            "                    ORDER BY t1.s+45\n" +
+                            "                    LIMIT 5;",
+                    "SelectedRecord\n" +
+                            "    Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "        Sort\n" +
+                            "          keys: [column]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [s,ts,s1,ts1,s+45]\n" +
+                            "                SelectedRecord\n" +
+                            "                    AsOf Join Fast Scan\n" +
+                            "                      condition: t2.s=t1.s\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Interval forward scan on: t1\n" +
+                            "                              intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t2\n"
+            );
+        });
+    }
+
     @Test
     public void testAsofJoinOptimisationShouldNotWorkWithWhereClauseColumnFromSlaveTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -850,14 +896,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
 
             assertPlanNoLeakCheck(
-                    "select size, count() from (\n" +
+                    "select size, price, count() from (\n" +
                             "select a.size, a.price from trades a ASOF JOIN order_book o\n" +
                             "order by a.price\n" +
                             "limit 5)  order by size limit 4",
                     "Sort light lo: 4\n" +
                             "  keys: [size]\n" +
                             "    GroupBy vectorized: false\n" +
-                            "      keys: [size]\n" +
+                            "      keys: [size,price]\n" +
                             "      values: [count(*)]\n" +
                             "        SelectedRecord\n" +
                             "            AsOf Join Fast Scan\n" +
@@ -873,6 +919,46 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                    Frame forward scan on: order_book\n"
             );
         });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithAliasOnOrderByExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select o.bid_price,  size as s , a.price as pr\n" +
+                            "from trades a asof join order_book o\n" +
+                            "order by size, a.price limit 5",
+                    "Sort\n" +
+                            "  keys: [s, pr]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            SelectedRecord\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: null\n" +
+                            "                  keys: [size, price]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+
     }
 
     @Test
