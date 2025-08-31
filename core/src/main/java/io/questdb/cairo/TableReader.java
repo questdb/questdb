@@ -727,19 +727,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-        int columnBase = getColumnBase(partitionIndex);
+        closePartitionResources(partitionIndex, offset);
         if (partitionSize > -1) {
-            closePartitionResources(partitionIndex, offset);
             openPartitionCount--;
         }
+        int columnBase = getColumnBase(partitionIndex);
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
-        for (int i = baseIndex, n = newBaseIndex - 1; i < n; i++) {
-            // Close columns before deleting the objects.
-            // FD leak caught by failing fuzz tests.
-            Misc.free(columns.get(i));
-            Misc.free(bitmapIndexes.get(i));
-        }
         columns.remove(baseIndex, newBaseIndex - 1);
         bitmapIndexes.remove(baseIndex, newBaseIndex - 1);
 
