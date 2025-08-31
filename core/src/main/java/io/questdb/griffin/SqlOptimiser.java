@@ -871,6 +871,8 @@ public class SqlOptimiser implements Mutable {
     // - only predicates relating to LEFT table may be pushed down
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
+        // CAST ELIMINATION: Removes redundant casts on join keys
+        eliminateRedundantCastsInJoinKeys(node);
         traverseNamesAndIndices(parent, node);
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
@@ -1004,6 +1006,50 @@ public class SqlOptimiser implements Mutable {
 
                 break;
         }
+    }
+
+    // Redundant Casts on join keys are eliminated here, which ensures that the most efficient query plan is executed regardless of the misuse of Cast by the user on join keys
+    // Casts on join keys are considered redundant, if type of both the keys are already the same
+    private void eliminateRedundantCastsInJoinKeys(ExpressionNode equalityNode) {
+        if (equalityNode == null || equalityNode.type != ExpressionNode.OPERATION || !"=".equals(equalityNode.token.toString())) {
+            return;
+        }
+
+        // Recursively unwrap casts on both sides
+        ExpressionNode unwrappedLeft = unwrapAllCasts(equalityNode.lhs);
+        ExpressionNode unwrappedRight = unwrapAllCasts(equalityNode.rhs);
+
+        // Replace only if both sides unwrap to simple column references (Literal nodes)
+        if (isSimpleColumn(unwrappedLeft) && isSimpleColumn(unwrappedRight)) {
+            equalityNode.lhs = unwrappedLeft;
+            equalityNode.rhs = unwrappedRight;
+        }
+    }
+
+    private ExpressionNode unwrapAllCasts(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        ExpressionNode current = node;
+        while (isCastFunction(current)) {
+            current = current.lhs;
+            if (current == null) {
+                break;
+            }
+        }
+        return current;
+    }
+
+    private boolean isCastFunction(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && SqlKeywords.isCastKeyword(node.token)
+                && node.paramCount == 2
+                && node.lhs != null;
+    }
+
+    private boolean isSimpleColumn(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.LITERAL;
     }
 
     private void analyseRegex(QueryModel parent, ExpressionNode node) throws SqlException {
