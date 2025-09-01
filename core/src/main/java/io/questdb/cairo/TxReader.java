@@ -246,7 +246,7 @@ public class TxReader implements Closeable, Mutable {
         return Long.MAX_VALUE;
     }
 
-    public long getNextPartitionTimestamp(long timestamp) {
+    public long getNextExistingPartitionTimestamp(long timestamp) {
         if (partitionBy == PartitionBy.NONE) {
             return Long.MAX_VALUE;
         }
@@ -262,10 +262,6 @@ public class TxReader implements Closeable, Mutable {
             return attachedPartitions.get(nextIndex);
         }
         return Long.MAX_VALUE;
-    }
-
-    public long getNextLogicalPartitionTimestamp(long timestamp) {
-        return partitionCeilMethod.ceil(timestamp);
     }
 
     public long getNextPartitionTimestamp(long timestamp) {
