@@ -71,6 +71,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -6147,6 +6148,77 @@ public class MatViewTest extends AbstractCairoTest {
                             "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
                     null
+            );
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testWeeklySampleTimestampOutOfRangeIssue6089() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE historical_prices (" +
+                            "  symbol SYMBOL," +
+                            "  market SYMBOL," +
+                            "  timestamp #TIMESTAMP," +
+                            "  price DOUBLE," +
+                            "  volume LONG" +
+                            ") timestamp(timestamp) PARTITION BY DAY WAL"
+            );
+
+            execute(
+                    "CREATE MATERIALIZED VIEW 'historical_prices_1week' AS (" +
+                            "  SELECT timestamp, symbol, market, " +
+                            "  first(price) AS open, max(price) AS high, " +
+                            "  min(price) AS low, last(price) AS close, " +
+                            "  sum(volume) AS volume" +
+                            "  FROM historical_prices" +
+                            "  SAMPLE BY 1w" +
+                            ") PARTITION BY MONTH TTL 5 YEARS"
+            );
+
+            execute(
+                    "INSERT INTO historical_prices VALUES" +
+                            "('HP', 'NYSE', '2025-08-31T15:49:00.309937Z', 28.50, 100)," +
+                            "('HP', 'NYSE', '2025-08-31T15:49:00.309937Z', 28.55, 120)," +
+                            "('HP', 'NYSE', '2025-08-31T15:49:00.309937Z', 28.52, 80)"
+            );
+
+            drainQueues();
+
+            assertSql(
+                    timestampType == TestTimestampType.MICRO
+                            ? "symbol\tmarket\ttimestamp\tprice\tvolume\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937Z\t28.5\t100\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937Z\t28.55\t120\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937Z\t28.52\t80\n"
+                            : "symbol\tmarket\ttimestamp\tprice\tvolume\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937000Z\t28.5\t100\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937000Z\t28.55\t120\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937000Z\t28.52\t80\n",
+                    "select * from historical_prices"
+            );
+
+            assertSql(
+                    "-",
+                    "SELECT timestamp, symbol, market, " +
+                            "first(price) AS open, max(price) AS high, min(price) AS low, last(price) AS close, sum(volume) AS volume " +
+                            "FROM historical_prices " +
+                            "SAMPLE BY 1w"
+            );
+
+            // Assert that materialized view status is valid
+            assertSql(
+                    "view_name\tview_status\n" +
+                            "historical_prices_1week\tvalid\n",
+                    "select view_name, view_status from materialized_views where view_name = 'historical_prices_1week'"
+            );
+
+            // Assert that view returns aggregated data
+            assertQueryNoLeakCheck(
+                    "timestamp\tsymbol\tmarket\topen\thigh\tlow\tclose\tvolume\n" +
+                            "2025-08-25T00:00:00.000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300\n",
+                    "historical_prices_1week ORDER BY timestamp"
             );
         });
     }
