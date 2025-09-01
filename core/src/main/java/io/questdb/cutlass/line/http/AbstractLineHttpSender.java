@@ -642,7 +642,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                                 : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
-                    pendingRows = 0;
+//                    pendingRows = 0;
                     flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
                     throw new LineSenderException("Could not flush buffer: ").put(url)
