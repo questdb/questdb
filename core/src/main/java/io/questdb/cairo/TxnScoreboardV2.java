@@ -224,36 +224,33 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
+        // Push max txn to the latest, to avoid races with acquireTxn()
+        // but don't stop checking if it's not the max.
+        updateMax(toTxn);
+
         if (getActiveReaderCount() == 0) {
             return true;
         }
 
-        long max;
-        do {
-            max = getMax();
-            for (int i = 0; i < bitmapCount; i++) {
-                long bitmap = Unsafe.getUnsafe().getLongVolatile(null, bitmapMem + (long) i * Long.BYTES);
-                if (bitmap == 0) {
-                    continue;
-                }
-
-                int base = i * Long.SIZE;
-                while (bitmap != 0) {
-                    final long lowestBit = Long.lowestOneBit(bitmap);
-                    final int bit = Long.numberOfTrailingZeros(lowestBit);
-                    int internalId = base + bit;
-                    long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) internalId * Long.BYTES);
-                    if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
-                        return false;
-                    }
-
-                    bitmap ^= lowestBit;
-                }
+        for (int i = 0; i < bitmapCount; i++) {
+            long bitmap = Unsafe.getUnsafe().getLongVolatile(null, bitmapMem + (long) i * Long.BYTES);
+            if (bitmap == 0) {
+                continue;
             }
-            // max changed, need to re-check
-            // but if max is already beyond toTxn then any new locks will have higher txn
-            // and are irrelevant to this range check.
-        } while (max <= toTxn && max != getMax());
+
+            int base = i * Long.SIZE;
+            while (bitmap != 0) {
+                final long lowestBit = Long.lowestOneBit(bitmap);
+                final int bit = Long.numberOfTrailingZeros(lowestBit);
+                int internalId = base + bit;
+                long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) internalId * Long.BYTES);
+                if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
+                    return false;
+                }
+
+                bitmap ^= lowestBit;
+            }
+        }
         return true;
     }
 

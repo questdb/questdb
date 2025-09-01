@@ -179,8 +179,13 @@ public class ColumnPurgeOperator implements Closeable {
                 txnScoreboard = engine.getTxnScoreboard(task.getTableName());
                 // fall through
             case STARTUP_ONLY:
-                int tableId = readTableId(path);
-                if (tableId != task.getTableId()) {
+                TableToken updatedTableToken = engine.getTableTokenIfExists(task.getTableName().getTableName());
+                boolean tableChanged = updatedTableToken == null || updatedTableToken.getTableId() != task.getTableId();
+                if (!tableChanged) {
+                    int tableId = readTableId(path);
+                    tableChanged = tableId != task.getTableId();
+                }
+                if (tableChanged) {
                     LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
                     return false;
                 }
