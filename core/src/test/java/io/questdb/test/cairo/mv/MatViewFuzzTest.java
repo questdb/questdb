@@ -51,19 +51,17 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
-
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
-    private static String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
+    private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
     @Test
     public void test2LevelDependencyView() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
         final String mv2Name = testName.getMethodName() + "_mv2";
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by 1h";
-        final String view2Sql = "select min(min), max(max), ts from  " + mvName + " sample by 2h";
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
+        final String view2Sql = "select min(min), max(max), ts from " + mvName + " sample by 2h";
         final Rnd rnd = fuzzer.generateRandom(LOG);
         testMvFuzz(rnd, tableName, mvName, viewSql, mv2Name, view2Sql);
     }
@@ -128,7 +126,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             for (int i = 0; i < tableCount; i++) {
                 final String tableNameBase = testTableName + "_" + i;
                 final String tableNameMv = tableNameBase + "_mv";
-                final String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
+                final String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1h";
                 final ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
                 fuzzTransactions.add(transactions);
                 viewSqls.add(viewSql);
@@ -241,7 +239,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
         final int mins = 1 + rnd.nextInt(300);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + mins + "m";
         testMvFuzz(rnd, tableName, mvName, viewSql);
     }
 
@@ -253,7 +251,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
         final int mins = 1 + rnd.nextInt(300);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin'";
         long start = MicrosFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
         testMvFuzz(rnd, tableName, start, mvName, viewSql);
@@ -267,7 +265,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
         final int mins = 1 + rnd.nextInt(300);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin'";
         long start = MicrosFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
         testMvFuzz(rnd, tableName, start, mvName, viewSql);
@@ -281,7 +279,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
         final int mins = 1 + rnd.nextInt(300);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin' with offset '00:15'";
         long start = MicrosFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
         testMvFuzz(rnd, tableName, start, mvName, viewSql);
@@ -295,7 +293,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
         final int secs = 1 + rnd.nextInt(30);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + secs + "s";
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + secs + "s";
         testMvFuzz(rnd, tableName, mvName, viewSql);
     }
 
@@ -305,7 +303,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String mvName = testName.getMethodName() + "_mv";
         final Rnd rnd = fuzzer.generateRandom(LOG);
         final int mins = 1 + rnd.nextInt(300);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + mins + "m";
+        testMvFuzz(rnd, tableName, mvName, viewSql);
+    }
+
+    @Test
+    public void testOneView_randomSampleByUnit() throws Exception {
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final char[] units = {'y', 'M', 'w', 'd', 'h', 'm'};
+        final char unit = units[rnd.nextInt(units.length)];
+        final int interval = 1 + rnd.nextInt(3);
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + interval + unit;
         testMvFuzz(rnd, tableName, mvName, viewSql);
     }
 
@@ -559,26 +569,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         createMatView(viewSql, matViewName, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
-
-        // Release table writers to reduce memory pressure
-        engine.releaseInactive();
-        return transactions;
-    }
-
-    private ObjList<FuzzTransaction> createTransactionsAndPeriodMv(
-            Rnd rnd,
-            String tableNameBase,
-            String matViewName,
-            String viewSql,
-            long start,
-            int length,
-            char lengthUnit
-    ) throws SqlException {
-        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
-        final boolean deferred = rnd.nextBoolean();
-        createPeriodMatView(viewSql, matViewName, start, length, lengthUnit, deferred);
-
-        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start);
 
         // Release table writers to reduce memory pressure
         engine.releaseInactive();

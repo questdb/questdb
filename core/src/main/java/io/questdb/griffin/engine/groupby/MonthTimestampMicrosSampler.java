@@ -57,11 +57,7 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        try {
-            return addMonth(timestamp, stepMonths);
-        } catch (ArithmeticException e) {
-            return Long.MAX_VALUE;
-        }
+        return addMonth(timestamp, stepMonths);
     }
 
     @Override
@@ -136,12 +132,11 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
                 _d = maxDay;
             }
         }
-        long result = Micros.toMicros(_y, _m, _d);
-        result = Math.addExact(result, Math.multiplyExact(startHour, Micros.HOUR_MICROS));
-        result = Math.addExact(result, Math.multiplyExact(startMin, Micros.MINUTE_MICROS));
-        result = Math.addExact(result, Math.multiplyExact(startSec, Micros.SECOND_MICROS));
-        result = Math.addExact(result, Math.multiplyExact(startMillis, Micros.MILLI_MICROS));
-        result = Math.addExact(result, startMicros);
-        return result;
+        return Micros.toMicros(_y, _m, _d)
+                + startHour * Micros.HOUR_MICROS
+                + startMin * Micros.MINUTE_MICROS
+                + startSec * Micros.SECOND_MICROS
+                + startMillis * Micros.MILLI_MICROS
+                + startMicros;
     }
 }

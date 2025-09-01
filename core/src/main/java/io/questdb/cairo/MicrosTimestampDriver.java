@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.griffin.engine.groupby.MonthTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.WeekTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
@@ -823,11 +824,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return new BaseTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'w':
                 // weeks
-                return new BaseTimestampSampler(Micros.WEEK_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                return new WeekTimestampMicrosSampler((int) interval);
             case 'M':
                 // months
                 return new MonthTimestampMicrosSampler((int) interval);
             case 'y':
+                // years
                 return new YearTimestampMicrosSampler((int) interval);
             default:
                 throw SqlException.$(position, "unsupported interval qualifier");

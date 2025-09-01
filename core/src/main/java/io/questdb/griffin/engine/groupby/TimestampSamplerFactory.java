@@ -43,8 +43,6 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is not a valid interval token
      */
     public static int findIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
-        int k = -1;
-
         if (cs == null) {
             throw SqlException.$(position, "missing interval");
         }
@@ -55,6 +53,7 @@ public final class TimestampSamplerFactory {
         }
 
         // look for end of digits
+        int k = -1;
         boolean allZeros = true;
         boolean atLeastOneDigit = false;
         for (int i = 0; i < len; i++) {

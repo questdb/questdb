@@ -209,23 +209,25 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             nextDstUtc = rules.getNextDST(timestamp);
         }
 
+        long from = Long.MIN_VALUE;
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
             timestampSampler.setStart(timestamp);
         } else {
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
             if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
-                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? timestampDriver.from(sampleFromFunc.getTimestamp(null), sampleFromFuncType) : 0L);
+                from = sampleFromFunc.getTimestamp(null);
+                timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
             } else {
-                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
             }
         }
 
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+        if (from != Long.MIN_VALUE) {
             // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(timestampDriver.from(sampleFromFunc.getTimestamp(null), sampleFromFuncType) + tzOffset);
+            topLocalEpoch = timestampSampler.round(timestampDriver.from(from, sampleFromFuncType) + tzOffset);
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {

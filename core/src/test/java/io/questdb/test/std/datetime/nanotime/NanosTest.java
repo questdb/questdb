@@ -47,7 +47,6 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 import static io.questdb.std.datetime.nanotime.NanosFormatUtils.parseNSecUTC;
 
 public class NanosTest {
-
     private final StringSink sink = new StringSink();
 
     @Before
@@ -56,8 +55,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddDaysPrevEpoch() throws Exception {
-
+    public void testAddDaysPrevEpoch() {
         NanosFormatCompiler compiler = new NanosFormatCompiler();
         DateFormat fmt = compiler.compile(CommonUtils.NSEC_UTC_PATTERN, true);
         long nanos = fmt.parse("2021-09-09T22:44:56.108872787Z", EN_LOCALE);
@@ -73,7 +71,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddMonths() throws Exception {
+    public void testAddMonths() {
         assertNanos(
                 "2007-07-12T23:45:51.045509761Z",
                 Nanos.addMonths(parseNSecUTC("2008-05-12T23:45:51.045509761Z"), -10)
@@ -81,7 +79,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddMonthsPrevEpoch() throws Exception {
+    public void testAddMonthsPrevEpoch() {
         assertNanos(
                 "1887-07-12T23:45:51.045887332Z",
                 Nanos.addMonths(parseNSecUTC("1888-05-12T23:45:51.045887332Z"), -10)
@@ -89,7 +87,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddYears() throws Exception {
+    public void testAddYears() {
         assertNanos(
                 "1998-05-12T23:45:51.045456091Z",
                 Nanos.addYears(parseNSecUTC("1988-05-12T23:45:51.045456091Z"), 10)
@@ -97,7 +95,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddYears3() throws Exception {
+    public void testAddYears3() {
         assertNanos(
                 "2015-01-01T00:00:00.988765341Z",
                 Nanos.addYears(parseNSecUTC("2014-01-01T00:00:00.988765341Z"), 1)
@@ -105,7 +103,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddYearsNonLeapToLeap() throws Exception {
+    public void testAddYearsNonLeapToLeap() {
         assertNanos(
                 "2016-01-01T00:00:00.878901304Z",
                 Nanos.addYears(parseNSecUTC("2015-01-01T00:00:00.878901304Z"), 1)
@@ -113,7 +111,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testAddYearsPrevEpoch() throws Exception {
+    public void testAddYearsPrevEpoch() {
         assertNanos(
                 "1898-05-12T23:45:51.045340901Z",
                 Nanos.addYears(parseNSecUTC("1888-05-12T23:45:51.045340901Z"), 10)
@@ -121,7 +119,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilDD() throws Exception {
+    public void testCeilDD() {
         assertNanos(
                 "2008-05-13T00:00:00.000000000Z",
                 Nanos.ceilDD(parseNSecUTC("2008-05-12T23:45:51.045900304Z"))
@@ -129,7 +127,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilDDPrevEpoch() throws Exception {
+    public void testCeilDDPrevEpoch() {
         assertNanos(
                 "1888-05-13T00:00:00.000000000Z",
                 Nanos.ceilDD(parseNSecUTC("1888-05-12T23:45:51.045807102Z"))
@@ -137,7 +135,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilHH() throws Exception {
+    public void testCeilHH() {
         assertNanos(
                 "2021-09-09T23:00:00.000000000Z",
                 Nanos.ceilHH(parseNSecUTC("2021-09-09T22:44:56.789131908Z"))
@@ -145,7 +143,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilMI() throws Exception {
+    public void testCeilMI() {
         assertNanos(
                 "2021-09-09T22:45:00.000000000Z",
                 Nanos.ceilMI(parseNSecUTC("2021-09-09T22:44:56.108872787Z"))
@@ -153,7 +151,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilMM() throws Exception {
+    public void testCeilMM() {
         assertNanos(
                 "2008-06-01T00:00:00.000000000Z",
                 Nanos.ceilMM(parseNSecUTC("2008-05-12T23:45:51.045901781Z"))
@@ -161,7 +159,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilMS() throws Exception {
+    public void testCeilMS() {
         assertNanos(
                 "2021-09-09T22:44:56.109000000Z",
                 Nanos.ceilMS(parseNSecUTC("2021-09-09T22:44:56.108872209Z"))
@@ -169,7 +167,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilSS() throws Exception {
+    public void testCeilSS() {
         assertNanos(
                 "2021-09-09T22:44:57.000000000Z",
                 Nanos.ceilSS(parseNSecUTC("2021-09-09T22:44:56.789761309Z"))
@@ -177,7 +175,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilWW() throws Exception {
+    public void testCeilWW() {
         assertNanos(
                 "2024-01-08T00:00:00.000000000Z",
                 Nanos.ceilWW(parseNSecUTC("2024-01-02T23:59:59.999821912Z"))
@@ -185,7 +183,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testCeilYYYY() throws Exception {
+    public void testCeilYYYY() {
         assertNanos(
                 "2009-01-01T00:00:00.000000000Z",
                 Nanos.ceilYYYY(parseNSecUTC("2008-05-12T23:45:51.045998123Z"))
@@ -193,7 +191,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testDayOfWeek() throws Exception {
+    public void testDayOfWeek() {
         long nanos = parseNSecUTC("1893-03-19T17:16:30.192901502Z");
         Assert.assertEquals(7, Nanos.getDayOfWeek(nanos));
         Assert.assertEquals(1, Nanos.getDayOfWeekSundayFirst(nanos));
@@ -203,7 +201,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testDayOfYear() throws Exception {
+    public void testDayOfYear() {
         long nanos = parseNSecUTC("2020-01-01T17:16:30.192901003Z");
         Assert.assertEquals(1, Nanos.getDayOfYear(nanos));
         nanos = parseNSecUTC("2019-03-10T07:16:30.192009167Z");
@@ -219,7 +217,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testDaysBetween() throws Exception {
+    public void testDaysBetween() {
         Assert.assertEquals(
                 41168,
                 Nanos.getDaysBetween(
@@ -237,7 +235,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorDD() throws Exception {
+    public void testFloorDD() {
         assertNanos(
                 "2008-05-12T00:00:00.000000000Z",
                 Nanos.floorDD(parseNSecUTC("2008-05-12T23:45:51.045990123Z"))
@@ -245,7 +243,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorDDWithStride() throws Exception {
+    public void testFloorDDWithStride() {
         assertNanos(
                 "2021-09-06T00:00:00.000000000Z",
                 Nanos.floorDD(parseNSecUTC("2021-09-09T22:44:56.784123789Z"), 12)
@@ -253,7 +251,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorHH() throws Exception {
+    public void testFloorHH() {
         assertNanos(
                 "2008-05-12T23:00:00.000000000Z",
                 Nanos.floorHH(parseNSecUTC("2008-05-12T23:45:51.901781502Z"))
@@ -261,7 +259,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorHHWithStride() throws Exception {
+    public void testFloorHHWithStride() {
         assertNanos(
                 "2021-09-09T19:00:00.000000000Z",
                 Nanos.floorHH(parseNSecUTC("2021-09-09T22:44:56.784123321Z"), 5)
@@ -269,7 +267,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorMI() throws Exception {
+    public void testFloorMI() {
         assertNanos(
                 "2021-09-09T22:44:00.000000000Z",
                 Nanos.floorMI(parseNSecUTC("2021-09-09T22:44:56.784123981Z"))
@@ -277,7 +275,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorMIWithStride() throws Exception {
+    public void testFloorMIWithStride() {
         assertNanos(
                 "2021-09-09T22:18:00.000000000Z",
                 Nanos.floorMI(parseNSecUTC("2021-09-09T22:44:56.784123987Z"), 73)
@@ -285,36 +283,40 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorMM() throws Exception {
-        assertNanos(
-                "2008-05-01T00:00:00.000000000Z",
-                Nanos.floorMM(parseNSecUTC("2008-05-12T23:45:51.045901405Z"))
-        );
+    public void testFloorMM() {
+        testFloorMM("1970-01-12T23:45:51.045000234Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorMM("1970-02-12T23:45:51.283000000Z", "1970-02-01T00:00:00.000000000Z");
+        testFloorMM("1970-11-12T23:45:51.045901405Z", "1970-11-01T00:00:00.000000000Z");
+        testFloorMM("2008-05-12T23:45:51.283000000Z", "2008-05-01T00:00:00.000000000Z");
+        testFloorMM("2022-02-22T20:18:30.000000000Z", "2022-02-01T00:00:00.000000000Z");
     }
 
     @Test
-    public void testFloorMMEpoch() throws Exception {
+    public void testFloorMMEpoch() {
         assertNanos(
-                "1970-09-01T00:00:00.000000000Z",
+                "1970-10-01T00:00:00.000000000Z",
                 Nanos.floorMM(parseNSecUTC("1970-10-12T23:45:51.045901781Z"), 3)
+        );
+        assertNanos(
+                "1970-11-01T00:00:00.000000000Z",
+                Nanos.floorMM(parseNSecUTC("1970-11-12T23:45:51.045981401Z"), 2)
         );
         assertNanos(
                 "1970-01-01T00:00:00.000000000Z",
                 Nanos.floorMM(parseNSecUTC("1970-02-12T23:45:51.045981401Z"), 3)
         );
-
         assertNanos(
                 "1970-01-01T00:00:00.000000000Z",
                 Nanos.floorMM(parseNSecUTC("1969-11-12T23:45:51.045201112Z"), 3)
         );
         assertNanos(
                 "1970-06-01T00:00:00.000000000Z",
-                Nanos.floorMM(parseNSecUTC("1969-05-12T23:45:51.045511341Z"), 3)
+                Nanos.floorMM(parseNSecUTC("1969-05-12T23:45:51.045511341Z"), 5)
         );
     }
 
     @Test
-    public void testFloorMS() throws Exception {
+    public void testFloorMS() {
         assertNanos(
                 "2021-09-09T22:44:56.784000000Z",
                 Nanos.floorMS(parseNSecUTC("2021-09-09T22:44:56.784123551Z"))
@@ -322,7 +324,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorMSWithStride() throws Exception {
+    public void testFloorMSWithStride() {
         assertNanos(
                 "2021-09-09T22:44:56.625000000Z",
                 Nanos.floorMS(parseNSecUTC("2021-09-09T22:44:56.784123654Z"), 225)
@@ -330,7 +332,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorSS() throws Exception {
+    public void testFloorSS() {
         assertNanos(
                 "2021-09-09T22:44:56.000000000Z",
                 Nanos.floorSS(parseNSecUTC("2021-09-09T22:44:56.789123456Z"))
@@ -338,7 +340,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorSSWithStride() throws Exception {
+    public void testFloorSSWithStride() {
         assertNanos(
                 "2021-09-09T22:44:40.000000000Z",
                 Nanos.floorSS(parseNSecUTC("2021-09-09T22:44:56.789876543Z"), 40)
@@ -346,7 +348,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorWW() throws Exception {
+    public void testFloorWW() {
         assertNanos(
                 "2024-12-30T00:00:00.000000000Z",
                 Nanos.floorWW(parseNSecUTC("2025-01-02T23:59:59.999876543Z"))
@@ -354,7 +356,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorWWWithStride() throws Exception {
+    public void testFloorWWWithStride() {
         assertNanos(
                 "2021-08-30T00:00:00.000000000Z",
                 Nanos.floorWW(parseNSecUTC("2021-09-09T22:44:56.784123456Z"), 2)
@@ -362,7 +364,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorYYYY() throws Exception {
+    public void testFloorYYYY() {
         assertNanos(
                 "2008-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("2008-05-12T23:45:51.045123456Z"))
@@ -370,7 +372,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorYYYYWithStrideAfterEpoch() throws Exception {
+    public void testFloorYYYYWithStrideAfterEpoch() {
         assertNanos(
                 "1973-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1975-05-12T23:45:51.045789123Z"), 3)
@@ -378,7 +380,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorYYYYWithStrideAtEpoch() throws Exception {
+    public void testFloorYYYYWithStrideAtEpoch() {
         assertNanos(
                 "1970-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1970-05-12T23:45:51.045654321Z"), 3)
@@ -386,7 +388,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorYYYYWithStrideBeforeEpochSnapToEpoch() throws Exception {
+    public void testFloorYYYYWithStrideBeforeEpochSnapToEpoch() {
         assertNanos(
                 "1970-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1968-05-12T23:45:51.045987654Z"), 3)
@@ -394,7 +396,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorYYYYWithStrideWellBeforeEpoch() throws Exception {
+    public void testFloorYYYYWithStrideWellBeforeEpoch() {
         assertNanos(
                 "1967-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1967-05-12T23:45:51.045246813Z"), 3)
@@ -402,7 +404,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testFormatDateTime() throws Exception {
+    public void testFormatDateTime() {
         assertTrue("2014-11-30T12:34:55.332981291Z");
         assertTrue("2008-03-15T11:22:30.500800301Z");
         assertTrue("1917-10-01T11:22:30.500504109Z");
@@ -410,7 +412,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testGetWeek() throws Exception {
+    public void testGetWeek() {
         Assert.assertEquals(52, Nanos.getWeek(parseNSecUTC("2017-12-31T13:32:12.531123456Z")));
         Assert.assertEquals(1, Nanos.getWeek(parseNSecUTC("2018-01-01T03:32:12.531789123Z")));
         Assert.assertEquals(51, Nanos.getWeek(parseNSecUTC("2020-12-20T13:32:12.531456789Z")));
@@ -422,7 +424,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testMonthsBetween() throws Exception {
+    public void testMonthsBetween() {
         // a < b, same year
         Assert.assertEquals(
                 2,
@@ -470,7 +472,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testNExtOrSameDow3() throws Exception {
+    public void testNExtOrSameDow3() {
         assertNanos(
                 "2017-04-06T00:00:00.000123456Z",
                 Nanos.nextOrSameDayOfWeek(parseNSecUTC("2017-04-06T00:00:00.000123456Z"), 4)
@@ -534,7 +536,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testNextOrSameDow1() throws Exception {
+    public void testNextOrSameDow1() {
         assertNanos(
                 "2017-04-12T00:00:00.123456789Z",
                 Nanos.nextOrSameDayOfWeek(parseNSecUTC("2017-04-06T00:00:00.123456789Z"), 3)
@@ -542,7 +544,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testNextOrSameDow2() throws Exception {
+    public void testNextOrSameDow2() {
         assertNanos(
                 "2017-04-08T00:00:00.876543210Z",
                 Nanos.nextOrSameDayOfWeek(parseNSecUTC("2017-04-06T00:00:00.876543210Z"), 6)
@@ -567,12 +569,12 @@ public class NanosTest {
     }
 
     @Test
-    public void testParseDateTime() throws Exception {
+    public void testParseDateTime() {
         assertTrue("2008-02-29T10:54:01.010123902Z");
     }
 
     @Test
-    public void testParseDateTimePrevEpoch() throws Exception {
+    public void testParseDateTimePrevEpoch() {
         assertTrue("1812-02-29T10:54:01.010901450Z");
     }
 
@@ -620,37 +622,37 @@ public class NanosTest {
 
 */
     @Test(expected = NumericException.class)
-    public void testParseWrongDay() throws Exception {
+    public void testParseWrongDay() {
         parseNSecUTC("2013-09-31T00:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongHour() throws Exception {
+    public void testParseWrongHour() {
         parseNSecUTC("2013-09-30T25:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongMicros() throws Exception {
+    public void testParseWrongMicros() {
         parseNSecUTC("2013-09-30T22:04:34.1024091Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongMinute() throws Exception {
+    public void testParseWrongMinute() {
         parseNSecUTC("2013-09-30T22:61:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongMonth() throws Exception {
+    public void testParseWrongMonth() {
         parseNSecUTC("2013-00-12T00:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongSecond() throws Exception {
+    public void testParseWrongSecond() {
         parseNSecUTC("2013-09-30T22:04:60.000Z");
     }
 
     @Test
-    public void testPreviousOrSameDow1() throws Exception {
+    public void testPreviousOrSameDow1() {
         assertNanos(
                 "2017-04-05T00:00:00.111222333Z",
                 Nanos.previousOrSameDayOfWeek(parseNSecUTC("2017-04-06T00:00:00.111222333Z"), 3)
@@ -658,7 +660,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testPreviousOrSameDow2() throws Exception {
+    public void testPreviousOrSameDow2() {
         assertNanos(
                 "2017-04-01T00:00:00.444555666Z",
                 Nanos.previousOrSameDayOfWeek(parseNSecUTC("2017-04-06T00:00:00.444555666Z"), 6)
@@ -666,7 +668,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testPreviousOrSameDow3() throws Exception {
+    public void testPreviousOrSameDow3() {
         assertNanos(
                 "2017-04-06T00:00:00.777888999Z",
                 Nanos.previousOrSameDayOfWeek(parseNSecUTC("2017-04-06T00:00:00.777888999Z"), 4)
@@ -765,7 +767,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testWeekOfMonth() throws Exception {
+    public void testWeekOfMonth() {
         Assert.assertEquals(1, Nanos.getWeekOfMonth(parseNSecUTC("2020-01-01T17:16:30.192345678Z")));
         Assert.assertEquals(2, Nanos.getWeekOfMonth(parseNSecUTC("2019-03-10T07:16:30.192837465Z")));
         Assert.assertEquals(5, Nanos.getWeekOfMonth(parseNSecUTC("2020-12-31T12:00:00.000111222Z")));
@@ -773,7 +775,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testWeekOfYear() throws Exception {
+    public void testWeekOfYear() {
         Assert.assertEquals(1, Nanos.getWeekOfYear(parseNSecUTC("2020-01-01T17:16:30.192555666Z")));
         Assert.assertEquals(10, Nanos.getWeekOfYear(parseNSecUTC("2019-03-10T07:16:30.192777888Z")));
         Assert.assertEquals(11, Nanos.getWeekOfYear(parseNSecUTC("2020-03-10T07:16:30.192999000Z")));
@@ -783,7 +785,7 @@ public class NanosTest {
     }
 
     @Test
-    public void testYearsBetween() throws Exception {
+    public void testYearsBetween() {
         Assert.assertEquals(
                 112,
                 Nanos.getYearsBetween(
@@ -842,5 +844,20 @@ public class NanosTest {
             Assert.fail("Expected exception");
         } catch (NumericException ignore) {
         }
+    }
+
+    private void testFloorMM(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorMM(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMM(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMM(parseNSecUTC(timestamp), 1, 0)
+        );
     }
 }

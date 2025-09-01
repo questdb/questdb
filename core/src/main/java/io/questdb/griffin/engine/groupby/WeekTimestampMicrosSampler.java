@@ -24,17 +24,19 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class BaseTimestampSampler implements TimestampSampler {
+public class WeekTimestampMicrosSampler implements TimestampSampler {
     private final long bucket;
-    private final int timestampType;
+    private final int stepWeeks;
     private long start;
 
-    public BaseTimestampSampler(long bucket, int timestampType) {
-        this.bucket = bucket;
-        this.timestampType = timestampType;
+    public WeekTimestampMicrosSampler(int stepWeeks) {
+        this.stepWeeks = stepWeeks;
+        this.bucket = stepWeeks * Micros.WEEK_MICROS;
     }
 
     @Override
@@ -49,7 +51,7 @@ public class BaseTimestampSampler implements TimestampSampler {
 
     @Override
     public int getTimestampType() {
-        return timestampType;
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -77,11 +79,7 @@ public class BaseTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        long q = (value - start) / bucket;
-        if (value < 0 && q * bucket != value) {
-            q = q - 1;
-        }
-        return start + q * bucket;
+        return Micros.floorWW(value, stepWeeks, start);
     }
 
     @Override
@@ -91,6 +89,6 @@ public class BaseTimestampSampler implements TimestampSampler {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.putAscii("BaseTsSampler");
+        sink.putAscii("WeekTsSampler");
     }
 }

@@ -71,7 +71,6 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -6152,7 +6151,6 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore
     @Test
     public void testWeeklySampleTimestampOutOfRangeIssue6089() throws Exception {
         assertMemoryLeak(() -> {
@@ -6199,12 +6197,20 @@ public class MatViewTest extends AbstractCairoTest {
                     "select * from historical_prices"
             );
 
-            assertSql(
-                    "-",
+            final String expected = timestampType == TestTimestampType.MICRO
+                    ? "timestamp\tsymbol\tmarket\topen\thigh\tlow\tclose\tvolume\n" +
+                    "2025-08-25T00:00:00.000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300\n"
+                    : "timestamp\tsymbol\tmarket\topen\thigh\tlow\tclose\tvolume\n" +
+                    "2025-08-25T00:00:00.000000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300\n";
+            assertQueryNoLeakCheck(
+                    expected,
                     "SELECT timestamp, symbol, market, " +
                             "first(price) AS open, max(price) AS high, min(price) AS low, last(price) AS close, sum(volume) AS volume " +
                             "FROM historical_prices " +
-                            "SAMPLE BY 1w"
+                            "SAMPLE BY 1w",
+                    "timestamp",
+                    true,
+                    true
             );
 
             // Assert that materialized view status is valid
@@ -6216,9 +6222,11 @@ public class MatViewTest extends AbstractCairoTest {
 
             // Assert that view returns aggregated data
             assertQueryNoLeakCheck(
-                    "timestamp\tsymbol\tmarket\topen\thigh\tlow\tclose\tvolume\n" +
-                            "2025-08-25T00:00:00.000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300\n",
-                    "historical_prices_1week ORDER BY timestamp"
+                    expected,
+                    "historical_prices_1week",
+                    "timestamp",
+                    true,
+                    true
             );
         });
     }

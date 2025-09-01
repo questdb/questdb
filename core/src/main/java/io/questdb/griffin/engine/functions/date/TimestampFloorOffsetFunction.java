@@ -34,7 +34,6 @@ import io.questdb.std.Numbers;
 
 
 public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction {
-
     private final Function arg;
     private final TimestampDriver.TimestampFloorWithOffsetMethod floor;
     private final long offset;

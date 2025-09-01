@@ -354,9 +354,9 @@ public final class Nanos {
     }
 
     public static long floorMM(long nanos) {
-        int y;
-        boolean l;
-        return yearNanos(y = getYear(nanos), l = isLeapYear(y)) + monthOfYearNanos(getMonthOfYear(nanos, y, l), l);
+        int y = getYear(nanos);
+        boolean l = isLeapYear(y);
+        return yearNanos(y, l) + monthOfYearNanos(getMonthOfYear(nanos, y, l), l);
     }
 
     @SuppressWarnings("unused")
@@ -377,12 +377,11 @@ public final class Nanos {
     }
 
     public static long floorMM(long nanos, int stride) {
-        final int origin = getYear(0);
         long m = (getMonthsBetween(0, nanos) / stride) * stride;
-        int y = (int) (origin + m / 12);
+        int y = (int) (EPOCH_YEAR_0 + m / 12);
         int mm = (int) (m % 12);
         boolean l = isLeapYear(y);
-        return yearNanos(y, l) + (mm > 0 ? monthOfYearNanos(mm, l) : 0);
+        return yearNanos(y, l) + (mm > 0 ? monthOfYearNanos(mm + 1, l) : 0);
     }
 
     public static long floorMR(long nanos, int stride) {
@@ -991,7 +990,7 @@ public final class Nanos {
 
     public static long parseNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -1001,7 +1000,7 @@ public final class Nanos {
         }
 
         if (i >= lim || Numbers.notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         int val = 0;
@@ -1015,7 +1014,7 @@ public final class Nanos {
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
             }
             val = r;
         }
@@ -1023,7 +1022,7 @@ public final class Nanos {
         final int len = i - p;
 
         if (len > 9 || val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         while (i - p < 9) {

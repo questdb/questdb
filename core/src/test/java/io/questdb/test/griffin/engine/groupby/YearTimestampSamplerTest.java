@@ -128,12 +128,12 @@ public class YearTimestampSamplerTest {
         Assert.assertEquals(expectedUs * Nanos.MICRO_NANOS, samplerNs.round(tsNs));
     }
 
-    private void testSampler(int stepSize, String expected) throws NumericException {
-        testSampler(stepSize, expected, ColumnType.TIMESTAMP_MICRO);
-        testSampler(stepSize, expected, ColumnType.TIMESTAMP_NANO);
+    private void testSampler(int stepYears, String expected) throws NumericException {
+        testSampler(stepYears, expected, ColumnType.TIMESTAMP_MICRO);
+        testSampler(stepYears, expected, ColumnType.TIMESTAMP_NANO);
     }
 
-    private void testSampler(int stepSize, String expected, int timestampType) throws NumericException {
+    private void testSampler(int stepYears, String expected, int timestampType) throws NumericException {
         StringSink sink = new StringSink();
         TimestampSampler sampler = ColumnType.isTimestampMicro(timestampType)
                 ? new YearTimestampMicrosSampler(4)
@@ -142,9 +142,9 @@ public class YearTimestampSamplerTest {
         long timestamp = driver.parseFloorLiteral("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
         for (int i = 0; i < 20; i++) {
-            long ts = sampler.nextTimestamp(timestamp, stepSize);
+            long ts = sampler.nextTimestamp(timestamp, stepYears);
             sink.putISODate(driver, ts).put('\n');
-            if (stepSize == 1) {
+            if (stepYears == 1) {
                 Assert.assertEquals(timestamp, sampler.previousTimestamp(ts));
             }
             timestamp = ts;

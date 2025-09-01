@@ -131,6 +131,7 @@ public class MonthTimestampSamplerTest {
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2014-02-12T12:12:12.123456Z",
+                "2022-02-23T17:08:58.000000Z",
                 "2014-02-12T12:12:12.123456Z",
                 "2024-11-12T12:12:12.123456Z",
         };
@@ -138,6 +139,7 @@ public class MonthTimestampSamplerTest {
                 "2013-12-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2014-02-01T00:00:00.000000Z",
+                "2022-02-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2024-11-01T00:00:00.000000Z",
         };
@@ -145,8 +147,9 @@ public class MonthTimestampSamplerTest {
                 1,
                 1,
                 1,
+                1,
                 3,
-                10
+                10,
         };
         Assert.assertEquals(src.length, rounded.length);
         Assert.assertEquals(src.length, strides.length);

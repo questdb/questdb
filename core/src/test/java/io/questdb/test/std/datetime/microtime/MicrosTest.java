@@ -46,8 +46,7 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.MicrosFormatUtils.parseHTTP;
 
-public class TimestampsTest {
-
+public class MicrosTest {
     private final StringSink sink = new StringSink();
 
     @Before
@@ -56,119 +55,119 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testAddDaysPrevEpoch() throws Exception {
+    public void testAddDaysPrevEpoch() {
         long micros = MicrosFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addDays(micros, 24));
         TestUtils.assertEquals("1888-06-05T23:45:51.045Z", sink);
     }
 
     @Test
-    public void testAddMonths() throws Exception {
+    public void testAddMonths() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addMonths(micros, -10));
         TestUtils.assertEquals("2007-07-12T23:45:51.045Z", sink);
     }
 
     @Test
-    public void testAddMonthsPrevEpoch() throws Exception {
+    public void testAddMonthsPrevEpoch() {
         long micros = MicrosFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addMonths(micros, -10));
         TestUtils.assertEquals("1887-07-12T23:45:51.045Z", sink);
     }
 
     @Test
-    public void testAddYears() throws Exception {
+    public void testAddYears() {
         long micros = MicrosFormatUtils.parseTimestamp("1988-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addYears(micros, 10));
         TestUtils.assertEquals("1998-05-12T23:45:51.045Z", sink);
     }
 
     @Test
-    public void testAddYears3() throws Exception {
+    public void testAddYears3() {
         long micros = MicrosFormatUtils.parseTimestamp("2014-01-01T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addYears(micros, 1));
         TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testAddYearsNonLeapToLeap() throws Exception {
+    public void testAddYearsNonLeapToLeap() {
         long micros = MicrosFormatUtils.parseTimestamp("2015-01-01T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addYears(micros, 1));
         TestUtils.assertEquals("2016-01-01T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testAddYearsPrevEpoch() throws Exception {
+    public void testAddYearsPrevEpoch() {
         long micros = MicrosFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.addYears(micros, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
     }
 
     @Test
-    public void testCeilDD() throws Exception {
+    public void testCeilDD() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilDD(micros));
         TestUtils.assertEquals("2008-05-13T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testCeilDDPrevEpoch() throws Exception {
+    public void testCeilDDPrevEpoch() {
         long micros = MicrosFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilDD(micros));
         TestUtils.assertEquals("1888-05-13T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testCeilHH() throws Exception {
+    public void testCeilHH() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilHH(micros));
         TestUtils.assertEquals("2021-09-09T23:00:00.000Z", sink);
     }
 
     @Test
-    public void testCeilMI() throws Exception {
+    public void testCeilMI() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilMI(micros));
         TestUtils.assertEquals("2021-09-09T22:45:00.000Z", sink);
     }
 
     @Test
-    public void testCeilMM() throws Exception {
+    public void testCeilMM() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilMM(micros));
         TestUtils.assertEquals("2008-06-01T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testCeilMS() throws Exception {
+    public void testCeilMS() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilMS(micros));
         TestUtils.assertEquals("2021-09-09T22:44:56.109Z", sink);
     }
 
     @Test
-    public void testCeilSS() throws Exception {
+    public void testCeilSS() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilSS(micros));
         TestUtils.assertEquals("2021-09-09T22:44:57.000Z", sink);
     }
 
     @Test
-    public void testCeilWW() throws Exception {
+    public void testCeilWW() {
         long micros = MicrosFormatUtils.parseTimestamp("2024-01-02T23:59:59.999Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilWW(micros));
         TestUtils.assertEquals("2024-01-08T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testCeilYYYY() throws Exception {
+    public void testCeilYYYY() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.ceilYYYY(micros));
         TestUtils.assertEquals("2009-01-01T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testDayOfWeek() throws Exception {
+    public void testDayOfWeek() {
         long micros = MicrosFormatUtils.parseTimestamp("1893-03-19T17:16:30.192Z");
         Assert.assertEquals(7, Micros.getDayOfWeek(micros));
         Assert.assertEquals(1, Micros.getDayOfWeekSundayFirst(micros));
@@ -178,7 +177,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testDayOfYear() throws Exception {
+    public void testDayOfYear() {
         long micros = MicrosFormatUtils.parseTimestamp("2020-01-01T17:16:30.192Z");
         Assert.assertEquals(1, Micros.getDayOfYear(micros));
         micros = MicrosFormatUtils.parseTimestamp("2019-03-10T07:16:30.192Z");
@@ -194,7 +193,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testDaysBetween() throws Exception {
+    public void testDaysBetween() {
         Assert.assertEquals(
                 41168,
                 Micros.getDaysBetween(
@@ -212,39 +211,44 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFloorDD() throws Exception {
+    public void testFloorDD() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorDD(micros));
         TestUtils.assertEquals("2008-05-12T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testFloorHH() throws Exception {
+    public void testFloorHH() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorHH(micros));
         TestUtils.assertEquals("2008-05-12T23:00:00.000Z", sink);
     }
 
     @Test
-    public void testFloorMI() throws Exception {
+    public void testFloorMI() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorMI(micros));
         TestUtils.assertEquals("2021-09-09T22:44:00.000Z", sink);
     }
 
     @Test
-    public void testFloorMM() throws Exception {
-        long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
-        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros));
-        TestUtils.assertEquals("2008-05-01T00:00:00.000Z", sink);
+    public void testFloorMM() {
+        testFloorMM("1970-01-12T23:45:51.123Z", "1970-01-01T00:00:00.000Z");
+        testFloorMM("1970-02-12T23:45:51.045Z", "1970-02-01T00:00:00.000Z");
+        testFloorMM("1970-11-12T23:45:51.123Z", "1970-11-01T00:00:00.000Z");
+        testFloorMM("2008-05-12T23:45:51.045Z", "2008-05-01T00:00:00.000Z");
+        testFloorMM("2022-02-22T20:18:30.283Z", "2022-02-01T00:00:00.000Z");
     }
 
     @Test
-    public void testFloorMMEpoch() throws Exception {
-        sink.clear();
+    public void testFloorMMEpoch() {
         long micros = MicrosFormatUtils.parseTimestamp("1970-10-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 3));
-        TestUtils.assertEquals("1970-09-01T00:00:00.000Z", sink);
+        TestUtils.assertEquals("1970-10-01T00:00:00.000Z", sink);
+        sink.clear();
+        micros = MicrosFormatUtils.parseTimestamp("1970-11-12T23:45:51.045Z");
+        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 2));
+        TestUtils.assertEquals("1970-11-01T00:00:00.000Z", sink);
         sink.clear();
         micros = MicrosFormatUtils.parseTimestamp("1970-02-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 3));
@@ -255,33 +259,33 @@ public class TimestampsTest {
         TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
         sink.clear();
         micros = MicrosFormatUtils.parseTimestamp("1969-05-12T23:45:51.045Z");
-        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 3));
+        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 5));
         TestUtils.assertEquals("1970-06-01T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testFloorMS() throws Exception {
+    public void testFloorMS() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorMS(micros));
         TestUtils.assertEquals("2021-09-09T22:44:56.784Z", sink);
     }
 
     @Test
-    public void testFloorSS() throws Exception {
+    public void testFloorSS() {
         final long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorSS(micros));
         TestUtils.assertEquals("2021-09-09T22:44:56.000Z", sink);
     }
 
     @Test
-    public void testFloorWW() throws Exception {
+    public void testFloorWW() {
         long micros = MicrosFormatUtils.parseTimestamp("2025-01-02T23:59:59.999Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorWW(micros));
         TestUtils.assertEquals("2024-12-30T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testFloorWithStride() throws Exception {
+    public void testFloorWithStride() {
         //postgresql: SELECT date_bin('2 weeks', '2021-09-09 22:44:56.784123Z', '1970-01-01 00:00:00.000000');
         sink.clear();
         long micros = MicrosFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
@@ -315,14 +319,14 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFloorYYYY() throws Exception {
+    public void testFloorYYYY() {
         long micros = MicrosFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorYYYY(micros));
         TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
     }
 
     @Test
-    public void testFloorYYYYEpoch() throws Exception {
+    public void testFloorYYYYEpoch() {
         long micros = MicrosFormatUtils.parseTimestamp("1975-05-12T23:45:51.045Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.floorYYYY(micros, 3));
         TestUtils.assertEquals("1973-01-01T00:00:00.000Z", sink);
@@ -350,7 +354,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFormatDateTime() throws Exception {
+    public void testFormatDateTime() {
         assertTrue("2014-11-30T12:34:55.332Z");
         assertTrue("2008-03-15T11:22:30.500Z");
         assertTrue("1917-10-01T11:22:30.500Z");
@@ -358,14 +362,14 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFormatNanosTz() throws Exception {
+    public void testFormatNanosTz() {
         final long micros = MicrosFormatUtils.parseDateTime("2008-05-10T12:31:02.008998991+01:00");
         MicrosFormatUtils.USEC_UTC_FORMAT.format(micros, DateLocaleFactory.INSTANCE.getLocale("en"), null, sink);
         TestUtils.assertEquals("2008-05-10T11:31:02.008998", sink);
     }
 
     @Test
-    public void testFormatNanosZ() throws Exception {
+    public void testFormatNanosZ() {
         final long micros = MicrosFormatUtils.parseDateTime("2008-05-10T12:31:02.008998991Z");
         MicrosFormatUtils.USEC_UTC_FORMAT.format(micros, DateLocaleFactory.INSTANCE.getLocale("en"), null, sink);
         TestUtils.assertEquals("2008-05-10T12:31:02.008998", sink);
@@ -395,7 +399,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testGetWeek() throws Exception {
+    public void testGetWeek() {
         long micros = MicrosFormatUtils.parseTimestamp("2017-12-31T13:32:12.531Z");
         Assert.assertEquals(52, Micros.getWeek(micros));
         micros = MicrosFormatUtils.parseTimestamp("2018-01-01T03:32:12.531Z");
@@ -422,7 +426,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testMonthsBetween() throws Exception {
+    public void testMonthsBetween() {
         // a < b, same year
         Assert.assertEquals(
                 2,
@@ -470,7 +474,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testNExtOrSameDow3() throws Exception {
+    public void testNExtOrSameDow3() {
         // thursday
         long micros = MicrosFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.nextOrSameDayOfWeek(micros, 4));
@@ -550,7 +554,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testNextOrSameDow1() throws Exception {
+    public void testNextOrSameDow1() {
         // thursday
         long micros = MicrosFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.nextOrSameDayOfWeek(micros, 3));
@@ -558,7 +562,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testNextOrSameDow2() throws Exception {
+    public void testNextOrSameDow2() {
         // thursday
         long micros = MicrosFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.nextOrSameDayOfWeek(micros, 6));
@@ -588,14 +592,14 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testParseDateTime() throws Exception {
+    public void testParseDateTime() {
         String date = "2008-02-29T10:54:01.010Z";
         MicrosFormatUtils.appendDateTime(sink, MicrosFormatUtils.parseTimestamp(date));
         TestUtils.assertEquals(date, sink);
     }
 
     @Test
-    public void testParseDateTimePrevEpoch() throws Exception {
+    public void testParseDateTimePrevEpoch() {
         String date = "1812-02-29T10:54:01.010Z";
         MicrosFormatUtils.appendDateTime(sink, MicrosFormatUtils.parseTimestamp(date));
         TestUtils.assertEquals(date, sink);
@@ -652,37 +656,37 @@ public class TimestampsTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongDay() throws Exception {
+    public void testParseWrongDay() {
         MicrosFormatUtils.parseTimestamp("2013-09-31T00:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongHour() throws Exception {
+    public void testParseWrongHour() {
         MicrosFormatUtils.parseTimestamp("2013-09-30T25:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongMicros() throws Exception {
+    public void testParseWrongMicros() {
         MicrosFormatUtils.parseTimestamp("2013-09-30T22:04:34.1024091Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongMinute() throws Exception {
+    public void testParseWrongMinute() {
         MicrosFormatUtils.parseTimestamp("2013-09-30T22:61:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongMonth() throws Exception {
+    public void testParseWrongMonth() {
         MicrosFormatUtils.parseTimestamp("2013-00-12T00:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongSecond() throws Exception {
+    public void testParseWrongSecond() {
         MicrosFormatUtils.parseTimestamp("2013-09-30T22:04:60.000Z");
     }
 
     @Test
-    public void testPreviousOrSameDow1() throws Exception {
+    public void testPreviousOrSameDow1() {
         // thursday
         long micros = MicrosFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.previousOrSameDayOfWeek(micros, 3));
@@ -690,7 +694,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testPreviousOrSameDow2() throws Exception {
+    public void testPreviousOrSameDow2() {
         // thursday
         long micros = MicrosFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.previousOrSameDayOfWeek(micros, 6));
@@ -698,7 +702,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testPreviousOrSameDow3() throws Exception {
+    public void testPreviousOrSameDow3() {
         // thursday
         long micros = MicrosFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         MicrosFormatUtils.appendDateTime(sink, Micros.previousOrSameDayOfWeek(micros, 4));
@@ -768,7 +772,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testWeekOfMonth() throws Exception {
+    public void testWeekOfMonth() {
         long micros = MicrosFormatUtils.parseTimestamp("2020-01-01T17:16:30.192Z");
         Assert.assertEquals(1, Micros.getWeekOfMonth(micros));
         micros = MicrosFormatUtils.parseTimestamp("2019-03-10T07:16:30.192Z");
@@ -780,7 +784,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testWeekOfYear() throws Exception {
+    public void testWeekOfYear() {
         long micros = MicrosFormatUtils.parseTimestamp("2020-01-01T17:16:30.192Z");
         Assert.assertEquals(1, Micros.getWeekOfYear(micros));
         micros = MicrosFormatUtils.parseTimestamp("2019-03-10T07:16:30.192Z");
@@ -796,7 +800,7 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testYearsBetween() throws Exception {
+    public void testYearsBetween() {
         Assert.assertEquals(
                 112,
                 Micros.getYearsBetween(
@@ -842,5 +846,20 @@ public class TimestampsTest {
             Assert.fail("Expected exception");
         } catch (NumericException ignore) {
         }
+    }
+
+    private void testFloorMM(String timestamp, String expected) {
+        sink.clear();
+        long micros = MicrosFormatUtils.parseTimestamp(timestamp);
+        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros));
+        TestUtils.assertEquals(expected, sink);
+        sink.clear();
+        micros = MicrosFormatUtils.parseTimestamp(timestamp);
+        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 1));
+        TestUtils.assertEquals(expected, sink);
+        sink.clear();
+        micros = MicrosFormatUtils.parseTimestamp(timestamp);
+        MicrosFormatUtils.appendDateTime(sink, Micros.floorMM(micros, 1, 0));
+        TestUtils.assertEquals(expected, sink);
     }
 }

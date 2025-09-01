@@ -362,9 +362,9 @@ public final class Micros {
     }
 
     public static long floorMM(long micros) {
-        int y;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = CommonUtils.isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
+        int y = getYear(micros);
+        boolean l = CommonUtils.isLeapYear(y);
+        return yearMicros(y, l) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
     @SuppressWarnings("unused")
@@ -389,7 +389,7 @@ public final class Micros {
         int y = (int) (EPOCH_YEAR_0 + m / 12);
         int mm = (int) (m % 12);
         boolean l = CommonUtils.isLeapYear(y);
-        return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
+        return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm + 1, l) : 0);
     }
 
     public static long floorMS(long micros, int stride, long offset) {
@@ -910,7 +910,7 @@ public final class Micros {
 
     public static long parseNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -920,7 +920,7 @@ public final class Micros {
         }
 
         if (i >= lim || Numbers.notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         int val = 0;
@@ -934,7 +934,7 @@ public final class Micros {
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
             }
             val = r;
         }
@@ -942,7 +942,7 @@ public final class Micros {
         final int len = i - p;
 
         if (len > 9 || val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         while (i - p < 9) {

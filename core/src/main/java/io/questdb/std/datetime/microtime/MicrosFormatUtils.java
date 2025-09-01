@@ -185,13 +185,13 @@ public class MicrosFormatUtils {
     public static void assertChar(char c, @NotNull CharSequence in, int pos, int hi) throws NumericException {
         assertRemaining(pos, hi);
         if (in.charAt(pos) != c) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
     public static void assertNoTail(int pos, int hi) throws NumericException {
         if (pos < hi) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
@@ -227,19 +227,19 @@ public class MicrosFormatUtils {
 
         // wrong month
         if (month < 1 || month > 12) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         if (hourType == CommonUtils.HOUR_24) {
             // wrong 24-hour clock hour
             if (hour < 0 || hour > 24) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
             }
             hour %= 24;
         } else {
             // wrong 12-hour clock hour
             if (hour < 0 || hour > 12) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
             }
             hour %= 12;
             if (hourType == CommonUtils.HOUR_PM) {
@@ -249,19 +249,19 @@ public class MicrosFormatUtils {
 
         // wrong day of month
         if (day < 1 || day > CommonUtils.getDaysPerMonth(month, leap)) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         if (minute < 0 || minute > 59) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         if (second < 0 || second > 59) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         if ((week <= 0 && week != -1) || week > CommonUtils.getWeeks(year)) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
 
         // calculate year, month, and day of ISO week
@@ -314,7 +314,7 @@ public class MicrosFormatUtils {
                 // try next
             }
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
@@ -330,7 +330,7 @@ public class MicrosFormatUtils {
                 // try next
             }
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmnnn

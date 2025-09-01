@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.griffin.engine.groupby.MonthTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.WeekTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
@@ -837,11 +838,12 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return new BaseTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'w':
                 // weeks
-                return new BaseTimestampSampler(Nanos.WEEK_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                return new WeekTimestampNanosSampler((int) interval);
             case 'M':
                 // months
                 return new MonthTimestampNanosSampler((int) interval);
             case 'y':
+                // years
                 return new YearTimestampNanosSampler((int) interval);
             default:
                 throw SqlException.$(position, "unsupported interval qualifier");
