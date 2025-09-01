@@ -4215,6 +4215,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
+        } finally {
+            tempInnerProjectionFunctions.clear();
+            tempOuterProjectionFunctions.clear();
         }
     }
 
