@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -89,22 +88,11 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record recordA) {
-        getLeft().memoize(recordA);
-        getRight().memoize(recordA);
-    }
-
-    @Override
     default void offerStateTo(Function that) {
         if (that instanceof BinaryFunction) {
             getLeft().offerStateTo(((BinaryFunction) that).getLeft());
             getRight().offerStateTo(((BinaryFunction) that).getRight());
         }
-    }
-
-    @Override
-    default boolean shouldMemoize() {
-        return getLeft().shouldMemoize() || getRight().shouldMemoize();
     }
 
     @Override

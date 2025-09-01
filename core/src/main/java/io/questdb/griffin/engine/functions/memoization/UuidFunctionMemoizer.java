@@ -31,10 +31,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 
-public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFunction {
+public final class UuidFunctionMemoizer extends UuidFunction implements MemoizerFunction {
     private final Function fn;
     private long hiLeft;
     private long hiRight;
@@ -44,7 +43,6 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
     private Record recordRight;
 
     public UuidFunctionMemoizer(Function fn) {
-        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
@@ -84,7 +82,7 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         recordLeft = NullRecord.INSTANCE;
         recordRight = NullRecord.INSTANCE;
-        UnaryFunction.super.init(symbolTableSource, executionContext);
+        MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -119,11 +117,6 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
                     .put(record.toString())
                     .put(']');
         }
-    }
-
-    @Override
-    public boolean shouldMemoize() {
-        return true;
     }
 
     @Override

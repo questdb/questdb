@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.BoolList;
 
 /**
  * This class supports generation of VirtualRecordCursorFactory in allowing functions
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
  */
 public class PriorityMetadata extends AbstractRecordMetadata {
     private final RecordMetadata baseMetadata;
+    private final BoolList dependencies;
     private final int virtualColumnReservedSlots;
 
     public PriorityMetadata(int virtualColumnReservedSlots, RecordMetadata baseMetadata) {
@@ -46,6 +48,8 @@ public class PriorityMetadata extends AbstractRecordMetadata {
         // hold on to the base metadata, in case this is a join metadata, and it is able to
         // resolve column names containing table aliases.
         this.baseMetadata = baseMetadata;
+        dependencies = new BoolList(virtualColumnReservedSlots);
+        dependencies.setPos(virtualColumnReservedSlots);
     }
 
     public void add(TableColumnMetadata m) {
@@ -64,7 +68,9 @@ public class PriorityMetadata extends AbstractRecordMetadata {
         if (index == -1) {
             int keyIndex = columnNameIndexMap.keyIndex(columnName, lo, hi);
             if (keyIndex < 0) {
-                return columnNameIndexMap.valueAt(keyIndex);
+                int pos = columnNameIndexMap.valueAt(keyIndex);
+                dependencies.set(pos, true);
+                return pos;
             }
             return -1;
         }
@@ -77,5 +83,9 @@ public class PriorityMetadata extends AbstractRecordMetadata {
             return columnMetadata.getQuick(index);
         }
         return baseMetadata.getColumnMetadata(index - virtualColumnReservedSlots);
+    }
+
+    public BoolList getDependencies() {
+        return dependencies;
     }
 }

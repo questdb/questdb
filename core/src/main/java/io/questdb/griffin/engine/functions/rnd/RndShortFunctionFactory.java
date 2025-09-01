@@ -75,11 +75,6 @@ public class RndShortFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }

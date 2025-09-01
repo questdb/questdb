@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -110,14 +109,6 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record record) {
-        getFunc0().memoize(record);
-        getFunc1().memoize(record);
-        getFunc2().memoize(record);
-        getFunc3().memoize(record);
-    }
-
-    @Override
     default void offerStateTo(Function that) {
         if (that instanceof QuaternaryFunction) {
             getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
@@ -125,14 +116,6 @@ public interface QuaternaryFunction extends Function {
             getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
             getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
         }
-    }
-
-    @Override
-    default boolean shouldMemoize() {
-        return getFunc0().shouldMemoize()
-                || getFunc1().shouldMemoize()
-                || getFunc2().shouldMemoize()
-                || getFunc3().shouldMemoize();
     }
 
     @Override

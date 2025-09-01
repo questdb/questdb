@@ -32,12 +32,11 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.str.CharSink;
 
-public final class Long256FunctionMemoizer extends Long256Function implements UnaryFunction {
+public final class Long256FunctionMemoizer extends Long256Function implements MemoizerFunction {
     private final Function fn;
     private final Long256Impl valueLeft = new Long256Impl();
     private final Long256Impl valueRight = new Long256Impl();
@@ -45,7 +44,6 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
     private Record recordRight;
 
     public Long256FunctionMemoizer(Function fn) {
-        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
@@ -93,7 +91,7 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         recordLeft = NullRecord.INSTANCE;
         recordRight = NullRecord.INSTANCE;
-        UnaryFunction.super.init(symbolTableSource, executionContext);
+        MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -137,11 +135,6 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
                     .put(record.toString())
                     .put(']');
         }
-    }
-
-    @Override
-    public boolean shouldMemoize() {
-        return true;
     }
 
     @Override

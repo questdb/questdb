@@ -1324,6 +1324,10 @@ public class SqlOptimiser implements Mutable {
         collapseStackedChooseModels(model.getUnionModel());
     }
 
+    private void collectExprRefCount(QueryModel model) {
+
+    }
+
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
         final ExpressionNode alias = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         if (parent.addModelAliasIndex(alias, modelIndex)) {
@@ -7007,6 +7011,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            collectExprRefCount(rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed

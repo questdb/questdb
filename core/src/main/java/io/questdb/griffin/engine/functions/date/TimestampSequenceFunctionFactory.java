@@ -76,11 +76,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
-            return true;
-        }
-
-        @Override
         public long getTimestamp(Record rec) {
             final long result = next;
             next += longIncrement.getLong(rec);

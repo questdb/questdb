@@ -32,9 +32,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public final class ByteFunctionMemoizer extends ByteFunction implements UnaryFunction {
+public final class ByteFunctionMemoizer extends ByteFunction implements MemoizerFunction {
     private final Function fn;
     private Record recordLeft;
     private Record recordRight;
@@ -42,7 +41,6 @@ public final class ByteFunctionMemoizer extends ByteFunction implements UnaryFun
     private byte valueRight;
 
     public ByteFunctionMemoizer(Function fn) {
-        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
@@ -71,7 +69,7 @@ public final class ByteFunctionMemoizer extends ByteFunction implements UnaryFun
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         recordLeft = NullRecord.INSTANCE;
         recordRight = NullRecord.INSTANCE;
-        UnaryFunction.super.init(symbolTableSource, executionContext);
+        MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -102,11 +100,6 @@ public final class ByteFunctionMemoizer extends ByteFunction implements UnaryFun
                     .put(record.toString())
                     .put(']');
         }
-    }
-
-    @Override
-    public boolean shouldMemoize() {
-        return true;
     }
 
     @Override

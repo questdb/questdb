@@ -136,6 +136,19 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -278,6 +291,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
+import io.questdb.std.BoolList;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
@@ -306,8 +320,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -3900,7 +3914,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final ObjList<Function> outerProjectionFunctions = new ObjList<>(columnCount);
                 final ObjList<Function> innerProjectionFunctions = new ObjList<>(columnCount);
                 final GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
-                final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
                 final IntList projectionFunctionFlags = new IntList(columnCount);
 
                 GroupByUtils.assembleGroupByFunctions(
@@ -3918,7 +3931,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctionPositions,
                         projectionFunctionFlags,
                         projectionMetadata,
-                        priorityMetadata,
                         valueTypes,
                         keyTypes,
                         listColumnFilterA,
@@ -3955,7 +3967,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<Function> outerProjectionFunctions = new ObjList<>(columnCount);
             final ObjList<Function> innerProjectionFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
-            final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
             GroupByUtils.assembleGroupByFunctions(
@@ -3973,7 +3984,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordFunctionPositions,
                     projectionFunctionFlags,
                     projectionMetadata,
-                    priorityMetadata,
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
@@ -4651,7 +4661,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<Function> outerProjectionFunctions = new ObjList<>(columnCount);
             final ObjList<Function> innerProjectionFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
-            final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
             GroupByUtils.assembleGroupByFunctions(
@@ -4669,7 +4678,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordFunctionPositions,
                     projectionFunctionFlags,
                     outerProjectionMetadata,
-                    priorityMetadata,
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
@@ -4997,13 +5005,66 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
+
+            if (ALLOW_FUNCTION_MEMOIZATION) {
+                BoolList boolList = priorityMetadata.getDependencies();
+                for (int i = 0, n = boolList.size(); i < n; i++) {
+                    if (boolList.get(i)) {
+                        Function function = functions.getQuick(i);
+                        if (function != null && !function.isConstant()) {
+                            switch (function.getType()) {
+                                case ColumnType.LONG:
+                                    functions.set(i, new LongFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.INT:
+                                    functions.set(i, new IntFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.TIMESTAMP:
+                                    functions.set(i, new TimestampFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    functions.set(i, new DoubleFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.SHORT:
+                                    functions.set(i, new ShortFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.BOOLEAN:
+                                    functions.set(i, new BooleanFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.BYTE:
+                                    functions.set(i, new ByteFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.CHAR:
+                                    functions.set(i, new CharFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.DATE:
+                                    functions.set(i, new DateFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    functions.set(i, new FloatFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.IPv4:
+                                    functions.set(i, new IPv4FunctionMemoizer(function));
+                                    break;
+                                case ColumnType.UUID:
+                                    functions.set(i, new UuidFunctionMemoizer(function));
+                                    break;
+                                case ColumnType.LONG256:
+                                    functions.set(i, new Long256FunctionMemoizer(function));
+                                    break;
+                                // other types do not have memoization yet
+                            }
+                        }
+                    }
+                }
+            }
+
             return new VirtualRecordCursorFactory(
                     virtualMetadata,
                     priorityMetadata,
                     functions,
                     factory,
-                    virtualColumnReservedSlots,
-                    ALLOW_FUNCTION_MEMOIZATION
+                    virtualColumnReservedSlots
             );
         } catch (SqlException | CairoException e) {
             Misc.freeObjList(functions);
