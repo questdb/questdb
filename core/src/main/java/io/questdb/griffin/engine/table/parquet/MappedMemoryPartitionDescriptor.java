@@ -47,13 +47,16 @@ public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
             ff.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
 
             final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
-            final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
-            ff.munmap(columnSecondaryAddr, columnSecondarySize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
-
+            if (columnSecondaryAddr != 0) {
+                final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
+                ff.munmap(columnSecondaryAddr, columnSecondarySize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
+            }
             final long symbolOffsetsAddr = columnData.get(rawIndex + SYMBOL_OFFSET_ADDR_OFFSET);
-            final long symbolOffsetsSize = columnData.get(rawIndex + SYMBOL_OFFSET_SIZE_OFFSET);
-            final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSize + 1);
-            ff.munmap(symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
+            if (symbolOffsetsAddr != 0) {
+                final long symbolOffsetsSize = columnData.get(rawIndex + SYMBOL_OFFSET_SIZE_OFFSET);
+                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSize + 1);
+                ff.munmap(symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
+            }
         }
 
         super.clear();
