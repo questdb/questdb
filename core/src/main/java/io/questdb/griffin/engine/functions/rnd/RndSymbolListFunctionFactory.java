@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -97,8 +98,20 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public boolean isSymbolTableStatic() {
             return false;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable() {
+            Func func = new Func(symbols);
+            func.rnd = new Rnd(this.rnd.getSeed0(), this.rnd.getSeed1());
+            return func;
         }
 
         @Override
@@ -113,7 +126,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(symbolKey);
+            return symbolKey != -1 ? symbols.getQuick(symbolKey) : null;
         }
 
         private int next() {

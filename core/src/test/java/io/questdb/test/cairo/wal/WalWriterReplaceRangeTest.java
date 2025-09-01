@@ -26,19 +26,12 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -489,80 +482,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         }
     }
 
-    private static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
-        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
-            Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            rdr.unsafeLoadAll();
-
-            return txnToString(rdr, compareTxns, compareTruncateVersion);
-        }
-    }
-
-    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion) {
-        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put("{");
-        if (compareTxns) {
-            sink.put("txn: ").put(txReader.getTxn());
-        }
-        sink.put(", attachedPartitions: [");
-        for (int i = 0; i < txReader.getPartitionCount(); i++) {
-            long timestamp = txReader.getPartitionTimestampByIndex(i);
-            long rowCount = txReader.getPartitionRowCountByTimestamp(timestamp);
-
-            if (i - 1 == txReader.getPartitionCount()) {
-                rowCount = txReader.getTransientRowCount();
-            }
-
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
-            if (i > 0) {
-                sink.put(",");
-            }
-            sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
-            sink.put("', rowCount: ").put(rowCount);
-            // Do not print name txn, it can be different in expected and actual table
-
-            if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
-            }
-            if (txReader.isPartitionReadOnly(i)) {
-                sink.put(", readOnly=true");
-            }
-            sink.put("}");
-        }
-        sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
-        sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
-        sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
-        sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
-        if (compareTruncateVersion) {
-            sink.put("', dataVersion: ").put(txReader.getDataVersion());
-        }
-        sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
-        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
-        if (compareTruncateVersion) {
-            sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
-        }
-
-        if (compareTxns) {
-            sink.put(", seqTxn: ").put(txReader.getSeqTxn());
-        }
-        sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
-        sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
-        sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
-        sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
-        sink.put("}");
-        return sink.toString();
-    }
-
     private void insertRowWithReplaceRange(
             String tsStr,
             String rangeStartStr,
@@ -727,7 +646,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-24T17", "2022-02-19T17", "2022-02-28T18", tableToken, false, false, "rg", "expected", true, false);
+            insertRowWithReplaceRange("2022-02-24T17", "2022-02-19T17", "2022-02-28T18", tableToken, false, compareTruncateVersion, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
@@ -754,6 +673,66 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             insertRowWithReplaceRange("2022-02-21,2022-02-21T01", "2022-02-21", "2022-02-27", tableToken, false, false, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeWithColumnAddedInMiddleOfPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            final int partitionRowCount = 500;
+
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            // Insert 1000 rows to fill one partition
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T01:00', 86 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(" + partitionRowCount + ")");
+            drainWalQueue();
+
+            // Add both fixed size (int) and variable size (string) columns after the partition is full
+            // This sets column_top = 1000 for both columns
+            execute("alter table rg add column c4 int");
+            execute("alter table rg add column c5 string");
+            drainWalQueue();
+
+            // Now perform a replace operation on ALL 1000 rows (the entire area where column data doesn't exist)
+            // This should trigger the column top fix for both fixed and variable size columns
+            Utf8StringSink sink = new Utf8StringSink();
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // Add one row with new column values for the replace operation
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T09");
+                TableWriter.Row row = ww.newRow(ts);
+                row.putInt(0, 999);
+                row.putLong(2, 9999);
+                row.putStr(3, "replaced");
+                sink.clear();
+                sink.put("replaced_varchar");
+                row.putVarchar(4, sink);
+                row.putSym(5, "replaced_sym");
+                row.putInt(6, 42); // c4 - fixed size column
+                row.putStr(7, "replaced_string"); // c5 - variable size column
+                row.append();
+
+                // Replace the entire partition range
+                long rangeStart = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00");
+                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T10");
+                ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // Verify the row content
+            assertSql("id\tts\ty\ts\tv\tm\tc4\tc5\n" +
+                            "999\t2022-02-24T09:00:00.000000Z\t9999\treplaced\treplaced_varchar\treplaced_sym\t42\treplaced_string\n" +
+                            "378\t2022-02-24T10:00:22.000000Z\t189\t378\tNUZ[\tc\tnull\t\n" +
+                            "379\t2022-02-24T10:01:48.000000Z\t189\t379\t@xbR>i@s\ta\tnull\t\n" +
+                            "380\t2022-02-24T10:03:14.000000Z\t190\t380\t;WS\tc\tnull\t\n" +
+                            "381\t2022-02-24T10:04:40.000000Z\t190\t381\tV1IF \t\tnull\t\n" +
+                            "382\t2022-02-24T10:06:06.000000Z\t191\t382\t14wddTh&))\tb\tnull\t\n" +
+                            "383\t2022-02-24T10:07:32.000000Z\t191\t383\t#<Y达\u197F亙ጾ燇Ȉc\ta\tnull\t\n" +
+                            "384\t2022-02-24T10:08:58.000000Z\t192\t384\t\uDB9E\uDD3D\uF29Ec+ɫwՊ毷걭\ta\tnull\t\n" +
+                            "385\t2022-02-24T10:10:24.000000Z\t192\t385\tsoMv* !Em>\ta\tnull\t\n" +
+                            "386\t2022-02-24T10:11:50.000000Z\t193\t386\t@1oq.w%V\tb\tnull\t\n",
+                    "select * from rg limit 10");
         });
     }
 }

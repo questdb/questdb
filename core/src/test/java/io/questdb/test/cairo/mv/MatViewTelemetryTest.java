@@ -35,7 +35,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
-import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
@@ -43,7 +42,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        setProperty(DEV_MODE_ENABLED, "true");
         setProperty(CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         super.setUp();
     }
@@ -55,7 +53,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
                     execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -95,7 +93,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
 
                     execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -135,7 +133,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:00.000000Z");
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
                     execute(
                             "2024-10-24T17:00:25.000000Z",
                             refreshJob,
@@ -179,7 +177,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createBaseTable("2024-10-24T17:00:10.000000Z");
                 createMatView("2024-10-24T17:00:20.000000Z", telemetryJob);
 
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
                     execute(
                             "2024-10-24T17:01:00.000000Z",
                             refreshJob,
@@ -204,7 +202,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertSql(
                         "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                                 "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
-                                "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
+                                "2\t\t\n" +
+                                "3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
                         "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
                 );
 

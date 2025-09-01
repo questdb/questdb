@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
  * SortedLightRecordCursor which implements LIMIT clause.
  */
 public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor, DynamicLimitCursor {
-
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
@@ -114,6 +113,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         chain.clear();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(isChainBuilt) + baseCursor.preComputedStateSize();
     }
 
     @Override

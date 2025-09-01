@@ -93,6 +93,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
@@ -128,6 +129,7 @@ import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -811,6 +813,69 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Asserts that the actual lines are the same as the expected lines in the reverse order.
+     * For example, assertion with expected: "123\n456\n789\n" and actual: "789\n456\n123\n" passes.
+     * This method expects for the char sequences to end up with a newline character.
+     */
+    public static void assertReverseLinesEqual(@Nullable String message, CharSequence expected, CharSequence actual) {
+        String cleanMessage = message == null ? "" : message;
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail(cleanMessage + "expected:<" + expected + "> but was: NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail(cleanMessage + "expected: NULL but was:<" + actual + ">");
+        }
+
+        if (expected.length() != actual.length()) {
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+        }
+
+        if (expected.length() == 0) {
+            // If expected is empty, so is actual here (otherwise it would have failed the last condition).
+            return;
+        }
+
+        if (expected.charAt(expected.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "expected must end up with a newline character");
+        }
+
+        if (actual.charAt(actual.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "actual must end up with a newline character");
+        }
+
+        int expLo = expected.length();
+        int actHi = -1;
+        final int actLen = actual.length();
+        while (expLo != 0) {
+            int idx = Chars.lastIndexOf(expected, 0, expLo - 1, '\n');
+            final int len = expLo - idx - 1;
+            expLo = idx + 1;
+
+            final int actLo = actHi + 1;
+            idx = Chars.indexOf(actual, actLo, actLen, '\n');
+            if (idx == -1 || idx - actHi != len) {
+                Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+            }
+            actHi = idx;
+
+            for (int j = 0; j < len; j++) {
+                if (expected.charAt(expLo + j) != actual.charAt(actLo + j)) {
+                    Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+                }
+            }
+        }
+
+        if (actHi != actLen - 1) {
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+        }
+    }
+
     public static void assertSql(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -964,8 +1029,11 @@ public final class TestUtils {
     }
 
     public static void assertSqlWithTypes(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence sql, MutableUtf16Sink sink, CharSequence expected
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            CharSequence expected
     ) throws SqlException {
         printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);
@@ -1315,7 +1383,7 @@ public final class TestUtils {
     }
 
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
@@ -1433,6 +1501,17 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static long getMetricValue(CairoEngine engine, String tag) {
+        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
+            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
+            String[] lines = metricsSink.toString().split("\n");
+            Optional<String> metricsLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tag + ' ')).findFirst();
+            Assert.assertTrue(tag + " missing", metricsLine.isPresent());
+            return Long.parseLong(metricsLine.get().substring(tag.length() + 1));
+        }
     }
 
     public static String getPgConnectionUri(int pgPort) {
@@ -2255,6 +2334,15 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    private static CharSequence reverseLines(CharSequence expected) {
+        String[] lines = expected.toString().split("\n");
+        StringSink sink = new StringSink(expected.length());
+        for (int i = 0, n = lines.length; i < n; i++) {
+            sink.put(lines[n - i - 1]).put('\n');
+        }
+        return sink;
+    }
+
     private static String toHexString(Long256 expected) {
         return Long.toHexString(expected.getLong0())
                 + " " + Long.toHexString(expected.getLong1())
@@ -2319,6 +2407,7 @@ public final class TestUtils {
 
     public static class LeakCheck implements QuietCloseable {
         private final int addrInfoCount;
+        private final long cachedFileCount;
         private final long fileCount;
         private final String fileDebugInfo;
         private final long mem;
@@ -2335,6 +2424,7 @@ public final class TestUtils {
 
             Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
             fileCount = Files.getOpenFileCount();
+            cachedFileCount = Files.getOpenCachedFileCount();
             fileDebugInfo = Files.getOpenFdDebugInfo();
             Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
@@ -2352,10 +2442,14 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
-            if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals(
-                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
-                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+            if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
+                Assert.fail(
+                        "expected: cached file descriptors: " + cachedFileCount +
+                                ", expected OS file descriptors: " + fileCount +
+                                ", list: " + fileDebugInfo +
+                                " actual: cached file descriptors: " + Files.getOpenCachedFileCount() +
+                                ", OS file descriptors: " + Files.getOpenFileCount() +
+                                ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
 

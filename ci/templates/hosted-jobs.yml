@@ -106,14 +106,7 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
-        javadoc:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.17"
-          testset: "none"
-          javadoc_step: "javadoc:javadoc"
-          javadoc_profile: ",javadoc"
+
     pool:
       vmImage: $(imageName)
       name: $(poolName)

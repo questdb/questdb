@@ -69,7 +69,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -92,24 +91,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    @TestOnly
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount
-    ) {
-        this(configuration, engine, workerCount, workerCount);
-    }
-
-    public TextQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
@@ -608,15 +597,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (d == d) {
+                if (Numbers.isFinite(d)) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (f == f) {
+                if (Numbers.isFinite(f)) {
                     response.put(f);
                 }
                 break;

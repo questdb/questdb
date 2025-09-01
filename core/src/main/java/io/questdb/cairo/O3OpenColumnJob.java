@@ -204,7 +204,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
-    public static void o3PartitionMerge(
+    public static void mergeVarColumn(
             Path pathToNewPartition,
             int pplen,
             CharSequence columnName,
@@ -1495,13 +1495,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         int plen = pathToOldPartition.size();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
-        boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND;
+        boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
         TableUtils.setPathForNativePartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcNameTxn : txn);
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
 
         // append jobs do not set value of part counter, we do it here for those
         switch (openColumnMode) {
+            case OPEN_LAST_PARTITION_FOR_APPEND:
             case OPEN_MID_PARTITION_FOR_APPEND:
                 appendMidPartition(
                         pathToNewPartition,
@@ -1527,7 +1528,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataOldPartitionSize,
                         o3SplitPartitionSize,
                         tableWriter,
-                        indexWriter,
+                        // Even though we are not using mapped memory for the last partition from the table writer
+                        // we must use its indexers to produce consistent index results. The condition here is
+                        // "creative" - we want to avoid bitmap index lookup for each and every column. We will use
+                        // presence of "indexWriter" as the guide. For columns that do not need indexing, this
+                        // writer would be null.
+
+                        // Consistent use of tableWriter's indexer is required because last partition could be updated
+                        // from two places, this is one of them. The other also uses tableWriter's index and is more
+                        // straightforward. Failure to make them consistent manifests when this site updates index and
+                        // extends its value memory, it may do so without extending key memory. Then key memory has
+                        // the reference to a value block, which would be outside the mapped area for tableWriters' indexer.
+                        openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND && indexWriter != null ? tableWriter.getBitmapIndexWriter(columnIndex) : indexWriter,
                         colTopSinkAddr,
                         columnIndex,
                         columnNameTxn,
@@ -1661,6 +1673,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             default:
+                assert false;
                 break;
         }
     }
@@ -2650,7 +2663,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         if (ColumnType.isVarSize(columnType)) {
             // index files are opened as normal
-            o3PartitionMerge(
+            mergeVarColumn(
                     pathToNewPartition,
                     pplen,
                     columnName,
@@ -2839,7 +2852,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 throw e;
             }
 
-            o3PartitionMerge(
+            mergeVarColumn(
                     pathToNewPartition,
                     pplen,
                     columnName,

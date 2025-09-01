@@ -28,6 +28,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
@@ -236,22 +238,41 @@ public class AlterOperationBuilder implements Mutable {
         extraStrInfo.add(newName);
     }
 
+    public AlterOperationBuilder ofSetMatViewRefresh(
+            int matViewNamePosition,
+            @NotNull TableToken matViewToken,
+            int tableId,
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        this.command = SET_MAT_VIEW_REFRESH;
+        this.tableNamePosition = matViewNamePosition;
+        this.tableToken = matViewToken;
+        this.extraInfo.add(refreshType);
+        this.extraInfo.add(timerInterval);
+        this.extraInfo.add(timerUnit);
+        this.extraInfo.add(timerStart);
+        this.extraInfo.add(periodLength);
+        this.extraInfo.add(periodLengthUnit);
+        this.extraInfo.add(periodDelay);
+        this.extraInfo.add(periodDelayUnit);
+        this.extraStrInfo.add(timerTimeZone);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetMatViewRefreshLimit(int matViewNamePosition, TableToken matViewToken, int tableId, int limitHoursOrMonths) {
         this.command = SET_MAT_VIEW_REFRESH_LIMIT;
         this.tableNamePosition = matViewNamePosition;
         this.tableToken = matViewToken;
         this.extraInfo.add(limitHoursOrMonths);
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofSetMatViewRefreshTimer(int matViewNamePosition, TableToken matViewToken, int tableId, long start, int interval, char unit) {
-        this.command = SET_MAT_VIEW_REFRESH_TIMER;
-        this.tableNamePosition = matViewNamePosition;
-        this.tableToken = matViewToken;
-        this.extraInfo.add(start);
-        this.extraInfo.add(interval);
-        this.extraInfo.add(unit);
         this.tableId = tableId;
         return this;
     }

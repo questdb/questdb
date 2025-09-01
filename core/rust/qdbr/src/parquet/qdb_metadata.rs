@@ -57,10 +57,7 @@ impl<'de, const N: u32> Deserialize<'de> for U32Const<N> {
     {
         let n = u32::deserialize(deserializer)?;
         if n != N {
-            return Err(serde::de::Error::custom(format!(
-                "expected {}, got {}",
-                N, n
-            )));
+            return Err(serde::de::Error::custom(format!("expected {N}, got {n}")));
         }
         Ok(U32Const)
     }
@@ -104,8 +101,7 @@ impl<'de> Deserialize<'de> for QdbMetaColFormat {
         match format {
             1 => Ok(QdbMetaColFormat::LocalKeyIsGlobal),
             _ => Err(serde::de::Error::custom(format!(
-                "unsupported format: {}",
-                format
+                "unsupported format: {format}"
             ))),
         }
     }

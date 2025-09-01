@@ -64,7 +64,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     private final boolean walEnabled;
 
     public PreparedStatementInvalidationTest(WalMode walMode) {
-        super(LegacyMode.MODERN);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
@@ -503,8 +502,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             } finally {
                 barrier.await();
             }
-            if (exception.get() != null) {
-                throw exception.get();
+
+            final Exception ex = exception.get();
+            if (ex != null) {
+                throw ex;
             }
         });
     }

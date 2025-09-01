@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.std.Numbers;
 
 public class FloatConstant extends FloatFunction implements ConstantFunction {
     public static final FloatConstant NULL = new FloatConstant(Float.NaN);
@@ -37,7 +38,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     public static FloatConstant newInstance(float value) {
-        return value == value ? new FloatConstant(value) : NULL;
+        return Numbers.isFinite(value) ? new FloatConstant(value) : NULL;
     }
 
     @Override
@@ -48,8 +49,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     @Override
     public boolean isNullConstant() {
         // NaN is used as a marker for NULL
-        // we can't use value != value because it will always be false
-        return value != value;
+        return Numbers.isNull(value);
     }
 
     @Override

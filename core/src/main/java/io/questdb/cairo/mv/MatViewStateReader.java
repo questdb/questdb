@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -41,9 +42,12 @@ import org.jetbrains.annotations.Nullable;
  */
 public class MatViewStateReader implements Mutable {
     private final StringSink invalidationReason = new StringSink();
+    private final LongList refreshIntervals = new LongList();
     private boolean invalid;
+    private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
     private long lastRefreshTimestamp = Numbers.LONG_NULL;
+    private long refreshIntervalsBaseTxn = -1;
 
     @Override
     public void clear() {
@@ -51,11 +55,18 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.clear();
         lastRefreshBaseTxn = -1;
         lastRefreshTimestamp = Numbers.LONG_NULL;
+        lastPeriodHi = Numbers.LONG_NULL;
+        refreshIntervalsBaseTxn = -1;
+        refreshIntervals.clear();
     }
 
     @Nullable
     public CharSequence getInvalidationReason() {
         return invalidationReason.length() > 0 ? invalidationReason : null;
+    }
+
+    public long getLastPeriodHi() {
+        return lastPeriodHi;
     }
 
     public long getLastRefreshBaseTxn() {
@@ -64,6 +75,14 @@ public class MatViewStateReader implements Mutable {
 
     public long getLastRefreshTimestamp() {
         return lastRefreshTimestamp;
+    }
+
+    public LongList getRefreshIntervals() {
+        return refreshIntervals;
+    }
+
+    public long getRefreshIntervalsBaseTxn() {
+        return refreshIntervalsBaseTxn;
     }
 
     public boolean isInvalid() {
@@ -75,6 +94,10 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.clear();
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
+        lastPeriodHi = info.getLastPeriodHi();
+        // Mat view data commit means that cached intervals were applied and should be evicted.
+        refreshIntervalsBaseTxn = -1;
+        refreshIntervals.clear();
         return this;
     }
 
@@ -84,6 +107,10 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.put(info.getInvalidationReason());
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
+        lastPeriodHi = info.getLastPeriodHi();
+        refreshIntervalsBaseTxn = info.getRefreshIntervalsBaseTxn();
+        refreshIntervals.clear();
+        refreshIntervals.addAll(info.getRefreshIntervals());
         return this;
     }
 
@@ -102,11 +129,30 @@ public class MatViewStateReader implements Mutable {
                 invalidationReason.clear();
                 invalidationReason.put(block.getStr(Long.BYTES + Byte.BYTES));
                 lastRefreshTimestamp = Numbers.LONG_NULL;
-                // keep going, because V2 block might follow
+                // keep going, because V2/V3 block might follow
                 continue;
             }
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
                 lastRefreshTimestamp = block.getLong(0);
+                // keep going, because V3 block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE) {
+                lastPeriodHi = block.getLong(0);
+                // keep going, because V4 block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE) {
+                long offset = 0;
+                refreshIntervalsBaseTxn = block.getLong(offset);
+                offset += Long.BYTES;
+                final int intervalsLen = block.getInt(offset);
+                offset += Integer.BYTES;
+                refreshIntervals.clear();
+                for (int i = 0; i < intervalsLen; i++) {
+                    refreshIntervals.add(block.getLong(offset));
+                    offset += Long.BYTES;
+                }
                 return this;
             }
         }

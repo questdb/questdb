@@ -142,6 +142,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return getDelegate().getColumnAliasGeneratedMaxSize();
+    }
+
+    @Override
     public int getColumnIndexerQueueCapacity() {
         return getDelegate().getColumnIndexerQueueCapacity();
     }
@@ -302,6 +307,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
+    }
+
+    @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
     }
@@ -442,13 +452,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return getDelegate().getMatViewMaxRefreshIntervals();
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
     }
 
     @Override
-    public long getMatViewMinRefreshInterval() {
-        return getDelegate().getMatViewMinRefreshInterval();
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
+        return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
 
     @Override
@@ -459,11 +474,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
-    }
-
-    @Override
-    public long getMatViewTimerStartEpsilon() {
-        return getDelegate().getMatViewTimerStartEpsilon();
     }
 
     @Override
@@ -714,6 +724,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlAsOfJoinLookAhead() {
         return getDelegate().getSqlAsOfJoinLookAhead();
+    }
+
+    @Override
+    public int getSqlAsOfJoinMapEvacuationThreshold() {
+        return getDelegate().getSqlAsOfJoinMapEvacuationThreshold();
+    }
+
+    @Override
+    public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+        return getDelegate().getSqlAsOfJoinShortCircuitCacheCapacity();
     }
 
     @Override
@@ -1002,6 +1022,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolTableAppendPageSize() {
+        return getDelegate().getSymbolTableAppendPageSize();
+    }
+
+    @Override
     public long getSystemDataAppendPageSize() {
         return getDelegate().getSystemDataAppendPageSize();
     }
@@ -1187,7 +1212,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterFileOpenOpts() {
+    public int getWriterFileOpenOpts() {
         return getDelegate().getWriterFileOpenOpts();
     }
 
@@ -1199,6 +1224,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
+    }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return getDelegate().isColumnAliasExpressionEnabled();
     }
 
     @Override
@@ -1239,6 +1269,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return getDelegate().isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetRawArrayEncoding() {
+        return getDelegate().isPartitionEncoderParquetRawArrayEncoding();
     }
 
     @Override
@@ -1289,6 +1324,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelReadParquetEnabled() {
         return getDelegate().isSqlParallelReadParquetEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelTopKEnabled() {
+        return getDelegate().isSqlParallelTopKEnabled();
     }
 
     @Override

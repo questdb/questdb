@@ -451,6 +451,9 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorWW(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -779,12 +782,20 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
-        if (str != null && str.length() > 1) {
-            try {
-                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
+    public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
+        if (str != null) {
+            if (Chars.equals(str, '-')) {
+                throw SqlException.position(position).put("positive number expected: ").put(str);
+            }
+            if (str.length() > 1) {
+                try {
+                    final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
+                    if (multiple <= 0) {
+                        throw SqlException.position(position).put("positive number expected: ").put(str);
+                    }
+                    return multiple;
+                } catch (NumericException ignored) {
+                }
             }
         }
         return 1;
@@ -1289,7 +1300,7 @@ public final class Timestamps {
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
      *
      * @param year the year
-     * @param leap true if give year is leap year
+     * @param leap true if given year is leap year
      * @return millis for start of year.
      */
     public static long yearMicros(int year, boolean leap) {

@@ -64,8 +64,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
                     .put(" (").put(ColumnType.decodeArrayDimensionality(fromType)).put("D)")
                     .put(", to=").put(ColumnType.nameOf(toType))
                     .put(" (").put(ColumnType.decodeArrayDimensionality(toType)).put("D)")
-                    // todo: make sure flattening exists and has this syntax
-                    .put("]. Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead");
+                    .put("]. Use array flattening operation (e.g. 'flatten(arr)') instead");
         }
         if (dimsToAdd == 0) {
             // nothing to do
@@ -106,7 +105,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         public ArrayView getArray(Record rec) {
             final ArrayView array = arg.getArray(rec);
             derivedArray.of(array);
-            derivedArray.addDimensions(dimsToAdd);
+            derivedArray.prependDimensions(dimsToAdd);
             return derivedArray;
         }
 

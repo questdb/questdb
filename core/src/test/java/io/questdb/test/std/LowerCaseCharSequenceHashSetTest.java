@@ -33,6 +33,7 @@ import org.junit.Test;
 import java.util.HashSet;
 
 public class LowerCaseCharSequenceHashSetTest {
+
     @Test
     public void testEqualsAndHashCode() {
         final int items = 1000;
@@ -66,7 +67,6 @@ public class LowerCaseCharSequenceHashSetTest {
 
     @Test
     public void testSaturation() {
-
         final int N = 10_000;
         final Rnd rnd = new Rnd();
         final LowerCaseCharSequenceHashSet lowerCaseSet = new LowerCaseCharSequenceHashSet();
@@ -85,6 +85,7 @@ public class LowerCaseCharSequenceHashSetTest {
         // verify
         for (String s : referenceSet) {
             Assert.assertTrue(lowerCaseSet.contains(s));
+            Assert.assertTrue(lowerCaseSet.contains(s, 0, s.length()));
             Assert.assertFalse(lowerCaseSet.excludes(s));
             Assert.assertFalse(lowerCaseSet.excludes(s, 0, s.length()));
 

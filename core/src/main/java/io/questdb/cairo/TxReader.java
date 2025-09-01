@@ -238,7 +238,15 @@ public class TxReader implements Closeable, Mutable {
         return minTimestamp;
     }
 
-    public long getNextExistingPartitionTimestamp(long timestamp) {
+    public long getNextLogicalPartitionTimestamp(long timestamp) {
+        if (partitionCeilMethod != null) {
+            return partitionCeilMethod.ceil(timestamp);
+        }
+        assert partitionBy == PartitionBy.NONE;
+        return Long.MAX_VALUE;
+    }
+
+    public long getNextPartitionTimestamp(long timestamp) {
         if (partitionBy == PartitionBy.NONE) {
             return Long.MAX_VALUE;
         }

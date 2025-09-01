@@ -72,18 +72,18 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         triggerFilePath = new Path();
     }
 
+    @AfterClass
+    public static void tearDownStatic() {
+        triggerFilePath = Misc.free(triggerFilePath);
+        AbstractFuzzTest.tearDownStatic();
+    }
+
     @Parameterized.Parameters(name = "V{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
                 {1},
                 {2},
         });
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        triggerFilePath = Misc.free(triggerFilePath);
-        AbstractFuzzTest.tearDownStatic();
     }
 
     @Before
@@ -110,7 +110,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0.5,
-                0.01
+                0.01,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -152,7 +153,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 1,
                 0.0,
-                0.01
+                0.01,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -291,7 +293,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
-                0.01
+                0.01,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -304,6 +307,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextInt(1_000_000),
                 5 + rnd.nextInt(10)
         );
+    }
+
+    private String getTestTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
     }
 
     private void hardLinkCopyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
@@ -349,18 +356,12 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private String getTestTableName() {
-        return testName.getMethodName().replace('[', '_').replace(']', '_');
-    }
-
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
         boolean testHardLinkCheckpoint = rnd.nextBoolean();
 
         assertMemoryLeak(() -> {
-            int size = rnd.nextInt(16 * 1024 * 1024);
-            node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
             if (testHardLinkCheckpoint) {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }

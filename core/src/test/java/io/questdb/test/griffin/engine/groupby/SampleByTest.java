@@ -4608,6 +4608,143 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFillNeedFix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE candles_market_spot_4_1m (" +
+                    "   candle_start_time TIMESTAMP," +
+                    "   candle_open_price DOUBLE," +
+                    "   candle_close_price DOUBLE," +
+                    "   candle_low_price DOUBLE," +
+                    "   candle_high_price DOUBLE," +
+                    "   candle_vwap DOUBLE," +
+                    "   candle_volume DOUBLE," +
+                    "   candle_trades_count INT," +
+                    "   candle_usd_volume DOUBLE," +
+                    "   computed_by VARCHAR," +
+                    "   created_at TIMESTAMP," +
+                    "   candle_symbol SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256" +
+                    ") timestamp(candle_start_time) PARTITION BY WEEK WAL " +
+                    "DEDUP UPSERT KEYS(candle_start_time,candle_symbol);");
+            execute("INSERT INTO candles_market_spot_4_1m VALUES\n" +
+                    "('2025-07-30 20:00:00', 0.00123, 0.00125, 0.00122, 0.00126, 0.00124, 1500, 45, 185.25, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 20:15:00', 0.00125, 0.00127, 0.00124, 0.00128, 0.00126, 1800, 52, 226.80, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 20:30:00', 0.00127, 0.00126, 0.00125, 0.00129, 0.00127, 2100, 61, 266.70, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 20:45:00', 0.00126, 0.00128, 0.00125, 0.00130, 0.00128, 1950, 58, 249.60, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 22:00:00', 0.00131, 0.00133, 0.00130, 0.00134, 0.00132, 2400, 72, 316.80, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 22:30:00', 0.00133, 0.00132, 0.00131, 0.00135, 0.00133, 2150, 63, 285.95, 'system', now(), 'LSKBTC')," +
+                    "('2025-07-30 22:59:00', 0.00132, 0.00134, 0.00131, 0.00136, 0.00134, 2500, 75, 335.00, 'system', now(), 'LSKBTC');");
+            drainWalQueue();
+            assertQuery(
+                    "candle_start_time\tcandle_symbol\topen\tclose\tlow\thigh\tcandle_volume\tcandle_usd_volume\tcnt\n" +
+                            "2025-07-30T22:00:00.000000Z\tLSKBTC\t0.00131\t0.00134\t0.0013\t0.00136\t7050.0\t937.75\t210\n" +
+                            "2025-07-30T21:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.00128\t0.0\t0.0\t0\n" +
+                            "2025-07-30T20:00:00.000000Z\tLSKBTC\t0.00123\t0.00128\t0.00122\t0.0013\t7350.0\t928.35\t216\n",
+                    "with sq as (\n" +
+                            "  select\n" +
+                            "    candle_start_time,\n" +
+                            "    candle_symbol,\n" +
+                            "    first(candle_open_price) as open,\n" +
+                            "    last(candle_close_price) as close,\n" +
+                            "    min(candle_low_price) as low,\n" +
+                            "    max(candle_high_price) as high,\n" +
+                            "    sum(candle_volume) as candle_volume,\n" +
+                            "    sum(candle_usd_volume) as candle_usd_volume,\n" +
+                            "    sum(candle_trades_count) as cnt\n" +
+                            "  from\n" +
+                            "    candles_market_spot_4_1m\n" +
+                            "  where\n" +
+                            "    candle_start_time >= '2025-07-30 20:00:00'\n" +
+                            "    and candle_start_time <= '2025-07-30 23:00:00'\n" +
+                            "    and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0, 0, 0)\n" +
+                            "  order by\n" +
+                            "    candle_start_time desc\n" +
+                            ")\n" +
+                            "select\n" +
+                            "  candle_start_time,\n" +
+                            "  candle_symbol,\n" +
+                            "  open,\n" +
+                            "  close,\n" +
+                            "  low,\n" +
+                            "  case\n" +
+                            "    when cnt = 0 then close\n" +
+                            "    else high\n" +
+                            "  end as high,\n" +
+                            "  candle_volume,\n" +
+                            "  candle_usd_volume,\n" +
+                            "  cnt\n" +
+                            "from sq;",
+                    "candle_start_time###DESC",
+                    true
+            );
+
+            assertQuery(
+                    "candle_start_time\tcnt\n" +
+                            "2025-07-30T22:00:00.000000Z\t210\n" +
+                            "2025-07-30T21:00:00.000000Z\t0\n" +
+                            "2025-07-30T20:00:00.000000Z\t216\n",
+                    "with sq as (\n" +
+                            "  select\n" +
+                            "    candle_start_time,\n" +
+                            "    candle_symbol,\n" +
+                            "    first(candle_open_price) as open,   \n" +
+                            "    sum(candle_trades_count) as cnt   \n" +
+                            "  from\n" +
+                            "    candles_market_spot_4_1m \n" +
+                            "  where \n" +
+                            "    candle_start_time >= '2025-07-30 20:00:00'  \n" +
+                            "    and candle_start_time <= '2025-07-30 23:00:00'\n" +
+                            "    and candle_symbol = 'LSKBTC' sample by 1h fill(PREV,  0)\n" +
+                            "  order by \n" +
+                            "    candle_start_time desc\n" +
+                            ")\n" +
+                            "select\n" +
+                            "  candle_start_time,\n" +
+                            "  cnt\n" +
+                            "from sq;",
+                    "candle_start_time###DESC",
+                    true
+            );
+
+            assertException("with sq as (\n" +
+                            "  select\n" +
+                            "    candle_start_time,\n" +
+                            "    candle_symbol,\n" +
+                            "    first(candle_open_price) as open,\n" +
+                            "    last(candle_close_price) as close,\n" +
+                            "    min(candle_low_price) as low,\n" +
+                            "    max(candle_high_price) as high,\n" +
+                            "    sum(candle_volume) as candle_volume,\n" +
+                            "    sum(candle_usd_volume) as candle_usd_volume,\n" +
+                            "    sum(candle_trades_count) as cnt\n" +
+                            "  from\n" +
+                            "    candles_market_spot_4_1m\n" +
+                            "  where\n" +
+                            "    candle_start_time >= '2025-07-30 20:00:00'\n" +
+                            "    and candle_start_time <= '2025-07-30 23:00:00'\n" +
+                            "    and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0)\n" +
+                            "  order by\n" +
+                            "    candle_start_time desc\n" +
+                            ")\n" +
+                            "select\n" +
+                            "  candle_start_time,\n" +
+                            "  candle_symbol,\n" +
+                            "  open,\n" +
+                            "  close,\n" +
+                            "  low,\n" +
+                            "  case\n" +
+                            "    when cnt = 0 then close\n" +
+                            "    else high\n" +
+                            "  end as high,\n" +
+                            "  candle_volume,\n" +
+                            "  candle_usd_volume,\n" +
+                            "  cnt\n" +
+                            "from sq;",
+                    554,
+                    "insufficient fill values for SAMPLE BY FILL");
+        });
+    }
+
+    @Test
     public void testSampleByFilteredByIndex() throws Exception {
         assertQuery(
                 "time\ts1\tdd\n" +
@@ -6123,6 +6260,41 @@ public class SampleByTest extends AbstractCairoTest {
                     "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000Z\",\"MAX\")]\n");
 
             assertSql("timestamp\tcount\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByWeekWithOffset0() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE points (  \n" +
+                    "  timestamp TIMESTAMP,  \n" +
+                    "  value DOUBLE,\n" +
+                    "  name SYMBOL\n" +
+                    ")  TIMESTAMP(timestamp)\n" +
+                    "PARTITION BY DAY wal\n" +
+                    "DEDUP UPSERT KEYS(timestamp, name);");
+            execute("INSERT INTO points VALUES " +
+                    "('2025-02-01T10:00:00.000Z', 1.0, 'point')," +
+                    "('2025-02-02T10:00:00.000Z', 2.0, 'point')," +
+                    "('2025-02-03T10:00:00.000Z', 3.0, 'point')," +
+                    "('2025-02-04T10:00:00.000Z', 4.0, 'point')," +
+                    "('2025-02-05T10:00:00.000Z', 5.0, 'point')," +
+                    "('2025-02-06T10:00:00.000Z', 6.0, 'point')," +
+                    "('2025-02-07T10:00:00.000Z', 7.0, 'point')," +
+                    "('2025-02-08T10:00:00.000Z', 8.0, 'point')," +
+                    "('2025-02-09T10:00:00.000Z', 9.0, 'point')," +
+                    "('2025-02-10T10:00:00.000Z', 10.0, 'point')," +
+                    "('2025-02-11T10:00:00.000Z', 11.0, 'point');");
+            drainWalQueue();
+            assertSql("timestamp\tfirst\n" +
+                            "2025-01-27T00:00:00.000000Z\t1.0\n" +
+                            "2025-02-03T00:00:00.000000Z\t3.0\n" +
+                            "2025-02-10T00:00:00.000000Z\t10.0\n",
+                    "SELECT timestamp, first(value)\n" +
+                            "FROM points\n" +
+                            "WHERE name = 'point'\n" +
+                            "SAMPLE BY 1w\n" +
+                            "ALIGN TO CALENDAR");
         });
     }
 
@@ -7761,11 +7933,11 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            CairoConfiguration configuration = createMmapFailingConfiguration(4);
+            CairoConfiguration configuration = createMmapFailingConfiguration(5);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0)) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
@@ -12929,8 +13101,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "not enough values"
+                101,
+                "insufficient fill values for SAMPLE BY FILL"
         );
     }
 
@@ -13548,8 +13720,8 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1w fill(null)";
             assertQueryNoLeakCheck(
                     "ts\tavg\n" +
-                            "2017-12-28T00:00:00.000000Z\t72.5\n" +
-                            "2018-01-04T00:00:00.000000Z\t312.5\n",
+                            "2018-01-01T00:00:00.000000Z\t168.5\n" +
+                            "2018-01-08T00:00:00.000000Z\t408.5\n",
                     query2,
                     "ts",
                     true

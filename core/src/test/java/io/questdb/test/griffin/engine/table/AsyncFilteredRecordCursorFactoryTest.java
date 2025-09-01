@@ -377,7 +377,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
                     }
                 }, 4, 1
-        ); // sharedWorkerCount < workerCount
+        ); // sharedQueryWorkerCount < workerCount
     }
 
     @Test
@@ -1001,7 +1001,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                                 }
 
                                                 @Override
-                                                public int getWorkerCount() {
+                                                public int getSharedQueryWorkerCount() {
                                                     return sharedPoolWorkerCount;
                                                 }
                                             }
@@ -1041,11 +1041,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool0(runnable, workerCount, workerCount, circuitBreaker);
     }
 
-    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
-        withPool0(runnable, workerCount, sharedWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount) throws Exception {
+        withPool0(runnable, workerCount, sharedQueryWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
     }
 
-    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         assertMemoryLeak(() -> {
             final TestWorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
@@ -1062,13 +1062,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 }
 
                                 @Override
-                                public int getSharedWorkerCount() {
-                                    return sharedWorkerCount;
-                                }
-
-                                @Override
-                                public int getWorkerCount() {
-                                    return workerCount;
+                                public int getSharedQueryWorkerCount() {
+                                    return sharedQueryWorkerCount;
                                 }
                             }
                     );
@@ -1208,11 +1203,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getWorkerCount() {
-            return sqlExecutionContext.getWorkerCount();
-        }
-
-        @Override
         public void initNow() {
             sqlExecutionContext.initNow();
         }
@@ -1245,6 +1235,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelReadParquetEnabled() {
             return sqlExecutionContext.isParallelReadParquetEnabled();
+        }
+
+        @Override
+        public boolean isParallelTopKEnabled() {
+            return sqlExecutionContext.isParallelTopKEnabled();
         }
 
         @Override
@@ -1325,6 +1320,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
             sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
+        }
+
+        @Override
+        public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+            sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
         }
 
         @Override

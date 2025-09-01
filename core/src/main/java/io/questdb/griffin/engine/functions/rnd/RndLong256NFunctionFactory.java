@@ -32,7 +32,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -84,6 +89,11 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
             return true;
         }
 

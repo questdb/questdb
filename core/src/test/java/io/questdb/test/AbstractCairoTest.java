@@ -33,12 +33,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
@@ -60,6 +62,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -164,7 +167,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static long fdReuseCount;
     private static long memoryUsage = -1;
+    private static long mmapReuseCount;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -221,13 +226,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+        long preComputerStateSize = cursor.preComputedStateSize();
 
         testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
         cursor.toTop();
+        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
         testStringsLong256AndBinary(metadata, cursor);
 
         // test API where the same record is being updated by cursor
         cursor.toTop();
+        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
         Record record = cursor.getRecord();
         Assert.assertNotNull(record);
         sink.clear();
@@ -257,6 +265,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         if (supportsRandomAccess) {
             cursor.toTop();
+            Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
             sink.clear();
             rows.clear();
             while (cursor.hasNext()) {
@@ -288,6 +297,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 sink.clear();
 
                 cursor.toTop();
+                Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
                 int target = rows.size() / 2;
                 CursorPrinter.println(metadata, sink);
                 while (target-- > 0 && cursor.hasNext()) {
@@ -299,11 +309,37 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     cursor.recordAt(factRec, rows.getQuick(i));
                 }
 
-                // not continue normal fetch
+                // now continue normal fetch
                 while (cursor.hasNext()) {
                     TestUtils.println(record, metadata, sink);
                 }
 
+                TestUtils.assertEquals(expected, sink);
+
+                // now test that cursor.hasNext() won't affect the state of recordB
+                sink.clear();
+                CursorPrinter.println(metadata, sink);
+                cursor.toTop();
+                target = rows.size() / 2;
+                boolean cursorExhausted = false;
+                for (int i = 0, n = target; i < n; i++) {
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                    // intentionally calling hasNext() twice: we want to adcanced the cursor position
+                    // but we do *NOT* want to call it in step-lock with recordAt()
+                    if (!cursorExhausted) {
+                        cursorExhausted = !cursor.hasNext();
+                    }
+                    if (!cursorExhausted) {
+                        cursorExhausted = !cursor.hasNext();
+                    }
+                    TestUtils.println(factRec, metadata, sink);
+                }
+                cursor.toTop();
+                for (int i = target, n = rows.size(); i < n; i++) {
+                    // in the 2nd part, we are intentionally not calling hasNext() at all
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                    TestUtils.println(factRec, metadata, sink);
+                }
                 TestUtils.assertEquals(expected, sink);
             }
         } else {
@@ -466,12 +502,35 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
+        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
+            Path tempPath = Path.getThreadLocal(root);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.unsafeLoadAll();
+
+            return txnToString(rdr, compareTxns, compareTruncateVersion, false);
+        }
+    }
+
+    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
+            Path tempPath = Path.getThreadLocal(root);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.unsafeLoadAll();
+
+            return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns);
+        }
+    }
+
     public static void refreshTablesInBaseEngine() {
         engine.reloadTableNames();
     }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        fdReuseCount = Files.getFdReuseCount();
+        mmapReuseCount = Files.getMmapReuseCount();
+
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops,
         // which causes memory leak detector to fail should logger be
@@ -516,6 +575,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
+        LOG.info().$("fd reuse count=").$(Files.getFdReuseCount() - fdReuseCount)
+                .$(", mmap resuse count=").$(Files.getMmapReuseCount() - mmapReuseCount).$();
     }
 
     public static Utf8String utf8(CharSequence value) {
@@ -544,13 +605,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
-    }
-
-    @After
-    public void tearDown() throws Exception {
-        tearDown(true);
-        super.tearDown();
-        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     public void tearDown(boolean removeDir) {
@@ -571,6 +626,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    @After
+    public void tearDown() throws Exception {
+        tearDown(true);
+        super.tearDown();
+        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
+    }
+
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
         long size;
         SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
@@ -579,7 +642,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.calculateSize(circuitBreaker, counter);
             size = counter.get();
+            long preComputeStateSize = cursor.preComputedStateSize();
             cursor.toTop();
+            Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
             counter.clear();
             cursor.calculateSize(circuitBreaker, counter);
             long sizeAfterToTop = counter.get();
@@ -834,6 +899,73 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put("{");
+        if (compareTxns) {
+            sink.put("txn: ").put(txReader.getTxn());
+        }
+        sink.put(", attachedPartitions: [");
+        for (int i = 0; i < txReader.getPartitionCount(); i++) {
+            long timestamp = txReader.getPartitionTimestampByIndex(i);
+            long rowCount = txReader.getPartitionRowCountByTimestamp(timestamp);
+
+            if (i - 1 == txReader.getPartitionCount()) {
+                rowCount = txReader.getTransientRowCount();
+            }
+
+            long parquetSize = txReader.getPartitionParquetFileSize(i);
+
+            if (i > 0) {
+                sink.put(",");
+            }
+            sink.put("\n{ts: '");
+            TimestampFormatUtils.appendDateTime(sink, timestamp);
+            sink.put("', rowCount: ").put(rowCount);
+            // Do not print name txn, it can be different in expected and actual table
+            if (comparePartitionTxns) {
+                sink.put(", txn: ").put(txReader.getPartitionNameTxn(i));
+            }
+
+            if (txReader.isPartitionParquet(i)) {
+                sink.put(", parquetSize: ").put(parquetSize);
+            }
+            if (txReader.isPartitionReadOnly(i)) {
+                sink.put(", readOnly=true");
+            }
+            sink.put("}");
+        }
+        sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
+        sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
+        sink.put(", minTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
+        sink.put("', maxTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
+        if (compareTruncateVersion) {
+            sink.put("', dataVersion: ").put(txReader.getDataVersion());
+        }
+        sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
+        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
+        if (compareTruncateVersion) {
+            sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
+        }
+
+        if (compareTxns) {
+            sink.put(", seqTxn: ").put(txReader.getSeqTxn());
+        }
+        sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
+        sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
+        sink.put(", lagMinTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
+        sink.put("', lagMaxTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
+        sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
+        sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
+        sink.put("}");
+        return sink.toString();
+    }
+
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
@@ -1075,11 +1207,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
             try {
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
-                CLOSEABLES.forEach(Misc::free);
             } catch (Throwable th) {
                 LOG.error().$("Error in test: ").$(th).$();
                 throw th;
             } finally {
+                CLOSEABLES.forEach(Misc::free);
                 forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;
             }
@@ -1386,8 +1518,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.execute(sqlText, sqlExecutionContext);
     }
 
-    protected static void execute(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.execute(dropSql, sqlExecutionContext);
+    protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute(sqlText, sqlExecutionContext);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
@@ -1629,6 +1761,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected final void allowFunctionMemoization() {
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+    }
+
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }
@@ -1744,6 +1880,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     false
             );
         }
+    }
+
+    protected void assertQueryAndPlan(String expected, String expectedPlan, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(query, expectedPlan);
+            assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
+        });
     }
 
     protected void assertQueryAndPlan(

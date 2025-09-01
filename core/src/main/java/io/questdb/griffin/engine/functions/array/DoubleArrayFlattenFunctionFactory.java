@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -36,8 +36,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -45,7 +46,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "flatten(D[]I)";
+        return "flatten(D[])";
     }
 
     @Override
@@ -57,56 +58,44 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function arrayArg = args.getQuick(0);
-        Function dimArg = args.getQuick(1);
-        int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-        int dimPos = argPositions.getQuick(1);
-        if (dimArg.isConstant()) {
-            int flattenDim = dimArg.getInt(null);
-            if (flattenDim < 1 || flattenDim > nDims) {
-                throw SqlException.$(dimPos, "dimension to flatten out of range [nDims=").put(nDims)
-                        .put(", flattenDim=").put(flattenDim).put(']');
-            }
-        }
-        return new Func(arrayArg, dimArg, dimPos);
+        return new Func(arrayArg);
     }
 
-    private static class Func extends ArrayFunction implements BinaryFunction {
+    private static class Func extends ArrayFunction implements UnaryFunction {
         private final Function arrayArg;
-        private final DerivedArrayView borrowedView = new DerivedArrayView();
-        private final Function dimArg;
-        private final int dimPos;
-        private final int nDims;
+        private final DerivedArrayView derivedView = new DerivedArrayView();
+        private DirectArray outArray = new DirectArray();
 
-        public Func(Function arrayArg, Function dimArg, int dimPos) {
+        public Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-            this.dimArg = dimArg;
-            this.dimPos = dimPos;
-            this.type = arrayArg.getType();
-            this.nDims = ColumnType.decodeArrayDimensionality(type);
+            this.type = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayArg.getType()), 1);
+            outArray.setType(type);
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+            outArray = Misc.free(outArray);
+        }
+
+        @Override
+        public Function getArg() {
+            return arrayArg;
         }
 
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
-            int flattenDim = dimArg.getInt(rec);
-            if (flattenDim < 1 || flattenDim > nDims) {
-                throw CairoException.nonCritical().position(dimPos)
-                        .put("dimension to flatten out of range [nDims=").put(nDims)
-                        .put(", flattenDim=").put(flattenDim).put(']');
+            if (array.isVanilla()) {
+                derivedView.of(array);
+                derivedView.flatten();
+                return derivedView;
+            } else {
+                outArray.setDimLen(0, array.getCardinality());
+                outArray.applyShape();
+                array.appendDataToMem(outArray.startMemoryA());
+                return outArray;
             }
-            borrowedView.of(array);
-            borrowedView.flattenDim(flattenDim - 1, dimPos);
-            return borrowedView;
-        }
-
-        @Override
-        public Function getLeft() {
-            return arrayArg;
-        }
-
-        @Override
-        public Function getRight() {
-            return dimArg;
         }
 
         @Override
@@ -116,7 +105,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("flatten(").val(arrayArg).val(',').val(dimArg).val(')');
+            sink.val("flatten(").val(arrayArg).val(')');
         }
     }
 }

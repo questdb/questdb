@@ -31,6 +31,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -145,6 +146,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
+    private final DataID dataID;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
@@ -175,6 +177,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -205,7 +208,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph(matViewTimerQueue);
+            this.matViewGraph = new MatViewGraph();
+            this.frameFactory = new FrameFactory(configuration);
+            this.dataID = DataID.open(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -362,8 +367,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         final MatViewState state = matViewStateStore.getViewState(tableToken);
-                        // Can be null if the graph implementation is no-op.
-                        // The no-op graph does nothing on view creation and other operations
+                        // Can be null if the state store implementation is no-op.
+                        // The no-op state store does nothing on view creation and other operations
                         // and is used when mat views are disabled.
                         if (state != null) {
                             final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
@@ -388,7 +393,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=")
+                                LOG.info().$("could not find materialized view state, default values will be used [table=")
                                         .$safe(viewDefinition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();
@@ -408,8 +413,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-                                // Kickstart incremental refresh.
+                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                                // Kickstart immediate refresh.
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
@@ -462,6 +467,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b6 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
         partitionOverwriteControl.clear();
+        frameFactory.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
@@ -483,6 +489,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
+        Misc.free(frameFactory);
     }
 
     @TestOnly
@@ -511,6 +518,9 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             if (matViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
+                if (!matViewDefinition.isDeferred()) {
+                    matViewStateStore.enqueueIncrementalRefresh(matViewToken);
+                }
             }
         } catch (CairoException e) {
             dropTableOrMatView(path, matViewToken);
@@ -653,12 +663,20 @@ public class CairoEngine implements Closeable, WriterSource {
         return copyContext;
     }
 
+    public DataID getDataID() {
+        return dataID;
+    }
+
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
         return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
+    }
+
+    public FrameFactory getFrameFactory() {
+        return frameFactory;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -918,7 +936,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
-    public TableToken getTableTokenByDirName(String dirName) {
+    public TableToken getTableTokenByDirName(CharSequence dirName) {
         return tableNameRegistry.getTableTokenByDirName(dirName);
     }
 
@@ -1386,6 +1404,12 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
+    public void resetFrameFactory() {
+        frameFactory.close();
+        frameFactory = new FrameFactory(configuration);
+    }
+
+    @TestOnly
     public void resetNameRegistryMemory() {
         tableNameRegistry.resetMemory();
     }
@@ -1803,7 +1827,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
-        return new SqlExecutionContextImpl(this, 1).with(AllowAllSecurityContext.INSTANCE);
+        return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
