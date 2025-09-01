@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -369,7 +370,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;
-                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                long newAddr = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                if (newAddr == -1) {
+                    throw CairoException.critical(Os.errno()).put("cannot mmap transaction log [path=").put(path).put(']');
+                }
+                this.address = newAddr;
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             } else {
                 throw CairoException.critical(ff.errno()).put("cannot read sequencer transactions [path=").put(path).put(']');
@@ -383,7 +388,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             final long oldSize = getMappedLen();
             txnCount = newTxnCount;
             final long newSize = getMappedLen();
-            address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+            long newAddr = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+            if (newAddr == -1) {
+                throw CairoException.critical(Os.errno()).put("cannot remap transaction log [fd=").put(fd).put(']');
+            }
+            address = newAddr;
         }
     }
 }

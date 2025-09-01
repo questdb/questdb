@@ -111,14 +111,15 @@ public class WalTxnDetails implements QuietCloseable {
 
         // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
         long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
-        int txn;
-        for (txn = 0; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
+        int txn = 0;
+        for (; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
             long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
             max = Math.max(max, long1);
             min = Math.min(min, long1);
             txnList.add(long1);
             txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
         }
+        assert txn > 0;
         Vect.radixSortLongIndexAscChecked(
                 txnList.getAddress(),
                 txn,
