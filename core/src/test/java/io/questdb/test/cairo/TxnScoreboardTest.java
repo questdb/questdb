@@ -109,11 +109,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         Assert.assertEquals(1, scoreboard.getActiveReaderCount(i * j));
                         Assert.assertFalse(scoreboard.isRangeAvailable(i * j, i * (j + 1)));
                     }
+                    long max = i * 87;
                     Assert.assertEquals(i, getMin(scoreboard));
                     for (int j = 1; j < 88; j++) {
                         scoreboard.releaseTxn(i - j, i * j);
                         Assert.assertEquals(0, scoreboard.getActiveReaderCount(i * j));
-                        Assert.assertTrue(scoreboard.isTxnAvailable(i * j));
+                        Assert.assertEquals(i * j < max, scoreboard.isTxnAvailable(i * j));
                         Assert.assertTrue(scoreboard.isRangeAvailable(i * j, i * (j + 1)));
                     }
 

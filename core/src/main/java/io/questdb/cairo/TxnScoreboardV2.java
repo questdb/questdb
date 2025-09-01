@@ -251,6 +251,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
                 }
             }
             // max changed, need to re-check
+            // but if max is already beyond toTxn then any new locks will have higher txn
+            // and are irrelevant to this range check.
         } while (max <= toTxn && max != getMax());
         return true;
     }
