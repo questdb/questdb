@@ -75,6 +75,11 @@ public class RndShortFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }

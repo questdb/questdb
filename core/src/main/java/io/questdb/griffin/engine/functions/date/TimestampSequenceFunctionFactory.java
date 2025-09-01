@@ -94,6 +94,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public boolean supportsRandomAccess() {
             return false;
         }

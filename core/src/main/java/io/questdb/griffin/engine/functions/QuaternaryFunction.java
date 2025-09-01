@@ -101,6 +101,14 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default boolean isStable() {
+        return getFunc0().isStable()
+                && getFunc1().isStable()
+                && getFunc2().isStable()
+                && getFunc3().isStable();
+    }
+
+    @Override
     default boolean isThreadSafe() {
         return getFunc0().isThreadSafe()
                 && getFunc1().isThreadSafe()

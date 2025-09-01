@@ -83,6 +83,11 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isStable() {
+        return getLeft().isStable() && getRight().isStable();
+    }
+
+    @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getRight().isThreadSafe();
     }

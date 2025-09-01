@@ -125,6 +125,11 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_varchar(").val((Sinkable) symbols).val(')');
         }

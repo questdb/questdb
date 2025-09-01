@@ -91,6 +91,11 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_byte(").val(lo).val(',').val(range).val(')');
         }

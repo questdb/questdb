@@ -85,5 +85,10 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         public boolean isRandom() {
             return true;
         }
+
+        @Override
+        public boolean isStable() {
+            return false;
+        }
     }
 }

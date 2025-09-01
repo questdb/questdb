@@ -103,6 +103,11 @@ public class RndLogFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_log(").val(totalLogLines).val(',').val(errorRatio).val(')');
         }

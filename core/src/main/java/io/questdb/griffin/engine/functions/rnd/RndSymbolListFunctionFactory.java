@@ -103,6 +103,11 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }

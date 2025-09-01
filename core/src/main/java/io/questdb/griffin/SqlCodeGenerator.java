@@ -5008,52 +5008,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (ALLOW_FUNCTION_MEMOIZATION) {
                 BoolList boolList = priorityMetadata.getDependencies();
-                for (int i = 0, n = boolList.size(); i < n; i++) {
-                    if (boolList.get(i)) {
-                        Function function = functions.getQuick(i);
-                        if (function != null && !function.isConstant()) {
-                            switch (function.getType()) {
-                                case ColumnType.LONG:
-                                    functions.set(i, new LongFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.INT:
-                                    functions.set(i, new IntFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.TIMESTAMP:
-                                    functions.set(i, new TimestampFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.DOUBLE:
-                                    functions.set(i, new DoubleFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.SHORT:
-                                    functions.set(i, new ShortFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.BOOLEAN:
-                                    functions.set(i, new BooleanFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.BYTE:
-                                    functions.set(i, new ByteFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.CHAR:
-                                    functions.set(i, new CharFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.DATE:
-                                    functions.set(i, new DateFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.FLOAT:
-                                    functions.set(i, new FloatFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.IPv4:
-                                    functions.set(i, new IPv4FunctionMemoizer(function));
-                                    break;
-                                case ColumnType.UUID:
-                                    functions.set(i, new UuidFunctionMemoizer(function));
-                                    break;
-                                case ColumnType.LONG256:
-                                    functions.set(i, new Long256FunctionMemoizer(function));
-                                    break;
-                                // other types do not have memoization yet
-                            }
+
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    Function function = functions.getQuick(i);
+                    if (function != null && !function.isConstant() && (boolList.get(i) || !function.isStable())) {
+                        switch (function.getType()) {
+                            case ColumnType.LONG:
+                                functions.set(i, new LongFunctionMemoizer(function));
+                                break;
+                            case ColumnType.INT:
+                                functions.set(i, new IntFunctionMemoizer(function));
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                functions.set(i, new TimestampFunctionMemoizer(function));
+                                break;
+                            case ColumnType.DOUBLE:
+                                functions.set(i, new DoubleFunctionMemoizer(function));
+                                break;
+                            case ColumnType.SHORT:
+                                functions.set(i, new ShortFunctionMemoizer(function));
+                                break;
+                            case ColumnType.BOOLEAN:
+                                functions.set(i, new BooleanFunctionMemoizer(function));
+                                break;
+                            case ColumnType.BYTE:
+                                functions.set(i, new ByteFunctionMemoizer(function));
+                                break;
+                            case ColumnType.CHAR:
+                                functions.set(i, new CharFunctionMemoizer(function));
+                                break;
+                            case ColumnType.DATE:
+                                functions.set(i, new DateFunctionMemoizer(function));
+                                break;
+                            case ColumnType.FLOAT:
+                                functions.set(i, new FloatFunctionMemoizer(function));
+                                break;
+                            case ColumnType.IPv4:
+                                functions.set(i, new IPv4FunctionMemoizer(function));
+                                break;
+                            case ColumnType.UUID:
+                                functions.set(i, new UuidFunctionMemoizer(function));
+                                break;
+                            case ColumnType.LONG256:
+                                functions.set(i, new Long256FunctionMemoizer(function));
+                                break;
+                            // other types do not have memoization yet
                         }
                     }
                 }

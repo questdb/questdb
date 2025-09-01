@@ -97,6 +97,11 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_date(").val(lo).val(',').val(range).val(',').val(nanRate).val(')');
         }

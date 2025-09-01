@@ -122,6 +122,11 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_str(").val(len).val(',').val(len).val(',').val(nullRate - 1).val(')');
         }

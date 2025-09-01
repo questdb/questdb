@@ -104,6 +104,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
@@ -142,6 +147,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isRandom() {
             return true;
+        }
+
+        @Override
+        public boolean isStable() {
+            return false;
         }
 
         @Override
@@ -186,6 +196,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
@@ -219,6 +234,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isRandom() {
             return true;
+        }
+
+        @Override
+        public boolean isStable() {
+            return false;
         }
 
         @Override

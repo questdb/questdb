@@ -88,6 +88,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isStable() {
+        return getLeft().isStable() && getCenter().isStable() && getRight().isStable();
+    }
+
+    @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
     }

@@ -341,8 +341,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     public void testProjectionInOrderByWithDate() throws Exception {
         testProjectionInOrderByWith0(
                 "name\tvalue\tdoubled\n" +
-                        "A\t1970-01-01T00:00:00.010Z\t0.8486964232560668\n" +
-                        "B\t1970-01-01T00:00:00.020Z\t4.089488367575552\n" +
+                        "B\t1970-01-01T00:00:00.020Z\t1.6973928465121335\n" +
+                        "A\t1970-01-01T00:00:00.010Z\t2.246301342497259\n" +
                         "C\t1970-01-01T00:00:00.030Z\t19.823333682561998\n",
                 "date"
         );
@@ -377,8 +377,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     public void testProjectionInOrderByWithTimestamp() throws Exception {
         testProjectionInOrderByWith0(
                 "name\tvalue\tdoubled\n" +
-                        "A\t1970-01-01T00:00:00.000010Z\t0.8486964232560668\n" +
-                        "B\t1970-01-01T00:00:00.000020Z\t4.089488367575552\n" +
+                        "B\t1970-01-01T00:00:00.000020Z\t1.6973928465121335\n" +
+                        "A\t1970-01-01T00:00:00.000010Z\t2.246301342497259\n" +
                         "C\t1970-01-01T00:00:00.000030Z\t19.823333682561998\n",
                 "timestamp"
         );
@@ -751,8 +751,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     private void testProjectionInOrderByWithF(String type) throws SqlException {
         testProjectionInOrderByWith0(
                 "name\tvalue\tdoubled\n" +
-                        "A\t10.0\t0.8486964232560668\n" +
-                        "B\t20.0\t4.089488367575552\n" +
+                        "B\t20.0\t1.6973928465121335\n" +
+                        "A\t10.0\t2.246301342497259\n" +
                         "C\t30.0\t19.823333682561998\n",
                 type
         );
@@ -761,8 +761,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     private void testProjectionInOrderByWithInt(String type) throws SqlException {
         testProjectionInOrderByWith0(
                 "name\tvalue\tdoubled\n" +
-                        "A\t10\t0.8486964232560668\n" +
-                        "B\t20\t4.089488367575552\n" +
+                        "B\t20\t1.6973928465121335\n" +
+                        "A\t10\t2.246301342497259\n" +
                         "C\t30\t19.823333682561998\n",
                 type
         );
