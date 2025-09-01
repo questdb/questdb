@@ -284,9 +284,15 @@ public class MmapCache {
     }
 
     private static void unmap0(long address, long len, int memoryTag) {
-        if (address != 0 && Files.munmap0(address, len) != -1) {
+        if (address == 0) {
+            return;
+        }
+        int result = Files.munmap0(address, len);
+        if (result != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
         }
+        assert result != -1 :
+                "failed to munmap non-zero address [address=" + address + ", len=" + len + ", memoryTag=" + memoryTag + ']';
     }
 
     private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
