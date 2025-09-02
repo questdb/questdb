@@ -1186,7 +1186,7 @@ public final class TableUtils {
      */
     public static long mapRWNoAlloc(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
-        if (addr > -1) {
+        if (addr != FilesFacade.MAP_FAILED) {
             return addr;
         }
         int errno = ff.errno();

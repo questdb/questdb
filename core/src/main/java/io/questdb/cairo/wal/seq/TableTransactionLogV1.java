@@ -371,7 +371,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;
                 long newAddr = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-                if (newAddr == -1) {
+                if (newAddr == FilesFacade.MAP_FAILED) {
                     throw CairoException.critical(Os.errno()).put("cannot mmap transaction log [path=").put(path).put(']');
                 }
                 this.address = newAddr;

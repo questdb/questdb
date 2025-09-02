@@ -519,7 +519,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 try {
                     rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
                     partFd = openRO(ff, rootPath.$(), LOG);
-                    address = ff.mmap(partFd, partMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                    long newAddr = ff.mmap(partFd, partMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                    if (newAddr == FilesFacade.MAP_FAILED) {
+                        throw CairoException.critical(ff.errno())
+                                .put("cannot mmap transaction log part [path=").put(rootPath)
+                                .put(", mapSize=").put(partMapSize)
+                                .put(']');
+                    }
+                    address = newAddr;
                     partId = part;
                 } finally {
                     rootPath.trimTo(size);

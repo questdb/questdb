@@ -264,7 +264,7 @@ public class MmapCache {
 
     private static long mmap0(int fd, long len, long offset, int flags, int memoryTag) {
         long address = Files.mmap0(fd, len, offset, flags, 0);
-        if (address != -1) {
+        if (address != FilesFacade.MAP_FAILED) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
         return address;
