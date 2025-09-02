@@ -700,6 +700,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         (JNIEnv *e, jclass cl, jint fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
+    if (len == 0) {
+        return -1;
+    }
+
     jlong maxsize = offset + len;
     DWORD flProtect;
     DWORD dwDesiredAccess;
