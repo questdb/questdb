@@ -24,13 +24,22 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeConverter;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -212,11 +221,14 @@ public class CopyWalSegmentUtils {
         }
         long size = rowCount << 4;
         long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
-        Vect.flattenIndex(srcDataTimestampAddr, rowCount);
-        if (commitMode != CommitMode.NOSYNC) {
-            ff.msync(srcDataTimestampAddr, size, commitMode == CommitMode.ASYNC);
+        try {
+            Vect.flattenIndex(srcDataTimestampAddr, rowCount);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(srcDataTimestampAddr, size, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
         }
-        ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
         return true;
     }
 
