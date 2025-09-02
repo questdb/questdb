@@ -141,9 +141,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -421,6 +421,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             int todo = readTodo(txWriter.txn);
             if (todo == TODO_RESTORE_META) {
+                if (todoMem.size() < 56) {
+                    throw CairoException.critical(0).put("cannot restore metadata, corrupt todo file does not have meta index at ").put(path.concat(TODO_FILE_NAME));
+                }
                 repairMetaRename((int) todoMem.getLong(48));
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
@@ -1184,13 +1187,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
 
                 bumpMetadataVersion();
-
-                // remove _todo as last step, after the commit.
-                // if anything fails before the commit, meta file will be reverted
-                clearTodoLog();
             } catch (CairoException e) {
                 throwDistressException(e);
             }
+
+            // remove _todo as last step, after the commit.
+            // if anything fails before the commit, meta file will be reverted
+            clearTodoLog();
 
             try {
 
@@ -2798,14 +2801,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // commit to _txn file
             bumpMetadataAndColumnStructureVersion();
-
-            // remove _todo as last step, after the commit.
-            // if anything fails before the commit, meta file will be reverted
-            clearTodoLog();
-
         } catch (CairoException e) {
             throwDistressException(e);
         }
+
+        // remove _todo as last step, after the commit.
+        // if anything fails before the commit, meta file will be reverted
+        clearTodoLog();
 
         try {
             // Call finish purge to remove old column files before renaming them in metadata
@@ -3845,23 +3847,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void clearTodoAndCommitMeta() {
         try {
             bumpMetadataVersion();
-
-            // remove _todo
-            clearTodoLog();
         } catch (CairoException e) {
             throwDistressException(e);
         }
+
+        clearTodoLog();
     }
 
     private void clearTodoAndCommitMetaStructureVersion() {
         try {
             bumpMetadataAndColumnStructureVersion();
-
-            // remove _todo
-            clearTodoLog();
         } catch (CairoException e) {
             throwDistressException(e);
         }
+
+        clearTodoLog();
     }
 
     private void clearTodoLog() {
@@ -3877,6 +3877,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // ensure the file is closed with the correct length
             todoMem.jumpTo(40);
             todoMem.sync(false);
+        } catch (Throwable th) {
+            // if we failed to clear _todo_, it's ok, it will be ignored
+            // because the txn inside _todo_ is out of date.
+            handleHousekeepingException(th);
         } finally {
             path.trimTo(pathSize);
         }
@@ -6763,7 +6767,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 todoMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
-                if (todoTxn == tableTxn && todoMem.getLong(24) != todoTxn) {
+                // also check that the _todo_ file belongs to the latest transaction in _txn, otherwise ignore it
+                if (todoTxn != tableTxn || todoMem.getLong(24) != todoTxn) {
                     todoMem.putLong(8, configuration.getDatabaseIdLo());
                     todoMem.putLong(16, configuration.getDatabaseIdHi());
                     Unsafe.getUnsafe().storeFence();
@@ -9936,11 +9941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-        try {
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
+        clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
 

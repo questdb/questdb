@@ -346,8 +346,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalMetadataChangeHeavyManyPartitions() throws Exception {
         // Too many partitions cause OSX to fail with file limit error
-        Assume.assumeTrue(Os.isOSX());
-        Rnd rnd = generateRandom(LOG, 739123650833L, 1749811822300L);
+        Assume.assumeTrue(!Os.isOSX());
+        Rnd rnd = generateRandom(LOG);
         setUpScoreboardVersion(rnd);
 
         setFuzzProbabilities(
