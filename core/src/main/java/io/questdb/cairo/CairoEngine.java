@@ -586,7 +586,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableNameRegistry.dropTable(tableToken);
                 // Remove the scoreboard after dropping the table from the registry
                 // Otherwise someone (like Column Purge Job) can create pooled instances of the scoreboard
-                // it from the registry without knowning that the table is being dropped.
+                // it from the registry without knowing that the table is being dropped.
                 // Then it can push the scoreboard max txn value into incorrect state.
                 scoreboardPool.remove(tableToken);
                 return;
