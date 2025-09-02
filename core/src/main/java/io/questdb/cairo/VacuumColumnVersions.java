@@ -182,7 +182,7 @@ public class VacuumColumnVersions implements Closeable {
 
     private void queueColumnVersionPurge(ColumnPurgeTask purgeTask, CairoEngine engine) {
         MessageBus messageBus = engine.getMessageBus();
-        LOG.info().$("scheduling column version purge [table=").$(purgeTask.getTableName())
+        LOG.info().$("scheduling column version purge [table=").$(purgeTask.getTableToken())
                 .$(", column=").$(purgeTask.getColumnName())
                 .I$();
 
