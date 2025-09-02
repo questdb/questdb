@@ -30,6 +30,8 @@ jobs:
           submodules: true
       - name: Install toolchains (CXX/NASM)
         run: |
+          # Temporary fix mtopolnik 2025-09-02: GH Actions pre-installs a custom cmake version, install then fails
+          brew uninstall cmake
           brew install make cmake gcc nasm
       - name: Build CXX Library
         run: |
