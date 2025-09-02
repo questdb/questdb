@@ -101,14 +101,6 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default boolean isStable() {
-        return getFunc0().isStable()
-                && getFunc1().isStable()
-                && getFunc2().isStable()
-                && getFunc3().isStable();
-    }
-
-    @Override
     default boolean isThreadSafe() {
         return getFunc0().isThreadSafe()
                 && getFunc1().isThreadSafe()
@@ -124,6 +116,14 @@ public interface QuaternaryFunction extends Function {
             getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
             getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
         }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getFunc0().shouldMemoize()
+                || getFunc1().shouldMemoize()
+                || getFunc2().shouldMemoize()
+                || getFunc3().shouldMemoize();
     }
 
     @Override

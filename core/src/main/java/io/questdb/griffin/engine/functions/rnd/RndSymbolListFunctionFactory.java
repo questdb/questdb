@@ -103,11 +103,6 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStable() {
-            return false;
-        }
-
-        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }
@@ -117,6 +112,11 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
             Func func = new Func(symbols);
             func.rnd = new Rnd(this.rnd.getSeed0(), this.rnd.getSeed1());
             return func;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override

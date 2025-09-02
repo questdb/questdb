@@ -92,8 +92,8 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStable() {
-            return false;
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override

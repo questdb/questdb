@@ -5011,7 +5011,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     Function function = functions.getQuick(i);
-                    if (function != null && !function.isConstant() && (boolList.get(i) || !function.isStable())) {
+                    if (function != null && !function.isConstant() && (boolList.get(i) || function.shouldMemoize())) {
                         switch (function.getType()) {
                             case ColumnType.LONG:
                                 functions.set(i, new LongFunctionMemoizer(function));

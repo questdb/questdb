@@ -247,19 +247,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Determines whether this function return stable result when called with the same record.
-     * <p>
-     * Unstable functions need to be materialized result to ensure consistent results across multi references.
-     * <p>
-     * Examples of unstable functions: random generators, current timestamp.
-     *
-     * @return true if the function and all of its child functions are stable, false otherwise
-     */
-    default boolean isStable() {
-        return true;
-    }
-
-    /**
      * Returns true if the function and all of its children functions are thread-safe
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL execution, thus this method makes sense only for functions
@@ -284,6 +271,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     default void offerStateTo(Function that) {
+    }
+
+    /**
+     * For exactly once per-row execution functions can declare themselves memoizable by
+     * returning true out of this method. Typically, this is all what's required. FunctionParser will
+     * wrap memoizable functions into type-specific Memoizers. These memoizers will implement {@see memoize} method.
+     * Caching heavy or potentially volatile computations for each data row.
+     *
+     * @return if function is memoizable
+     */
+    default boolean shouldMemoize() {
+        return false;
     }
 
     /**

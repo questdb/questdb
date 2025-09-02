@@ -70,11 +70,6 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default boolean isStable() {
-        return getArg().isStable();
-    }
-
-    @Override
     default boolean isThreadSafe() {
         return getArg().isThreadSafe();
     }
@@ -84,6 +79,11 @@ public interface UnaryFunction extends Function {
         if (that instanceof UnaryFunction) {
             getArg().offerStateTo(((UnaryFunction) that).getArg());
         }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getArg().shouldMemoize();
     }
 
     @Override

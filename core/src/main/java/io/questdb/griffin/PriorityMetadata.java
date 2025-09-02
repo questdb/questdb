@@ -69,6 +69,7 @@ public class PriorityMetadata extends AbstractRecordMetadata {
             int keyIndex = columnNameIndexMap.keyIndex(columnName, lo, hi);
             if (keyIndex < 0) {
                 int pos = columnNameIndexMap.valueAt(keyIndex);
+                // Means this column is depended upon by another expression
                 dependencies.set(pos, true);
                 return pos;
             }

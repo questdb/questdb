@@ -88,11 +88,6 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isStable() {
-        return getLeft().isStable() && getCenter().isStable() && getRight().isStable();
-    }
-
-    @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
     }
@@ -104,6 +99,11 @@ public interface TernaryFunction extends Function {
             getCenter().offerStateTo(((TernaryFunction) that).getCenter());
             getRight().offerStateTo(((TernaryFunction) that).getRight());
         }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getCenter().shouldMemoize() || getRight().shouldMemoize();
     }
 
     @Override

@@ -122,13 +122,13 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStable() {
+        public boolean isSymbolTableStatic() {
             return false;
         }
 
         @Override
-        public boolean isSymbolTableStatic() {
-            return false;
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override

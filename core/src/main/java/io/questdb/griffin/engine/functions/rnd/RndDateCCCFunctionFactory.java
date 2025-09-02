@@ -97,8 +97,8 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStable() {
-            return false;
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override

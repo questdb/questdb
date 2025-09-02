@@ -95,17 +95,6 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isStable() {
-        ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (!args.getQuick(i).isStable()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
     default boolean isThreadSafe() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
@@ -128,6 +117,18 @@ public interface MultiArgFunction extends Function {
                 }
             }
         }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.shouldMemoize()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

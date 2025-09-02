@@ -417,6 +417,11 @@ public class JsonExtractFunction implements Function {
         return pointer == null;
     }
 
+    @Override
+    public boolean shouldMemoize() {
+        return true;
+    }
+
     private long extractLongFromJsonNumber(long res) {
         switch (stateA.simdJsonResult.getNumberType()) {
             case SimdJsonNumberType.SIGNED_INTEGER:
