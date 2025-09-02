@@ -117,7 +117,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     public boolean purge(@NotNull ColumnPurgeTask task) {
-        assert task.getTableName() != null;
+        assert task.getTableToken() != null;
         assert scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE;
         boolean done = purge0(task);
         if (done && scoreboardUseMode == ScoreboardUseMode.BAU_QUEUE_PROCESSING) {
@@ -127,7 +127,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     public boolean purge(@NotNull ColumnPurgeTask task, @NotNull TableReader tableReader) {
-        assert task.getTableName() != null;
+        assert task.getTableToken() != null;
         assert scoreboardUseMode == ScoreboardUseMode.VACUUM_TABLE;
         txReader = tableReader.getTxFile();
         txnScoreboard = tableReader.getTxnScoreboard();
@@ -156,7 +156,7 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$safe(task.getTableName().getTableName())
+                    .$safe(task.getTableToken().getTableName())
                     .$(", txn=").$(updateTxn)
                     .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
@@ -176,10 +176,10 @@ public class ColumnPurgeOperator implements Closeable {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
                 txnScoreboard = Misc.free(txnScoreboard);
-                txnScoreboard = engine.getTxnScoreboard(task.getTableName());
+                txnScoreboard = engine.getTxnScoreboard(task.getTableToken());
                 // fall through
             case STARTUP_ONLY:
-                TableToken updatedTableToken = engine.getTableTokenIfExists(task.getTableName().getTableName());
+                TableToken updatedTableToken = engine.getTableTokenIfExists(task.getTableToken().getTableName());
                 boolean tableChanged = updatedTableToken == null || updatedTableToken.getTableId() != task.getTableId();
                 if (!tableChanged) {
                     int tableId = readTableId(path);
@@ -205,7 +205,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean purge0(ColumnPurgeTask task) {
         try {
-            setTablePath(task.getTableName());
+            setTablePath(task.getTableToken());
             final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
             long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
             boolean allDone = true;
