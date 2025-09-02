@@ -1010,7 +1010,7 @@ public class SqlOptimiser implements Mutable {
 
     // Redundant Casts on join keys are eliminated here, which ensures that the most efficient query plan is executed regardless of the misuse of Cast by the user on join keys
     // Casts on join keys are considered redundant, if type of both the keys are already the same
-    private void eliminateRedundantCastsInJoinKeys(ExpressionNode equalityNode, QueryModel joinModel) {
+    private void eliminateRedundantCastsInJoinKeys(ExpressionNode equalityNode, QueryModel joinModel) throws SqlException {
         if (equalityNode == null || equalityNode.type != ExpressionNode.OPERATION || !"=".equals(equalityNode.token.toString())) {
             return;
         }
@@ -1099,6 +1099,7 @@ public class SqlOptimiser implements Mutable {
     private boolean isCastFunction(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
+                && node.token != null
                 && SqlKeywords.isCastKeyword(node.token)
                 && node.paramCount == 2
                 && node.lhs != null;
