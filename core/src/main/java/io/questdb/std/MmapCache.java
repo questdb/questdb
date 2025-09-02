@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
+
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
@@ -210,8 +212,9 @@ public class MmapCache {
      * Unmaps memory region, decrements reference count, and removes from cache if last reference.
      */
     public void unmap(long address, long len, int memoryTag) {
-        if (address == 0 || len <= 0) {
-            return;
+        if (address <= 0 || len <= 0) {
+            throw CairoException.critical(0)
+                    .put("unmap: invalid address or length [address=" + address + ", len=" + len + ']');
         }
 
         if (!Files.FS_CACHE_ENABLED) {
@@ -284,15 +287,15 @@ public class MmapCache {
     }
 
     private static void unmap0(long address, long len, int memoryTag) {
-        if (address == 0) {
-            return;
-        }
         int result = Files.munmap0(address, len);
         if (result != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
+        } else {
+            throw CairoException.critical(Os.errno())
+                    .put("munmap failed [address=").put(address)
+                    .put(", len=").put(len)
+                    .put(", memoryTag=").put(memoryTag).put(']');
         }
-        assert result != -1 :
-                "failed to munmap non-zero address [address=" + address + ", len=" + len + ", memoryTag=" + memoryTag + ']';
     }
 
     private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {

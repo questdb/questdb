@@ -43,9 +43,10 @@ public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
             final long rawIndex = columnIndex * COLUMN_ENTRY_SIZE;
 
             final long columnAddr = columnData.get(rawIndex + COLUMN_ADDR_OFFSET);
-            final long columnSize = columnData.get(rawIndex + COLUMN_SIZE_OFFSET);
-            ff.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
-
+            if (columnAddr != 0) {
+                final long columnSize = columnData.get(rawIndex + COLUMN_SIZE_OFFSET);
+                ff.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
+            }
             final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
             if (columnSecondaryAddr != 0) {
                 final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);

@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
@@ -61,6 +62,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class FilesTest {
@@ -763,6 +765,27 @@ public class FilesTest {
     }
 
     @Test
+    public void testMmapInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fdrw = Files.openRW(path.$());
+                long fdro = Files.openRO(path.$());
+                if (Files.allocate(fdrw, 1024)) {
+                    long addr1 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    if (addr1 != FilesFacade.MAP_FAILED) {
+                        Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                        Assert.fail("mmap with len 0 should return MAP_FAILED");
+                    }
+                }
+                Files.close(fdrw);
+                Files.close(fdro);
+            }
+        });
+    }
+
+    @Test
     public void testOpenCleanRWAllocatesToSize() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
@@ -789,33 +812,6 @@ public class FilesTest {
                 Assert.assertTrue(fd < 0);
             } finally {
                 Files.close(fd);
-            }
-        });
-    }
-
-    @Test
-    public void testRemapTo0Len() throws Exception {
-        // Emulates the syscall sequence from TxnScoreboard's initialization and close.
-        assertMemoryLeak(() -> {
-            File temp = temporaryFolder.newFile();
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                Assert.assertTrue(Files.exists(path.$()));
-
-                long fdrw = Files.openRW(path.$());
-                long fdro = Files.openRO(path.$());
-
-                if (Files.allocate(fdrw, 1024)) {
-                    long addr1 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                    long addr2 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-
-                    addr1 = Files.mremap(fdro, addr1, 0, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-
-                    Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
-                    Files.munmap(addr2, 0, MemoryTag.MMAP_DEFAULT);
-                }
-
-                Files.close(fdrw);
-                Files.close(fdro);
             }
         });
     }
@@ -997,6 +993,28 @@ public class FilesTest {
                     // Delete files
                     Files.remove(path.$());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRemapTo0Len() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+
+                long fdrw = Files.openRW(path.$());
+                long fdro = Files.openRO(path.$());
+
+                if (Files.allocate(fdrw, 1024)) {
+                    long addr1 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    addr1 = Files.mremap(fdro, addr1, 0, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                }
+
+                Files.close(fdrw);
+                Files.close(fdro);
             }
         });
     }
@@ -1331,6 +1349,45 @@ public class FilesTest {
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
                 Assert.assertEquals(-1, Files.openRO(linkPath.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testUnmapInvalidZeroAddress() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Files.munmap(0, 64, MemoryTag.MMAP_DEFAULT);
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "invalid address");
+            }
+        });
+    }
+
+    @Test
+    public void testUnmapInvalidZeroLength() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+
+                long fdrw = Files.openRW(path.$());
+                long fdro = Files.openRO(path.$());
+
+                if (Files.allocate(fdrw, 1024)) {
+                    long addr1 = Files.mmap(fdro, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        Files.munmap(addr1, 0, MemoryTag.MMAP_DEFAULT);
+                    } catch (CairoException e) {
+                        assertContains(e.getFlyweightMessage(), "invalid address or length");
+                    } finally {
+                        Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+
+                Files.close(fdrw);
+                Files.close(fdro);
             }
         });
     }
