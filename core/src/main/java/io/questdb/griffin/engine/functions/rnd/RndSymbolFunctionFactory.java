@@ -127,11 +127,6 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_symbol(").val(count).val(',').val(strMem.getLo()).val(',').val(strMem.getHi()).val(',').val(nullRate - 1).val(')');
         }

@@ -85,11 +85,6 @@ class RndVarcharFunction extends VarcharFunction implements Function {
     }
 
     @Override
-    public boolean shouldMemoize() {
-        return true;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.val("rnd_varchar(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
     }
