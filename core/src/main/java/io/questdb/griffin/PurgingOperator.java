@@ -194,7 +194,7 @@ public final class PurgingOperator {
     }
 
     private void purgeColumnVersionAsync(
-            TableToken tableName,
+            TableToken tableToken,
             String columnName,
             int tableId,
             int tableTruncateVersion,
@@ -212,7 +212,7 @@ public final class PurgingOperator {
             if (cursor > -1L) {
                 ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
                 task.of(
-                        tableName,
+                        tableToken,
                         columnName,
                         tableId,
                         tableTruncateVersion,
@@ -228,7 +228,7 @@ public final class PurgingOperator {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableName.getTableName())
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableToken.getTableName())
                         .$("\"' [columnName=").$safe(columnName)
                         .$(", updateTxn=").$(updateTxn)
                         .I$();
