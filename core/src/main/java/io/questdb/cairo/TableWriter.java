@@ -8735,7 +8735,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // If table is removed / renamed, this should fail with table does not exist.
             todoCount = openTodoMem();
         } catch (CairoException ex) {
-            if (ex.errnoFileCannotRead()) {
+            if (ex.isFileCannotRead()) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName());
             }
             throw ex;

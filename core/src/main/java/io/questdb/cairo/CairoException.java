@@ -182,10 +182,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
     }
 
-    public boolean errnoFileCannotRead() {
-        return Files.errnoFileCannotRead(errno);
-    }
-
     public int getErrno() {
         return errno;
     }
@@ -246,6 +242,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != TABLE_DROPPED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isFileCannotRead() {
+        return Files.isErrnoFileCannotRead(errno);
     }
 
     public boolean isHousekeeping() {

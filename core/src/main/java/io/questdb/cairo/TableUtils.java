@@ -855,7 +855,7 @@ public final class TableUtils {
             long spinLockTimeout
     ) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (ex.errnoFileCannotRead()) {
+        if (ex.isFileCannotRead()) {
             if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").$safe(tableName)
                         .$(", msg=").$safe(ex.getFlyweightMessage())
@@ -1294,7 +1294,7 @@ public final class TableUtils {
             return fd;
         }
         int errno = ff.errno();
-        if (Files.errnoFileCannotRead(errno)) {
+        if (Files.isErrnoFileCannotRead(errno)) {
             throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
         }
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
@@ -1307,7 +1307,7 @@ public final class TableUtils {
             return fd;
         }
         int errno = ff.errno();
-        if (Files.errnoFileCannotRead(errno)) {
+        if (Files.isErrnoFileCannotRead(errno)) {
             throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
         }
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');

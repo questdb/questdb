@@ -115,7 +115,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     break;
                 } catch (CairoException e) {
                     Misc.free(cursor);
-                    if (e.errnoFileCannotRead()) {
+                    if (e.isFileCannotRead()) {
                         // Txn sequencer can have its parts deleted due to housekeeping
                         // Need to keep scanning until we find a valid part
                         if (txnLo == 0) {
