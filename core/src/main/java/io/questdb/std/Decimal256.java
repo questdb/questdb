@@ -466,6 +466,10 @@ public class Decimal256 implements Sinkable {
      * @return true if the decimal precision is smaller or equal to the given precision, false otherwise.
      */
     public boolean comparePrecision(int precision) {
+        if (isNull()) {
+            return true;
+        }
+
         if (precision > MAX_SCALE) {
             return true;
         } else if (precision < 0) {
