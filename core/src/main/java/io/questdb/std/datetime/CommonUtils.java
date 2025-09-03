@@ -68,13 +68,13 @@ public class CommonUtils {
 
     public static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
     public static void checkChar(Utf8Sequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.byteAt(p) != c) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
@@ -86,7 +86,7 @@ public class CommonUtils {
             return false;
         }
 
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     public static boolean checkLen3(int p, int lim) throws NumericException {
@@ -97,7 +97,7 @@ public class CommonUtils {
             return false;
         }
 
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     public static boolean checkLenStrict(int p, int lim) throws NumericException {
@@ -108,24 +108,24 @@ public class CommonUtils {
             return false;
         }
 
-        throw NumericException.INSTANCE;
+        throw NumericException.instance();
     }
 
     public static void checkRange(int x, int min, int max) throws NumericException {
         if (x < min || x > max) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
     public static void checkSpecialChar(CharSequence s, int p, int lim) throws NumericException {
         if (p >= lim || (s.charAt(p) != 'T' && s.charAt(p) != ' ')) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
     public static void checkSpecialChar(Utf8Sequence s, int p, int lim) throws NumericException {
         if (p >= lim || (s.byteAt(p) != 'T' && s.byteAt(p) != ' ')) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance();
         }
     }
 
@@ -231,7 +231,7 @@ public class CommonUtils {
                 tzSign = 1;
                 break;
             default:
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
         }
         return tzSign;
     }
@@ -257,7 +257,7 @@ public class CommonUtils {
             case 8:
                 return 100000000;
             default:
-                throw NumericException.INSTANCE;
+                throw NumericException.instance();
         }
     }
 

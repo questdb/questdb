@@ -182,11 +182,11 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testCeilWeekBeforeAndAfterEpoch() {
+    public void testCeilWeek() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        long start = timestampDriver.fromDays(-366);
-        for (int i = 0; i < 2 * 366; i++) {
-            long timestamp = start + i * timestampDriver.fromDays(i);
+        long start = timestampDriver.fromDays(0);
+        for (int i = 0; i < 3 * 366; i++) {
+            long timestamp = start + timestampDriver.fromDays(i);
             String date = timestampDriver.toMSecString(timestamp);
 
             long ceil = PartitionBy.getPartitionCeilMethod(timestampType.getTimestampType(), PartitionBy.WEEK).ceil(timestamp);
@@ -197,6 +197,15 @@ public class PartitionByTest {
             Assert.assertTrue(message, ceil > timestamp);
             Assert.assertTrue(message, ceil <= timestamp + timestampDriver.fromWeeks(1));
         }
+    }
+
+    @Test
+    public void testCeilWeekEpoch() {
+        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(timestampType.getTimestampType(), PartitionBy.WEEK);
+        long floor1 = ceilMethod.ceil(0);
+        // negative timestamps are treated as zero
+        long floor2 = ceilMethod.ceil(-1000);
+        Assert.assertEquals(floor1, floor2);
     }
 
     @Test
@@ -300,17 +309,9 @@ public class PartitionByTest {
     @SuppressWarnings("ConstantConditions")
     @Test
     public void testFloorWeek() {
-        long floor1 = PartitionBy.getPartitionFloorMethod(timestampType.getTimestampType(), PartitionBy.WEEK).floor(0);
-        long floor2 = PartitionBy.getPartitionFloorMethod(timestampType.getTimestampType(), PartitionBy.WEEK).floor(floor1);
-        Assert.assertEquals(floor1, floor2);
-    }
-
-    @SuppressWarnings("ConstantConditions")
-    @Test
-    public void testFloorWeekBeforeAndAfterEpoch() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        long start = timestampDriver.fromDays(-366);
-        for (int i = 0; i < 2 * 366; i++) {
+        long start = timestampDriver.fromDays(0);
+        for (int i = 0; i < 3 * 366; i++) {
             long timestamp = start + timestampDriver.fromDays(i);
             String date = timestampDriver.toMSecString(timestamp);
 
@@ -322,6 +323,18 @@ public class PartitionByTest {
             Assert.assertTrue(message, floor <= timestamp);
             Assert.assertTrue(message, floor + timestampDriver.fromWeeks(1) > timestamp);
         }
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    @Test
+    public void testFloorWeekEpoch() {
+        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(timestampType.getTimestampType(), PartitionBy.WEEK);
+        long floor1 = floorMethod.floor(0);
+        long floor2 = floorMethod.floor(floor1);
+        Assert.assertEquals(floor1, floor2);
+        // negative timestamps are treated as zero
+        floor2 = floorMethod.floor(-1000);
+        Assert.assertEquals(floor1, floor2);
     }
 
     @Test
