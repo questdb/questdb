@@ -25,6 +25,20 @@
 package io.questdb.std;
 
 public final class Decimals {
+    public static final int MAX_PRECISION = 76;
+    public static final int MAX_SCALE = MAX_PRECISION;
+    private static final int[] PRECISION_SIZE_POW2 = {
+            0, 0, 0, // precision 0-2 -> 1 byte
+            1, 1, // precision 3-4 -> 2 byte
+            2, 2, 2, 2, 2, // precision 5-9 -> 4 bytes
+            3, 3, 3, 3, 3, 3, 3, 3, 3, // precision 10-18 -> 8 bytes
+            4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+            4, 4, 4, 4, 4, 4, 4, 4, // precision 19-38 -> 16 bytes
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+            5, 5, // precision 39-76 -> 32 bytes
+    };
     public static long DECIMAL128_HI_NULL = Long.MIN_VALUE;
     public static long DECIMAL128_LO_NULL = 0L;
     public static short DECIMAL16_NULL = Short.MIN_VALUE;
@@ -35,4 +49,28 @@ public final class Decimals {
     public static int DECIMAL32_NULL = Integer.MIN_VALUE;
     public static long DECIMAL64_NULL = Long.MIN_VALUE;
     public static byte DECIMAL8_NULL = Byte.MIN_VALUE;
+
+    /**
+     * Returns the required storage size in bytes (pow 2) for a decimal with given precision.
+     * <p>
+     * Storage sizes:
+     * - Precision 1-2:   1 byte  (7 bits for magnitude + 1 sign bit)
+     * - Precision 3-4:   2 bytes (15 bits for magnitude + 1 sign bit)
+     * - Precision 5-9:   4 bytes (31 bits for magnitude + 1 sign bit)
+     * - Precision 10-18: 8 bytes (63 bits for magnitude + 1 sign bit)
+     * - Precision 19-38: 16 bytes (128-bit storage)
+     * - Precision 39-76: 32 bytes (256-bit storage)
+     *
+     * @param precision the number of significant digits
+     * @return the required storage size in bytes
+     * @throws IllegalArgumentException if precision is invalid
+     */
+    public static int getStorageSizePow2(int precision) {
+        if (precision < 1 || precision > MAX_SCALE) {
+            throw new IllegalArgumentException("Invalid decimal precision: " + precision +
+                    ". Must be between 1 and " + MAX_SCALE);
+        }
+
+        return PRECISION_SIZE_POW2[precision];
+    }
 }
