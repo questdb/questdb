@@ -251,14 +251,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
-        final int rowGroupCount = metadata.rowGroupCount();
+        final int rowGroupCount = metadata.getRowGroupCount();
 
         long rowCount = 0;
         long rowGroupSize = 0;
         int rowGroupIndex = 0;
         for (int i = 0; i < rowGroupCount; i++) {
             rowGroupIndex = i;
-            rowGroupSize = metadata.rowGroupSize(i);
+            rowGroupSize = metadata.getRowGroupSize(i);
             if (partitionLo < rowCount + rowGroupSize) {
                 break;
             }

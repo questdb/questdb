@@ -459,12 +459,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
 
-            assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n"
-                            + "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n"
-                            + "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n"
-                            + "2\t2024-06-12\tfalse\ttrue\t652\t\t\n" +
-                            "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
-                    "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
+            assertQuery(
+                    "index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp\n" +
+                            "0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
+                            "1\t2024-06-11\tfalse\tfalse\tfalse\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
+                            "2\t2024-06-12\tfalse\ttrue\ttrue\t\t\n" +
+                            "3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+                    "select index, name, readOnly, isParquet, parquetFileSize > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     false,
                     true
             );
