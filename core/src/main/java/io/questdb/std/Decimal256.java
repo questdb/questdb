@@ -28,8 +28,8 @@ public class Decimal256 implements Sinkable {
      */
     public static final int MAX_SCALE = 76;
     public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
-    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE + 1, -1, -1, -1, 0);
-    public static final Decimal256 NULL_VALUE = new Decimal256(Long.MIN_VALUE, -1, -1, -1, 0);
+    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, 0, 0, 1, 0);
+    public static final Decimal256 NULL_VALUE = new Decimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, 0);
     private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
             1L, 15L,
             159L, 1593L, 15930L, 159309L, 1593091L,
@@ -385,7 +385,8 @@ public class Decimal256 implements Sinkable {
      * @return true if null, false otherwise
      */
     public static boolean isNull(long hh, long hl, long lh, long ll) {
-        return hh == Long.MIN_VALUE && hl == -1 && lh == -1 && ll == -1;
+        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
+                lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
     }
 
     /**
@@ -788,7 +789,8 @@ public class Decimal256 implements Sinkable {
      * @return true if null, false otherwise
      */
     public boolean isNull() {
-        return hh == Long.MIN_VALUE && hl == -1 && lh == -1 && ll == -1;
+        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
+                lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
     }
 
     /**
@@ -963,10 +965,10 @@ public class Decimal256 implements Sinkable {
      * Set this Decimal256 to the null value.
      */
     public void ofNull() {
-        hh = Long.MIN_VALUE;
-        hl = -1;
-        lh = -1;
-        ll = -1;
+        hh = Decimals.DECIMAL256_HH_NULL;
+        hl = Decimals.DECIMAL256_HL_NULL;
+        lh = Decimals.DECIMAL256_LH_NULL;
+        ll = Decimals.DECIMAL256_LL_NULL;
         scale = 0;
     }
 
