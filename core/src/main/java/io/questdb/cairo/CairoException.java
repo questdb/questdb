@@ -42,6 +42,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+    public static final int ERRNO_INVALID_PARAMETER = 22;
+    public static final int ERRNO_INVALID_PARAMETER_WIN = 87;
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;

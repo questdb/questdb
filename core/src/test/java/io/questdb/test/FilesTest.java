@@ -778,6 +778,7 @@ public class FilesTest {
                         Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
                         Assert.fail("mmap with len 0 should return MAP_FAILED");
                     }
+                    Assert.assertEquals("errno should be INVALID_PARAMETER", Os.errno(), Files.errnoInvalidParameter());
                 }
                 Files.close(fdrw);
                 Files.close(fdro);
@@ -1360,6 +1361,7 @@ public class FilesTest {
                 Files.munmap(0, 64, MemoryTag.MMAP_DEFAULT);
                 Assert.fail("Expected CairoException");
             } catch (CairoException e) {
+                Assert.assertEquals("errno should be INVALID_PARAMETER", e.getErrno(), Files.errnoInvalidParameter());
                 assertContains(e.getFlyweightMessage(), "invalid address");
             }
         });
@@ -1380,6 +1382,7 @@ public class FilesTest {
                     try {
                         Files.munmap(addr1, 0, MemoryTag.MMAP_DEFAULT);
                     } catch (CairoException e) {
+                        Assert.assertEquals("errno should be INVALID_PARAMETER", e.getErrno(), Files.errnoInvalidParameter());
                         assertContains(e.getFlyweightMessage(), "invalid address or length");
                     } finally {
                         Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);

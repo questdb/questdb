@@ -130,6 +130,9 @@ public final class Files {
                 : CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN;
     }
 
+    public static int errnoInvalidParameter() {
+        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
+                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
     }
 
     public static boolean exists(long fd) {
