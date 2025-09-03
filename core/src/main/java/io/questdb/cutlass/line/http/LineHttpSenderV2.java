@@ -35,6 +35,9 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.FlattenArrayUtils;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpSenderV2 extends AbstractLineHttpSender {
@@ -62,7 +65,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos);
+                flushIntervalNanos,
+                new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks()));
     }
 
     protected LineHttpSenderV2(String host,
@@ -78,7 +82,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                                int maxNameLength,
                                long maxRetriesNanos,
                                long minRequestThroughput,
-                               long flushIntervalNanos) {
+                               long flushIntervalNanos,
+                               Rnd rnd) {
         super(host,
                 port,
                 path,
@@ -92,7 +97,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos);
+                flushIntervalNanos,
+                rnd);
     }
 
     @Override
