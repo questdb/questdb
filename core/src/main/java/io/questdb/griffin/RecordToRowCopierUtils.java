@@ -1354,7 +1354,7 @@ public class RecordToRowCopierUtils {
         int toPrecision = ColumnType.getDecimalPrecision(toType);
         if (fromScale != toScale) {
             try {
-                decimal256.rescale(ColumnType.getDecimalScale(toType));
+                decimal256.rescale(toScale);
             } catch (NumericException ignored) {
                 throw ImplicitCastException.inconvertibleValue(decimal256.toString(), fromType, toType);
             }
