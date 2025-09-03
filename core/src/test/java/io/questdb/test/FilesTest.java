@@ -778,7 +778,7 @@ public class FilesTest {
                         Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
                         Assert.fail("mmap with len 0 should return MAP_FAILED");
                     }
-                    Assert.assertEquals("errno should be INVALID_PARAMETER", Os.errno(), Files.errnoInvalidParameter());
+                    Assert.assertEquals("errno should be INVALID_PARAMETER", Files.errnoInvalidParameter(), Os.errno());
                 }
                 Files.close(fdrw);
                 Files.close(fdro);
