@@ -29,6 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -91,52 +92,52 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public long getDecimal128Hi(long offset) {
-        return Long.MIN_VALUE;
+        return Decimals.DECIMAL128_HI_NULL;
     }
 
     @Override
     public long getDecimal128Lo(long offset) {
-        return -1;
+        return Decimals.DECIMAL128_LO_NULL;
     }
 
     @Override
     public short getDecimal16(long offset) {
-        return Short.MIN_VALUE;
+        return Decimals.DECIMAL16_NULL;
     }
 
     @Override
     public long getDecimal256HH(long offset) {
-        return Long.MIN_VALUE;
+        return Decimals.DECIMAL256_HH_NULL;
     }
 
     @Override
     public long getDecimal256HL(long offset) {
-        return -1;
+        return Decimals.DECIMAL256_HL_NULL;
     }
 
     @Override
     public long getDecimal256LH(long offset) {
-        return -1;
+        return Decimals.DECIMAL256_LH_NULL;
     }
 
     @Override
     public long getDecimal256LL(long offset) {
-        return -1;
+        return Decimals.DECIMAL256_LL_NULL;
     }
 
     @Override
     public int getDecimal32(long offset) {
-        return Integer.MIN_VALUE;
+        return Decimals.DECIMAL32_NULL;
     }
 
     @Override
     public long getDecimal64(long offset) {
-        return Long.MIN_VALUE;
+        return Decimals.DECIMAL64_NULL;
     }
 
     @Override
     public byte getDecimal8(long offset) {
-        return Byte.MIN_VALUE;
+        return Decimals.DECIMAL8_NULL;
     }
 
     @Override
