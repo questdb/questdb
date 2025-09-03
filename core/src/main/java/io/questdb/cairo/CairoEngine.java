@@ -573,7 +573,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
-            scoreboardPool.remove(tableToken);
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
@@ -586,6 +585,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
 
                 tableNameRegistry.dropTable(tableToken);
+                // Remove the scoreboard after dropping the table from the registry
+                // Otherwise someone (like Column Purge Job) can create pooled instances of the scoreboard
+                // it from the registry without knowing that the table is being dropped.
+                // Then it can push the scoreboard max txn value into incorrect state.
+                scoreboardPool.remove(tableToken);
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken)
