@@ -125,8 +125,6 @@ public final class Files {
         return -1;
     }
 
-    public static boolean errnoFileCannotRead(int errno) {
-        return errnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
     public static int errnoFileDoesNotExist() {
         return Os.type != Os.WINDOWS ? CairoException.ERRNO_FILE_DOES_NOT_EXIST
                 : CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN;
@@ -286,6 +284,10 @@ public final class Files {
 
     public static boolean isDots(CharSequence name) {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
+    }
+
+    public static boolean isErrnoFileCannotRead(int errno) {
+        return errno == errnoFileDoesNotExist() || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
     }
 
     public native static boolean isSoftLink(long lpszPath);
