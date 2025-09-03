@@ -125,11 +125,6 @@ public final class Files {
         return -1;
     }
 
-    public static int errnoFileDoesNotExist() {
-        return Os.type != Os.WINDOWS ? CairoException.ERRNO_FILE_DOES_NOT_EXIST
-                : CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN;
-    }
-
     public static int errnoInvalidParameter() {
         return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
                 : CairoException.ERRNO_INVALID_PARAMETER_WIN;
@@ -290,7 +285,12 @@ public final class Files {
     }
 
     public static boolean isErrnoFileCannotRead(int errno) {
-        return errno == errnoFileDoesNotExist() || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
+        return isErrnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
+    }
+
+    public static boolean isErrnoFileDoesNotExist(int errno) {
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST ||
+                (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
     public native static boolean isSoftLink(long lpszPath);
