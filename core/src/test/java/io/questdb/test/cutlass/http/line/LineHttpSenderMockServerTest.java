@@ -316,6 +316,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 Assert.fail("Exception expected");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not flush buffer: http://127.0.0.1:1/write?precision=n Connection Failed");
+                sender.reset();
             }
         }
     }
@@ -417,6 +418,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 e.getMessage(),
                                 "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
                         );
+                        sender.reset();
                     } finally {
                         delayLatch.countDown();
                     }
@@ -429,6 +431,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         CountDownLatch delayLatch = new CountDownLatch(1);
         MockHttpProcessor mock = new MockHttpProcessor()
                 .delayedReplyWithStatus(204, delayLatch);
+
 
         testWithMock(mock, sender -> {
                     sender.table("test")
@@ -443,6 +446,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 e.getMessage(),
                                 "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
                         );
+                        sender.reset();
                     } finally {
                         delayLatch.countDown();
                     }

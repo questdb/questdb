@@ -441,6 +441,18 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     @Override
+    public void reset(long newFlushAfterNanos) {
+        pendingRows = 0;
+        flushAfterNanos = newFlushAfterNanos;
+        request = newRequest();
+    }
+
+    @Override
+    public void reset() {
+        reset(Long.MAX_VALUE);
+    }
+
+    @Override
     public Sender stringColumn(CharSequence name, CharSequence value) {
         writeFieldName(name);
         request.put('"');
@@ -614,7 +626,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 }
                 assert response.isChunked();
                 if (isRetryableHttpStatus(statusCode) || isMisdirectedRequest(statusCode)) {
-                    if (isMisdirectedRequest(statusCode)) {
+                    if (isMisdirectedRequest(statusCode) || isNotFound(statusCode)) {
                         rotateAddress();
                     }
 
@@ -642,9 +654,6 @@ public abstract class AbstractLineHttpSender implements Sender {
                                 : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
-//                    pendingRows = 0;
-                    flushAfterNanos = Long.MAX_VALUE;
-                    request = newRequest();
                     throw new LineSenderException("Could not flush buffer: ").put(url)
                             .put(" Connection Failed").put(": ").put(e.getMessage()).errno(e.getErrno());
                 }
@@ -655,9 +664,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 retryBackoff = backoff(retryBackoff);
             }
         }
-        pendingRows = 0;
-        flushAfterNanos = System.nanoTime() + flushIntervalNanos;
-        request = newRequest();
+        reset(System.nanoTime() + flushIntervalNanos);
     }
 
     private boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {

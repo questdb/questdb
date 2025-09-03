@@ -293,6 +293,10 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      */
     Sender longColumn(CharSequence name, long value);
 
+    void reset(long newFlushAfterNanos);
+
+    void reset();
+
     /**
      * Add a column with a string value.
      *
