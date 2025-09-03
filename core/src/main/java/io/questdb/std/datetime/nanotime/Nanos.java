@@ -108,7 +108,7 @@ public final class Nanos {
         if (_d > maxDay) {
             _d = maxDay;
         }
-        return toNanos(_y, _m, _d) + getTimeNanos(nanos) + (nanos < 0 ? 1 : 0);
+        return toNanos(_y, _m, _d) + getTimeNanos(nanos);
     }
 
     public static long addNanos(long nanos, int moreNanos) {
@@ -164,8 +164,7 @@ public final class Nanos {
         return yearNanos(y + years, leap2)
                 + monthOfYearNanos(m = getMonthOfYear(nanos, y, leap1), leap2)
                 + (getDayOfMonth(nanos, y, m, leap1) - 1) * DAY_NANOS
-                + getTimeNanos(nanos)
-                + (nanos < 0 ? 1 : 0);
+                + getTimeNanos(nanos);
     }
 
     public static long ceilDD(long nanos) {
@@ -181,6 +180,10 @@ public final class Nanos {
         return floorHH(nanos) + HOUR_NANOS;
     }
 
+    public static long ceilMC(long nanos) {
+        return floorMC(nanos) + MICRO_NANOS;
+    }
+
     public static long ceilMI(long nanos) {
         return floorMI(nanos) + MINUTE_NANOS;
     }
@@ -192,10 +195,6 @@ public final class Nanos {
         return yearNanos(y, l)
                 + monthOfYearNanos(m, l)
                 + (CommonUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
-    }
-
-    public static long ceilMR(long nanos) {
-        return floorMR(nanos) + MICRO_NANOS;
     }
 
     public static long ceilMS(long nanos) {
@@ -243,12 +242,11 @@ public final class Nanos {
     }
 
     public static long floorDD(long nanos) {
-        return floorDD(nanos, 1);
+        return nanos - getTimeNanos(nanos);
     }
 
     public static long floorDD(long nanos, int stride) {
-        long result = nanos - getTimeNanos(nanos, stride);
-        return Math.min(result, nanos);
+        return nanos - getTimeNanos(nanos, stride);
     }
 
     public static long floorDD(long nanos, int stride, long offset) {
@@ -258,8 +256,7 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        long result = nanos - getTimeNanos(nanos, stride, offset);
-        return Math.min(result, nanos);
+        return nanos - getTimeNanos(nanos, stride, offset);
     }
 
     /**
@@ -293,11 +290,11 @@ public final class Nanos {
     }
 
     public static long floorHH(long nanos) {
-        return floorHH(nanos, 1);
+        return nanos - getRemainderNanos(nanos, HOUR_NANOS);
     }
 
     public static long floorHH(long nanos, int stride) {
-        return nanos - nanos % (stride * HOUR_NANOS);
+        return nanos - getRemainderNanos(nanos, stride * HOUR_NANOS);
     }
 
     public static long floorHH(long nanos, int stride, long offset) {
@@ -307,11 +304,11 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        return (nanos - ((nanos - offset) % (stride * HOUR_NANOS)));
+        return nanos - getRemainderNanos(nanos - offset, stride * HOUR_NANOS);
     }
 
     public static long floorMC(long nanos) {
-        return nanos - nanos % MICRO_NANOS;
+        return nanos - getRemainderNanos(nanos, MICRO_NANOS);
     }
 
     /**
@@ -322,7 +319,7 @@ public final class Nanos {
      * @return floored value.
      */
     public static long floorMC(long nanos, int stride) {
-        return nanos - nanos % (stride * MICRO_NANOS);
+        return nanos - getRemainderNanos(nanos, stride * MICRO_NANOS);
     }
 
     public static long floorMC(long nanos, int stride, long offset) {
@@ -332,15 +329,15 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        return nanos - ((nanos - offset) % (stride * MICRO_NANOS));
+        return nanos - getRemainderNanos(nanos - offset, stride * MICRO_NANOS);
     }
 
     public static long floorMI(long nanos) {
-        return floorMI(nanos, 1);
+        return nanos - getRemainderNanos(nanos, MINUTE_NANOS);
     }
 
     public static long floorMI(long nanos, int stride) {
-        return nanos - nanos % (stride * MINUTE_NANOS);
+        return nanos - getRemainderNanos(nanos, stride * MINUTE_NANOS);
     }
 
     public static long floorMI(long nanos, int stride, long offset) {
@@ -350,7 +347,7 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        return nanos - ((nanos - offset) % (stride * MINUTE_NANOS));
+        return nanos - getRemainderNanos(nanos - offset, stride * MINUTE_NANOS);
     }
 
     public static long floorMM(long nanos) {
@@ -384,12 +381,12 @@ public final class Nanos {
         return yearNanos(y, l) + (mm > 0 ? monthOfYearNanos(mm + 1, l) : 0);
     }
 
-    public static long floorMR(long nanos, int stride) {
-        return nanos - nanos % (stride * MICRO_NANOS);
+    public static long floorMS(long nanos) {
+        return nanos - getRemainderNanos(nanos, MILLI_NANOS);
     }
 
-    public static long floorMR(long nanos) {
-        return floorMR(nanos, 1);
+    public static long floorMS(long nanos, int stride) {
+        return nanos - getRemainderNanos(nanos, stride * MILLI_NANOS);
     }
 
     public static long floorMS(long nanos, int stride, long offset) {
@@ -399,15 +396,7 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        return nanos - ((nanos - offset) % (stride * MILLI_NANOS));
-    }
-
-    public static long floorMS(long nanos) {
-        return floorMS(nanos, 1);
-    }
-
-    public static long floorMS(long nanos, int stride) {
-        return nanos - nanos % (stride * MILLI_NANOS);
+        return nanos - getRemainderNanos(nanos - offset, stride * MILLI_NANOS);
     }
 
     /**
@@ -431,7 +420,7 @@ public final class Nanos {
     }
 
     public static long floorNS(long nanos, int stride) {
-        return nanos - nanos % stride;
+        return nanos - getRemainderNanos(nanos, stride);
     }
 
     public static long floorNS(long nanos, int stride, long offset) {
@@ -441,7 +430,7 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        return nanos - ((nanos - offset) % stride);
+        return nanos - getRemainderNanos(nanos - offset, stride);
     }
 
     /**
@@ -463,11 +452,11 @@ public final class Nanos {
     }
 
     public static long floorSS(long nanos) {
-        return floorSS(nanos, 1);
+        return nanos - getRemainderNanos(nanos, SECOND_NANOS);
     }
 
     public static long floorSS(long nanos, int stride) {
-        return nanos - nanos % (stride * SECOND_NANOS);
+        return nanos - getRemainderNanos(nanos, stride * SECOND_NANOS);
     }
 
     public static long floorSS(long nanos, int stride, long offset) {
@@ -477,7 +466,7 @@ public final class Nanos {
         if (nanos < offset) {
             return offset;
         }
-        return nanos - ((nanos - offset) % (stride * SECOND_NANOS));
+        return nanos - getRemainderNanos(nanos - offset, stride * SECOND_NANOS);
     }
 
     public static long floorWW(long nanos) {
@@ -662,10 +651,6 @@ public final class Nanos {
         return Math.abs(nanosA - nanosB) / MILLI_NANOS;
     }
 
-    public static long getMillisOfMinute(long nanos) {
-        return getNanosOfMinute(nanos) / 1000;
-    }
-
     public static int getMillisOfSecond(long nanos) {
         if (nanos > -1) {
             return (int) ((nanos / MILLI_NANOS) % SECOND_MILLIS);
@@ -744,14 +729,6 @@ public final class Nanos {
             return (int) (nanos % MICRO_NANOS);
         } else {
             return (int) (MICRO_NANOS - 1 + ((nanos + 1) % MICRO_NANOS));
-        }
-    }
-
-    public static long getNanosOfMinute(long nanos) {
-        if (nanos > -1) {
-            return nanos % MINUTE_NANOS;
-        } else {
-            return MINUTE_NANOS - 1 + (nanos + 1) % MINUTE_NANOS;
         }
     }
 
@@ -1191,17 +1168,20 @@ public final class Nanos {
         return nanos;
     }
 
+    private static long getRemainderNanos(long nanos, long interval) {
+        final long rem = nanos % interval;
+        return rem < 0 ? interval + rem : rem;
+    }
+
     private static long getTimeNanos(long nanos) {
-        return nanos < 0 ? DAY_NANOS - 1 + (nanos % DAY_NANOS) : nanos % DAY_NANOS;
+        return getRemainderNanos(nanos, DAY_NANOS);
     }
 
     private static long getTimeNanos(long nanos, int strideDays) {
-        final long ns = strideDays * DAY_NANOS;
-        return nanos < 0 ? ns - 1 + (nanos % ns) : nanos % ns;
+        return getRemainderNanos(nanos, strideDays * DAY_NANOS);
     }
 
-    private static long getTimeNanos(long nanos, int strideDays, long offsetNanos) {
-        final long us = strideDays * DAY_NANOS;
-        return nanos < 0 ? us - 1 + ((nanos - offsetNanos) % us) : (nanos - offsetNanos) % us;
+    private static long getTimeNanos(long nanos, int strideDays, long offset) {
+        return getRemainderNanos(nanos - offset, strideDays * DAY_NANOS);
     }
 }

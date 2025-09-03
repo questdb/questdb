@@ -674,7 +674,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             case 'T':
                 return Nanos::ceilMS;
             case 'U':
-                return Nanos::ceilMR;
+                return Nanos::ceilMC;
             case 'n':
                 return Nanos::ceilNS;
             default:

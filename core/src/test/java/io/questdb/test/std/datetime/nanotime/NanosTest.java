@@ -116,6 +116,10 @@ public class NanosTest {
                 "1898-05-12T23:45:51.045340901Z",
                 Nanos.addYears(parseNSecUTC("1888-05-12T23:45:51.045340901Z"), 10)
         );
+        assertNanos(
+                "1893-05-12T00:00:00.000000000Z",
+                Nanos.addYears(parseNSecUTC("1888-05-12T00:00:00.000000000Z"), 5)
+        );
     }
 
     @Test
@@ -236,10 +240,12 @@ public class NanosTest {
 
     @Test
     public void testFloorDD() {
-        assertNanos(
-                "2008-05-12T00:00:00.000000000Z",
-                Nanos.floorDD(parseNSecUTC("2008-05-12T23:45:51.045990123Z"))
-        );
+        testFloorDD("1969-12-31T23:59:59.999999999Z", "1969-12-31T00:00:00.000000000Z");
+        testFloorDD("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorDD("1969-01-01T12:13:14.567891234Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorDD("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorDD("2008-05-12T23:45:51.045990123Z", "2008-05-12T00:00:00.000000000Z");
+        testFloorDD("2025-09-03T23:59:59.999999999Z", "2025-09-03T00:00:00.000000000Z");
     }
 
     @Test
@@ -252,10 +258,12 @@ public class NanosTest {
 
     @Test
     public void testFloorHH() {
-        assertNanos(
-                "2008-05-12T23:00:00.000000000Z",
-                Nanos.floorHH(parseNSecUTC("2008-05-12T23:45:51.901781502Z"))
-        );
+        testFloorHH("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:00:00.000000000Z");
+        testFloorHH("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorHH("1969-01-01T12:13:14.567567567Z", "1969-01-01T12:00:00.000000000Z");
+        testFloorHH("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorHH("2008-05-12T23:45:51.901781502Z", "2008-05-12T23:00:00.000000000Z");
+        testFloorHH("2025-09-03T23:59:59.999999999Z", "2025-09-03T23:00:00.000000000Z");
     }
 
     @Test
@@ -267,11 +275,23 @@ public class NanosTest {
     }
 
     @Test
+    public void testFloorMC() {
+        testFloorMC("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.999999000Z");
+        testFloorMC("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorMC("1969-01-01T12:13:14.567567567Z", "1969-01-01T12:13:14.567567000Z");
+        testFloorMC("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorMC("2008-05-12T23:45:51.045045045Z", "2008-05-12T23:45:51.045045000Z");
+        testFloorMC("2025-09-03T23:59:59.999999999Z", "2025-09-03T23:59:59.999999000Z");
+    }
+
+    @Test
     public void testFloorMI() {
-        assertNanos(
-                "2021-09-09T22:44:00.000000000Z",
-                Nanos.floorMI(parseNSecUTC("2021-09-09T22:44:56.784123981Z"))
-        );
+        testFloorMI("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:00.000000000Z");
+        testFloorMI("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorMI("1969-01-01T12:13:14.567567567Z", "1969-01-01T12:13:00.000000000Z");
+        testFloorMI("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorMI("2008-05-12T23:45:51.045045045Z", "2008-05-12T23:45:00.000000000Z");
+        testFloorMI("2025-09-03T23:59:59.999999999Z", "2025-09-03T23:59:00.000000000Z");
     }
 
     @Test
@@ -317,10 +337,12 @@ public class NanosTest {
 
     @Test
     public void testFloorMS() {
-        assertNanos(
-                "2021-09-09T22:44:56.784000000Z",
-                Nanos.floorMS(parseNSecUTC("2021-09-09T22:44:56.784123551Z"))
-        );
+        testFloorMS("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.999000000Z");
+        testFloorMS("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorMS("1969-01-01T12:13:14.567567567Z", "1969-01-01T12:13:14.567000000Z");
+        testFloorMS("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorMS("2008-05-12T23:45:51.045045045Z", "2008-05-12T23:45:51.045000000Z");
+        testFloorMS("2025-09-03T23:59:59.999999999Z", "2025-09-03T23:59:59.999000000Z");
     }
 
     @Test
@@ -332,11 +354,35 @@ public class NanosTest {
     }
 
     @Test
-    public void testFloorSS() {
+    public void testFloorNS() {
+        testFloorNS("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.999999999Z");
+        testFloorNS("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorNS("1969-01-01T12:13:14.567567567Z", "1969-01-01T12:13:14.567567567Z");
+        testFloorNS("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorNS("2008-05-12T23:45:51.045045045Z", "2008-05-12T23:45:51.045045045Z");
+        testFloorNS("2025-09-03T23:59:59.999999999Z", "2025-09-03T23:59:59.999999999Z");
+    }
+
+    @Test
+    public void testFloorNSEpoch() {
         assertNanos(
-                "2021-09-09T22:44:56.000000000Z",
-                Nanos.floorSS(parseNSecUTC("2021-09-09T22:44:56.789123456Z"))
+                "1969-12-31T23:59:59.999999997Z",
+                Nanos.floorNS(parseNSecUTC("1969-12-31T23:59:59.999999999Z"), 3)
         );
+        assertNanos(
+                "2001-12-31T23:59:59.999999990Z",
+                Nanos.floorNS(parseNSecUTC("2001-12-31T23:59:59.999999999Z"), 10)
+        );
+    }
+
+    @Test
+    public void testFloorSS() {
+        testFloorSS("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.000000000Z");
+        testFloorSS("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorSS("1969-01-01T12:13:14.567567567Z", "1969-01-01T12:13:14.000000000Z");
+        testFloorSS("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorSS("2008-05-12T23:45:51.045045045Z", "2008-05-12T23:45:51.000000000Z");
+        testFloorSS("2025-09-03T23:59:59.999999999Z", "2025-09-03T23:59:59.000000000Z");
     }
 
     @Test
@@ -349,10 +395,11 @@ public class NanosTest {
 
     @Test
     public void testFloorWW() {
-        assertNanos(
-                "2024-12-30T00:00:00.000000000Z",
-                Nanos.floorWW(parseNSecUTC("2025-01-02T23:59:59.999876543Z"))
-        );
+        testFloorWW("1969-12-29T00:00:00.000000000Z", "1969-12-29T00:00:00.000000000Z");
+        testFloorWW("1970-01-01T00:00:00.000000000Z", "1969-12-29T00:00:00.000000000Z");
+        testFloorWW("2025-01-02T23:59:59.999876543Z", "2024-12-30T00:00:00.000000000Z");
+        testFloorWW("2025-09-01T00:00:00.000000000Z", "2025-09-01T00:00:00.000000000Z");
+        testFloorWW("2025-09-02T13:59:59.000111222Z", "2025-09-01T00:00:00.000000000Z");
     }
 
     @Test
@@ -365,10 +412,10 @@ public class NanosTest {
 
     @Test
     public void testFloorYYYY() {
-        assertNanos(
-                "2008-01-01T00:00:00.000000000Z",
-                Nanos.floorYYYY(parseNSecUTC("2008-05-12T23:45:51.045123456Z"))
-        );
+        testFloorYYYY("1969-01-01T00:00:00.000000000Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorYYYY("1970-01-01T00:00:00.000000000Z", "1970-01-01T00:00:00.000000000Z");
+        testFloorYYYY("2008-05-12T23:45:51.045123456Z", "2008-01-01T00:00:00.000000000Z");
+        testFloorYYYY("2025-12-31T23:59:59.999999999Z", "2025-01-01T00:00:00.000000000Z");
     }
 
     @Test
@@ -846,6 +893,66 @@ public class NanosTest {
         }
     }
 
+    private void testFloorDD(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorDD(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorDD(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorDD(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorHH(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorHH(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorHH(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorHH(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorMC(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorMC(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMC(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMC(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorMI(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorMI(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMI(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMI(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
     private void testFloorMM(String timestamp, String expected) {
         assertNanos(
                 expected,
@@ -858,6 +965,81 @@ public class NanosTest {
         assertNanos(
                 expected,
                 Nanos.floorMM(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorMS(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorMS(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMS(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorMS(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorNS(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorNS(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorNS(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorNS(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorSS(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorSS(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorSS(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorSS(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorWW(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorWW(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorWW(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorWW(parseNSecUTC(timestamp), 1, 0)
+        );
+    }
+
+    private void testFloorYYYY(String timestamp, String expected) {
+        assertNanos(
+                expected,
+                Nanos.floorYYYY(parseNSecUTC(timestamp))
+        );
+        assertNanos(
+                expected,
+                Nanos.floorYYYY(parseNSecUTC(timestamp), 1)
+        );
+        assertNanos(
+                expected,
+                Nanos.floorYYYY(parseNSecUTC(timestamp), 1, 0)
         );
     }
 }
