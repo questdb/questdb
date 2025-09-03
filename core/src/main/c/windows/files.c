@@ -705,7 +705,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         // docs: https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffileex
         // dwNumberOfBytesToMap: "If this parameter is 0 (zero), the mapping extends from the
         // specified offset to the end of the file mapping."
-        TlsSetValue(dwTlsIndexLastError, (LPVOID) (DWORD_PTR) ERROR_INVALID_PARAMETER);
+        TlsSetValue(dwTlsIndexLastError, (LPVOID) (DWORD_PTR) 87);
         return -1;
     }
 
