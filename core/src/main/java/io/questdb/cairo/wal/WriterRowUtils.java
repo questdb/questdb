@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -41,26 +42,33 @@ public class WriterRowUtils {
     public static void putNullDecimal(TableWriter.Row row, int col, int toType) {
         switch (ColumnType.tagOf(toType)) {
             case ColumnType.DECIMAL8:
-                row.putByte(col, Byte.MIN_VALUE);
+                row.putByte(col, Decimals.DECIMAL8_NULL);
                 break;
             case ColumnType.DECIMAL16:
-                row.putShort(col, Short.MIN_VALUE);
+                row.putShort(col, Decimals.DECIMAL16_NULL);
                 break;
             case ColumnType.DECIMAL32:
-                row.putInt(col, Integer.MIN_VALUE);
+                row.putInt(col, Decimals.DECIMAL32_NULL);
                 break;
             case ColumnType.DECIMAL64:
-                row.putLong(col, Long.MIN_VALUE);
+                row.putLong(col, Decimals.DECIMAL64_NULL);
                 break;
             case ColumnType.DECIMAL128:
-                row.putDecimal128(col, Long.MIN_VALUE, -1);
+                row.putDecimal128(col, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
                 break;
             case ColumnType.DECIMAL256:
-                row.putDecimal256(col, Long.MIN_VALUE, -1, -1, -1);
+                row.putDecimal256(col, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
                 break;
         }
     }
 
+    /**
+     * Puts decimal value into a row column. The Decimal should already have the right scale/precision.
+     * @param index column index
+     * @param value decimal value to be copied to the row column
+     * @param columnType column type
+     * @param row row to be updated
+     */
     public static void putDecimal(int index, Decimal256 value, int columnType, TableWriter.Row row) {
         if (value.isNull()) {
             putNullDecimal(row, index, columnType);
@@ -70,8 +78,6 @@ public class WriterRowUtils {
         if (!value.fitsInStorageSizePow2(tag - ColumnType.DECIMAL8)) {
             throw CairoException.nonCritical().put("value does not fit in column type ").put(ColumnType.nameOf(columnType));
         }
-        // TODO: adjust scale
-        // TODO: check for precision overflow
         switch (tag) {
             case ColumnType.DECIMAL8:
                 row.putByte(index, (byte) value.getLl());
