@@ -33,6 +33,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
@@ -101,52 +102,52 @@ public class NullMemoryCMR implements MemoryCMR {
 
     @Override
     public long getDecimal128Hi(long offset) {
-        return Long.MIN_VALUE;
+        return Decimals.DECIMAL128_HI_NULL;
     }
 
     @Override
     public long getDecimal128Lo(long offset) {
-        return -1;
+        return Decimals.DECIMAL128_LO_NULL;
     }
 
     @Override
     public short getDecimal16(long offset) {
-        return Short.MIN_VALUE;
+        return Decimals.DECIMAL16_NULL;
     }
 
     @Override
     public long getDecimal256HH(long offset) {
-        return Long.MIN_VALUE;
+        return Decimals.DECIMAL256_HH_NULL;
     }
 
     @Override
     public long getDecimal256HL(long offset) {
-        return -1;
+        return Decimals.DECIMAL256_HL_NULL;
     }
 
     @Override
     public long getDecimal256LH(long offset) {
-        return -1;
+        return Decimals.DECIMAL256_LH_NULL;
     }
 
     @Override
     public long getDecimal256LL(long offset) {
-        return -1;
+        return Decimals.DECIMAL256_LL_NULL;
     }
 
     @Override
     public int getDecimal32(long offset) {
-        return Integer.MIN_VALUE;
+        return Decimals.DECIMAL32_NULL;
     }
 
     @Override
     public long getDecimal64(long offset) {
-        return Long.MIN_VALUE;
+        return Decimals.DECIMAL64_NULL;
     }
 
     @Override
     public byte getDecimal8(long offset) {
-        return Byte.MIN_VALUE;
+        return Decimals.DECIMAL8_NULL;
     }
 
     @Override
@@ -199,7 +200,12 @@ public class NullMemoryCMR implements MemoryCMR {
 
     @Override
     public void getLong256(long offset, Long256Acceptor sink) {
-        sink.setAll(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1(), Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
+        sink.setAll(
+                Long256Impl.NULL_LONG256.getLong0(),
+                Long256Impl.NULL_LONG256.getLong1(),
+                Long256Impl.NULL_LONG256.getLong2(),
+                Long256Impl.NULL_LONG256.getLong3()
+        );
     }
 
     @Override
