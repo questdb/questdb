@@ -25,36 +25,38 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Circuit breaker that doesn't check network connection status or timeout
  * and only allows cancelling statement via CANCEL QUERY command.
  */
-public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
-    private final int throttle;
-    protected volatile AtomicBoolean cancelledFlag;
+public class AtomicCountedCircuitBreaker implements SqlExecutionCircuitBreaker {
+    protected volatile @NotNull AtomicBoolean cancelledFlag = new AtomicBoolean(false);
+    protected volatile @NotNull AtomicInteger inProgress = new AtomicInteger(0);
     private long fd = -1;
     private int testCount = 0;
+    private int throttle;
 
-    public AtomicBooleanCircuitBreaker() {
-        this(0);
+    public AtomicCountedCircuitBreaker() {
+        inProgress = new AtomicInteger(0);
         cancelledFlag = new AtomicBoolean(false);
     }
 
-
-    public AtomicBooleanCircuitBreaker(int throttle) {
+    public AtomicCountedCircuitBreaker(int throttle) {
         this.throttle = throttle;
+        inProgress = new AtomicInteger(0);
+        cancelledFlag = new AtomicBoolean(false);
     }
 
     public void cancel() {
         // This call can be concurrent with the call to setCancelledFlag
-        AtomicBoolean cf = cancelledFlag;
-        if (cf != null) {
-            cf.set(true);
-        }
+        inProgress.set(-1);
+        cancelledFlag.set(true);
     }
 
     @Override
@@ -72,14 +74,15 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         testCount = 0;
     }
 
+    // returns remaining processes to await
     @Override
     public int finish() {
-        setCancelledFlag(null);
-        return -1;
+        return inProgress.decrementAndGet();
     }
 
+
     @Override
-    public AtomicBoolean getCancelledFlag() {
+    public @NotNull AtomicBoolean getCancelledFlag() {
         return cancelledFlag;
     }
 
@@ -95,7 +98,21 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
 
     @Override
     public int getState() {
-        return isCancelled() ? STATE_CANCELLED : STATE_OK;
+        if (isCancelled()) {
+            return STATE_CANCELLED;
+        }
+
+        int ip = inProgress.get();
+
+        if (ip == 0) {
+            return STATE_FINISHED;
+        }
+
+        if (ip < 0) {
+            return STATE_CANCELLED;
+        }
+
+        return STATE_OK;
     }
 
     @Override
@@ -105,7 +122,11 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
 
     @Override
     public long getTimeout() {
-        throw new UnsupportedOperationException("AtomicBooleanCircuitBreaker does not support timeout");
+        throw new UnsupportedOperationException("AtomicCountedCircuitBreaker does not support timeout");
+    }
+
+    public int inc() {
+        return inProgress.incrementAndGet();
     }
 
     @Override
@@ -119,9 +140,8 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void reset() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(false);
-        }
+        cancelledFlag.set(false);
+        inProgress.set(0);
     }
 
     @Override
@@ -131,7 +151,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
 
     @Override
     public void setCancelledFlag(AtomicBoolean cancelledFlag) {
-        this.cancelledFlag = cancelledFlag;
+        if (cancelledFlag != null) {
+            this.cancelledFlag = cancelledFlag;
+        }
     }
 
     @Override
@@ -161,6 +183,8 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get();
+        return cancelledFlag.get();
     }
+
+
 }

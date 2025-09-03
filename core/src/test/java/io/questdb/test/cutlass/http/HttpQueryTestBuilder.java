@@ -37,14 +37,15 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
@@ -71,6 +72,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
+    private String copyExportRoot;
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
@@ -144,6 +146,11 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
+                    public CharSequence getSqlCopyExportRoot() {
+                        return copyExportRoot != null ? copyExportRoot : super.getSqlCopyExportRoot();
+                    }
+
+                    @Override
                     public CharSequence getSqlCopyInputRoot() {
                         return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
                     }
@@ -180,9 +187,17 @@ public class HttpQueryTestBuilder {
                 }
 
                 if (cairoConfiguration.getSqlCopyInputRoot() != null) {
-                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount);
-                    workerPool.assign(copyRequestJob);
-                    workerPool.freeOnExit(copyRequestJob);
+                    CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(engine, workerCount);
+                    workerPool.assign(copyImportRequestJob);
+                    workerPool.freeOnExit(copyImportRequestJob);
+                }
+
+                if (cairoConfiguration.getSqlCopyExportRoot() != null) {
+                    final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
+                            engine
+                    );
+                    workerPool.assign(copyExportRequestJob);
+                    workerPool.freeOnExit(copyExportRequestJob);
                 }
 
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
@@ -238,7 +253,7 @@ public class HttpQueryTestBuilder {
 
                     @Override
                     public HttpRequestHandler newInstance() {
-                        return new TextQueryProcessor(
+                        return new ExportQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount()
@@ -304,6 +319,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withAlterTableStartWaitTimeout(long startWriterWaitTimeout) {
         this.startWriterWaitTimeout = startWriterWaitTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withCopyExportRoot(String copyExportRoot) {
+        this.copyExportRoot = copyExportRoot;
         return this;
     }
 
