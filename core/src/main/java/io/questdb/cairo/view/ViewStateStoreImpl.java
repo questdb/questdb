@@ -57,7 +57,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @Override
     public ViewState addViewState(ViewDefinition viewDefinition) {
         final TableToken viewToken = viewDefinition.getViewToken();
-        final ViewState state = new ViewState(viewDefinition);
+        final ViewState state = new ViewState(viewDefinition, microsecondClock.getTicks());
 
         final ViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
         if (prevState != null) {

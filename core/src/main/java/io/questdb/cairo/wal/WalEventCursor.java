@@ -57,7 +57,6 @@ public class WalEventCursor {
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
-    private final ViewStatusUpdateInfo viewStatusUpdateInfo = new ViewStatusUpdateInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
@@ -123,13 +122,6 @@ public class WalEventCursor {
 
     public byte getType() {
         return type;
-    }
-
-    public ViewStatusUpdateInfo getViewStatusUpdateInfo() {
-        if (type != VIEW_STATUS_UPDATE) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not VIEW_STATUS_UPDATE, type=").put(type);
-        }
-        return viewStatusUpdateInfo;
     }
 
     public boolean hasNext() {
@@ -250,9 +242,6 @@ public class WalEventCursor {
                 sqlInfo.read();
                 break;
             case TRUNCATE:
-                break;
-            case VIEW_STATUS_UPDATE:
-                viewStatusUpdateInfo.read();
                 break;
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
@@ -698,31 +687,6 @@ public class WalEventCursor {
             rndSeed1 = readLong();
             arrayViewPool.clear();
             byteViewPool.clear();
-        }
-    }
-
-    public class ViewStatusUpdateInfo {
-        private final StringSink error = new StringSink();
-        private boolean invalid;
-        private long updateTimestamp;
-
-        public CharSequence getInvalidationReason() {
-            return error;
-        }
-
-        public long getUpdateTimestamp() {
-            return updateTimestamp;
-        }
-
-        public boolean isInvalid() {
-            return invalid;
-        }
-
-        private void read() {
-            updateTimestamp = readLong();
-            invalid = readBool();
-            error.clear();
-            error.put(readStr());
         }
     }
 }

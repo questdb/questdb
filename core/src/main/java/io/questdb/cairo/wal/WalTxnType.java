@@ -31,7 +31,6 @@ public class WalTxnType {
     public static final byte NONE = -1;
     public static final byte SQL = 1;
     public static final byte TRUNCATE = 2;
-    public static final byte VIEW_STATUS_UPDATE = 5;
 
     public static boolean isDataType(byte type) {
         return type == DATA || type == MAT_VIEW_DATA;

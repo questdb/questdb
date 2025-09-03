@@ -24,8 +24,7 @@
 
 package io.questdb.cairo.view;
 
-import io.questdb.cairo.file.AppendableBlock;
-import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,27 +32,23 @@ import org.jetbrains.annotations.Nullable;
  * View state serves the purpose of keeping track of invalidated views.
  */
 public class ViewState {
-    public static final String VIEW_STATE_FILE_NAME = "_view.s";
-    public static final int VIEW_STATE_FORMAT_MSG_TYPE = 0;
-
+    private final StringSink invalidationReason = new StringSink();
     private final ViewDefinition viewDefinition;
     private volatile boolean dropped;
     private volatile boolean invalid;
+    private volatile long updateTimestamp;
 
-    public ViewState(@NotNull ViewDefinition viewDefinition) {
+    public ViewState(@NotNull ViewDefinition viewDefinition, long updateTimestamp) {
         this.viewDefinition = viewDefinition;
+        this.updateTimestamp = updateTimestamp;
     }
 
-    public static void append(
-            long updateTimestamp,
-            boolean invalid,
-            @Nullable CharSequence invalidationReason,
-            @NotNull BlockFileWriter writer
-    ) {
-        final AppendableBlock block = writer.append();
-        appendState(updateTimestamp, invalid, invalidationReason, block);
-        block.commit(VIEW_STATE_FORMAT_MSG_TYPE);
-        writer.commit();
+    public CharSequence getInvalidationReason() {
+        return invalidationReason.length() > 0 ? invalidationReason : null;
+    }
+
+    public long getUpdateTimestamp() {
+        return updateTimestamp;
     }
 
     public @NotNull ViewDefinition getViewDefinition() {
@@ -61,10 +56,6 @@ public class ViewState {
     }
 
     public void init() {
-    }
-
-    public void initFromReader(ViewStateReader reader) {
-        setInvalidFlag(reader.isInvalid());
     }
 
     public boolean isDropped() {
@@ -79,18 +70,14 @@ public class ViewState {
         dropped = true;
     }
 
-    public void setInvalidFlag(boolean invalid) {
+    public synchronized void updateState(boolean invalid, @Nullable CharSequence invalidationReason, long updateTimestamp) {
         this.invalid = invalid;
-    }
 
-    private static void appendState(
-            long updateTimestamp,
-            boolean invalid,
-            @Nullable CharSequence invalidationReason,
-            @NotNull AppendableBlock block
-    ) {
-        block.putLong(updateTimestamp);
-        block.putBool(invalid);
-        block.putStr(invalidationReason);
+        this.invalidationReason.clear();
+        if (invalidationReason != null) {
+            this.invalidationReason.put(invalidationReason);
+        }
+
+        this.updateTimestamp = updateTimestamp;
     }
 }

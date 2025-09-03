@@ -279,9 +279,9 @@ public class CreateDropViewTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)");
             assertSql(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
-                            "foo\tDECLARE @x := 1, @y := 2 SELECT @x + @y\tfoo~1\t\tvalid\t\n",
-                    "views()"
+                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
+                            "foo\tDECLARE @x := 1, @y := 2 SELECT @x + @y\tfoo~1\t\tvalid\n",
+                    "select view_name, view_sql, view_table_dir_name, invalidation_reason, view_status from views()"
             );
             assertSql(
                     "column\n" +

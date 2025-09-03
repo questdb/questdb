@@ -86,15 +86,15 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, viewQuery1);
             assertViewDefinitionFile(VIEW1, viewQuery1);
-            assertViewStateFile(VIEW1, expectedErrorMessage);
+            assertViewState(VIEW1, expectedErrorMessage);
 
             assertViewDefinition(VIEW2, viewQuery2);
             assertViewDefinitionFile(VIEW2, viewQuery2);
-            assertViewStateFile(VIEW2);
+            assertViewState(VIEW2);
 
             assertViewDefinition(VIEW3, viewQuery3);
             assertViewDefinitionFile(VIEW3, viewQuery3);
-            assertViewStateFile(VIEW3, expectedErrorMessage);
+            assertViewState(VIEW3, expectedErrorMessage);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -131,15 +131,15 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, viewQuery1);
             assertViewDefinitionFile(VIEW1, viewQuery1);
-            assertViewStateFile(VIEW1);
+            assertViewState(VIEW1);
 
             assertViewDefinition(VIEW2, viewQuery2);
             assertViewDefinitionFile(VIEW2, viewQuery2);
-            assertViewStateFile(VIEW2);
+            assertViewState(VIEW2);
 
             assertViewDefinition(VIEW3, viewQuery3);
             assertViewDefinitionFile(VIEW3, viewQuery3);
-            assertViewStateFile(VIEW3);
+            assertViewState(VIEW3);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -237,7 +237,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
-            assertViewStateFile(VIEW1, "table does not exist [table=" + TABLE1 + "]");
+            assertViewState(VIEW1, "table does not exist [table=" + TABLE1 + "]");
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -263,7 +263,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
-            assertViewStateFile(VIEW1);
+            assertViewState(VIEW1);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -363,7 +363,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
             assertViewDefinitionFile(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
-            assertViewStateFile(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
+            assertViewState(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -387,7 +387,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
             assertViewDefinitionFile(VIEW1, "select ts, k, max(v) as v_max from (" + TABLE1_2 + " union " + TABLE2_2 + ") where v > 4");
-            assertViewStateFile(VIEW1);
+            assertViewState(VIEW1);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -440,7 +440,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
-            assertViewStateFile(VIEW1, expectedErrorMessage);
+            assertViewState(VIEW1, expectedErrorMessage);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -464,7 +464,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
-            assertViewStateFile(VIEW1);
+            assertViewState(VIEW1);
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +

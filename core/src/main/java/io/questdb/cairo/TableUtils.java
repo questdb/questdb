@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -1060,12 +1059,6 @@ public final class TableUtils {
     public static boolean isViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
         path.of(configuration.getDbRoot()).concat(dirName).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
-        return ff.exists(path.$());
-    }
-
-    public static boolean isViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
-        FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getDbRoot()).concat(dirName).concat(ViewState.VIEW_STATE_FILE_NAME);
         return ff.exists(path.$());
     }
 

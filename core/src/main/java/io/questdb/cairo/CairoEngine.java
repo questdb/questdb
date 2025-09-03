@@ -65,8 +65,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.NoOpViewStateStore;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
-import io.questdb.cairo.view.ViewState;
-import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
@@ -294,6 +292,8 @@ public class CairoEngine implements Closeable, WriterSource {
         if (updatedTableToken.isMatView()) {
             matViewGraph.updateToken(updatedTableToken);
         }
+        enqueueCompileView(token);
+        enqueueCompileView(updatedTableToken);
     }
 
     public void attachReader(TableReader reader) {
@@ -358,7 +358,6 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
-            final ViewStateReader viewStateReader = new ViewStateReader();
             final MatViewStateReader matViewStateReader = new MatViewStateReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
@@ -378,36 +377,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 viewStateStore.createViewState(viewDefinition);
                             }
                         }
-
-                        final ViewState state = viewStateStore.getViewState(tableToken);
-                        // Can be null if the state store implementation is no-op.
-                        // The no-op state store does nothing on view creation and other operations
-                        // and is used when views are disabled.
-                        if (state != null) {
-                            state.setInvalidFlag(false);
-                            // For mat views we read state from WAL, for views this is not necessary.
-                            // First, mat views are likely to be refreshed often, for views we might not find a
-                            // state update for a long time, and we can read WAL forever slowing down startup.
-                            // Second, state for views are not that critical for operation. If, for some reason,
-                            // the state of the view is valid, while the view's SELECT is broken, the view
-                            // will be invalidated as soon as it is queried.
-                            viewStateReader.clear();
-                            final boolean viewStateExists = TableUtils.isViewStateFileExists(configuration, path, tableToken.getDirName());
-                            if (viewStateExists) {
-                                try {
-                                    reader.of(path.trimTo(pathLen).concat(tableToken.getDirName()).concat(ViewState.VIEW_STATE_FILE_NAME).$());
-                                    viewStateReader.of(reader, tableToken);
-                                    state.initFromReader(viewStateReader);
-                                } catch (CairoException e) {
-                                    LOG.info().$("could not read view state file, assuming view is valid [view=").$(tableToken)
-                                            .$(", msg=").$(e.getFlyweightMessage())
-                                            .$(", errno=").$(e.getErrno())
-                                            .I$();
-                                }
-                            } else {
-                                LOG.info().$("view state file is missing, assuming view is valid [view=").$(tableToken).I$();
-                            }
-                        }
+                        viewStateStore.enqueueCompile(tableToken);
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load view [view=").$(tableToken);
                         if (th instanceof CairoException) {
@@ -1282,6 +1252,7 @@ public class CairoEngine implements Closeable, WriterSource {
             matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
             matViewRefreshTask.invalidationReason = "table drop operation";
             notifyMatViewBaseTableCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
+            notifyViewsAboutDrop(tableToken);
             return true;
         }
         return false;
@@ -1788,12 +1759,6 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
 
-                        if (tableToken.isView()) {
-                            try (WalWriter walWriter = walWriterPool.get(tableToken)) {
-                                walWriter.resetViewState(configuration.getMicrosecondClock().getTicks(), false, null);
-                            }
-                        }
-
                         if (!keepLock) {
                             // Unlock pools before registering the name
                             // to avoid `table busy` errors when trying to use the table immediately after registration
@@ -1831,6 +1796,10 @@ public class CairoEngine implements Closeable, WriterSource {
             enqueueCompileView(tableToken);
             return tableToken;
         }
+    }
+
+    private ViewStateStore createViewStateStore() {
+        return configuration.isViewEnabled() ? new ViewStateStoreImpl(this) : NoOpViewStateStore.INSTANCE;
     }
 
     private void notifyViewsAboutDrop(TableToken tableToken) {
@@ -1962,11 +1931,6 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
-    }
-
-    // used in ent
-    protected ViewStateStore createViewStateStore() {
-        return configuration.isViewEnabled() ? new ViewStateStoreImpl(this) : NoOpViewStateStore.INSTANCE;
     }
 
     protected Iterable<FunctionFactory> getFunctionFactories() {

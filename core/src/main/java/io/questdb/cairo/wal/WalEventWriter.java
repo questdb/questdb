@@ -382,22 +382,6 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    int appendViewStatusUpdate(long updateTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.VIEW_STATUS_UPDATE);
-        eventMem.putLong(updateTimestamp);
-        eventMem.putBool(invalid);
-        eventMem.putStr(invalidationReason);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_VIEW_FORMAT_VERSION);
-        return txn++;
-    }
-
     void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;

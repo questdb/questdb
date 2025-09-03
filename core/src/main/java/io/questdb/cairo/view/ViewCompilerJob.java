@@ -27,7 +27,6 @@ package io.questdb.cairo.view;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -100,7 +99,10 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private void compileView(TableToken viewToken, long updateTimestamp) {
         final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
-            LOG.error().$("cannot compile view, probably dropped concurrently [token=").$(viewToken).I$();
+            // the view could have been dropped concurrently
+            if (!engine.isTableDropped(viewToken)) {
+                LOG.error().$("cannot compile view, missing view definition [token=").$(viewToken).I$();
+            }
             return;
         }
 
@@ -162,11 +164,11 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             // there is no state change, just return
             return;
         }
-        state.setInvalidFlag(invalid);
-
-        LOG.info().$("updating view state [viewToken=").$(viewToken).$(", invalid=").$(invalid).$(", updateTimestamp=").$(updateTimestamp).I$();
-        try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-            walWriter.resetViewState(updateTimestamp, invalid, invalidationReason);
-        }
+        LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
+                .$(", invalid=").$(invalid)
+                .$(", reason=").$safe(invalidationReason)
+                .$(", updateTimestamp=").$(updateTimestamp)
+                .I$();
+        state.updateState(invalid, invalidationReason, updateTimestamp);
     }
 }

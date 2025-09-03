@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -38,7 +37,7 @@ public class ViewModificationTest extends AbstractViewTest {
         // override default to test copy
         inputRoot = getCsvRoot();
         inputWorkRoot = unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
-        AbstractCairoTest.setUpStatic();
+        AbstractViewTest.setUpStatic();
     }
 
     @Test

@@ -419,6 +419,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         stopQuestDB();
         startQuestDB();
 
+        drainWalQueue();
+        drainViewQueue();
+
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
             final ViewState state1 = getViewState(VIEW1);
             final ViewState state2 = getViewState(VIEW2);

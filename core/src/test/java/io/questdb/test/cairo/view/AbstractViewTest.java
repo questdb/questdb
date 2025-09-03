@@ -30,7 +30,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
-import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -106,29 +105,22 @@ class AbstractViewTest extends AbstractCairoTest {
         }
     }
 
-    static void assertViewStateFile(String name) {
-        assertViewStateFile(name, null);
+    static void assertViewState(String name) {
+        assertViewState(name, null);
     }
 
-    static void assertViewStateFile(String name, String invalidationReason) {
+    static void assertViewState(String name, String invalidationReason) {
         final TableToken viewToken = engine.getTableTokenIfExists(name);
-        try (
-                BlockFileReader reader = new BlockFileReader(configuration);
-                Path path = new Path()
-        ) {
-            reader.of(path.of(configuration.getDbRoot()).concat(viewToken).concat(ViewState.VIEW_STATE_FILE_NAME).$());
+        final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
+        assertNotNull(viewState);
 
-            final ViewStateReader viewStateReader = new ViewStateReader();
-            viewStateReader.of(reader, viewToken);
-
-            if (invalidationReason != null) {
-                assertTrue(viewStateReader.isInvalid());
-                assertNotNull(viewStateReader.getInvalidationReason());
-                assertEquals(invalidationReason, viewStateReader.getInvalidationReason().toString());
-            } else {
-                assertFalse(viewStateReader.isInvalid());
-                assertNull(viewStateReader.getInvalidationReason());
-            }
+        if (invalidationReason != null) {
+            assertTrue(viewState.isInvalid());
+            assertNotNull(viewState.getInvalidationReason());
+            assertEquals(invalidationReason, viewState.getInvalidationReason().toString());
+        } else {
+            assertFalse(viewState.isInvalid());
+            assertNull(viewState.getInvalidationReason());
         }
     }
 
@@ -181,6 +173,6 @@ class AbstractViewTest extends AbstractCairoTest {
         drainViewQueue();
         assertViewDefinition(viewName, viewQuery, expectedDependencies);
         assertViewDefinitionFile(viewName, viewQuery);
-        assertViewStateFile(viewName);
+        assertViewState(viewName);
     }
 }

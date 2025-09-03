@@ -26,14 +26,12 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -42,21 +40,15 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
-import io.questdb.cairo.view.ViewStateReader;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 public class ViewsFunctionFactory implements FunctionFactory {
-    private static final Log LOG = LogFactory.getLog(ViewsFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -112,7 +104,6 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
             private final ViewsRecord record = new ViewsRecord();
-            private final ViewStateReader viewStateReader = new ViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private CairoEngine engine;
             private int viewIndex = 0;
@@ -128,50 +119,26 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() throws DataUnavailableException {
-                final CairoConfiguration configuration = engine.getConfiguration();
-                try (
-                        final Path path = new Path();
-                        final BlockFileReader reader = new BlockFileReader(configuration)
-                ) {
-                    path.of(configuration.getDbRoot());
-                    final int pathLen = path.size();
-
-                    final int n = viewTokens.size();
-                    for (; viewIndex < n; viewIndex++) {
-                        final TableToken viewToken = viewTokens.get(viewIndex);
-                        if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
-                            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
-                            if (viewDefinition == null) {
-                                continue; // view was dropped concurrently
-                            }
-
-                            viewStateReader.clear();
-                            final boolean viewStateExists = TableUtils.isViewStateFileExists(configuration, path, viewToken.getDirName());
-                            if (viewStateExists) {
-                                try {
-                                    reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(ViewState.VIEW_STATE_FILE_NAME).$());
-                                    viewStateReader.of(reader, viewToken);
-                                } catch (CairoException e) {
-                                    LOG.info().$("could not read view state file [view=").$(viewToken)
-                                            .$(", msg=").$(e.getFlyweightMessage())
-                                            .$(", errno=").$(e.getErrno())
-                                            .I$();
-                                    continue;
-                                }
-                            }
-
-                            record.of(
-                                    viewDefinition,
-                                    viewStateReader.getUpdateTimestamp(),
-                                    viewStateReader.getInvalidationReason(),
-                                    viewStateReader.isInvalid()
-                            );
-                            viewIndex++;
-                            return true;
+                final int n = viewTokens.size();
+                for (; viewIndex < n; viewIndex++) {
+                    final TableToken viewToken = viewTokens.get(viewIndex);
+                    if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+                        if (viewDefinition == null) {
+                            continue; // view was dropped concurrently
                         }
+
+                        final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
+                        if (viewState == null) {
+                            continue; // view was dropped concurrently or views are disabled
+                        }
+
+                        record.of(viewDefinition, viewState);
+                        viewIndex++;
+                        return true;
                     }
-                    return false;
                 }
+                return false;
             }
 
             @Override
@@ -197,14 +164,12 @@ public class ViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class ViewsRecord implements Record {
-                private final StringSink invalidationReason = new StringSink();
-                private boolean invalid;
-                private long updateTimestamp;
                 private ViewDefinition viewDefinition;
+                private ViewState viewState;
 
                 @Override
                 public long getLong(int col) {
-                    return col == COLUMN_VIEW_STATUS_UPDATE_TIME ? updateTimestamp : 0;
+                    return col == COLUMN_VIEW_STATUS_UPDATE_TIME ? viewState.getUpdateTimestamp() : 0;
                 }
 
                 @Override
@@ -219,7 +184,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_STATUS:
                             return getViewStatus();
                         case COLUMN_INVALIDATION_REASON:
-                            return invalidationReason.length() > 0 ? invalidationReason : null;
+                            return viewState.getInvalidationReason();
                         default:
                             return null;
                     }
@@ -237,19 +202,14 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
                 public void of(
                         ViewDefinition viewDefinition,
-                        long updateTimestamp,
-                        CharSequence invalidationReason,
-                        boolean invalid
+                        ViewState viewState
                 ) {
                     this.viewDefinition = viewDefinition;
-                    this.invalidationReason.clear();
-                    this.invalidationReason.put(invalidationReason);
-                    this.invalid = invalid;
-                    this.updateTimestamp = updateTimestamp;
+                    this.viewState = viewState;
                 }
 
                 private CharSequence getViewStatus() {
-                    return invalid ? "invalid" : "valid";
+                    return viewState.isInvalid() ? "invalid" : "valid";
                 }
             }
         }

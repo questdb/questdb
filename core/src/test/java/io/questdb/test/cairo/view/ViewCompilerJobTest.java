@@ -90,6 +90,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                             Os.sleep(1);
                         }
                     } catch (Throwable e) {
+                        e.printStackTrace(System.out);
                         errors.put("compileThread " + finalI, e);
                     }
                 });
@@ -109,6 +110,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                             execute(breakingSqls[index]);
                             execute(fixingSqls[index]);
                         } catch (Throwable e) {
+                            e.printStackTrace(System.out);
                             errors.put("tableChangeThread " + finalI, e);
                         }
                         Os.sleep(1);

@@ -39,7 +39,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
-import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -87,6 +86,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private final CairoConfiguration config;
     private final CairoEngine engine;
+    private final BlockFileWriter matViewStateWriter;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
@@ -94,7 +94,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
-    private final BlockFileWriter viewStateWriter;
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
@@ -115,14 +114,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
         config = engine.getConfiguration();
-        viewStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        matViewStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
 
     @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
-        Misc.free(viewStateWriter);
+        Misc.free(matViewStateWriter);
     }
 
     private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
@@ -614,33 +613,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
-            case VIEW_STATUS_UPDATE:
-                try (WalEventReader eventReader = walEventReader) {
-                    final Path path = Path.PATH2.get();
-                    final TableToken token = writer.getTableToken();
-                    path.of(engine.getConfiguration().getDbRoot()).concat(token);
-                    int tablePathLen = path.size();
-                    path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                    final WalEventCursor.ViewStatusUpdateInfo info = walEventCursor.getViewStatusUpdateInfo();
-                    updateViewState(
-                            path.trimTo(tablePathLen),
-                            info.getUpdateTimestamp(),
-                            info.isInvalid(),
-                            info.getInvalidationReason()
-                    );
-                } catch (CairoException e) {
-                    LOG.error().$("could not update state for view [view=").$(writer.getTableToken())
-                            .$(", msg=").$(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .I$();
-                }
-                // WAL-E files can be deleted by the purge job after a commit.
-                // Update the materialized view state before committing the transaction.
-                writer.setSeqTxn(seqTxn);
-                writer.markSeqTxnCommitted(seqTxn);
-                lastCommittedRows = 0;
-                return 1;
             case MAT_VIEW_INVALIDATE:
                 try (WalEventReader eventReader = walEventReader) {
                     final Path path = Path.PATH2.get();
@@ -782,7 +754,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn
     ) {
-        try (BlockFileWriter stateWriter = viewStateWriter) {
+        try (BlockFileWriter stateWriter = matViewStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
             MatViewState.append(
                     lastRefreshTimestamp,
@@ -792,24 +764,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastPeriodHi,
                     refreshIntervals,
                     refreshIntervalsBaseTxn,
-                    stateWriter
-            );
-        }
-    }
-
-    private void updateViewState(
-            Path tablePath,
-            long updateTimestamp,
-            boolean invalid,
-            @Nullable CharSequence invalidationReason
-    ) {
-        try (BlockFileWriter stateWriter = viewStateWriter) {
-            stateWriter.of(tablePath.concat(ViewState.VIEW_STATE_FILE_NAME).$());
-
-            ViewState.append(
-                    updateTimestamp,
-                    invalid,
-                    invalidationReason,
                     stateWriter
             );
         }
