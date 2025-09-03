@@ -705,6 +705,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         // docs: https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffileex
         // dwNumberOfBytesToMap: "If this parameter is 0 (zero), the mapping extends from the
         // specified offset to the end of the file mapping."
+        printf("mmap0 setting errno 87\n");
         TlsSetValue(dwTlsIndexLastError, (LPVOID) (DWORD_PTR) 87);
         return -1;
     }
@@ -731,6 +732,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
             NULL
     );
     if (hMapping == NULL) {
+        printf("mmap0 got hMapping == NULL\n");
         SaveLastError();
         return -1;
     }
@@ -747,6 +749,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     SaveLastError();
 
     if (CloseHandle(hMapping) == 0) {
+        printf("mmap0 CloseHandle(hMapping) == 0\n");
         SaveLastError();
         if (address != NULL) {
             UnmapViewOfFile(address);
@@ -755,6 +758,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     }
 
     if (address == NULL) {
+        printf("mmap0 address == null\n");
         return -1;
     }
 
