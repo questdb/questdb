@@ -88,11 +88,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     };
 
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(Micros::floorDD, DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(Micros::floorHH, HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(Micros::floorMM, MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorDD, DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorHH, HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(Micros::floorYYYY, YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorYYYY, YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
     private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
@@ -552,15 +552,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Micros::ceilDD;
+                return MicrosTimestampDriver::partitionCeilDD;
             case MONTH:
-                return Micros::ceilMM;
+                return MicrosTimestampDriver::partitionCeilMM;
             case YEAR:
-                return Micros::ceilYYYY;
+                return MicrosTimestampDriver::partitionCeilYYYY;
             case HOUR:
-                return Micros::ceilHH;
+                return MicrosTimestampDriver::partitionCeilHH;
             case WEEK:
-                return Micros::ceilWW;
+                return MicrosTimestampDriver::partitionCeilWW;
             default:
                 return null;
         }
@@ -590,15 +590,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Micros::floorDD;
+                return MicrosTimestampDriver::partitionFloorDD;
             case WEEK:
-                return Micros::floorWW;
+                return MicrosTimestampDriver::partitionFloorWW;
             case MONTH:
-                return Micros::floorMM;
+                return MicrosTimestampDriver::partitionFloorMM;
             case YEAR:
-                return Micros::floorYYYY;
+                return MicrosTimestampDriver::partitionFloorYYYY;
             case HOUR:
-                return Micros::floorHH;
+                return MicrosTimestampDriver::partitionFloorHH;
             default:
                 return null;
         }
@@ -1435,6 +1435,56 @@ public class MicrosTimestampDriver implements TimestampDriver {
         throw NumericException.instance();
     }
 
+    private static long partitionCeilDD(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.ceilDD(Math.max(micros, 0));
+    }
+
+    private static long partitionCeilHH(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.ceilHH(Math.max(micros, 0));
+    }
+
+    private static long partitionCeilMM(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.ceilMM(Math.max(micros, 0));
+    }
+
+    private static long partitionCeilWW(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.ceilWW(Math.max(micros, 0));
+    }
+
+    private static long partitionCeilYYYY(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.ceilYYYY(Math.max(micros, 0));
+    }
+
+    private static long partitionFloorDD(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.floorDD(Math.max(micros, 0));
+    }
+
+    private static long partitionFloorHH(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.floorHH(Math.max(micros, 0));
+    }
+
+    private static long partitionFloorMM(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.floorMM(Math.max(micros, 0));
+    }
+
+    private static long partitionFloorWW(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.floorWW(Math.max(micros, 0));
+    }
+
+    private static long partitionFloorYYYY(long micros) {
+        // Designated timestamp can't be negative.
+        return Micros.floorYYYY(Math.max(micros, 0));
+    }
+
     private static void validateBounds0(long timestamp) {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
@@ -1528,9 +1578,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     public static class IsoWeekPartitionFormat implements DateFormat {
+
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
-            long weekTime = timestamp - Micros.floorWW(timestamp);
+            long weekTime = timestamp - MicrosTimestampDriver.partitionFloorWW(timestamp);
             WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
 
             if (weekTime > 0) {

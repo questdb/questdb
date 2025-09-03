@@ -89,11 +89,11 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     };
     private static final String MAX_NANO_TIMESTAMP_STR = "2261-12-31 23:59:59.999999999";
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(Nanos::floorDD, NanosFormatUtils.DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(Nanos::floorHH, NanosFormatUtils.HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(Nanos::floorMM, NanosFormatUtils.MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorDD, NanosFormatUtils.DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorHH, NanosFormatUtils.HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMM, NanosFormatUtils.MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(Nanos::floorYYYY, NanosFormatUtils.YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
     private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
@@ -562,15 +562,15 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Nanos::ceilDD;
+                return NanosTimestampDriver::partitionCeilDD;
             case MONTH:
-                return Nanos::ceilMM;
+                return NanosTimestampDriver::partitionCeilMM;
             case YEAR:
-                return Nanos::ceilYYYY;
+                return NanosTimestampDriver::partitionCeilYYYY;
             case HOUR:
-                return Nanos::ceilHH;
+                return NanosTimestampDriver::partitionCeilHH;
             case WEEK:
-                return Nanos::ceilWW;
+                return NanosTimestampDriver::partitionCeilWW;
             default:
                 return null;
         }
@@ -600,15 +600,15 @@ public class NanosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Nanos::floorDD;
+                return NanosTimestampDriver::partitionFloorDD;
             case WEEK:
-                return Nanos::floorWW;
+                return NanosTimestampDriver::partitionFloorWW;
             case MONTH:
-                return Nanos::floorMM;
+                return NanosTimestampDriver::partitionFloorMM;
             case YEAR:
-                return Nanos::floorYYYY;
+                return NanosTimestampDriver::partitionFloorYYYY;
             case HOUR:
-                return Nanos::floorHH;
+                return NanosTimestampDriver::partitionFloorHH;
             default:
                 return null;
         }
@@ -1432,6 +1432,56 @@ public class NanosTimestampDriver implements TimestampDriver {
         throw NumericException.instance();
     }
 
+    private static long partitionCeilDD(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.ceilDD(Math.max(nanos, 0));
+    }
+
+    private static long partitionCeilHH(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.ceilHH(Math.max(nanos, 0));
+    }
+
+    private static long partitionCeilMM(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.ceilMM(Math.max(nanos, 0));
+    }
+
+    private static long partitionCeilWW(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.ceilWW(Math.max(nanos, 0));
+    }
+
+    private static long partitionCeilYYYY(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.ceilYYYY(Math.max(nanos, 0));
+    }
+
+    private static long partitionFloorDD(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorDD(Math.max(nanos, 0));
+    }
+
+    private static long partitionFloorHH(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorHH(Math.max(nanos, 0));
+    }
+
+    private static long partitionFloorMM(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorMM(Math.max(nanos, 0));
+    }
+
+    private static long partitionFloorWW(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorWW(Math.max(nanos, 0));
+    }
+
+    private static long partitionFloorYYYY(long nanos) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorYYYY(Math.max(nanos, 0));
+    }
+
     private static void validateBounds0(long timestamp) {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
@@ -1522,9 +1572,10 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     public static class IsoWeekPartitionFormat implements DateFormat {
+
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
-            long weekTime = timestamp - Nanos.floorWW(timestamp);
+            long weekTime = timestamp - NanosTimestampDriver.partitionFloorWW(timestamp);
             WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
 
             if (weekTime > 0) {
