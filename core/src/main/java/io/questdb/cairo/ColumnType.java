@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
@@ -941,6 +942,17 @@ public final class ColumnType {
             String name = sink.toString();
             typeNameMap.put(type, name);
             nameTypeMap.put(name, type);
+        }
+
+        for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
+            for (int scale = 0; scale <= Decimals.MAX_SCALE; scale++) {
+                int type = getDecimalType(precision, scale);
+                sink.clear();
+                sink.put("DECIMAL(").put(precision).put(',').put(scale).put(")");
+                String name = sink.toString();
+                typeNameMap.put(type, name);
+                nameTypeMap.put(name, type);
+            }
         }
     }
 }
