@@ -34,6 +34,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
@@ -125,70 +126,70 @@ public class WalDataRecord implements Record, Sinkable {
     public byte getDecimal8(int col) {
         final long offset = recordIndex;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? Byte.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getByte(offset);
+        return offset < 0 ? Decimals.DECIMAL8_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
     }
 
     @Override
     public short getDecimal16(int col) {
         final long offset = recordIndex * Short.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? Short.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getShort(offset);
+        return offset < 0 ? Decimals.DECIMAL16_NULL : reader.getColumn(absoluteColumnIndex).getShort(offset);
     }
 
     @Override
     public int getDecimal32(int col) {
         final long offset = recordIndex * Integer.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? Integer.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getInt(offset);
+        return offset < 0 ? Decimals.DECIMAL32_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
     }
 
     @Override
     public long getDecimal64(int col) {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? Long.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getLong(offset);
+        return offset < 0 ? Decimals.DECIMAL64_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 
     @Override
     public long getDecimal128Hi(int col) {
         final long offset = recordIndex * 2 * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? Long.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getLong(offset);
+        return offset < 0 ? Decimals.DECIMAL128_HI_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 
     @Override
     public long getDecimal128Lo(int col) {
         final long offset = recordIndex * 2 * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
+        return offset < 0 ? Decimals.DECIMAL128_LO_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }
 
     @Override
     public long getDecimal256HH(int col) {
         final long offset = recordIndex * 4 * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? Long.MIN_VALUE : reader.getColumn(absoluteColumnIndex).getLong(offset);
+        return offset < 0 ? Decimals.DECIMAL256_HH_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 
     @Override
     public long getDecimal256HL(int col) {
         final long offset = recordIndex * 4 * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
+        return offset < 0 ? Decimals.DECIMAL256_HL_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }
 
     @Override
     public long getDecimal256LH(int col) {
         final long offset = recordIndex * 4 * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + 2 * Long.BYTES);
+        return offset < 0 ? Decimals.DECIMAL256_LH_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset + 2 * Long.BYTES);
     }
 
     @Override
     public long getDecimal256LL(int col) {
         final long offset = recordIndex * 4 * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? -1 : reader.getColumn(absoluteColumnIndex).getLong(offset + 3 * Long.BYTES);
+        return offset < 0 ? Decimals.DECIMAL256_LL_NULL : reader.getColumn(absoluteColumnIndex).getLong(offset + 3 * Long.BYTES);
     }
 
     @Override
