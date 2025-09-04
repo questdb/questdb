@@ -459,8 +459,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        checkpointAgent.checkpointCreate(circuitBreaker, false);
+    public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
 
     /**
@@ -1468,7 +1468,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        checkpointAgent.checkpointCreate(circuitBreaker, true);
+        checkpointAgent.checkpointCreate(circuitBreaker, true, false);
     }
 
     public void unlock(

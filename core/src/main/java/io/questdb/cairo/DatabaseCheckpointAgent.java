@@ -172,7 +172,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot) throws SqlException {
+    private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot, boolean isIncrementalBackup) throws SqlException {
         try {
             final long startedAt = microClock.getTicks();
             if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
@@ -363,7 +363,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         mem.close();
 
                         // Flush dirty pages and filesystem metadata to disk
-                        if (ff.sync() != 0) {
+                        if (!isIncrementalBackup && ff.sync() != 0) {
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
@@ -537,9 +537,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isLegacy) throws SqlException {
+    void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isLegacy, boolean incrementalBackup) throws SqlException {
         // Windows doesn't support sync() system call.
-        if (Os.isWindows()) {
+        if (!incrementalBackup && Os.isWindows()) {
             if (isLegacy) {
                 throw SqlException.position(0).put("Snapshot is not supported on Windows");
             }
@@ -561,7 +561,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 ff.rmdir(path);
             }
         }
-        checkpointCreate(circuitBreaker, checkpointRoot);
+        checkpointCreate(circuitBreaker, checkpointRoot, incrementalBackup);
     }
 
     void checkpointRelease() throws SqlException {
