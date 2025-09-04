@@ -779,7 +779,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
         closePartitionResources(partitionIndex, offset);
-        LOG.infoW().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp).I$();
+        LOG.info().$("closed partition [path=").$substr(dbRootSize, path)
+                .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
+                .I$();
         if (partitionSize > -1) {
             openPartitionCount--;
         }
