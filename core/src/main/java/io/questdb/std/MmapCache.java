@@ -266,7 +266,13 @@ public class MmapCache {
     }
 
     private static long mmap0(int fd, long len, long offset, int flags, int memoryTag) {
+        if (len == 0) {
+            System.out.println("java mmap0 len 0");
+        }
         long address = Files.mmap0(fd, len, offset, flags, 0);
+        if (len == 0) {
+            System.out.println("java mmap0 len 0 done");
+        }
         if (address != FilesFacade.MAP_FAILED) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
