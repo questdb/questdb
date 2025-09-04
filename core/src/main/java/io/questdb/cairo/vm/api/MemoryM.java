@@ -94,8 +94,4 @@ public interface MemoryM extends Closeable {
     default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         of(ff, name, ff.getPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
     }
-
-    default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
-    }
 }
