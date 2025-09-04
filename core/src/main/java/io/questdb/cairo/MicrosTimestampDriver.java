@@ -28,8 +28,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.griffin.engine.groupby.MonthTimestampMicrosSampler;
+import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
@@ -641,8 +641,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampCeilMethod getTimestampCeilMethod(char c) {
-        switch (c) {
+    public TimestampCeilMethod getTimestampCeilMethod(char unit) {
+        switch (unit) {
             case 'd':
                 return Micros::ceilDD;
             case 'M':
@@ -707,8 +707,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampFloorMethod getTimestampFloorMethod(String c) {
-        switch (c) {
+    public TimestampFloorMethod getTimestampFloorMethod(String unit) {
+        switch (unit) {
             case "century":
                 return Micros::floorCentury;
             case "day":
@@ -743,8 +743,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c) {
-        switch (c) {
+    public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char unit) {
+        switch (unit) {
             case 'M':
                 return Micros::floorMM;
             case 'y':
@@ -771,8 +771,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c) {
-        switch (c) {
+    public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String unit) {
+        switch (unit) {
             case "day":
                 return Micros::floorDD;
             case "hour":
@@ -803,25 +803,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
         switch (timeUnit) {
             case 'n':
                 // nanos
-                return new BaseTimestampSampler(Math.max(interval / Micros.MICRO_NANOS, 1), ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(Math.max(interval / Micros.MICRO_NANOS, 1), ColumnType.TIMESTAMP_MICRO);
             case 'U':
                 // micros
-                return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
             case 'T':
                 // millis
-                return new BaseTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 's':
                 // seconds
-                return new BaseTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'm':
                 // minutes
-                return new BaseTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'h':
                 // hours
-                return new BaseTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'd':
                 // days
-                return new BaseTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                return new SimpleTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'w':
                 // weeks
                 return new WeekTimestampMicrosSampler((int) interval);

@@ -25,8 +25,9 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
+import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -40,10 +41,10 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class BaseTimestampSamplerTest {
+public class SimpleTimestampSamplerTest {
     private final TestTimestampType timestampType;
 
-    public BaseTimestampSamplerTest(TestTimestampType timestampType) {
+    public SimpleTimestampSamplerTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
     }
 
@@ -57,7 +58,8 @@ public class BaseTimestampSamplerTest {
     @Test
     public void testNextTimestamp() throws NumericException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        final BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromMinutes(1), timestampType.getTimestampType());
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(timestampDriver.fromMinutes(1), timestampType.getTimestampType());
+        sampler.setStart(0);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000000Z",
@@ -81,7 +83,8 @@ public class BaseTimestampSamplerTest {
     @Test
     public void testNextTimestampWithStep() throws NumericException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        final BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromSeconds(1), timestampType.getTimestampType());
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(timestampDriver.fromSeconds(1), timestampType.getTimestampType());
+        sampler.setStart(0);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000000Z",
@@ -105,7 +108,8 @@ public class BaseTimestampSamplerTest {
     @Test
     public void testPreviousTimestamp() throws NumericException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        final BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromHours(1), timestampType.getTimestampType());
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(timestampDriver.fromHours(1), timestampType.getTimestampType());
+        sampler.setStart(0);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000000Z",
@@ -131,33 +135,78 @@ public class BaseTimestampSamplerTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final String[] src = new String[]{
                 "1967-12-31T01:11:42.123456789Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-05T00:00:00.000000000Z",
                 "2013-12-31T00:00:00.000000000Z",
                 "2014-01-01T01:12:12.000000001Z",
+                "2014-02-12T12:12:12.123456789Z",
+                "2014-02-12T12:12:12.123456789Z",
                 "2014-02-12T12:12:12.123456789Z",
                 "2014-02-12T12:12:12.123456789Z",
         };
         final String[] rounded = new String[]{
                 "1967-12-31T01:00:00.000000000Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-04T00:00:00.000000000Z",
                 "2013-12-31T00:00:00.000000000Z",
                 "2014-01-01T01:00:00.000000000Z",
                 "2014-02-12T12:00:00.000000000Z",
                 "2014-02-12T12:12:00.000000000Z",
+                "2014-02-12T00:00:00.000000000Z",
+                "2014-02-09T00:00:00.000000000Z",
         };
         final long[] strides = new long[]{
                 timestampDriver.fromHours(1),
+                timestampDriver.fromDays(1),
+                timestampDriver.fromDays(3),
                 timestampDriver.fromHours(1),
                 timestampDriver.fromHours(1),
                 timestampDriver.fromHours(1),
                 timestampDriver.fromMinutes(1),
+                timestampDriver.fromDays(1),
+                timestampDriver.fromDays(10),
         };
         Assert.assertEquals(src.length, rounded.length);
         Assert.assertEquals(src.length, strides.length);
 
         for (int i = 0; i < src.length; i++) {
-            final BaseTimestampSampler sampler = new BaseTimestampSampler(strides[i], timestampType.getTimestampType());
+            final SimpleTimestampSampler sampler = new SimpleTimestampSampler(strides[i], timestampType.getTimestampType());
+            sampler.setStart(0);
             final long ts = timestampDriver.parseFloorLiteral(src[i]);
             final long roundedTs = sampler.round(ts);
-            Assert.assertEquals(timestampDriver.parseFloorLiteral(rounded[i]), roundedTs);
+            Assert.assertEquals(
+                    "expected " + rounded[i] + ", got " + Nanos.toString(timestampDriver.toNanos(roundedTs)),
+                    timestampDriver.parseFloorLiteral(rounded[i]),
+                    roundedTs
+            );
+        }
+    }
+
+    @Test
+    public void testRoundMatchesFloor() throws NumericException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] src = new String[]{
+                "1967-12-31T01:11:42.123456789Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-05T00:00:00.000000000Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T01:12:12.000000001Z",
+                "2014-02-12T12:12:12.123456789Z",
+                "2025-09-04T10:45:01.987654321Z",
+        };
+
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(timestampDriver.fromDays(1), timestampType.getTimestampType());
+        sampler.setStart(0);
+
+        final TimestampDriver.TimestampFloorMethod floorMethod = timestampDriver.getTimestampFloorMethod("day");
+        final TimestampDriver.TimestampFloorWithStrideMethod floorWithStrideMethod = timestampDriver.getTimestampFloorWithStrideMethod("day");
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorWithOffsetMethod = timestampDriver.getTimestampFloorWithOffsetMethod('d');
+        for (int i = 0; i < src.length; i++) {
+            final long ts = timestampDriver.parseFloorLiteral(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(floorMethod.floor(ts), roundedTs);
+            Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
+            Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
         }
     }
 
@@ -165,7 +214,7 @@ public class BaseTimestampSamplerTest {
     public void testSimple() throws NumericException {
         final StringSink sink = new StringSink();
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        final BaseTimestampSampler sampler = new BaseTimestampSampler(timestampDriver.fromHours(1), timestampType.getTimestampType());
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(timestampDriver.fromHours(1), timestampType.getTimestampType());
 
         long timestamp = timestampDriver.parseFloorLiteral("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
@@ -178,7 +227,8 @@ public class BaseTimestampSamplerTest {
         }
 
         TestUtils.assertEquals(
-                AbstractCairoTest.replaceTimestampSuffix("2018-11-16T16:00:00.000000Z\n" +
+                AbstractCairoTest.replaceTimestampSuffix(
+                        "2018-11-16T16:00:00.000000Z\n" +
                                 "2018-11-16T17:00:00.000000Z\n" +
                                 "2018-11-16T18:00:00.000000Z\n" +
                                 "2018-11-16T19:00:00.000000Z\n" +

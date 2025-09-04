@@ -28,8 +28,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.griffin.engine.groupby.MonthTimestampNanosSampler;
+import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
@@ -655,8 +655,8 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampCeilMethod getTimestampCeilMethod(char c) {
-        switch (c) {
+    public TimestampCeilMethod getTimestampCeilMethod(char unit) {
+        switch (unit) {
             case 'd':
                 return Nanos::ceilDD;
             case 'M':
@@ -721,8 +721,8 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampFloorMethod getTimestampFloorMethod(String c) {
-        switch (c) {
+    public TimestampFloorMethod getTimestampFloorMethod(String unit) {
+        switch (unit) {
             case "century":
                 return Nanos::floorCentury;
             case "day":
@@ -757,8 +757,8 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c) {
-        switch (c) {
+    public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char unit) {
+        switch (unit) {
             case 'M':
                 return Nanos::floorMM;
             case 'y':
@@ -785,8 +785,8 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c) {
-        switch (c) {
+    public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String unit) {
+        switch (unit) {
             case "day":
                 return Nanos::floorDD;
             case "hour":
@@ -817,25 +817,25 @@ public class NanosTimestampDriver implements TimestampDriver {
         switch (timeUnit) {
             case 'n':
                 // nanos
-                return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
             case 'U':
                 // micros
-                return new BaseTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
             case 'T':
                 // millis
-                return new BaseTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 's':
                 // seconds
-                return new BaseTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'm':
                 // minutes
-                return new BaseTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'h':
                 // hours
-                return new BaseTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'd':
                 // days
-                return new BaseTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+                return new SimpleTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'w':
                 // weeks
                 return new WeekTimestampNanosSampler((int) interval);

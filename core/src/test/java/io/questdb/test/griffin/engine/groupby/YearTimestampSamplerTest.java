@@ -25,7 +25,10 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
@@ -59,6 +62,16 @@ public class YearTimestampSamplerTest {
         testRound(50, "2051-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
         testRound(100, "2024-01-01T00:00:00.000000Z", "1970-01-01T00:00:00.000000Z");
         testRound(1000, "2025-12-31T23:59:59.999999Z", "1970-01-01T00:00:00.000000Z");
+    }
+
+    @Test
+    public void testRoundMatchesFloorMicros() throws Exception {
+        testRoundMatchesFloor(MicrosTimestampDriver.INSTANCE);
+    }
+
+    @Test
+    public void testRoundMatchesFloorNanos() throws Exception {
+        testRoundMatchesFloor(NanosTimestampDriver.INSTANCE);
     }
 
     @Test
@@ -126,6 +139,32 @@ public class YearTimestampSamplerTest {
         samplerNs.setStart(0);
         final long tsNs = tsUs * Nanos.MICRO_NANOS;
         Assert.assertEquals(expectedUs * Nanos.MICRO_NANOS, samplerNs.round(tsNs));
+    }
+
+    private void testRoundMatchesFloor(TimestampDriver timestampDriver) throws NumericException, SqlException {
+        final String[] src = new String[]{
+                "1967-12-31T01:11:42.123456789Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-05T00:00:00.000000000Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T01:12:12.000000001Z",
+                "2014-02-12T12:12:12.123456789Z",
+                "2025-09-04T10:45:01.987654321Z",
+        };
+
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'y', 0);
+        sampler.setStart(0);
+
+        final TimestampDriver.TimestampFloorMethod floorMethod = timestampDriver.getTimestampFloorMethod("year");
+        final TimestampDriver.TimestampFloorWithStrideMethod floorWithStrideMethod = timestampDriver.getTimestampFloorWithStrideMethod("year");
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorWithOffsetMethod = timestampDriver.getTimestampFloorWithOffsetMethod('y');
+        for (int i = 0; i < src.length; i++) {
+            final long ts = timestampDriver.parseFloorLiteral(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(floorMethod.floor(ts), roundedTs);
+            Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
+            Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
+        }
     }
 
     private void testSampler(int stepYears, String expected) throws NumericException {

@@ -164,6 +164,35 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
+    public void testRoundMatchesFloor() throws Exception {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] src = new String[]{
+                "1967-12-31T01:11:42.123456789Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-05T00:00:00.000000000Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T01:12:12.000000001Z",
+                "2014-02-12T12:12:12.123456789Z",
+                "2025-09-04T10:45:01.987654321Z",
+        };
+
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setStart(0);
+
+        final TimestampDriver.TimestampFloorMethod floorMethod = timestampDriver.getTimestampFloorMethod("month");
+        final TimestampDriver.TimestampFloorWithStrideMethod floorWithStrideMethod = timestampDriver.getTimestampFloorWithStrideMethod("month");
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorWithOffsetMethod = timestampDriver.getTimestampFloorWithOffsetMethod('M');
+        for (int i = 0; i < src.length; i++) {
+            final long ts = timestampDriver.parseFloorLiteral(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(floorMethod.floor(ts), roundedTs);
+            // TODO(puzpuzpuz): fix floorMM
+//            Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
+//            Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
+        }
+    }
+
+    @Test
     public void testSimple() throws Exception {
         final StringSink sink = new StringSink();
         final TimestampDriver timestampDriver = timestampType.getDriver();

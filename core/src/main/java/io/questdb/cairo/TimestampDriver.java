@@ -437,7 +437,7 @@ public interface TimestampDriver {
      */
     long getTicks();
 
-    TimestampCeilMethod getTimestampCeilMethod(char c);
+    TimestampCeilMethod getTimestampCeilMethod(char unit);
 
     TimestampConstant getTimestampConstantNull();
 
@@ -445,11 +445,11 @@ public interface TimestampDriver {
 
     TimestampDiffMethod getTimestampDiffMethod(char type);
 
-    TimestampFloorMethod getTimestampFloorMethod(String c);
+    TimestampFloorMethod getTimestampFloorMethod(String unit);
 
-    TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c);
+    TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char unit);
 
-    TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c);
+    TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String unit);
 
     /**
      * Creates a timestamp sampler instance for the given interval and time unit.

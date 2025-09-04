@@ -485,7 +485,7 @@ public final class Micros {
     public static long floorWW(long micros, int stride) {
         // Epoch 1 Jan 1970 is a Thursday.
         // Shift 3 days to find offset in the week.
-        long weekOffset = (micros + Micros.DAY_MICROS * 3) % (stride * WEEK_MICROS);
+        long weekOffset = (micros + 3 * Micros.DAY_MICROS) % (stride * WEEK_MICROS);
         if (weekOffset < 0) {
             // Floor value must be always below or equal to the original value.
             // If offset is negative, we need to add stride to it so that the result is
