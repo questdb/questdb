@@ -48,7 +48,15 @@ public class MmapCache {
      * @param flags        memory mapping flags, e.g., Files.MAP_RO for read-only
      */
     public long cacheMmap(int fd, long mmapCacheKey, long len, long offset, int flags, int memoryTag) {
-        if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW || len == 0) {
+        if (len < 1) {
+            throw CairoException.critical(0)
+                    .put("could not mmap file, invalid len [len=").put(len)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put(']');
+        }
+        if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
@@ -102,6 +110,15 @@ public class MmapCache {
      * Resizes existing memory mapping, reusing or creating new mapping as needed.
      */
     public long mremap(int fd, long mmapCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        if (newSize < 1) {
+            throw CairoException.critical(0)
+                    .put("could not remap file, invalid newSize [previousSize=").put(previousSize)
+                    .put(", newSize=").put(newSize)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put(']');
+        }
         if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
         }
