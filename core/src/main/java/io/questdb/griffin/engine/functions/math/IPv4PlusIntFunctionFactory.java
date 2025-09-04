@@ -51,14 +51,14 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new IPv4PlusIntFunctionFactory.IPv4PlusIntFunction(args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    public static final class IPv4PlusIntFunction extends IPv4Function implements BinaryFunction {
+    private static class Func extends IPv4Function implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public IPv4PlusIntFunction(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
@@ -68,7 +68,6 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
             final int l = left.getIPv4(rec);
             final int r = right.getInt(rec);
             final long sum = Numbers.ipv4ToLong(l) + r;
-
             if (sum >> 32 != 0) {
                 return Numbers.IPv4_NULL;
             }
@@ -90,5 +89,4 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
             sink.val(left).val('+').val(right);
         }
     }
-
 }
