@@ -707,6 +707,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         // dwNumberOfBytesToMap: "If this parameter is 0 (zero), the mapping extends from the
         // specified offset to the end of the file mapping."
         printf("mmap0 setting errno 87\n");
+        fflush(stdout);
         SetLastError(87);
         SaveLastError();
 //        TlsSetValue(dwTlsIndexLastError, (LPVOID) (DWORD_PTR) 87);

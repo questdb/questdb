@@ -66,7 +66,6 @@ public final class Files {
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
-    public static final long STDOUT_FD = getStdOutFdInternal();
     private static final MmapCache mmapCache = new MmapCache();
     public static boolean FS_CACHE_ENABLED = true;
     // To be set in tests to check every call for using OPEN file descriptor

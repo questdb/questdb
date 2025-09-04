@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.str.DirectUtf8Sink;
 
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
@@ -267,19 +266,7 @@ public class MmapCache {
     }
 
     private static long mmap0(int fd, long len, long offset, int flags, int memoryTag) {
-        if (len == 0) {
-            try (DirectUtf8Sink sink = new DirectUtf8Sink(50)) {
-                sink.putAscii("java mmap0 len 0\n");
-                Files.append(Files.STDOUT_FD, sink.ptr(), sink.size());
-            }
-        }
         long address = Files.mmap0(fd, len, offset, flags, 0);
-        if (len == 0) {
-            try (DirectUtf8Sink sink = new DirectUtf8Sink(50)) {
-                sink.putAscii("java mmap0 len 0 done, errno ").put(Os.errno()).put('\n');
-                Files.append(Files.STDOUT_FD, sink.ptr(), sink.size());
-            }
-        }
         if (address != FilesFacade.MAP_FAILED) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
