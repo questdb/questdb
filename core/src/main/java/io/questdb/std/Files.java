@@ -350,6 +350,14 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+        if (len < 1) {
+            throw CairoException.critical(0)
+                    .put("could not mmap file, invalid len [len=").put(len)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put(']');
+        }
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheKey = fdCache.toMmapCacheKey(fd);
         return mmapCache.cacheMmap(osFd, mmapCacheKey, len, offset, flags, memoryTag);
@@ -357,7 +365,8 @@ public final class Files {
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         if (newSize < 1) {
-            throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(previousSize)
+            throw CairoException.critical(0)
+                    .put("could not remap file, invalid newSize [previousSize=").put(previousSize)
                     .put(", newSize=").put(newSize)
                     .put(", offset=").put(offset)
                     .put(", fd=").put(fd)

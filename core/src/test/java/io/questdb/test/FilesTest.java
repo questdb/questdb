@@ -781,12 +781,43 @@ public class FilesTest {
                 long fdro = Files.openRO(path.$());
                 try {
                     long mmapAddr = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                    int errno = Os.errno();
-                    if (mmapAddr != FilesFacade.MAP_FAILED) {
+                    Files.munmap(mmapAddr, 0, MemoryTag.MMAP_DEFAULT);
+                    Assert.fail("mmap with zero len should have failed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid len");
+                } finally {
+                    Files.close(fdro);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMremapInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fdrw = Files.openRW(path.$());
+                try {
+                    if (!Files.allocate(fdrw, 1024)) {
+                        Assert.fail("Files.allocate() failed with errno " + Os.errno());
+                    }
+                } finally {
+                    Files.close(fdrw);
+                }
+                long fdro = Files.openRO(path.$());
+                try {
+                    long mmapAddr = Files.mmap(fdro, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    Assert.assertNotEquals("mmap should have succeeded", FilesFacade.MAP_FAILED, mmapAddr);
+                    try {
+                        mmapAddr = Files.mremap(fdro, mmapAddr, 64, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                         Files.munmap(mmapAddr, 0, MemoryTag.MMAP_DEFAULT);
-                        Assert.fail("mmap with len 0 should return MAP_FAILED");
-                    } else {
-                        Assert.assertEquals("errno should be INVALID_PARAMETER", Files.errnoInvalidParameter(), errno);
+                        Assert.fail("mremap with len 0 should have failed");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "invalid newSize");
+                    } finally {
+                        Files.munmap(mmapAddr, 64, MemoryTag.MMAP_DEFAULT);
                     }
                 } finally {
                     Files.close(fdro);
@@ -1003,28 +1034,6 @@ public class FilesTest {
                     // Delete files
                     Files.remove(path.$());
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testRemapTo0Len() throws Exception {
-        assertMemoryLeak(() -> {
-            File temp = temporaryFolder.newFile();
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                Assert.assertTrue(Files.exists(path.$()));
-
-                long fdrw = Files.openRW(path.$());
-                long fdro = Files.openRO(path.$());
-
-                if (Files.allocate(fdrw, 1024)) {
-                    long addr1 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                    addr1 = Files.mremap(fdro, addr1, 0, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                    Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
-                }
-
-                Files.close(fdrw);
-                Files.close(fdro);
             }
         });
     }
