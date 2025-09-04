@@ -4261,8 +4261,8 @@ public class SqlParser {
         joinStartSet.put("join", QueryModel.JOIN_INNER);
         joinStartSet.put("inner", QueryModel.JOIN_INNER);
         joinStartSet.put("left", QueryModel.JOIN_LEFT_OUTER);
-        joinStartSet.put("right", QueryModel.JOIN_LEFT_OUTER);
-        joinStartSet.put("full", QueryModel.JOIN_LEFT_OUTER);
+        joinStartSet.put("right", QueryModel.JOIN_RIGHT_OUTER);
+        joinStartSet.put("full", QueryModel.JOIN_FULL_OUTER);
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
