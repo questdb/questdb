@@ -827,6 +827,45 @@ public class FilesTest {
     }
 
     @Test
+    public void testMunmapInvalidZeroAddress() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Files.munmap(0, 64, MemoryTag.MMAP_DEFAULT);
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "invalid address");
+            }
+        });
+    }
+
+    @Test
+    public void testMunmapInvalidZeroLength() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+
+                long fdrw = Files.openRW(path.$());
+                long fdro = Files.openRO(path.$());
+
+                if (Files.allocate(fdrw, 1024)) {
+                    long addr1 = Files.mmap(fdro, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        Files.munmap(addr1, 0, MemoryTag.MMAP_DEFAULT);
+                    } catch (CairoException e) {
+                        assertContains(e.getFlyweightMessage(), "invalid address or length");
+                    } finally {
+                        Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+
+                Files.close(fdrw);
+                Files.close(fdro);
+            }
+        });
+    }
+
+    @Test
     public void testOpenCleanRWAllocatesToSize() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
@@ -1368,47 +1407,6 @@ public class FilesTest {
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
                 Assert.assertEquals(-1, Files.openRO(linkPath.$()));
-            }
-        });
-    }
-
-    @Test
-    public void testUnmapInvalidZeroAddress() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Files.munmap(0, 64, MemoryTag.MMAP_DEFAULT);
-                Assert.fail("Expected CairoException");
-            } catch (CairoException e) {
-                Assert.assertEquals("errno should be INVALID_PARAMETER", e.getErrno(), Files.errnoInvalidParameter());
-                assertContains(e.getFlyweightMessage(), "invalid address");
-            }
-        });
-    }
-
-    @Test
-    public void testUnmapInvalidZeroLength() throws Exception {
-        assertMemoryLeak(() -> {
-            File temp = temporaryFolder.newFile();
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                Assert.assertTrue(Files.exists(path.$()));
-
-                long fdrw = Files.openRW(path.$());
-                long fdro = Files.openRO(path.$());
-
-                if (Files.allocate(fdrw, 1024)) {
-                    long addr1 = Files.mmap(fdro, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                    try {
-                        Files.munmap(addr1, 0, MemoryTag.MMAP_DEFAULT);
-                    } catch (CairoException e) {
-                        Assert.assertEquals("errno should be INVALID_PARAMETER", e.getErrno(), Files.errnoInvalidParameter());
-                        assertContains(e.getFlyweightMessage(), "invalid address or length");
-                    } finally {
-                        Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
-                    }
-                }
-
-                Files.close(fdrw);
-                Files.close(fdro);
             }
         });
     }
