@@ -230,7 +230,7 @@ public class MmapCache {
      */
     public void unmap(long address, long len, int memoryTag) {
         if (address <= 0 || len <= 0) {
-            throw CairoException.critical(Files.errnoInvalidParameter())
+            throw CairoException.critical(0)
                     .put("unmap: invalid address or length [address=" + address + ", len=" + len + ']');
         }
 
