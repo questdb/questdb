@@ -437,7 +437,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 10);
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG, 624968545800L, 1756738649271L);
+            Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 4);
