@@ -117,6 +117,10 @@ public interface PlanSink {
 
     PlanSink val(long hash, int geoHashBits);
 
+    PlanSink valDecimal(long value, int precision, int scale);
+
+    PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale);
+
     PlanSink valIPv4(int ip);
 
     PlanSink valISODate(long l);
