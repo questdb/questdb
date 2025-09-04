@@ -770,19 +770,19 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
-                long fdrw = Files.openAppend(path.$());
+                long fdrw = Files.openRW(path.$());
                 try {
                     if (!Files.allocate(fdrw, 1024)) {
-                        Assert.fail("Files.allocate() failed");
+                        Assert.fail("Files.allocate() failed with errno " + Os.errno());
                     }
                 } finally {
                     Files.close(fdrw);
                 }
                 long fdro = Files.openRO(path.$());
-                long addr1 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                long mmapAddr = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                 int errno = Os.errno();
-                if (addr1 != FilesFacade.MAP_FAILED) {
-                    Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                if (mmapAddr != FilesFacade.MAP_FAILED) {
+                    Files.munmap(mmapAddr, 64, MemoryTag.MMAP_DEFAULT);
                     Assert.fail("mmap with len 0 should return MAP_FAILED");
                 }
                 Assert.assertEquals("errno should be INVALID_PARAMETER", Files.errnoInvalidParameter(), errno);
