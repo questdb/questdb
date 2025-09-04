@@ -374,10 +374,15 @@ public final class Nanos {
     }
 
     public static long floorMM(long nanos, int stride) {
-        long m = (getMonthsBetween(0, nanos) / stride) * stride;
-        int y = (int) (EPOCH_YEAR_0 + m / 12);
-        int mm = (int) (m % 12);
-        boolean l = isLeapYear(y);
+        final int y0 = getYear(nanos);
+        final boolean l0 = CommonUtils.isLeapYear(y0);
+        final int m0 = getMonthOfYear(nanos, y0, l0);
+        final long mdiff = 12L * (y0 - EPOCH_YEAR_0) + (m0 - 1);
+
+        final long m = Math.floorDiv(mdiff, stride) * stride;
+        final int y = EPOCH_YEAR_0 + (int) Math.floorDiv(m, 12);
+        final int mm = Math.floorMod(m, 12);
+        final boolean l = CommonUtils.isLeapYear(y);
         return yearNanos(y, l) + (mm > 0 ? monthOfYearNanos(mm + 1, l) : 0);
     }
 

@@ -381,10 +381,15 @@ public final class Micros {
     }
 
     public static long floorMM(long micros, int stride) {
-        long m = (getMonthsBetween(0, micros) / stride) * stride;
-        int y = (int) (EPOCH_YEAR_0 + m / 12);
-        int mm = (int) (m % 12);
-        boolean l = CommonUtils.isLeapYear(y);
+        final int y0 = getYear(micros);
+        final boolean l0 = CommonUtils.isLeapYear(y0);
+        final int m0 = getMonthOfYear(micros, y0, l0);
+        final long mdiff = 12L * (y0 - EPOCH_YEAR_0) + (m0 - 1);
+
+        final long m = Math.floorDiv(mdiff, stride) * stride;
+        final int y = EPOCH_YEAR_0 + (int) Math.floorDiv(m, 12);
+        final int mm = Math.floorMod(m, 12);
+        final boolean l = CommonUtils.isLeapYear(y);
         return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm + 1, l) : 0);
     }
 
