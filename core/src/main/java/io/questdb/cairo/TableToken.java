@@ -30,11 +30,13 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Stands for a WAL table, or a non-WAL table, or a materialized view.
  */
 public class TableToken implements Sinkable {
+    private final String dbLogName;
     @NotNull
     private final GcUtf8String dirName;
     private final boolean dirNameSameAsTableName;
@@ -47,15 +49,15 @@ public class TableToken implements Sinkable {
     @NotNull
     private final String tableName;
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
-        this(tableName, new GcUtf8String(dirName), tableId, false, isWal, isSystem, isProtected, false);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
+        this(tableName, new GcUtf8String(dirName), dbLogName, tableId, false, isWal, isSystem, isProtected, false);
     }
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
-        this(tableName, new GcUtf8String(dirName), tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+    public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+        this(tableName, new GcUtf8String(dirName), dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, @Nullable String dbLogName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
@@ -64,6 +66,7 @@ public class TableToken implements Sinkable {
         this.isSystem = isSystem;
         this.isProtected = isProtected;
         this.isPublic = isPublic;
+        this.dbLogName = dbLogName;
         String dirNameString = dirName.toString();
         this.dirNameSameAsTableName = Chars.startsWith(dirNameString, tableName) &&
                 (dirNameString.length() == tableName.length() ||
@@ -156,7 +159,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+        return new TableToken(newName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
     }
 
     @Override
@@ -167,6 +170,9 @@ public class TableToken implements Sinkable {
             sink.put("TableToken{tableName=").put(tableName)
                     .put(", dirName=").put(dirName)
                     .put('}');
+        }
+        if (dbLogName != null) {
+            sink.put(", db=").put(dbLogName);
         }
     }
 

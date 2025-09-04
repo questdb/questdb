@@ -393,7 +393,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             this.path = new Path();
             path.of(root);
-            this.pathRootSize = path.size();
+            this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
             path.concat(tableToken);
             this.other = new Path();
             other.of(root).concat(tableToken);

@@ -242,6 +242,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    @NotNull
     public SeqTxnTracker getTxnTracker(TableToken tableToken) {
         return getSeqTxnTracker(tableToken);
     }
@@ -465,6 +466,7 @@ public class TableSequencerAPI implements QuietCloseable {
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
+    @NotNull
     private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
         return seqTxnTrackers.computeIfAbsent(tt.getDirName(), createTxnTracker);
     }

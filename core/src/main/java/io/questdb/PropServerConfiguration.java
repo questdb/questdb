@@ -199,6 +199,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
+    private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
     private final int defaultSeqPartTxnCount;
@@ -819,6 +820,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+        this.dbLogName = getString(properties, env, PropertyKey.DEBUG_DB_LOG_NAME, null);
         String tmpRoot;
         boolean absDbDir = new File(this.dbDirectory).isAbsolute();
         if (absDbDir) {
@@ -2975,6 +2977,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getDbRoot() {
             return dbRoot;
+        }
+
+        @Override
+        public @Nullable String getDbLogName() {
+            return dbLogName;
         }
 
         @Override

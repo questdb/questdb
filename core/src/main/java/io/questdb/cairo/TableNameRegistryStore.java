@@ -376,7 +376,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
                             boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+                            String dbLogName = configuration.getDbLogName();
+                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -475,7 +476,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
                         boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
                         boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isMatView;
-                        token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+                        String dbLogName = configuration.getDbLogName();
+                        token = new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -503,7 +505,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
                     boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
                     boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isMatView;
-                    final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+                    String dbLogName = configuration.getDbLogName();
+                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping
