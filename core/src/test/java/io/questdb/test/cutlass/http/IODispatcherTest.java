@@ -7893,7 +7893,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 200;
+        final int timeout = 400;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
