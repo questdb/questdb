@@ -1392,6 +1392,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnbalancedLeftBrace2() {
+        assertFail("abs(100000*rnd_double(),\n" +
+                "timestamp_sequence('2022-07-01', 1000000)\n" +
+                "from long_sequence(1000000)\n" +
+                ";", 3, "unbalanced (");
+    }
+
+    @Test
     public void testUnbalancedRightBraceExit() throws Exception {
         x("a 5 x y c b +", "a+b(5,c(x,y)))");
     }
