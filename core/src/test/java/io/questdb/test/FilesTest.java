@@ -779,14 +779,18 @@ public class FilesTest {
                     Files.close(fdrw);
                 }
                 long fdro = Files.openRO(path.$());
-                long mmapAddr = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                int errno = Os.errno();
-                if (mmapAddr != FilesFacade.MAP_FAILED) {
-                    Files.munmap(mmapAddr, 64, MemoryTag.MMAP_DEFAULT);
-                    Assert.fail("mmap with len 0 should return MAP_FAILED");
+                try {
+                    long mmapAddr = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    int errno = Os.errno();
+                    if (mmapAddr != FilesFacade.MAP_FAILED) {
+                        Files.munmap(mmapAddr, 64, MemoryTag.MMAP_DEFAULT);
+                        Assert.fail("mmap with len 0 should return MAP_FAILED");
+                    } else {
+                        Assert.assertEquals("errno should be INVALID_PARAMETER", Files.errnoInvalidParameter(), errno);
+                    }
+                } finally {
+                    Files.close(fdro);
                 }
-                Assert.assertEquals("errno should be INVALID_PARAMETER", Files.errnoInvalidParameter(), errno);
-                Files.close(fdro);
             }
         });
     }
