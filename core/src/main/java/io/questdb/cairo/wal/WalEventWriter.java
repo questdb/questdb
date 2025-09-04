@@ -183,6 +183,29 @@ class WalEventWriter implements Closeable {
             case ColumnType.ARRAY:
                 eventMem.putArray(function.getArray(null));
                 break;
+            case ColumnType.DECIMAL8:
+                eventMem.putByte(function.getDecimal8(null));
+                break;
+            case ColumnType.DECIMAL16:
+                eventMem.putShort(function.getDecimal16(null));
+                break;
+            case ColumnType.DECIMAL32:
+                eventMem.putInt(function.getDecimal32(null));
+                break;
+            case ColumnType.DECIMAL64:
+                eventMem.putLong(function.getDecimal64(null));
+                break;
+            case ColumnType.DECIMAL128:
+                eventMem.putDecimal128(function.getDecimal128Hi(null), function.getDecimal128Lo(null));
+                break;
+            case ColumnType.DECIMAL256:
+                eventMem.putDecimal256(
+                    function.getDecimal256HH(null),
+                    function.getDecimal256HL(null),
+                    function.getDecimal256LH(null),
+                    function.getDecimal256LL(null)
+                );
+                break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
