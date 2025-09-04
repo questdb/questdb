@@ -429,11 +429,10 @@ public class NanosTest {
 
     @Test
     public void testFloorYYYYEpoch() {
-        // TODO(puzpuzpuz): fix floorYYYY
-//        assertNanos(
-//                "1967-01-01T00:00:00.000000000Z",
-//                Nanos.floorYYYY(parseNSecUTC("1968-05-12T23:45:51.045045045Z"), 3)
-//        );
+        assertNanos(
+                "1967-01-01T00:00:00.000000000Z",
+                Nanos.floorYYYY(parseNSecUTC("1968-05-12T23:45:51.045045045Z"), 3)
+        );
         assertNanos(
                 "2000-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("2000-10-12T23:45:51.045901781Z"), 3)
@@ -446,37 +445,17 @@ public class NanosTest {
                 "2005-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("2006-10-12T23:45:51.045901781Z"), 5)
         );
-    }
-
-    @Test
-    public void testFloorYYYYWithStrideAfterEpoch() {
-        assertNanos(
-                "1973-01-01T00:00:00.000000000Z",
-                Nanos.floorYYYY(parseNSecUTC("1975-05-12T23:45:51.045789123Z"), 3)
-        );
-    }
-
-    @Test
-    public void testFloorYYYYWithStrideAtEpoch() {
         assertNanos(
                 "1970-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1970-05-12T23:45:51.045654321Z"), 3)
         );
-    }
-
-    @Test
-    public void testFloorYYYYWithStrideBeforeEpochSnapToEpoch() {
-        assertNanos(
-                "1970-01-01T00:00:00.000000000Z",
-                Nanos.floorYYYY(parseNSecUTC("1968-05-12T23:45:51.045987654Z"), 3)
-        );
-    }
-
-    @Test
-    public void testFloorYYYYWithStrideWellBeforeEpoch() {
         assertNanos(
                 "1967-01-01T00:00:00.000000000Z",
                 Nanos.floorYYYY(parseNSecUTC("1967-05-12T23:45:51.045246813Z"), 3)
+        );
+        assertNanos(
+                "1973-01-01T00:00:00.000000000Z",
+                Nanos.floorYYYY(parseNSecUTC("1975-05-12T23:45:51.045789123Z"), 3)
         );
     }
 

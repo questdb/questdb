@@ -397,10 +397,9 @@ public class MicrosTest {
     @Test
     public void testFloorYYYYEpoch() {
         long micros;
-        // TODO(puzpuzpuz): fix floorYYYY
-//        micros = MicrosFormatUtils.parseTimestamp("1968-05-12T23:45:51.045045Z");
-//        MicrosFormatUtils.appendDateTimeUSec(sink, Micros.floorYYYY(micros, 3));
-//        TestUtils.assertEquals("1967-01-01T00:00:00.000000Z", sink);
+        micros = MicrosFormatUtils.parseTimestamp("1968-05-12T23:45:51.045045Z");
+        MicrosFormatUtils.appendDateTimeUSec(sink, Micros.floorYYYY(micros, 3));
+        TestUtils.assertEquals("1967-01-01T00:00:00.000000Z", sink);
         sink.clear();
         micros = MicrosFormatUtils.parseTimestamp("1975-05-12T23:45:51.045045Z");
         MicrosFormatUtils.appendDateTimeUSec(sink, Micros.floorYYYY(micros, 3));

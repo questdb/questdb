@@ -517,7 +517,7 @@ public final class Micros {
     }
 
     public static long floorYYYY(long micros, int stride) {
-        final int y = EPOCH_YEAR_0 + ((getYear(micros) - EPOCH_YEAR_0) / stride) * stride;
+        final int y = EPOCH_YEAR_0 + Math.floorDiv(getYear(micros) - EPOCH_YEAR_0, stride) * stride;
         return yearMicros(y, CommonUtils.isLeapYear(y));
     }
 

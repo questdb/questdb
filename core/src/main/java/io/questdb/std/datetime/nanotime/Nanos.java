@@ -508,8 +508,7 @@ public final class Nanos {
     }
 
     public static long floorYYYY(long nanos, int stride) {
-        final int origin = getYear(0);
-        final int y = origin + ((getYear(nanos) - origin) / stride) * stride;
+        final int y = EPOCH_YEAR_0 + Math.floorDiv(getYear(nanos) - EPOCH_YEAR_0, stride) * stride;
         return yearNanos(y, isLeapYear(y));
     }
 
