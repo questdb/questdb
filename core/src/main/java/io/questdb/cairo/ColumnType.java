@@ -36,10 +36,10 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
-// | Handling bit  | Extra type information | Type discriminant (tag) |
-// +---------------+------------------------+-------------------------+
-// |    1 bit      |        23 bits         |         8 bits          |
-// +---------------+------------------------+-------------------------+
+// | Handling bit  | Extra type information | Timestamp Flag | GeoHash Flag |Extra type information | Type discriminant (tag) |
+// +---------------+------------------------+----------------+--------------+-----------------------+-------------------------+
+// |    1 bit      |        12 bits         |     1 bit      |    1 bit     |        8 bits         |         8 bits          |
+// +---------------+------------------------+----------------+--------------+-----------------------+-------------------------+
 //
 // Handling bit:
 //   Skip column use case:
@@ -122,9 +122,9 @@ public final class ColumnType {
     // and scale, giving this layout:
     //       31         30~24    23~16      15~8              7~0
     // +--------------+--------+--------+-----------+-------------------------+
-    // | Handling bit | Unused | Scale  | Precision | Type discriminant (tag) |
+    // | Handling bit | Scale  | Used   | Precision | Type discriminant (tag) |
     // +--------------+--------+--------+-----------+-------------------------+
-    // |    1 bit     | 7 bits | 8 bits |  8 bits   |         8 bits          |
+    // |    1 bit     | 8 bits | 7 bits |  8 bits   |         8 bits          |
     // +--------------+--------+--------+-----------+-------------------------+
     public static final short DECIMAL8 = INTERVAL + 1;     // = 33;
     public static final short DECIMAL16 = DECIMAL8 + 1;    // = 34;
@@ -241,7 +241,7 @@ public final class ColumnType {
     }
 
     public static int getDecimalScale(int type) {
-        return (type >>> 16) & 0xFF;
+        return (type >>> 18) & 0xFF;
     }
 
     public static int getDecimalType(int precision, int scale) {
@@ -250,7 +250,7 @@ public final class ColumnType {
         int size = Decimals.getStorageSizePow2(precision);
         // Construct the type following the layout described earlier.
         // DECIMAL8-256 needs to be clustered together for this to work.
-        return ((scale & 0xFF) << 16) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
+        return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
     }
 
     public static boolean isDecimal(int type) {
