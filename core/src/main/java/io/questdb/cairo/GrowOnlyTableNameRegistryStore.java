@@ -32,6 +32,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class GrowOnlyTableNameRegistryStore implements Closeable {
@@ -72,7 +73,11 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
         tableNameMemory.putStr(tableToken.getTableName());
         tableNameMemory.putStr(tableToken.getDirName());
         tableNameMemory.putInt(tableToken.getTableId());
-        final int tableType = tableToken.isMatView() ? TableUtils.TABLE_TYPE_MAT : (tableToken.isWal() ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL);
+        final int tableType =
+                tableToken.isView() ? TABLE_TYPE_VIEW
+                        : tableToken.isMatView() ? TABLE_TYPE_MAT
+                        : tableToken.isWal() ? TABLE_TYPE_WAL
+                        : TABLE_TYPE_NON_WAL;
         tableNameMemory.putInt(tableType);
 
         if (operation != OPERATION_REMOVE) {

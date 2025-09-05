@@ -32,6 +32,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
@@ -325,6 +326,7 @@ public class ServerMain implements Closeable {
         final boolean isReadOnly = cairoConfig.isReadOnlyInstance();
         final boolean walApplyEnabled = cairoConfig.isWalApplyEnabled();
         final boolean matViewEnabled = cairoConfig.isMatViewEnabled();
+        final boolean viewEnabled = cairoConfig.isViewEnabled();
 
         workerPoolManager = new WorkerPoolManager(config) {
             @Override
@@ -369,6 +371,10 @@ public class ServerMain implements Closeable {
                         if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
                             setupMatViewJobs(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                         }
+
+                        if (viewEnabled && !config.getViewCompilerPoolConfiguration().isEnabled()) {
+                            setupViewJobs(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
+                        }
                     }
 
                     // telemetry
@@ -386,7 +392,7 @@ public class ServerMain implements Closeable {
             }
         };
 
-        engine.buildMatViewGraph();
+        engine.buildViewGraphs();
 
         if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
             // create dedicated worker pool for materialized view refresh
@@ -395,6 +401,15 @@ public class ServerMain implements Closeable {
                     WorkerPoolManager.Requester.MAT_VIEW_REFRESH
             );
             setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        }
+
+        if (viewEnabled && !isReadOnly && config.getViewCompilerPoolConfiguration().isEnabled()) {
+            // create dedicated worker pool for view compiler
+            WorkerPool viewCompilerWorkerPool = workerPoolManager.getInstanceWrite(
+                    config.getViewCompilerPoolConfiguration(),
+                    WorkerPoolManager.Requester.VIEW_COMPILER
+            );
+            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -472,6 +487,19 @@ public class ServerMain implements Closeable {
         }
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         sharedPoolWrite.assign(matViewTimerJob);
+    }
+
+    protected void setupViewJobs(
+            WorkerPool sharedPoolWrite,
+            CairoEngine engine,
+            int sharedQueryWorkerCount
+    ) {
+        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ViewCompilerJob viewCompilerJob = new ViewCompilerJob(i, engine, sharedQueryWorkerCount);
+            sharedPoolWrite.assign(i, viewCompilerJob);
+            sharedPoolWrite.freeOnExit(viewCompilerJob);
+        }
     }
 
     protected void setupWalApplyJob(
