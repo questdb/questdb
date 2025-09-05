@@ -376,7 +376,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "Window\n" +
                         "  functions: [rank() over (partition by [hostname])]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [hostname,ts,memoize(usage_system),usage_system1+10]\n" +
+                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
                         "        SelectedRecord\n" +
                         "            Filter filter: t2.ts<t1.ts\n" +
                         "                Cross Join\n" +

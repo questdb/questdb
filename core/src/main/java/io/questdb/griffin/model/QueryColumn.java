@@ -41,13 +41,8 @@ public class QueryColumn implements Mutable, Sinkable {
     private ExpressionNode ast;
     private int columnType;
     private boolean includeIntoWildcard = true;
-    private int refCount;
 
     public QueryColumn() {
-    }
-
-    public void addRefCount(int inc) {
-        this.refCount += inc;
     }
 
     @Override
@@ -56,7 +51,6 @@ public class QueryColumn implements Mutable, Sinkable {
         ast = null;
         includeIntoWildcard = true;
         columnType = -1;
-        refCount = 0;
     }
 
     @Override
@@ -87,10 +81,6 @@ public class QueryColumn implements Mutable, Sinkable {
         return alias != null ? alias : ast.token;
     }
 
-    public int getRefCount() {
-        return refCount;
-    }
-
     @Override
     public int hashCode() {
         return Objects.hash(alias, ast, includeIntoWildcard);
@@ -117,7 +107,6 @@ public class QueryColumn implements Mutable, Sinkable {
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
         this.columnType = type;
-        this.refCount = 0;
         return this;
     }
 

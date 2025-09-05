@@ -30,6 +30,7 @@ import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -156,6 +157,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+    private IntIntHashMap columnIndexRefCounts = new IntIntHashMap();
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
@@ -483,6 +485,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
+        columnIndexRefCounts.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -939,6 +942,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return this;
     }
 
+    public int getRefCount(int index) {
+        int value = columnIndexRefCounts.get(index);
+        return value == -1 ? 0 : value;
+    }
+
     public ExpressionNode getSampleBy() {
         return sampleBy;
     }
@@ -1081,10 +1089,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void incrementColumnRefCount(CharSequence alias, int refCount) {
-        QueryColumn column = aliasToColumnMap.get(alias);
-        if (column != null) {
-            column.addRefCount(refCount);
+        int key = columnAliasIndexes.get(alias);
+        if (key > -1) {
+            int keyIndex = columnIndexRefCounts.keyIndex(key);
+            if (keyIndex < 0) {
+                refCount += columnIndexRefCounts.valueAt(keyIndex);
+            }
+
+            columnIndexRefCounts.putAt(keyIndex, key, refCount);
         }
+    }
+
+    public void incrementColumnRefCount(int index, int refCount) {
+        int keyIndex = columnIndexRefCounts.keyIndex(index);
+        if (keyIndex < 0) {
+            refCount += columnIndexRefCounts.valueAt(keyIndex);
+        }
+        columnIndexRefCounts.putAt(keyIndex, index, refCount);
     }
 
     public boolean isArtificialStar() {
