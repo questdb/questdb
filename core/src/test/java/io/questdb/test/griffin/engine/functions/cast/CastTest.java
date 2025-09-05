@@ -573,6 +573,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_boolean() as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testBooleanToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -1168,6 +1193,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_byte() as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000076Z\n" +
+                        "1970-01-01T00:00:00.000000102Z\n" +
+                        "1970-01-01T00:00:00.000000027Z\n" +
+                        "1970-01-01T00:00:00.000000087Z\n" +
+                        "1970-01-01T00:00:00.000000079Z\n" +
+                        "1970-01-01T00:00:00.000000079Z\n" +
+                        "1970-01-01T00:00:00.000000122Z\n" +
+                        "1970-01-01T00:00:00.000000083Z\n" +
+                        "1970-01-01T00:00:00.000000090Z\n" +
+                        "1970-01-01T00:00:00.000000076Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testByteToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -1570,6 +1620,11 @@ public class CastTest extends AbstractCairoTest {
                 "inconvertible value: m [CHAR -> TIMESTAMP]"
         );
         assertException(
+                "select 'm'::timestamp_ns - 1",
+                0,
+                "inconvertible value: m [CHAR -> TIMESTAMP_NS]"
+        );
+        assertException(
                 "select 'm'::boolean",
                 0,
                 "inconvertible value: m [CHAR -> BOOLEAN]"
@@ -1784,6 +1839,31 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000006Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testCharToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000007Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000008Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000007Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000006Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n",
                 true,
                 true,
                 false
@@ -2344,6 +2424,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_date(1000,150000,1) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:01:38.083000000Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:06.240000000Z\n" +
+                        "1970-01-01T00:00:53.076000000Z\n" +
+                        "\n" +
+                        "1970-01-01T00:01:03.779000000Z\n" +
+                        "1970-01-01T00:01:23.737000000Z\n" +
+                        "1970-01-01T00:02:23.935000000Z\n" +
+                        "\n" +
+                        "1970-01-01T00:01:15.474000000Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testDateToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -2892,6 +2997,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_double(2)*100000000 as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.080432240Z\n" +
+                        "1970-01-01T00:00:00.008486964Z\n" +
+                        "1970-01-01T00:00:00.008438320Z\n" +
+                        "1970-01-01T00:00:00.065085940Z\n" +
+                        "1970-01-01T00:00:00.079056753Z\n" +
+                        "1970-01-01T00:00:00.022452340Z\n" +
+                        "1970-01-01T00:00:00.034910703Z\n" +
+                        "1970-01-01T00:00:00.076110295Z\n" +
+                        "1970-01-01T00:00:00.042177688Z\n" +
+                        "\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testDoubleToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -3415,6 +3545,31 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testFloatToTimestampNanoViaDouble() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_float(2)*100000000 as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.080432240Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.008486962Z\n" +
+                        "1970-01-01T00:00:00.029919904Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.093446048Z\n" +
+                        "1970-01-01T00:00:00.013123357Z\n" +
+                        "1970-01-01T00:00:00.079056752Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.022452336Z\n",
+                true,
+                true,
+                false
         );
     }
 
@@ -4174,6 +4329,31 @@ public class CastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000032Z\n" +
                         "1970-01-01T00:00:00.000067Z\n" +
                         "1970-01-01T00:00:00.000106Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testIntToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_int(1,150,100) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000019Z\n" +
+                        "1970-01-01T00:00:00.000000072Z\n" +
+                        "1970-01-01T00:00:00.000000090Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.000000007Z\n" +
+                        "1970-01-01T00:00:00.000000017Z\n" +
+                        "1970-01-01T00:00:00.000000065Z\n" +
+                        "1970-01-01T00:00:00.000000032Z\n" +
+                        "1970-01-01T00:00:00.000000067Z\n" +
+                        "1970-01-01T00:00:00.000000106Z\n",
                 true,
                 true,
                 false
@@ -4943,6 +5123,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_long(1,150,100) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000067Z\n" +
+                        "1970-01-01T00:00:00.000000126Z\n" +
+                        "1970-01-01T00:00:00.000000124Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.000000057Z\n" +
+                        "1970-01-01T00:00:00.000000033Z\n" +
+                        "1970-01-01T00:00:00.000000085Z\n" +
+                        "1970-01-01T00:00:00.000000040Z\n" +
+                        "1970-01-01T00:00:00.000000111Z\n" +
+                        "1970-01-01T00:00:00.000000112Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLongToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -5563,6 +5768,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShortToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_short() as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "1969-12-31T23:59:59.999972944Z\n" +
+                        "1970-01-01T00:00:00.000024814Z\n" +
+                        "1969-12-31T23:59:59.999988545Z\n" +
+                        "1969-12-31T23:59:59.999986973Z\n" +
+                        "1969-12-31T23:59:59.999978773Z\n" +
+                        "1969-12-31T23:59:59.999977045Z\n" +
+                        "1969-12-31T23:59:59.999998602Z\n" +
+                        "1970-01-01T00:00:00.000021015Z\n" +
+                        "1970-01-01T00:00:00.000030202Z\n" +
+                        "1969-12-31T23:59:59.999980504Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testShortToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -6073,6 +6303,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123897123Z', '2019-03-24T14:20:33.123551098Z', 'ABC', null) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "2019-03-11T10:20:33.123897123Z\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.123551098Z\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.123551098Z\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "2019-03-11T10:20:33.123897123Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testStrToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -6559,6 +6814,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolToTimestampNano() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_symbol('2019-03-11T10:20:33.123897098Z', '2019-03-24T14:20:33.123551123Z', 'ABC', null) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "2019-03-11T10:20:33.123897098Z\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.123551123Z\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.123551123Z\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "2019-03-11T10:20:33.123897098Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testSymbolToVarchar() throws Exception {
         assertQuery(
                 "a\n",
@@ -6634,6 +6914,551 @@ public class CastTest extends AbstractCairoTest {
                         "221\n",
                 "select cast(a as varchar) x from tt order by x",
                 "create table tt as (select rnd_symbol('1','200','221', null) a from long_sequence(20))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNanoToBoolean() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a boolean)",
+                null,
+                "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2)::timestamp_ns as boolean) from long_sequence(10)",
+                "a\n" +
+                        "true\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "false\n" +
+                        "true\n",
+                true,
+                true,
+                false
+        );
+
+        assertQueryNoLeakCheck(
+                "cast\nfalse\n",
+                "select cast(cast(0L as timestamp_ns) as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQueryNoLeakCheck(
+                "cast\ntrue\n",
+                "select cast(cast(5L as timestamp_ns) as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNanoToStrConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a string)",
+                null,
+                "insert into tab select cast(cast(334l as timestamp_ns) as string) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToBooleanConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a boolean)",
+                null,
+                "insert into tab select cast(cast(1 as timestamp_ns) as boolean) from long_sequence(10)",
+                "a\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToByte() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a byte)",
+                null,
+                "insert into tab select cast(rnd_timestamp(96::timestamp_ns,100::timestamp_ns, 2) as byte) from long_sequence(10)",
+                "a\n" +
+                        "97\n" +
+                        "0\n" +
+                        "100\n" +
+                        "99\n" +
+                        "0\n" +
+                        "97\n" +
+                        "97\n" +
+                        "98\n" +
+                        "0\n" +
+                        "96\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToChar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a char)",
+                null,
+                "insert into tab select cast(rnd_timestamp(34::timestamp_ns,66::timestamp_ns,2) as char) from long_sequence(10)",
+                "a\n" +
+                        "7\n" +
+                        "\n" +
+                        "9\n" +
+                        "0\n" +
+                        "\n" +
+                        "2\n" +
+                        "+\n" +
+                        "4\n" +
+                        "\n" +
+                        "-\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToDate() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a date)",
+                null,
+                "insert into tab select cast(rnd_timestamp(1000000,10000000,2)::timestamp_ns as date) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:05.437Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:05.960Z\n" +
+                        "1970-01-01T00:00:08.779Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:05.513Z\n" +
+                        "1970-01-01T00:00:05.535Z\n" +
+                        "1970-01-01T00:00:09.498Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:02.521Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToDouble() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a double)",
+                null,
+                "insert into tab select cast(rnd_timestamp(1,150,2)::timestamp_ns as double) from long_sequence(10)",
+                "a\n" +
+                        "67000.0\n" +
+                        "null\n" +
+                        "30000.0\n" +
+                        "99000.0\n" +
+                        "null\n" +
+                        "137000.0\n" +
+                        "127000.0\n" +
+                        "58000.0\n" +
+                        "null\n" +
+                        "111000.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToFloat() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a float)",
+                null,
+                "insert into tab select cast(rnd_timestamp(1,150,2)::timestamp_ns as float) from long_sequence(10)",
+                "a\n" +
+                        "67000.0\n" +
+                        "null\n" +
+                        "30000.0\n" +
+                        "99000.0\n" +
+                        "null\n" +
+                        "137000.0\n" +
+                        "127000.0\n" +
+                        "58000.0\n" +
+                        "null\n" +
+                        "111000.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToInt() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a int)",
+                null,
+                "insert into tab select cast(rnd_timestamp(1000000L, 1000000000L, 2)::timestamp as int) from long_sequence(10)",
+                "a\n" +
+                        "985257636\n" +
+                        "null\n" +
+                        "968130026\n" +
+                        "555619965\n" +
+                        "null\n" +
+                        "712286238\n" +
+                        "215755333\n" +
+                        "720037886\n" +
+                        "null\n" +
+                        "129724714\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToLong() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a long)",
+                null,
+                "insert into tab select cast(cast(rnd_long(1,15000000,100) as timestamp_ns) as long) from long_sequence(10)",
+                "a\n" +
+                        "13992367\n" +
+                        "4501476\n" +
+                        "2660374\n" +
+                        "null\n" +
+                        "5864007\n" +
+                        "10281933\n" +
+                        "6977935\n" +
+                        "9100840\n" +
+                        "8600061\n" +
+                        "478012\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToLong256Sort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "0x08\n" +
+                        "0x11\n" +
+                        "0x1e\n" +
+                        "0x34\n" +
+                        "0x3d\n" +
+                        "0x4d\n" +
+                        "0x57\n" +
+                        "0x63\n" +
+                        "0x80\n" +
+                        "0x89\n" +
+                        "0xa7\n" +
+                        "0xc0\n" +
+                        "0xc7\n",
+                "select cast(a as long256) x from tt order by x",
+                "create table tt as (select rnd_timestamp(1::timestamp_ns,200::timestamp_ns,1) a from long_sequence(20))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNsToShort() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a short)",
+                null,
+                "insert into tab select cast(rnd_timestamp(23::timestamp_ns,56::timestamp_ns,2) as short) from long_sequence(10)",
+                "a\n" +
+                        "31\n" +
+                        "0\n" +
+                        "54\n" +
+                        "23\n" +
+                        "0\n" +
+                        "29\n" +
+                        "33\n" +
+                        "24\n" +
+                        "0\n" +
+                        "51\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToStr() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a string)",
+                null,
+                "insert into tab select cast(rnd_timestamp(34,66,100)::timestamp_ns as string) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000055000Z\n" +
+                        "1970-01-01T00:00:00.000048000Z\n" +
+                        "1970-01-01T00:00:00.000055000Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.000045000Z\n" +
+                        "1970-01-01T00:00:00.000036000Z\n" +
+                        "1970-01-01T00:00:00.000034000Z\n" +
+                        "1970-01-01T00:00:00.000058000Z\n" +
+                        "1970-01-01T00:00:00.000045000Z\n" +
+                        "1970-01-01T00:00:00.000061000Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToStrSort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.000008000Z\n" +
+                        "1970-01-01T00:00:00.000017000Z\n" +
+                        "1970-01-01T00:00:00.000030000Z\n" +
+                        "1970-01-01T00:00:00.000052000Z\n" +
+                        "1970-01-01T00:00:00.000061000Z\n" +
+                        "1970-01-01T00:00:00.000077000Z\n" +
+                        "1970-01-01T00:00:00.000087000Z\n" +
+                        "1970-01-01T00:00:00.000099000Z\n" +
+                        "1970-01-01T00:00:00.000128000Z\n" +
+                        "1970-01-01T00:00:00.000137000Z\n" +
+                        "1970-01-01T00:00:00.000167000Z\n" +
+                        "1970-01-01T00:00:00.000192000Z\n" +
+                        "1970-01-01T00:00:00.000199000Z\n",
+                "select cast(a as string) x from tt order by x",
+                "create table tt as (select rnd_timestamp(1,200,1)::timestamp_ns a from long_sequence(20))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNsToSymbol() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a symbol)",
+                null,
+                "insert into tab select cast(rnd_timestamp(1::timestamp_ns,150::timestamp_ns,2) as symbol) from long_sequence(10)",
+                "a\n" +
+                        "67\n" +
+                        "\n" +
+                        "30\n" +
+                        "99\n" +
+                        "\n" +
+                        "137\n" +
+                        "127\n" +
+                        "58\n" +
+                        "\n" +
+                        "111\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToSymbolConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a symbol)",
+                null,
+                "insert into tab select cast(cast(601l as timestamp_ns) as symbol) from long_sequence(10)",
+                "a\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n" +
+                        "601\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToSymbolIndexBehaviour() throws Exception {
+        assertQuery(
+                "b\ta\n" +
+                        "20\t1970-01-01T00:00:00.000000020Z\n" +
+                        "\t\n" +
+                        "11\t1970-01-01T00:00:00.000000011Z\n" +
+                        "13\t1970-01-01T00:00:00.000000013Z\n" +
+                        "\t\n" +
+                        "15\t1970-01-01T00:00:00.000000015Z\n" +
+                        "19\t1970-01-01T00:00:00.000000019Z\n" +
+                        "17\t1970-01-01T00:00:00.000000017Z\n" +
+                        "\t\n" +
+                        "10\t1970-01-01T00:00:00.000000010Z\n" +
+                        "\t\n" +
+                        "17\t1970-01-01T00:00:00.000000017Z\n" +
+                        "\t\n" +
+                        "17\t1970-01-01T00:00:00.000000017Z\n" +
+                        "18\t1970-01-01T00:00:00.000000018Z\n" +
+                        "18\t1970-01-01T00:00:00.000000018Z\n" +
+                        "\t\n" +
+                        "12\t1970-01-01T00:00:00.000000012Z\n" +
+                        "11\t1970-01-01T00:00:00.000000011Z\n" +
+                        "15\t1970-01-01T00:00:00.000000015Z\n",
+                "select cast(a as symbol) b, a from tab",
+                "create table tab as (select rnd_timestamp(10::timestamp_ns, 20::timestamp_ns, 2) a from long_sequence(20))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNsToVarchar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a varchar)",
+                null,
+                "insert into tab select cast(rnd_timestamp(34::timestamp_ns,66::timestamp_ns,100) as varchar) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000055Z\n" +
+                        "1970-01-01T00:00:00.000000048Z\n" +
+                        "1970-01-01T00:00:00.000000055Z\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.000000045Z\n" +
+                        "1970-01-01T00:00:00.000000036Z\n" +
+                        "1970-01-01T00:00:00.000000034Z\n" +
+                        "1970-01-01T00:00:00.000000058Z\n" +
+                        "1970-01-01T00:00:00.000000045Z\n" +
+                        "1970-01-01T00:00:00.000000061Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToVarcharConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a varchar)",
+                null,
+                "insert into tab select cast(cast(334l as timestamp_ns) as varchar) from long_sequence(10)",
+                "a\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n" +
+                        "334\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampNsToVarcharSort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "1970-01-01T00:00:00.000008000Z\n" +
+                        "1970-01-01T00:00:00.000017000Z\n" +
+                        "1970-01-01T00:00:00.000030000Z\n" +
+                        "1970-01-01T00:00:00.000052000Z\n" +
+                        "1970-01-01T00:00:00.000061000Z\n" +
+                        "1970-01-01T00:00:00.000077000Z\n" +
+                        "1970-01-01T00:00:00.000087000Z\n" +
+                        "1970-01-01T00:00:00.000099000Z\n" +
+                        "1970-01-01T00:00:00.000128000Z\n" +
+                        "1970-01-01T00:00:00.000137000Z\n" +
+                        "1970-01-01T00:00:00.000167000Z\n" +
+                        "1970-01-01T00:00:00.000192000Z\n" +
+                        "1970-01-01T00:00:00.000199000Z\n",
+                "select cast(a as varchar) x from tt order by x",
+                "create table tt as (select rnd_timestamp(1,200,1)::timestamp_ns a from long_sequence(20))",
                 null,
                 true,
                 true
@@ -6973,16 +7798,16 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 "insert into tab select cast(cast(334l as timestamp) as string) from long_sequence(10)",
                 "a\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n",
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n",
                 true,
                 true,
                 false
@@ -7627,6 +8452,31 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "2019-03-11T10:20:33.123897Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testVarcharToTimestampNs() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp_ns)",
+                null,
+                "insert into tab select cast(rnd_varchar('2019-03-11T10:20:33.123897123Z', '2019-03-24T14:20:33.123551098Z', 'ABC', null) as timestamp_ns) from long_sequence(10)",
+                "a\n" +
+                        "2019-03-11T10:20:33.123897123Z\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.123551098Z\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.123551098Z\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "2019-03-11T10:20:33.123897123Z\n",
                 true,
                 true,
                 false

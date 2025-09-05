@@ -24,10 +24,19 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.griffin.engine.groupby.YearTimestampSampler;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
+import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -48,6 +57,21 @@ public class YearTimestampSamplerTest {
         testRound(10, "2020-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
         testRound(10, "2024-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
         testRound(10, "2025-12-31T23:59:59.999999Z", "2020-01-01T00:00:00.000000Z");
+
+        testRound(50, "1970-01-01T00:00:00.000000Z", "1970-01-01T00:00:00.000000Z");
+        testRound(50, "2051-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
+        testRound(100, "2024-01-01T00:00:00.000000Z", "1970-01-01T00:00:00.000000Z");
+        testRound(1000, "2025-12-31T23:59:59.999999Z", "1970-01-01T00:00:00.000000Z");
+    }
+
+    @Test
+    public void testRoundMatchesFloorMicros() throws Exception {
+        testRoundMatchesFloor(MicrosTimestampDriver.INSTANCE);
+    }
+
+    @Test
+    public void testRoundMatchesFloorNanos() throws Exception {
+        testRoundMatchesFloor(NanosTimestampDriver.INSTANCE);
     }
 
     @Test
@@ -105,25 +129,65 @@ public class YearTimestampSamplerTest {
     }
 
     private void testRound(int stepYears, String timestamp, String expectedRounded) throws NumericException {
-        final YearTimestampSampler sampler = new YearTimestampSampler(stepYears);
-        sampler.setStart(0);
-        final long ts = TimestampFormatUtils.parseUTCTimestamp(timestamp);
-        Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(expectedRounded), sampler.round(ts));
+        final YearTimestampMicrosSampler samplerUs = new YearTimestampMicrosSampler(stepYears);
+        samplerUs.setStart(0);
+        final long tsUs = MicrosFormatUtils.parseUTCTimestamp(timestamp);
+        final long expectedUs = MicrosFormatUtils.parseUTCTimestamp(expectedRounded);
+        Assert.assertEquals(expectedUs, samplerUs.round(tsUs));
+
+        final YearTimestampNanosSampler samplerNs = new YearTimestampNanosSampler(stepYears);
+        samplerNs.setStart(0);
+        final long tsNs = tsUs * Nanos.MICRO_NANOS;
+        Assert.assertEquals(expectedUs * Nanos.MICRO_NANOS, samplerNs.round(tsNs));
     }
 
-    private void testSampler(int stepSize, String expected) throws NumericException {
+    private void testRoundMatchesFloor(TimestampDriver timestampDriver) throws NumericException, SqlException {
+        final String[] src = new String[]{
+                "1967-12-31T01:11:42.123456789Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-05T00:00:00.000000000Z",
+                "2013-12-31T00:00:00.000000000Z",
+                "2014-01-01T01:12:12.000000001Z",
+                "2014-02-12T12:12:12.123456789Z",
+                "2025-09-04T10:45:01.987654321Z",
+        };
+
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'y', 0);
+        sampler.setStart(0);
+
+        final TimestampDriver.TimestampFloorMethod floorMethod = timestampDriver.getTimestampFloorMethod("year");
+        final TimestampDriver.TimestampFloorWithStrideMethod floorWithStrideMethod = timestampDriver.getTimestampFloorWithStrideMethod("year");
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorWithOffsetMethod = timestampDriver.getTimestampFloorWithOffsetMethod('y');
+        for (int i = 0; i < src.length; i++) {
+            final long ts = timestampDriver.parseFloorLiteral(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(floorMethod.floor(ts), roundedTs);
+            Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
+            Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
+        }
+    }
+
+    private void testSampler(int stepYears, String expected) throws NumericException {
+        testSampler(stepYears, expected, ColumnType.TIMESTAMP_MICRO);
+        testSampler(stepYears, expected, ColumnType.TIMESTAMP_NANO);
+    }
+
+    private void testSampler(int stepYears, String expected, int timestampType) throws NumericException {
         StringSink sink = new StringSink();
-        YearTimestampSampler sampler = new YearTimestampSampler(4);
-        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+        TimestampSampler sampler = ColumnType.isTimestampMicro(timestampType)
+                ? new YearTimestampMicrosSampler(4)
+                : new YearTimestampNanosSampler(4);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        long timestamp = driver.parseFloorLiteral("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
         for (int i = 0; i < 20; i++) {
-            long ts = sampler.nextTimestamp(timestamp, stepSize);
-            sink.putISODate(ts).put('\n');
-            if (stepSize == 1) {
+            long ts = sampler.nextTimestamp(timestamp, stepYears);
+            sink.putISODate(driver, ts).put('\n');
+            if (stepYears == 1) {
                 Assert.assertEquals(timestamp, sampler.previousTimestamp(ts));
             }
             timestamp = ts;
         }
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEquals(AbstractCairoTest.replaceTimestampSuffix(expected, ColumnType.nameOf(timestampType)), sink);
     }
 }

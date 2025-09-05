@@ -41,7 +41,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -127,7 +127,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // today is deterministic
                 final String activePartitionName = "2022-10-19";
-                final AtomicLong timestampNano = new AtomicLong(TimestampFormatUtils.parseTimestamp(
+                final AtomicLong timestampNano = new AtomicLong(MicrosFormatUtils.parseTimestamp(
                         activePartitionName + "T00:00:00.000000Z") * 1000L
                 );
 

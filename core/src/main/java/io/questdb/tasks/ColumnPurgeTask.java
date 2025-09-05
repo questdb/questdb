@@ -24,7 +24,9 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
@@ -42,6 +44,8 @@ public class ColumnPurgeTask implements Mutable {
     private int partitionBy;
     private int tableId;
     private TableToken tableToken;
+    private TimestampDriver timestampDriver;
+    private int timestampType;
     private long truncateVersion;
     private long updateTxn;
 
@@ -62,12 +66,14 @@ public class ColumnPurgeTask implements Mutable {
         this.tableToken = inTask.tableToken;
         this.columnName = inTask.columnName;
         this.tableId = inTask.tableId;
+        this.timestampType = inTask.timestampType;
         this.partitionBy = inTask.partitionBy;
         this.updateTxn = inTask.updateTxn;
         this.columnType = inTask.columnType;
         this.truncateVersion = inTask.truncateVersion;
         this.updatedColumnInfo.clear();
         this.updatedColumnInfo.add(inTask.updatedColumnInfo);
+        this.timestampDriver = inTask.timestampDriver;
     }
 
     public CharSequence getColumnName() {
@@ -88,6 +94,14 @@ public class ColumnPurgeTask implements Mutable {
 
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    public TimestampDriver getTimestampTypeDriver() {
+        return timestampDriver;
     }
 
     public long getTruncateVersion() {
@@ -113,6 +127,7 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             long truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn
     ) {
@@ -120,10 +135,12 @@ public class ColumnPurgeTask implements Mutable {
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
+        this.timestampType = timestampType;
         this.partitionBy = partitionBy;
         this.updateTxn = updateTxn;
         this.truncateVersion = truncateVersion;
         this.updatedColumnInfo.clear();
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     public void of(
@@ -133,11 +150,12 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             int truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions
     ) {
-        of(tableToken, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        of(tableToken, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
     }
 
@@ -148,13 +166,14 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             int truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions,
             int columnVersionsLo,
             int columnVersionsHi
     ) {
-        of(tableToken, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        of(tableToken, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
 }

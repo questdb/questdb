@@ -401,6 +401,10 @@ public final class Dates {
         }
     }
 
+    public static long parseOffset(CharSequence in) {
+        return parseOffset(in, 0, in.length());
+    }
+
     public static long parseOffset(CharSequence in, int lo, int hi) {
         int p = lo;
         int state = STATE_INIT;

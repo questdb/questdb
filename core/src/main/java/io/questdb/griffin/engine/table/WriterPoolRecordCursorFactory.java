@@ -169,7 +169,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(TABLE_NAME_COLUMN_INDEX, new TableColumnMetadata("table_name", ColumnType.STRING))
                 .add(OWNER_THREAD_COLUMN_INDEX, new TableColumnMetadata("owner_thread_id", ColumnType.LONG))
-                .add(LAST_ACCESS_TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("last_access_timestamp", ColumnType.TIMESTAMP))
+                .add(LAST_ACCESS_TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("last_access_timestamp", ColumnType.TIMESTAMP_MICRO))
                 .add(OWNERSHIP_REASON_COLUMN_INDEX, new TableColumnMetadata("ownership_reason", ColumnType.STRING));
         METADATA = metadata;
     }

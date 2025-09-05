@@ -74,7 +74,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         int type0 = arg0.getType();
         // once we support more than the DOUBLE array type, use
         // short commonElemType = (short) type0;
-        short commonElemType = ColumnType.DOUBLE;
+        int commonElemType = ColumnType.DOUBLE;
         if (!ColumnType.isArray(type0)) {
             for (int i = 1; i < outerDimLen; i++) {
                 Function argI = args.getQuick(i);
@@ -175,7 +175,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 @NotNull CairoConfiguration configuration,
                 @NotNull ObjList<Function> args,
                 @NotNull IntList argPositions,
-                short commonElemType,
+                int commonElemType,
                 int nestedNDims
         ) {
             try {

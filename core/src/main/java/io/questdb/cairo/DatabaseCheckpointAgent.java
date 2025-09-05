@@ -57,8 +57,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -74,6 +73,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
@@ -328,7 +328,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
                                         }
                                         scoreboardTxns.add(txn);
-                                        scoreboardTxns.add(reader.getMetadata().getPartitionBy());
+                                        scoreboardTxns.add(
+                                                Numbers.encodeLowHighInts(
+                                                        reader.getMetadata().getPartitionBy(),
+                                                        reader.getMetadata().getTimestampType()
+                                                )
+                                        );
                                         scoreboards.add(scoreboard);
                                     }
 
@@ -420,12 +425,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             if (tableMetadata == null) {
                 tableMetadata = new TableReaderMetadata(configuration);
             }
-            tableMetadata.load(tablePath.concat(TableUtils.META_FILE_NAME).$());
+            tableMetadata.loadMetadata(tablePath.concat(TableUtils.META_FILE_NAME).$());
 
             if (txWriter == null) {
                 txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
             }
-            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getPartitionBy());
+            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
             txWriter.unsafeLoadAll();
 
             if (columnVersionReader == null) {
@@ -452,7 +457,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 // Remove non-attached partitions
                 LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
                 partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
-                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(
+                        tableMetadata.getTimestampType(),
+                        tableMetadata.getPartitionBy()
+                );
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
         } finally {
@@ -467,8 +475,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
 
             if (schedulePartitionPurge && scoreboard.isOutdated(txn)) {
-                int partitionBy = (int) scoreboardTxns.getQuick(2 * i + 1);
-                TableUtils.schedulePurgeO3Partitions(messageBus, scoreboard.getTableToken(), partitionBy);
+                long raw = scoreboardTxns.getQuick(2 * i + 1);
+                int partitionBy = Numbers.decodeLowInt(raw);
+                int timestampType = Numbers.decodeHighInt(raw);
+                TableUtils.schedulePurgeO3Partitions(messageBus, scoreboard.getTableToken(), timestampType, partitionBy);
             }
         }
         scoreboardTxns.clear();
@@ -496,7 +506,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 } else {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
-                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
+                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
                 if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
                     return;
                 }

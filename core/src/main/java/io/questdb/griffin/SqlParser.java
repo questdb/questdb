@@ -25,7 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -43,7 +45,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -62,9 +63,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -219,7 +220,7 @@ public class SqlParser {
             throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
-        return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
+        return CommonUtils.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
@@ -367,6 +368,8 @@ public class SqlParser {
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         switch (token.charAt(0)) {
+            case 'n':
+                // nanos
             case 'U':
                 // micros
             case 'T':
@@ -922,8 +925,8 @@ public class SqlParser {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
-                every = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                every = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
                 tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
@@ -938,18 +941,24 @@ public class SqlParser {
                 }
             }
 
+            // Timer uses microsecond precision for start time calculation
             if (isPeriodKeyword(tok)) {
                 // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
+                final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                        MicrosTimestampDriver.INSTANCE,
+                        length,
+                        lengthUnit,
+                        lexer.lastTokenPosition()
+                );
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
-                TimeZoneRules tzRules = null;
+                TimeZoneRules tzRulesMicros = null;
                 String tz = null;
                 if (isTimeKeyword(tok)) {
                     expectTok(lexer, "zone");
@@ -959,9 +968,9 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
-                    } catch (NumericException e) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                    } catch (CairoException e) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                     }
                     tok = tok(lexer, "'delay' or ')'");
                 }
@@ -970,8 +979,8 @@ public class SqlParser {
                 char delayUnit = 0;
                 if (isDelayKeyword(tok)) {
                     tok = tok(lexer, "DELAY interval");
-                    delay = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                     tok = tok(lexer, "')'");
                 }
@@ -981,11 +990,11 @@ public class SqlParser {
                 }
 
                 // Period timer start is at the boundary of the current period.
-                final long now = configuration.getMicrosecondClock().getTicks();
-                final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
-                final long start = periodSampler.round(nowLocal);
+                final long nowMicros = configuration.getMicrosecondClock().getTicks();
+                final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+                final long startUs = periodSamplerMicros.round(nowLocalMicros);
 
-                mvOpBuilder.setTimer(tz, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
                 mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {
@@ -994,12 +1003,12 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
                 }
                 // Use the current time as the start timestamp if it wasn't specified.
-                long start = configuration.getMicrosecondClock().getTicks();
+                long startUs = configuration.getMicrosecondClock().getTicks();
                 String tz = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
-                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                        startUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(GenericLexer.unquote(tok));
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }
@@ -1012,12 +1021,12 @@ public class SqlParser {
                         tok = tok(lexer, "'as'");
                     }
                 }
-                mvOpBuilder.setTimer(tz, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
             } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // REFRESH EVERY <interval> AS
                 // Don't forget to set timer params.
-                final long start = configuration.getMicrosecondClock().getTicks();
-                mvOpBuilder.setTimer(null, start, every, everyUnit);
+                final long startUs = configuration.getMicrosecondClock().getTicks();
+                mvOpBuilder.setTimer(null, startUs, every, everyUnit);
             }
         }
         mvOpBuilder.setRefreshType(refreshType);
@@ -1267,7 +1276,7 @@ public class SqlParser {
                     throw SqlException.position(timestamp.position)
                             .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
                 }
-                if (model.getColumnType() != ColumnType.TIMESTAMP) {
+                if (!ColumnType.isTimestamp(model.getColumnType())) {
                     throw SqlException
                             .position(timestamp.position)
                             .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
@@ -3019,8 +3028,8 @@ public class SqlParser {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                        long timeUnit = parseTimeUnit(lexer);
-                                        if (timeUnit != -1) {
+                                        char timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != 0) {
                                             winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
@@ -3063,8 +3072,8 @@ public class SqlParser {
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                            long timeUnit = parseTimeUnit(lexer);
-                                            if (timeUnit != -1) {
+                                            char timeUnit = parseTimeUnit(lexer);
+                                            if (timeUnit != 0) {
                                                 winCol.setRowsHiExprTimeUnit(timeUnit);
                                             }
                                         }
@@ -3103,8 +3112,8 @@ public class SqlParser {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                        long timeUnit = parseTimeUnit(lexer);
-                                        if (timeUnit != -1) {
+                                        char timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != 0) {
                                             winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
@@ -3331,11 +3340,13 @@ public class SqlParser {
         model.setTableNameExpr(tableNameExpr);
     }
 
-    private long parseTimeUnit(GenericLexer lexer) throws SqlException {
+    private char parseTimeUnit(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "'preceding' or time unit");
-        long unit = -1;
-        if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
-            unit = WindowColumn.ITME_UNIT_MICROSECOND;
+        char unit = 0;
+        if (isNanosecondsKeyword(tok) || isNanosecondKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_NANOSECOND;
+        } else if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_MICROSECOND;
         } else if (isMillisecondKeyword(tok) || isMillisecondsKeyword(tok)) {
             unit = WindowColumn.TIME_UNIT_MILLISECOND;
         } else if (isSecondKeyword(tok) || isSecondsKeyword(tok)) {
@@ -3347,7 +3358,7 @@ public class SqlParser {
         } else if (isDayKeyword(tok) || isDaysKeyword(tok)) {
             unit = WindowColumn.TIME_UNIT_DAY;
         }
-        if (unit == -1) {
+        if (unit == 0) {
             lexer.unparseLast();
         }
         return unit;
@@ -3899,23 +3910,23 @@ public class SqlParser {
             }
             throw SqlException.position(typePosition).put("column type is expected here");
         }
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+        final int columnType = SqlUtil.toPersistedType(tok, typePosition);
         final int typeTagPosition = lexer.lastTokenPosition();
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
-        if (typeTag == ColumnType.DOUBLE) {
+        if (ColumnType.tagOf(columnType) == ColumnType.DOUBLE) {
             CharSequence next = optTok(lexer);
             if (next != null && !isPrecisionKeyword(next)) {
                 lexer.unparseLast();
             }
         }
 
-        int nDims = SqlUtil.parseArrayDimensionality(lexer, typeTag, typeTagPosition);
+        int nDims = SqlUtil.parseArrayDimensionality(lexer, columnType, typeTagPosition);
         if (nDims > 0) {
-            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+            if (!ColumnType.isSupportedArrayElementType(columnType)) {
                 throw SqlException.position(typePosition)
                         .put("unsupported array element type [type=")
-                        .put(ColumnType.nameOf(typeTag))
+                        .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
             if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
@@ -3924,14 +3935,16 @@ public class SqlParser {
                         .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
                         .put(']');
             }
-            return ColumnType.encodeArrayType(typeTag, nDims);
-        } else if (typeTag == ColumnType.GEOHASH) {
+            return ColumnType.encodeArrayType(columnType, nDims);
+        }
+
+        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
-        return typeTag;
+        return columnType;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

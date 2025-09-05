@@ -54,9 +54,10 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -112,8 +113,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
+    protected TestTimestampType timestampType = TestTimestampType.MICRO;
     protected boolean useLegacyStringDefault = true;
-
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
         @Override
         public boolean getAutoCreateNewColumns() {
@@ -142,6 +143,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public double getCommitIntervalFraction() {
             return commitIntervalFraction;
+        }
+
+        @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return timestampType.getTimestampType();
         }
 
         @Override
@@ -175,7 +181,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
+        public Clock getMicrosecondClock() {
             return testMicrosClock;
         }
 

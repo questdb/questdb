@@ -25,9 +25,9 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -95,7 +95,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactions() throws Exception {
         assertMemoryLeak(() -> {
-            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2023-11-22T19:00:53.950468Z"));
             execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
@@ -116,7 +116,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactionsLastLine() throws Exception {
         assertMemoryLeak(() -> {
-            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2023-11-22T19:00:53.950468Z"));
             execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
@@ -135,7 +135,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactionsV2() throws Exception {
         assertMemoryLeak(() -> {
-            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2023-11-22T19:00:53.950468Z"));
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
             execute("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");

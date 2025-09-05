@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -33,7 +34,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -53,14 +53,15 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(0).getType()), ColumnType.TIMESTAMP_MICRO);
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NULL) {
-                return TimestampConstant.NULL;
+                return ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
             }
-            return new TimestampSequenceFunction(start, args.getQuick(1));
+            return new TimestampSequenceFunction(start, args.getQuick(1), timestampType);
         } else {
-            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1));
+            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), timestampType);
         }
     }
 
@@ -69,15 +70,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         private final long start;
         private long next;
 
-        public TimestampSequenceFunction(long start, Function longIncrement) {
+        public TimestampSequenceFunction(long start, Function longIncrement, int timestampType) {
+            super(timestampType);
             this.start = start;
             this.next = start;
             this.longIncrement = longIncrement;
-        }
-
-        @Override
-        public boolean shouldMemoize() {
-            return true;
         }
 
         @Override
@@ -95,6 +92,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
 
@@ -119,7 +121,8 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         private final Function start;
         private long next;
 
-        public TimestampSequenceVariableFunction(Function start, Function longIncrement) {
+        public TimestampSequenceVariableFunction(Function start, Function longIncrement, int timestampType) {
+            super(timestampType);
             this.start = start;
             this.next = 0;
             this.longIncrement = longIncrement;

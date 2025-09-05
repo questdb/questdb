@@ -113,6 +113,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
+    public int getTimestampType() {
+        return metadata.getTimestampType();
+    }
+
+    @Override
     public void removeColumn(@NotNull CharSequence columnName) {
         metadata.removeColumn(columnName);
     }

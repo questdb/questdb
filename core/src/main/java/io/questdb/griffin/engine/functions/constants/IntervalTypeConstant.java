@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
@@ -32,7 +33,13 @@ import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
 public class IntervalTypeConstant extends IntervalFunction implements TypeConstant, FunctionExtension {
-    public static final IntervalTypeConstant INSTANCE = new IntervalTypeConstant();
+    public static final IntervalTypeConstant RAW_INSTANCE = new IntervalTypeConstant(ColumnType.INTERVAL_RAW);
+    public static final IntervalTypeConstant TIMESTAMP_MICRO_INSTANCE = new IntervalTypeConstant(ColumnType.INTERVAL_TIMESTAMP_MICRO);
+    public static final IntervalTypeConstant TIMESTAMP_NANO_INSTANCE = new IntervalTypeConstant(ColumnType.INTERVAL_TIMESTAMP_NANO);
+
+    protected IntervalTypeConstant(int intervalType) {
+        super(intervalType);
+    }
 
     @Override
     public FunctionExtension extendedOps() {

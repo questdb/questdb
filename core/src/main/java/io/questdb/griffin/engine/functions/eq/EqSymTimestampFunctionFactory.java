@@ -25,17 +25,17 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -62,17 +62,20 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position, ObjList<Function> args,
-            IntList argPositions, CairoConfiguration configuration,
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
         Function symbolFunc = args.getQuick(0);
         Function timestampFunc = args.getQuick(1);
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(timestampFunc.getType()));
 
         if (symbolFunc.isConstant()) {
             CharSequence value = symbolFunc.getSymbol(null);
-            long symbolConstant = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value) : Numbers.LONG_NULL;
+            long symbolConstant = driver.implicitCast(value, ColumnType.SYMBOL);
 
             if (timestampFunc.isConstant()) {
                 return symbolConstant == timestampFunc.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
@@ -83,14 +86,14 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
 
         if (timestampFunc.isRuntimeConstant() && !symbolFunc.isNonDeterministic()) {
-            return new VarSymbolRuntimeConstTimestampFunction(symbolFunc, timestampFunc);
+            return new VarSymbolRuntimeConstTimestampFunction(symbolFunc, timestampFunc, driver);
         }
 
         if (timestampFunc.isConstant() && !symbolFunc.isNonDeterministic()) {
-            return new VarSymbolConstTimestampFunction(symbolFunc, timestampFunc, timestampFunc.getTimestamp(null));
+            return new VarSymbolConstTimestampFunction(symbolFunc, timestampFunc, timestampFunc.getTimestamp(null), driver);
         }
 
-        return new VarSymbolVarTimestampFunction(symbolFunc, timestampFunc);
+        return new VarSymbolVarTimestampFunction(symbolFunc, timestampFunc, driver);
     }
 
     private static class ConstSymbolVarTimestampFunction extends AbstractEqBinaryFunction {
@@ -109,16 +112,18 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class VarSymbolConstTimestampFunction extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
         private final BitSet hits;
         private final BitSet misses;
         private final long timestampConstant;
 
 
-        public VarSymbolConstTimestampFunction(Function symbolFunc, Function timestampFunc, long timestampConstant) {
+        public VarSymbolConstTimestampFunction(Function symbolFunc, Function timestampFunc, long timestampConstant, TimestampDriver driver) {
             super(symbolFunc, timestampFunc);
             this.timestampConstant = timestampConstant;
             this.hits = new BitSet();
             this.misses = new BitSet();
+            this.driver = driver;
         }
 
         @Override
@@ -130,9 +135,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-
             int id = left.getInt(rec);
-
             if (id >= 0 && id < BITSET_OPTIMISATION_THRESHOLD) {
                 if (hits.get(id)) {
                     return true;
@@ -143,10 +146,9 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
                 }
             }
 
-
-            long symbol = left.getTimestamp(rec);
+            final CharSequence value = left.getSymbol(rec);
+            long symbol = driver.implicitCast(value, ColumnType.SYMBOL);
             boolean result = negated == (symbol != timestampConstant);
-
             if (id >= 0 && id < BITSET_OPTIMISATION_THRESHOLD) {
                 if (result) {
                     hits.set(id);
@@ -165,10 +167,12 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class VarSymbolRuntimeConstTimestampFunction extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
         private VarSymbolConstTimestampFunction innerFunc;
 
-        public VarSymbolRuntimeConstTimestampFunction(Function symbolFunc, Function timestampFunc) {
+        public VarSymbolRuntimeConstTimestampFunction(Function symbolFunc, Function timestampFunc, TimestampDriver driver) {
             super(symbolFunc, timestampFunc);
+            this.driver = driver;
         }
 
         @Override
@@ -181,19 +185,22 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             super.init(symbolTableSource, executionContext);
 
             long timestampConstant = right.getTimestamp(null);
-            this.innerFunc = new VarSymbolConstTimestampFunction(left, right, timestampConstant);
+            this.innerFunc = new VarSymbolConstTimestampFunction(left, right, timestampConstant, driver);
         }
     }
 
     private static class VarSymbolVarTimestampFunction extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
 
-        public VarSymbolVarTimestampFunction(Function symbolFunc, Function timestampFunc) {
+        public VarSymbolVarTimestampFunction(Function symbolFunc, Function timestampFunc, TimestampDriver driver) {
             super(symbolFunc, timestampFunc);
+            this.driver = driver;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long symbol = left.getTimestamp(rec);
+            final CharSequence value = left.getSymbol(rec);
+            long symbol = driver.implicitCast(value, ColumnType.SYMBOL);
             long timestamp = right.getTimestamp(rec);
             return negated == (symbol != timestamp);
         }

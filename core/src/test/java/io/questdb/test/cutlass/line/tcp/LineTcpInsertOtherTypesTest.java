@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -858,6 +859,87 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "1630933921000m"
                 }
         );
+    }
+
+    @Test
+    public void testInsertTimestampNS() throws Exception {
+        timestampType = TestTimestampType.NANO;
+        assertTimestamp(
+                "value\ttimestamp\n" +
+                        "0.0\t2021-09-06T13:12:01.000000000Z\n" +
+                        "1.0\t2021-09-06T13:12:01.000000000Z\n" +
+                        "2.0\t2021-09-06T13:12:01.000000000Z\n" +
+                        "3.0\t2021-09-06T13:12:01.000000000Z\n",
+                new CharSequence[]{
+                        "1630933921000000000",
+                        "1630933921000000000n",
+                        "1630933921000000t",
+                        "1630933921000m"
+                }
+        );
+        timestampType = TestTimestampType.MICRO;
+    }
+
+    @Test
+    public void testInsertTimestampNSTableDoesNotExist() throws Exception {
+        timestampType = TestTimestampType.NANO;
+        assertTypeNoTable(
+                "value\ttimestamp\n" +
+                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:01.000000000Z\n" +
+                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:02.000000000Z\n" +
+                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:03.000000000Z\n",
+                new CharSequence[]{
+                        "1630933921000000t",
+                        "1630933921000000000n",
+                        "1630933921000m"
+                },
+                false
+        );
+        timestampType = TestTimestampType.MICRO;
+    }
+
+    @Test
+    public void testInsertTimestampNSTableExists() throws Exception {
+        timestampType = TestTimestampType.NANO;
+        assertType(
+                ColumnType.TIMESTAMP_NANO,
+                "value\ttimestamp\n" +
+                        "1970-01-19T21:02:13.921000000Z\t1970-01-01T00:00:01.000000Z\n" +
+                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:03.000000Z\n" +
+                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:04.000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:10.000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:11.000000Z\n" +
+                        "\t1970-01-01T00:00:12.000000Z\n" +
+                        "\t1970-01-01T00:00:13.000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:14.000000Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:15.000000Z\n" +
+                        "2262-04-11T23:47:16.854775807Z\t1970-01-01T00:00:16.000000Z\n",
+                new CharSequence[]{
+                        "1630933921000000i", // valid
+                        "1630933921000000t", // valid
+                        "1630933921000000000n", // valid
+                        "1630933921000m", // valid
+                        "1630933921000", // discarded bad type double
+                        "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
+                        "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
+                        "\"1970-01-01T00:00:05.000000Z", // discarded bad string value
+                        "1970-01-01T00:00:05.000000Z\"", // discarded bad string value
+                        "0i", // valid
+                        "0t", // valid
+                        "-9223372036854775808i", // valid NaN, same as null
+                        "", // valid null
+                        "-0i", // valid
+                        "-0t", // valid
+                        "9223372036854775807i", // valid
+                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "t", // discarded bad type boolean
+                },
+                false
+        );
+        timestampType = TestTimestampType.MICRO;
     }
 
     @Test
