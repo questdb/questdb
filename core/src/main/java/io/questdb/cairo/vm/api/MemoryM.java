@@ -91,6 +91,15 @@ public interface MemoryM extends Closeable {
         of(ff, name, extendSegmentSize, size, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
+    /**
+     * Maps file based on its size as reported by the file system. This method must not be used by readers that
+     * will map files concurrently with writes performed by other threads. File length is not a reliable way to determine
+     * the size of the file contents.
+     *
+     * @param ff        the facade
+     * @param name      file name
+     * @param memoryTag the memory tag to track leaks if memory is not released or memory consumption
+     */
     default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         of(ff, name, ff.getPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
     }

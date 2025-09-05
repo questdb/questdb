@@ -128,7 +128,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     ff,
                     name,
                     ff.getMapPageSize(),
-                    BitmapIndexUtils.getKeyEntryOffset(this.keyCount),
+                    BitmapIndexUtils.getKeyEntryOffset(0),
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
                     -1
