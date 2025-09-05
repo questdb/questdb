@@ -352,9 +352,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
+    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
-    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -5221,33 +5221,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
-        @Override
-        public int getBlocks() {
-            return pgSelectCacheBlockCount;
-        }
-
-        @Override
-        public LongGauge getCachedGauge() {
-            return metrics.pgWireMetrics().cachedSelectsGauge();
-        }
-
-        @Override
-        public Counter getHiCounter() {
-            return metrics.pgWireMetrics().selectCacheHitCounter();
-        }
-
-        @Override
-        public Counter getMissCounter() {
-            return metrics.pgWireMetrics().selectCacheMissCounter();
-        }
-
-        @Override
-        public int getRows() {
-            return pgSelectCacheRowCount;
-        }
-    }
-
     private class PropPGConfiguration implements PGConfiguration {
 
         @Override
@@ -5553,6 +5526,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean readOnlySecurityContext() {
             return pgReadOnlySecurityContext || isReadOnlyInstance;
+        }
+    }
+
+    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+        @Override
+        public int getBlocks() {
+            return pgSelectCacheBlockCount;
+        }
+
+        @Override
+        public LongGauge getCachedGauge() {
+            return metrics.pgWireMetrics().cachedSelectsGauge();
+        }
+
+        @Override
+        public Counter getHiCounter() {
+            return metrics.pgWireMetrics().selectCacheHitCounter();
+        }
+
+        @Override
+        public Counter getMissCounter() {
+            return metrics.pgWireMetrics().selectCacheMissCounter();
+        }
+
+        @Override
+        public int getRows() {
+            return pgSelectCacheRowCount;
         }
     }
 
