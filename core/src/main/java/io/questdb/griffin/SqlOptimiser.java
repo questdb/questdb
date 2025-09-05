@@ -83,6 +83,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
@@ -166,6 +167,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
+    private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -1322,10 +1324,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         collapseStackedChooseModels(model.getUnionModel());
-    }
-
-    private void collectExprRefCount(QueryModel model) {
-
     }
 
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -6965,12 +6963,193 @@ public class SqlOptimiser implements Mutable {
         return outerModel;
     }
 
+    static boolean isInSubQueryModel(CharSequence alias, QueryModel model) {
+        if (model == null) {
+            return false;
+        }
+        return model.getColumnAliasIndex(alias) > 0;
+    }
+
     @SuppressWarnings("unused")
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
 
     @SuppressWarnings("unused")
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
+    }
+
+    void collectColumnRefCount(QueryModel parent, QueryModel queryModel) {
+        if (queryModel == null) {
+            return;
+        }
+        if (queryModel.getSelectModelType() != SELECT_MODEL_CHOOSE && queryModel.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
+            collectColumnRefCountRecursive(parent, queryModel);
+            return;
+        }
+        ObjList<QueryColumn> columns = queryModel.getColumns();
+        if (parent == null) {
+            // init ref count to 1 for top queryModel
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                columns.getQuick(i).addRefCount(1);
+            }
+        }
+
+        tempExprs.clear();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            tempExprs.add(columns.getQuick(i).getAst());
+        }
+        if (queryModel.getOrderBy() != null) {
+            tempExprs.addAll(queryModel.getOrderBy());
+        }
+        if (queryModel.getWhereClause() != null) {
+            tempExprs.add(queryModel.getWhereClause());
+        }
+        if (queryModel.getLatestBy() != null) {
+            tempExprs.addAll(queryModel.getLatestBy());
+        }
+        QueryModel child = queryModel.getNestedModel();
+
+        for (int i = 0, n = tempExprs.size(); i < n; i++) {
+            final ExpressionNode ast = tempExprs.getQuick(i);
+            if (ast != null) {
+                sqlNodeStack.clear();
+                sqlNodeStack.push(ast);
+                while (!sqlNodeStack.isEmpty()) {
+                    final ExpressionNode node = sqlNodeStack.pop();
+                    if (node.type == LITERAL) {
+                        final CharSequence columnRef = node.token;
+                        final int dot = Chars.indexOfLastUnquoted(columnRef, '.');
+                        if (dot == -1) {
+                            if (child == null || !child.getAliasToColumnMap().contains(columnRef)) {
+                                queryModel.incrementColumnRefCount(columnRef, 1);
+                            }
+                        } else {
+                            final CharSequence tableName = columnRef.subSequence(0, dot);
+                            final CharSequence columnName = columnRef.subSequence(dot + 1, columnRef.length());
+                            if (queryModel.getTableNameExpr() != null && Chars.equalsIgnoreCase(tableName, queryModel.getTableNameExpr().token)) {
+                                if (child == null || !child.getAliasToColumnMap().contains(columnName)) {
+                                    queryModel.incrementColumnRefCount(columnRef, 1);
+                                }
+                            }
+                        }
+                    } else if (node.type == FUNCTION) {
+                        if (node.paramCount < 3) {
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            if (node.lhs != null) {
+                                sqlNodeStack.push(node.lhs);
+                            }
+                        } else {
+                            for (int k = 0, m = node.paramCount; k < m; k++) {
+                                sqlNodeStack.push(node.args.getQuick(k));
+                            }
+                        }
+                    } else {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        if (node.lhs != null) {
+                            sqlNodeStack.push(node.lhs);
+                        }
+                    }
+                }
+            }
+        }
+
+        tempExprs.clear();
+        if (parent != null) {
+            columns = parent.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                tempExprs.add(columns.getQuick(i).getAst());
+            }
+            int columnsSize = columns.size();
+            // isRecordNotMaterized flag indicates whether the generated RecordFactory will materialize records.
+            // For materialized records, operations like ORDER BY/WHERE won't call the child queryModel's calculations.
+            // For GroupBy, window functions, and joins, materialization depends on specific scenarios.
+            boolean isRecordNotMaterized = parent.getSelectModelType() == SELECT_MODEL_VIRTUAL || parent.getSelectModelType() == SELECT_MODEL_CHOOSE;
+            if (isRecordNotMaterized) {
+                if (queryModel.getOrderBy() != null) {
+                    tempExprs.addAll(parent.getOrderBy());
+                }
+                if (queryModel.getWhereClause() != null) {
+                    tempExprs.add(parent.getWhereClause());
+                }
+                if (queryModel.getLatestBy() != null) {
+                    tempExprs.addAll(parent.getLatestBy());
+                }
+            }
+
+            for (int i = 0, n = tempExprs.size(); i < n; i++) {
+                final ExpressionNode ast = tempExprs.getQuick(i);
+                int refCount = 1;
+                if (i < columnsSize && parent.getSelectModelType() == SELECT_MODEL_CHOOSE) {
+                    refCount = columns.getQuick(i).getRefCount();
+                }
+
+                if (ast != null) {
+                    sqlNodeStack.clear();
+                    sqlNodeStack.push(ast);
+                    while (!sqlNodeStack.isEmpty()) {
+                        final ExpressionNode node = sqlNodeStack.pop();
+                        if (node.type == LITERAL) {
+                            final CharSequence columnRef = node.token;
+                            final int dot = Chars.indexOfLastUnquoted(columnRef, '.');
+                            if (dot == -1) {
+                                queryModel.incrementColumnRefCount(columnRef, refCount);
+                            } else {
+                                final CharSequence tableName = columnRef.subSequence(0, dot);
+                                final CharSequence columnName = columnRef.subSequence(dot + 1, columnRef.length());
+                                if (queryModel.getTableNameExpr() != null && Chars.equalsIgnoreCase(tableName, queryModel.getTableNameExpr().token)) {
+                                    queryModel.incrementColumnRefCount(columnRef, refCount);
+                                }
+                            }
+                        } else if (node.type == FUNCTION) {
+                            if (node.paramCount < 3) {
+                                if (node.rhs != null) {
+                                    sqlNodeStack.push(node.rhs);
+                                }
+                                if (node.lhs != null) {
+                                    sqlNodeStack.push(node.lhs);
+                                }
+                            } else {
+                                for (int k = 0, m = node.paramCount; k < m; k++) {
+                                    sqlNodeStack.push(node.args.getQuick(k));
+                                }
+                            }
+                        } else {
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            if (node.lhs != null) {
+                                sqlNodeStack.push(node.lhs);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        collectColumnRefCountRecursive(parent, queryModel);
+    }
+
+    void collectColumnRefCountRecursive(QueryModel parent, QueryModel queryModel) {
+        QueryModel parentModel = queryModel;
+        if (queryModel.getSelectModelType() == SELECT_MODEL_NONE) {
+            if (queryModel.getJoinModels().size() < 2) {
+                if (queryModel.getTableNameExpr() != null) {
+                    parentModel = null;
+                } else {
+                    parentModel = parent;
+                }
+            }
+        }
+        collectColumnRefCount(parentModel, queryModel.getNestedModel());
+        collectColumnRefCount(parentModel, queryModel.getUnionModel());
+        ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            collectColumnRefCount(parentModel, joinModels.getQuick(i));
+        }
     }
 
     QueryModel optimise(
@@ -7011,7 +7190,9 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            collectExprRefCount(rewrittenModel);
+            if (ALLOW_FUNCTION_MEMOIZATION) {
+                collectColumnRefCount(null, rewrittenModel);
+            }
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed

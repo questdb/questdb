@@ -291,7 +291,6 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
-import io.questdb.std.BoolList;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
@@ -5007,11 +5006,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (ALLOW_FUNCTION_MEMOIZATION) {
-                BoolList boolList = priorityMetadata.getDependencies();
-
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     Function function = functions.getQuick(i);
-                    if (function != null && !function.isConstant() && (boolList.get(i) || function.shouldMemoize())) {
+                    if (function != null && !function.isConstant() && (columns.getQuick(i).getRefCount() > 1 || function.shouldMemoize())) {
                         switch (function.getType()) {
                             case ColumnType.LONG:
                                 functions.set(i, new LongFunctionMemoizer(function));
