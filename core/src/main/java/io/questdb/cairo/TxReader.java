@@ -246,6 +246,24 @@ public class TxReader implements Closeable, Mutable {
         return Long.MAX_VALUE;
     }
 
+    public long getNextExistingPartitionTimestamp(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index < 0) {
+            index = -index - 1;
+        } else {
+            index += LONGS_PER_TX_ATTACHED_PARTITION;
+        }
+        int nextIndex = index + PARTITION_TS_OFFSET;
+        if (nextIndex < attachedPartitions.size()) {
+            return attachedPartitions.get(nextIndex);
+        }
+        return Long.MAX_VALUE;
+    }
+
     public long getNextPartitionTimestamp(long timestamp) {
         if (partitionBy == PartitionBy.NONE) {
             return Long.MAX_VALUE;
@@ -265,24 +283,6 @@ public class TxReader implements Closeable, Mutable {
             }
         }
         return partitionCeilMethod.ceil(timestamp);
-    }
-
-    public long getNextExistingPartitionTimestamp(long timestamp) {
-        if (partitionBy == PartitionBy.NONE) {
-            return Long.MAX_VALUE;
-        }
-
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
-        if (index < 0) {
-            index = -index - 1;
-        } else {
-            index += LONGS_PER_TX_ATTACHED_PARTITION;
-        }
-        int nextIndex = index + PARTITION_TS_OFFSET;
-        if (nextIndex < attachedPartitions.size()) {
-            return attachedPartitions.get(nextIndex);
-        }
-        return Long.MAX_VALUE;
     }
 
     public int getPartitionCount() {
@@ -397,11 +397,20 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
-    public void initRO(MemoryMR txnFile, int partitionBy) {
-        this.roTxMemBase = txnFile;
+    public void initPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
         this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
-        this.partitionBy = partitionBy;
+
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            // Add transient row count as the only partition in attached partitions list
+            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+        }
+    }
+
+    public void initRO(MemoryMR txnFile) {
+        this.roTxMemBase = txnFile;
     }
 
     public boolean isLagOrdered() {
@@ -479,9 +488,7 @@ public class TxReader implements Closeable, Mutable {
         clear();
         try {
             openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
-            this.partitionBy = partitionBy;
+            initPartitionBy(partitionBy);
         } catch (Throwable e) {
             close();
             throw e;
@@ -704,9 +711,11 @@ public class TxReader implements Closeable, Mutable {
                 attachedPartitions.clear();
             }
         } else {
-            // Add transient row count as the only partition in attached partitions list
+            // If partitionBy is NONE, we have no partitions, but we still need to
+            // have a single partition with transient row count.
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+            attachedPartitionsSize = 1;
         }
     }
 
