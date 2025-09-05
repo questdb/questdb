@@ -263,25 +263,27 @@ public class CopyWalSegmentUtils {
 
             final long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
             final long newAuxMemAddr = TableUtils.mapRW(ff, secondaryFd, newAuxMemSize, MEMORY_TAG);
-            ff.madvise(newAuxMemAddr, newAuxMemSize, Files.POSIX_MADV_RANDOM);
+            try {
+                ff.madvise(newAuxMemAddr, newAuxMemSize, Files.POSIX_MADV_RANDOM);
 
-            columnTypeDriver.shiftCopyAuxVector(
-                    dataStartOffset,
-                    auxMemAddr,
-                    startRowNumber,
-                    startRowNumber + rowCount - 1, // inclusive
-                    newAuxMemAddr,
-                    newAuxMemSize
-            );
+                columnTypeDriver.shiftCopyAuxVector(
+                        dataStartOffset,
+                        auxMemAddr,
+                        startRowNumber,
+                        startRowNumber + rowCount - 1, // inclusive
+                        newAuxMemAddr,
+                        newAuxMemSize
+                );
 
-            columnRollSink.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorSize(startRowNumber));
-            columnRollSink.setDestSizes(dataSize, newAuxMemSize);
+                columnRollSink.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorSize(startRowNumber));
+                columnRollSink.setDestSizes(dataSize, newAuxMemSize);
 
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(newAuxMemAddr, newAuxMemSize, commitMode == CommitMode.ASYNC);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(newAuxMemAddr, newAuxMemSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(newAuxMemAddr, newAuxMemSize, MEMORY_TAG);
             }
-            // All in memory calls, no need to unmap in finally
-            ff.munmap(newAuxMemAddr, newAuxMemSize, MEMORY_TAG);
             return true;
         } finally {
             ff.munmap(auxMemAddr, auxMemSize, MEMORY_TAG);
