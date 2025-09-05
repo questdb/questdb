@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.BuildInformationHolder;
+import io.questdb.ConfigPropertyKey;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.FreeOnExit;
@@ -157,11 +158,11 @@ public class Overrides {
         this.mangleTableDirNames = mangle;
     }
 
-    public void setProperty(PropertyKey propertyKey, long value) {
+    public void setProperty(ConfigPropertyKey propertyKey, long value) {
         setProperty(propertyKey, String.valueOf(value));
     }
 
-    public void setProperty(PropertyKey propertyKey, String value) {
+    public void setProperty(ConfigPropertyKey propertyKey, String value) {
         String propertyPath = propertyKey.getPropertyPath();
         if (value != null) {
             String existing = properties.getProperty(propertyPath);
@@ -177,7 +178,7 @@ public class Overrides {
         }
     }
 
-    public void setProperty(PropertyKey propertyKey, boolean value) {
+    public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
         setProperty(propertyKey, value ? "true" : "false");
     }
 
