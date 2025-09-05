@@ -125,8 +125,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                                 continue;
                             }
                         }
-                        throw e;
                     }
+                    throw e;
                 }
             }
             return cursor;
