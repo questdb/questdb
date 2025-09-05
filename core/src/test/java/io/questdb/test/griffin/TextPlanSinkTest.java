@@ -56,6 +56,15 @@ public class TextPlanSinkTest {
         sink.val(" ");
         sink.valDecimal(Decimals.DECIMAL64_NULL, 5, 2);
         sink.val(" ");
+        sink.valDecimal(123, 456, 75, 15);
+        sink.val(" ");
+        sink.valDecimal(
+                Decimals.DECIMAL128_HI_NULL,
+                Decimals.DECIMAL128_LO_NULL,
+                38,
+                10
+        );
+        sink.val(" ");
         sink.valDecimal(123, 456, 789, 12, 75, 15);
         sink.val(" ");
         sink.valDecimal(
@@ -67,6 +76,6 @@ public class TextPlanSinkTest {
                 15
         );
 
-        Assert.assertEquals("123.00 null 772083513452561734106970858370490908534443021.732119385735180 null", sink.getSink().toString());
+        Assert.assertEquals("123.00 null 2268949.521066274849224 null 772083513452561734106970858370490908534443021.732119385735180 null", sink.getSink().toString());
     }
 }

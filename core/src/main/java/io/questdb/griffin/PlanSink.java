@@ -119,6 +119,8 @@ public interface PlanSink {
 
     PlanSink valDecimal(long value, int precision, int scale);
 
+    PlanSink valDecimal(long hi, long lo, int precision, int scale);
+
     PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale);
 
     PlanSink valIPv4(int ip);

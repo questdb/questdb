@@ -199,23 +199,19 @@ public class TextPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink valDecimal(long value, int precision, int scale) {
-        if (value == Decimals.DECIMAL64_NULL) {
-            sink.put("null");
-        } else {
-            Decimal64 d = Decimal64.fromLong(value, scale);
-            sink.put(d.toString());
-        }
+        Decimals.append(value, precision, scale, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valDecimal(long hi, long lo, int precision, int scale) {
+        Decimals.append(hi, lo, precision, scale, sink);
         return this;
     }
 
     @Override
     public PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale) {
-        if (Decimal256.isNull(hh, hl, lh, ll)) {
-            sink.put("null");
-        } else {
-            Decimal256 d = new Decimal256(hh, hl, lh, ll, scale);
-            sink.put(d.toString());
-        }
+        Decimals.append(hh, hl, lh, ll, precision, scale, sink);
         return this;
     }
 

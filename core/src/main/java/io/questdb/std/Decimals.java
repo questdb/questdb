@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.CharSink;
+
 public final class Decimals {
     public static final int MAX_PRECISION = 76;
     public static final int MAX_SCALE = MAX_PRECISION;
@@ -38,6 +40,26 @@ public final class Decimals {
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
             5, 5, // precision 39-76 -> 32 bytes
+    };
+    private static final long[] POW10_PRECISION = { // maps the maximum positive value to the precision
+            9L,
+            99L,
+            999L,
+            9999L,
+            99999L,
+            999999L,
+            9999999L,
+            99999999L,
+            999999999L,
+            9999999999L,
+            99999999999L,
+            999999999999L,
+            9999999999999L,
+            99999999999999L,
+            999999999999999L,
+            9999999999999999L,
+            99999999999999999L,
+            999999999999999999L,
     };
     public static long DECIMAL128_HI_NULL = Long.MIN_VALUE;
     public static long DECIMAL128_LO_NULL = 0L;
@@ -62,15 +84,90 @@ public final class Decimals {
      * - Precision 39-76: 32 bytes (256-bit storage)
      *
      * @param precision the number of significant digits
-     * @return the required storage size in bytes
+     * @return the required storage size in bytes (pow 2)
      * @throws IllegalArgumentException if precision is invalid
      */
     public static int getStorageSizePow2(int precision) {
-        if (precision < 1 || precision > MAX_SCALE) {
+        if (precision < 1 || precision > MAX_PRECISION) {
             throw new IllegalArgumentException("Invalid decimal precision: " + precision +
-                    ". Must be between 1 and " + MAX_SCALE);
+                    ". Must be between 1 and " + MAX_PRECISION);
         }
 
         return PRECISION_SIZE_POW2[precision];
+    }
+
+    /**
+     * Returns the precision for a specific long decimal.
+     *
+     * @param value of the decimal
+     * @return the required precision to store the long.
+     */
+    public static int getLongPrecision(long value) {
+        if (value == Numbers.LONG_NULL) return 0;
+        if (value < 0) {
+            value = -value;
+        }
+        for (int i = 0, n = POW10_PRECISION.length; i < n; i++) {
+            if (value <= POW10_PRECISION[i]) {
+                return i + 1;
+            }
+        }
+        return 19;
+    }
+
+    /**
+     * Returns the maximum long value for a specific precision.
+     *
+     * @param precision to be used as reference
+     */
+    public static long getMaxLong(int precision) {
+        assert precision > 0;
+        if (precision >= 19) {
+            return Long.MAX_VALUE;
+        }
+        return POW10_PRECISION[precision - 1];
+    }
+
+    /**
+     * Prints the long decimal to a sink
+     * @param value to print
+     * @param scale defines the place of the dot
+     * @param sink to write the value to
+     */
+    public static void append(long value, int precision, int scale, CharSink<?> sink) {
+        if (value == Decimals.DECIMAL64_NULL) {
+            sink.put("null");
+        } else {
+            Decimal64 d = Decimal64.fromLong(value, scale);
+            sink.put(d.toString());
+        }
+    }
+
+    /**
+     * Prints the decimal to a sink
+     * @param scale defines the place of the dot
+     * @param sink to write the value to
+     */
+    public static void append(long hi, long lo, int precision, int scale, CharSink<?> sink) {
+        if (Decimal128.isNull(hi, lo)) {
+            sink.put("null");
+        } else {
+            Decimal128 d = new Decimal128(hi, lo, scale);
+            sink.put(d.toString());
+        }
+    }
+
+    /**
+     * Prints the decimal to a sink
+     * @param scale defines the place of the dot
+     * @param sink to write the value to
+     */
+    public static void append(long hh, long hl, long lh, long ll, int precision, int scale, CharSink<?> sink) {
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            sink.put("null");
+        } else {
+            Decimal256 d = new Decimal256(hh, hl, lh, ll, scale);
+            sink.put(d.toString());
+        }
     }
 }

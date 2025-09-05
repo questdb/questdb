@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
 import io.questdb.std.Decimals;
 
 public class Decimal128Constant extends AbstractDecimalFunction implements ConstantFunction {
-
     public static final Decimal128Constant NULL = new Decimal128Constant(
             Decimals.DECIMAL128_HI_NULL,
             Decimals.DECIMAL128_LO_NULL,
@@ -64,18 +63,6 @@ public class Decimal128Constant extends AbstractDecimalFunction implements Const
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (isNullConstant()) {
-            sink.valDecimal(
-                    Decimals.DECIMAL256_HH_NULL,
-                    Decimals.DECIMAL256_HL_NULL,
-                    Decimals.DECIMAL256_LH_NULL,
-                    Decimals.DECIMAL256_LL_NULL,
-                    ColumnType.getDecimalPrecision(type),
-                    ColumnType.getDecimalScale(type)
-            );
-        } else {
-            long s = hi < 0 ? -1 : 0;
-            sink.valDecimal(s, s, hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
-        }
+        sink.valDecimal(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
     }
 }
