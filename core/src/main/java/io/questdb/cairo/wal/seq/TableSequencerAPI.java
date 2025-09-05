@@ -149,7 +149,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         }
                     }
                 } catch (CairoException ex) {
-                    if (ex.errnoFileCannotRead() || ex.isTableDropped()) {
+                    if (ex.isFileCannotRead() || ex.isTableDropped()) {
                         // Table is partially dropped, but not fully.
                         lastTxn = -1;
                     } else {

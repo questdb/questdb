@@ -1756,11 +1756,14 @@ public class WalWriter implements TableWriterAPI {
         auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
             final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
-            columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+            try {
+                columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
             }
-            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
         }
     }
 
@@ -1770,14 +1773,14 @@ public class WalWriter implements TableWriterAPI {
         dataMem.jumpTo(varColSize);
         if (rowCount > 0 && varColSize > 0) {
             final long dataMemAddr = TableUtils.mapRW(ff, dataMem.getFd(), varColSize, MEM_TAG);
-            columnTypeDriver.setDataVectorEntriesToNull(
-                    dataMemAddr,
-                    rowCount
-            );
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+            try {
+                columnTypeDriver.setDataVectorEntriesToNull(dataMemAddr, rowCount);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(dataMemAddr, varColSize, MEM_TAG);
             }
-            ff.munmap(dataMemAddr, varColSize, MEM_TAG);
         }
     }
 
