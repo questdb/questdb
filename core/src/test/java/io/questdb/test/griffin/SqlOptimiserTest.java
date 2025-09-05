@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -32,6 +33,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
@@ -68,6 +70,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             "  vendor_id SYMBOL capacity 8,\n" +
             "  pickup_datetime TIMESTAMP\n" +
             ") timestamp (pickup_datetime) PARTITION BY MONTH WAL;";
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
+    }
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -368,7 +376,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "Window\n" +
                         "  functions: [rank() over (partition by [hostname])]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
+                        "      functions: [hostname,ts,memoize(usage_system),usage_system1+10]\n" +
                         "        SelectedRecord\n" +
                         "            Filter filter: t2.ts<t1.ts\n" +
                         "                Cross Join\n" +

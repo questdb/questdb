@@ -117,6 +117,7 @@ public class QueryColumn implements Mutable, Sinkable {
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
         this.columnType = type;
+        this.refCount = 0;
         return this;
     }
 
