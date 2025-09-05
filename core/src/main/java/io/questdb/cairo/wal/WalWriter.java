@@ -189,7 +189,7 @@ public class WalWriter implements TableWriterAPI {
         this.walId = walId;
         this.path = new Path();
         path.of(configuration.getDbRoot());
-        this.pathRootSize = path.size();
+        this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
         this.metrics = configuration.getMetrics();
