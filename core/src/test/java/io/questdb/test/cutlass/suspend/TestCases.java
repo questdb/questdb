@@ -268,21 +268,31 @@ public class TestCases {
 
         // HashOuterJoinRecordCursorFactory
         addTestCase("select * from x left join (x union all y) on (sym)");
+        addTestCase("select * from x right join (x union all y) on (sym)");
+        addTestCase("select * from x full join (x union all y) on (sym)");
 
         // HashOuterJoinFilteredRecordCursorFactory
         addTestCase("select * from x left join (x union all y) xy on x.sym = xy.sym and x.sym ~ 'a'");
+        addTestCase("select * from x right join (x union all y) xy on x.sym = xy.sym and x.sym ~ 'a'");
+        addTestCase("select * from x full join (x union all y) xy on x.sym = xy.sym and x.sym ~ 'a'");
 
         // HashJoinLightRecordCursorFactory
         addTestCase("select * from x join y on (sym)");
 
         // HashOuterJoinLightRecordCursorFactory
         addTestCase("select * from x left join y on (sym)");
+        addTestCase("select * from x right join y on (sym)");
+        addTestCase("select * from x full join y on (sym)");
 
         // HashOuterJoinFilteredLightRecordCursorFactory
         addTestCase("select * from x left join y on x.sym = y.sym and x.sym ~ 'a'");
+        addTestCase("select * from x right join y on x.sym = y.sym and x.sym ~ 'a'");
+        addTestCase("select * from x full join y on x.sym = y.sym and x.sym ~ 'a'");
 
         // NestedLoopLeftJoinRecordCursorFactory
         addTestCase("select * from x left join y on x.i + 42 = y.i");
+        addTestCase("select * from x right join y on x.i + 42 = y.i");
+        addTestCase("select * from x full join y on x.i + 42 = y.i");
 
         // CrossJoinRecordCursorFactory
         addTestCase("select * from x cross join y");

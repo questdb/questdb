@@ -206,7 +206,9 @@ import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SingleStringSymbolShortCircuit;
@@ -1301,6 +1303,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            if (joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER) {
+                valueTypes.add(BOOLEAN);
+            }
             if (filter != null) {
                 return new HashOuterJoinFilteredLightRecordCursorFactory(
                         configuration,
@@ -1313,7 +1318,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveKeySink,
                         masterMetadata.getColumnCount(),
                         filter,
-                        context
+                        context,
+                        joinType
                 );
             }
 
@@ -1327,7 +1333,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterKeySink,
                     slaveKeySink,
                     masterMetadata.getColumnCount(),
-                    context
+                    context,
+                    joinType
             );
         }
 
@@ -1335,6 +1342,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         valueTypes.add(ColumnType.LONG); // chain head offset
         valueTypes.add(ColumnType.LONG); // chain tail offset
         valueTypes.add(ColumnType.LONG); // record count for the key
+        if (filter == null && (joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER)) {
+            valueTypes.add(BOOLEAN);
+        }
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
         RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
@@ -1368,7 +1378,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     filter,
-                    context
+                    context,
+                    joinType
             );
         }
 
@@ -1383,7 +1394,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveKeySink,
                 slaveSink,
                 masterMetadata.getColumnCount(),
-                context
+                context,
+                joinType
         );
     }
 
@@ -2609,18 +2621,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         switch (joinType) {
                             case JOIN_CROSS_LEFT:
+                            case JOIN_CROSS_RIGHT:
+                            case JOIN_CROSS_FULL:
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
                                 filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-
-                                master = new NestedLoopLeftJoinRecordCursorFactory(
-                                        joinMetadata,
-                                        master,
-                                        slave,
-                                        masterMetadata.getColumnCount(),
-                                        filter,
-                                        NullRecordFactory.getInstance(slaveMetadata)
-                                );
+                                switch (joinType) {
+                                    case JOIN_CROSS_LEFT:
+                                        master = new NestedLoopLeftJoinRecordCursorFactory(
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                masterMetadata.getColumnCount(),
+                                                filter,
+                                                NullRecordFactory.getInstance(slaveMetadata)
+                                        );
+                                        break;
+                                    case JOIN_CROSS_RIGHT:
+                                        master = new NestedLoopRightJoinRecordCursorFactory(
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                masterMetadata.getColumnCount(),
+                                                filter,
+                                                NullRecordFactory.getInstance(masterMetadata)
+                                        );
+                                        break;
+                                    case JOIN_CROSS_FULL:
+                                        master = new NestedLoopFullJoinRecordCursorFactory(
+                                                configuration,
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                masterMetadata.getColumnCount(),
+                                                filter,
+                                                NullRecordFactory.getInstance(masterMetadata),
+                                                NullRecordFactory.getInstance(slaveMetadata)
+                                        );
+                                        break;
+                                }
                                 masterAlias = null;
                                 break;
                             case JOIN_CROSS:
@@ -2640,7 +2679,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // rules: 1. when it returns `true` it means that the join is self-join for sure
                                 //        2. when it returns `false` it means that the join may or may not be self-join
                                 boolean selfJoin = isSameTable(master, slave);
-                                processJoinContext(index == 1, selfJoin, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel);
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
@@ -2675,7 +2714,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         slaveSink,
                                                         masterMetadata.getColumnCount(),
                                                         symbolShortCircuit,
-                                                        slaveModel.getContext(),
+                                                        slaveModel.getJoinContext(),
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
@@ -2768,7 +2807,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     slave,
                                                     slaveSink,
                                                     masterMetadata.getColumnCount(),
-                                                    slaveModel.getContext(),
+                                                    slaveModel.getJoinContext(),
                                                     asOfToleranceInterval
                                             );
                                         }
@@ -2888,7 +2927,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getName(),
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_AS_OF_JOIN,
-                                            slaveModel.getContext(),
+                                            slaveModel.getJoinContext(),
                                             asOfToleranceInterval
                                     );
                                 }
@@ -2901,7 +2940,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         master = createLtJoin(
@@ -2923,7 +2962,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
-                                                slaveModel.getContext(),
+                                                slaveModel.getJoinContext(),
                                                 ltToleranceInterval
                                         );
                                     } else {
@@ -2956,7 +2995,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getName(),
                                             slaveModel.getJoinKeywordPosition(),
                                             CREATE_FULL_FAT_LT_JOIN,
-                                            slaveModel.getContext(),
+                                            slaveModel.getJoinContext(),
                                             ltToleranceInterval
                                     );
                                 }
@@ -2968,7 +3007,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -2990,7 +3029,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     writeStringAsVarcharA
                                             ),
                                             masterMetadata.getColumnCount(),
-                                            slaveModel.getContext()
+                                            slaveModel.getJoinContext()
                                     );
                                     // if we fail after this step, master will release slave
                                     releaseSlave = false;
@@ -3006,17 +3045,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                                 break;
                             default:
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
-
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
-                                if (joinType == JOIN_OUTER
-                                        && filter != null && filter.isConstant() && !filter.getBool(null)) {
-                                    Misc.free(slave);
-                                    slave = new EmptyTableRecordCursorFactory(slaveMetadata);
+                                if (filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                    if (joinType == JOIN_LEFT_OUTER) {
+                                        Misc.free(slave);
+                                        slave = new EmptyTableRecordCursorFactory(slaveMetadata);
+                                    } else if (joinType == JOIN_INNER) {
+                                        Misc.free(master);
+                                        Misc.free(slave);
+                                        return new EmptyTableRecordCursorFactory(joinMetadata);
+                                    } else if (joinType == JOIN_RIGHT_OUTER) {
+                                        Misc.free(master);
+                                        master = new EmptyTableRecordCursorFactory(masterMetadata);
+                                    }
                                 }
 
                                 if (joinType == JOIN_INNER) {
@@ -3029,7 +3075,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slave,
                                         joinType,
                                         filter,
-                                        slaveModel.getContext()
+                                        slaveModel.getJoinContext()
                                 );
                                 masterAlias = null;
                                 break;
@@ -6841,12 +6887,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     static {
         joinsRequiringTimestamp[JOIN_INNER] = false;
-        joinsRequiringTimestamp[JOIN_OUTER] = false;
+        joinsRequiringTimestamp[JOIN_LEFT_OUTER] = false;
         joinsRequiringTimestamp[JOIN_CROSS] = false;
         joinsRequiringTimestamp[JOIN_ASOF] = true;
         joinsRequiringTimestamp[JOIN_SPLICE] = true;
         joinsRequiringTimestamp[JOIN_LT] = true;
         joinsRequiringTimestamp[JOIN_ONE] = false;
+        joinsRequiringTimestamp[JOIN_RIGHT_OUTER] = false;
+        joinsRequiringTimestamp[JOIN_FULL_OUTER] = false;
     }
 
     static {

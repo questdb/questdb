@@ -2402,6 +2402,114 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "99\t99\n" +
                             "100\t100\n"
             );
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "select x, y from l right join rr on l.x = rr.y and (y > 0 or y > 10)",
+                    sink,
+                    "x\ty\n" +
+                            "51\t51\n" +
+                            "52\t52\n" +
+                            "53\t53\n" +
+                            "54\t54\n" +
+                            "55\t55\n" +
+                            "56\t56\n" +
+                            "57\t57\n" +
+                            "58\t58\n" +
+                            "59\t59\n" +
+                            "60\t60\n" +
+                            "61\t61\n" +
+                            "62\t62\n" +
+                            "63\t63\n" +
+                            "64\t64\n" +
+                            "65\t65\n" +
+                            "66\t66\n" +
+                            "67\t67\n" +
+                            "68\t68\n" +
+                            "69\t69\n" +
+                            "70\t70\n" +
+                            "71\t71\n" +
+                            "72\t72\n" +
+                            "73\t73\n" +
+                            "74\t74\n" +
+                            "75\t75\n" +
+                            "76\t76\n" +
+                            "77\t77\n" +
+                            "78\t78\n" +
+                            "79\t79\n" +
+                            "80\t80\n" +
+                            "81\t81\n" +
+                            "82\t82\n" +
+                            "83\t83\n" +
+                            "84\t84\n" +
+                            "85\t85\n" +
+                            "86\t86\n" +
+                            "87\t87\n" +
+                            "88\t88\n" +
+                            "89\t89\n" +
+                            "90\t90\n" +
+                            "91\t91\n" +
+                            "92\t92\n" +
+                            "93\t93\n" +
+                            "94\t94\n" +
+                            "95\t95\n" +
+                            "96\t96\n" +
+                            "97\t97\n" +
+                            "98\t98\n" +
+                            "99\t99\n" +
+                            "100\t100\n" +
+                            "null\t139\n" +
+                            "null\t106\n" +
+                            "null\t103\n" +
+                            "null\t116\n" +
+                            "null\t150\n" +
+                            "null\t148\n" +
+                            "null\t120\n" +
+                            "null\t137\n" +
+                            "null\t110\n" +
+                            "null\t133\n" +
+                            "null\t140\n" +
+                            "null\t122\n" +
+                            "null\t149\n" +
+                            "null\t125\n" +
+                            "null\t144\n" +
+                            "null\t111\n" +
+                            "null\t118\n" +
+                            "null\t121\n" +
+                            "null\t117\n" +
+                            "null\t146\n" +
+                            "null\t102\n" +
+                            "null\t145\n" +
+                            "null\t113\n" +
+                            "null\t129\n" +
+                            "null\t147\n" +
+                            "null\t124\n" +
+                            "null\t126\n" +
+                            "null\t112\n" +
+                            "null\t130\n" +
+                            "null\t135\n" +
+                            "null\t101\n" +
+                            "null\t127\n" +
+                            "null\t123\n" +
+                            "null\t107\n" +
+                            "null\t119\n" +
+                            "null\t136\n" +
+                            "null\t131\n" +
+                            "null\t143\n" +
+                            "null\t138\n" +
+                            "null\t105\n" +
+                            "null\t109\n" +
+                            "null\t115\n" +
+                            "null\t128\n" +
+                            "null\t134\n" +
+                            "null\t132\n" +
+                            "null\t141\n" +
+                            "null\t114\n" +
+                            "null\t108\n" +
+                            "null\t104\n" +
+                            "null\t142\n"
+            );
         });
     }
 
@@ -2469,6 +2577,116 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "98\t98\n" +
                             "99\t99\n" +
                             "100\t100\n"
+            );
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "select x, y\n" +
+                            "from l right join rr on l.x = rr.y\n" +
+                            "where y > 0 or y > 10",
+                    sink,
+                    "x\ty\n" +
+                            "51\t51\n" +
+                            "52\t52\n" +
+                            "53\t53\n" +
+                            "54\t54\n" +
+                            "55\t55\n" +
+                            "56\t56\n" +
+                            "57\t57\n" +
+                            "58\t58\n" +
+                            "59\t59\n" +
+                            "60\t60\n" +
+                            "61\t61\n" +
+                            "62\t62\n" +
+                            "63\t63\n" +
+                            "64\t64\n" +
+                            "65\t65\n" +
+                            "66\t66\n" +
+                            "67\t67\n" +
+                            "68\t68\n" +
+                            "69\t69\n" +
+                            "70\t70\n" +
+                            "71\t71\n" +
+                            "72\t72\n" +
+                            "73\t73\n" +
+                            "74\t74\n" +
+                            "75\t75\n" +
+                            "76\t76\n" +
+                            "77\t77\n" +
+                            "78\t78\n" +
+                            "79\t79\n" +
+                            "80\t80\n" +
+                            "81\t81\n" +
+                            "82\t82\n" +
+                            "83\t83\n" +
+                            "84\t84\n" +
+                            "85\t85\n" +
+                            "86\t86\n" +
+                            "87\t87\n" +
+                            "88\t88\n" +
+                            "89\t89\n" +
+                            "90\t90\n" +
+                            "91\t91\n" +
+                            "92\t92\n" +
+                            "93\t93\n" +
+                            "94\t94\n" +
+                            "95\t95\n" +
+                            "96\t96\n" +
+                            "97\t97\n" +
+                            "98\t98\n" +
+                            "99\t99\n" +
+                            "100\t100\n" +
+                            "null\t139\n" +
+                            "null\t106\n" +
+                            "null\t103\n" +
+                            "null\t116\n" +
+                            "null\t150\n" +
+                            "null\t148\n" +
+                            "null\t120\n" +
+                            "null\t137\n" +
+                            "null\t110\n" +
+                            "null\t133\n" +
+                            "null\t140\n" +
+                            "null\t122\n" +
+                            "null\t149\n" +
+                            "null\t125\n" +
+                            "null\t144\n" +
+                            "null\t111\n" +
+                            "null\t118\n" +
+                            "null\t121\n" +
+                            "null\t117\n" +
+                            "null\t146\n" +
+                            "null\t102\n" +
+                            "null\t145\n" +
+                            "null\t113\n" +
+                            "null\t129\n" +
+                            "null\t147\n" +
+                            "null\t124\n" +
+                            "null\t126\n" +
+                            "null\t112\n" +
+                            "null\t130\n" +
+                            "null\t135\n" +
+                            "null\t101\n" +
+                            "null\t127\n" +
+                            "null\t123\n" +
+                            "null\t107\n" +
+                            "null\t119\n" +
+                            "null\t136\n" +
+                            "null\t131\n" +
+                            "null\t143\n" +
+                            "null\t138\n" +
+                            "null\t105\n" +
+                            "null\t109\n" +
+                            "null\t115\n" +
+                            "null\t128\n" +
+                            "null\t134\n" +
+                            "null\t132\n" +
+                            "null\t141\n" +
+                            "null\t114\n" +
+                            "null\t108\n" +
+                            "null\t104\n" +
+                            "null\t142\n"
             );
         });
     }

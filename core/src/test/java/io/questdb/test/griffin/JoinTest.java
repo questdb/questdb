@@ -70,6 +70,7 @@ public class JoinTest extends AbstractCairoTest {
 
             execute("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
             execute("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+            execute("insert into table_2 values ( '2022-10-25T04:00:00.000000Z', 'tom',  24, '1 Houston St' )");
 
             // query "2"
             assertQueryNoLeakCheck(
@@ -83,6 +84,37 @@ public class JoinTest extends AbstractCairoTest {
                             "   on a.ts = b.ts ",
                     null,
                     "ts", false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\tmember\taddress\tts\n" +
+                            "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                            "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                            "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                    "select a.name, a.age, a.member, b.address, a.ts\n" +
+                            "from table_2 as b \n" +
+                            "right join table_1 as a \n" +
+                            "   on a.ts = b.ts ",
+                    null,
+                    null
+                    , false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\tmember\taddress\tts\n" +
+                            "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                            "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                            "\tnull\tfalse\t1 Houston St\t\n" +
+                            "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                    "select a.name, a.age, a.member, b.address, a.ts\n" +
+                            "from table_2 as b \n" +
+                            "full join table_1 as a \n" +
+                            "   on a.ts = b.ts ",
+                    null,
+                    null,
+                    false,
                     false
             );
 
@@ -102,6 +134,37 @@ public class JoinTest extends AbstractCairoTest {
                     false
             );
 
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_2 as b \n" +
+                            "right join table_1 as a \n" +
+                            "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n" +
+                            "\tnull\t1 Houston St\t\t2022-10-25T03:59:00.000000Z\t2022-10-25T04:01:00.000000Z\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_1 as a \n" +
+                            "full join table_2 as b \n" +
+                            "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
             // query "4" - same as "3" but between is replaced with >= and <=
             assertQueryNoLeakCheck(
                     "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
@@ -114,6 +177,38 @@ public class JoinTest extends AbstractCairoTest {
                             "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)",
                     null,
                     "ts",
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_2 as b \n" +
+                            "right join table_1 as a \n" +
+                            "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "\tnull\t1 Houston St\t\t2022-10-25T03:59:00.000000Z\t2022-10-25T04:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_2 as b \n" +
+                            "full join table_1 as a \n" +
+                            "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)",
+                    null,
+                    null,
                     false,
                     false
             );
@@ -1789,6 +1884,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y (yid int, a int, b int)");
             select("select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2").close();
             select("select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2").close();
+            select("select tx.a, tx.b from x as tx right join y as ty on xid = yid where tx.a = 1 or tx.b=2").close();
+            select("select tx.a, tx.b from x as tx right join y as ty on xid = yid where ty.a = 1 or ty.b=2").close();
+            select("select tx.a, tx.b from x as tx full join y as ty on xid = yid where tx.a = 1 or tx.b=2").close();
+            select("select tx.a, tx.b from x as tx full join y as ty on xid = yid where ty.a = 1 or ty.b=2").close();
         });
     }
 
@@ -1820,7 +1919,7 @@ public class JoinTest extends AbstractCairoTest {
 
             execute("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
 
-            for (String joinType : Arrays.asList("LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
+            for (String joinType : Arrays.asList("LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
                 testJoinColumnPropagationIntoJoinModel0(joinType);
             }
             testJoinColumnPropagationIntoJoinModel0("JOIN");
@@ -2497,20 +2596,20 @@ public class JoinTest extends AbstractCairoTest {
     public void testJoinInnerPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "c\ta\tb\td\tcolumn\n" +
-                    "1\t120\t6\t0\t126\n" +
-                    "1\t120\t71\t0\t191\n" +
-                    "1\t120\t42\t0\t162\n" +
                     "1\t120\t39\t0\t159\n" +
-                    "1\t120\t6\t50\t126\n" +
-                    "1\t120\t71\t50\t191\n" +
-                    "1\t120\t42\t50\t162\n" +
+                    "1\t120\t42\t0\t162\n" +
+                    "1\t120\t71\t0\t191\n" +
+                    "1\t120\t6\t0\t126\n" +
                     "1\t120\t39\t50\t159\n" +
-                    "5\t251\t7\t198\t258\n" +
-                    "5\t251\t44\t198\t295\n" +
+                    "1\t120\t42\t50\t162\n" +
+                    "1\t120\t71\t50\t191\n" +
+                    "1\t120\t6\t50\t126\n" +
                     "5\t251\t47\t198\t298\n" +
-                    "5\t251\t7\t279\t258\n" +
+                    "5\t251\t44\t198\t295\n" +
+                    "5\t251\t7\t198\t258\n" +
+                    "5\t251\t47\t279\t298\n" +
                     "5\t251\t44\t279\t295\n" +
-                    "5\t251\t47\t279\t298\n";
+                    "5\t251\t7\t279\t258\n";
 
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
@@ -2525,18 +2624,18 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     expected +
-                            "7\t253\t14\t228\t267\n" +
                             "7\t253\t35\t228\t288\n" +
-                            "7\t253\t14\t723\t267\n" +
+                            "7\t253\t14\t228\t267\n" +
                             "7\t253\t35\t723\t288\n" +
-                            "9\t100\t8\t456\t108\n" +
-                            "9\t100\t38\t456\t138\n" +
-                            "9\t100\t19\t456\t119\n" +
+                            "7\t253\t14\t723\t267\n" +
                             "9\t100\t63\t456\t163\n" +
-                            "9\t100\t8\t667\t108\n" +
-                            "9\t100\t38\t667\t138\n" +
+                            "9\t100\t19\t456\t119\n" +
+                            "9\t100\t38\t456\t138\n" +
+                            "9\t100\t8\t456\t108\n" +
+                            "9\t100\t63\t667\t163\n" +
                             "9\t100\t19\t667\t119\n" +
-                            "9\t100\t63\t667\t163\n",
+                            "9\t100\t38\t667\t138\n" +
+                            "9\t100\t8\t667\t108\n",
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d",
                     null,
                     true,
@@ -2828,6 +2927,50 @@ public class JoinTest extends AbstractCairoTest {
                     null,
                     true
             );
+
+            assertQueryNoLeakCheck(
+                    "kk\ta\tb\tkk1\ta1\tb1\n" +
+                            "1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\tnull\t\t\n" +
+                            "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                            "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                            "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\tnull\t\t\n" +
+                            "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                            "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n" +
+                            "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\tnull\t\t\n" +
+                            "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                            "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n" +
+                            "7\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\tnull\t\t\n" +
+                            "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                            "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                            "9\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\tnull\t\t\n" +
+                            "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                            "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n",
+                    "select x.*, y.* from y right join x on (kk) order by kk,a",
+                    null,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "kk\ta\tb\tkk1\ta1\tb1\n" +
+                            "1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\tnull\t\t\n" +
+                            "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                            "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                            "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\tnull\t\t\n" +
+                            "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                            "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n" +
+                            "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\tnull\t\t\n" +
+                            "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                            "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n" +
+                            "7\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\tnull\t\t\n" +
+                            "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                            "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                            "9\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\tnull\t\t\n" +
+                            "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                            "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n",
+                    "select x.*, y.* from y full join x on (kk) order by kk,a",
+                    null,
+                    true
+            );
         });
     }
 
@@ -2874,6 +3017,28 @@ public class JoinTest extends AbstractCairoTest {
                     null,
                     true
             );
+            assertQueryNoLeakCheck(
+                    "kk\ta\tb\tkk1\ta1\tb1\n" +
+                            "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                            "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                            "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                            "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n" +
+                            "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                            "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n" +
+                            "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                            "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                            "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                            "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n",
+                    "select * from x right join y on (kk) order by x.a desc, y.a",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select * from x full join y on (kk) order by x.a desc, y.a",
+                    null,
+                    true
+            );
         });
     }
 
@@ -2890,11 +3055,13 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinOuterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select x.c, x.a, b, ts from x left join y on y.m = x.c order by x.c, x.a";
-            final String expected = "c\ta\tb\tts\n" +
+            final String leftJoin = "select x.c, x.a, b, ts from x left join y on y.m = x.c order by x.c, x.a, b";
+            final String rightJoin = "select x.c, x.a, b, ts from y right join x on y.m = x.c order by x.c, x.a, b";
+            final String fullJoin = "select x.c, x.a, b, ts from x full join y on y.m = x.c order by x.c, x.a, b";
+            String expected = "c\ta\tb\tts\n" +
                     "1\t120\tnull\t2018-03-01T00:00:00.000001Z\n" +
-                    "2\t568\t72\t2018-03-01T00:00:00.000002Z\n" +
                     "2\t568\t16\t2018-03-01T00:00:00.000002Z\n" +
+                    "2\t568\t72\t2018-03-01T00:00:00.000002Z\n" +
                     "3\t333\tnull\t2018-03-01T00:00:00.000003Z\n" +
                     "4\t371\t3\t2018-03-01T00:00:00.000004Z\n" +
                     "4\t371\t14\t2018-03-01T00:00:00.000004Z\n" +
@@ -2902,30 +3069,51 @@ public class JoinTest extends AbstractCairoTest {
                     "6\t439\t12\t2018-03-01T00:00:00.000006Z\n" +
                     "6\t439\t81\t2018-03-01T00:00:00.000006Z\n" +
                     "7\t42\tnull\t2018-03-01T00:00:00.000007Z\n" +
-                    "8\t521\t97\t2018-03-01T00:00:00.000008Z\n" +
                     "8\t521\t16\t2018-03-01T00:00:00.000008Z\n" +
+                    "8\t521\t97\t2018-03-01T00:00:00.000008Z\n" +
                     "9\t356\tnull\t2018-03-01T00:00:00.000009Z\n" +
-                    "10\t598\t74\t2018-03-01T00:00:00.000010Z\n" +
-                    "10\t598\t5\t2018-03-01T00:00:00.000010Z\n";
+                    "10\t598\t5\t2018-03-01T00:00:00.000010Z\n" +
+                    "10\t598\t74\t2018-03-01T00:00:00.000010Z\n";
 
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, query, null, true, false);
+            assertQueryAndCache(expected, leftJoin, null, true, false);
+            assertQueryAndCache(expected, rightJoin, null, true, false);
+            assertQueryAndCache(expected, fullJoin, null, true, false);
+
 
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
+            expected = expected +
+                    "11\t467\tnull\t2018-03-01T00:00:00.000011Z\n" +
+                    "12\t347\t0\t2018-03-01T00:00:00.000012Z\n" +
+                    "12\t347\t7\t2018-03-01T00:00:00.000012Z\n" +
+                    "13\t244\tnull\t2018-03-01T00:00:00.000013Z\n" +
+                    "14\t197\t50\t2018-03-01T00:00:00.000014Z\n" +
+                    "14\t197\t68\t2018-03-01T00:00:00.000014Z\n";
             assertQueryNoLeakCheck(
-                    expected +
-                            "11\t467\tnull\t2018-03-01T00:00:00.000011Z\n" +
-                            "12\t347\t0\t2018-03-01T00:00:00.000012Z\n" +
-                            "12\t347\t7\t2018-03-01T00:00:00.000012Z\n" +
-                            "13\t244\tnull\t2018-03-01T00:00:00.000013Z\n" +
-                            "14\t197\t68\t2018-03-01T00:00:00.000014Z\n" +
-                            "14\t197\t50\t2018-03-01T00:00:00.000014Z\n",
-                    query,
+                    expected,
+                    leftJoin,
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expected,
+                    rightJoin,
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    "c\ta\tb\tts\n" +
+                            "null\tnull\t55\t\n" +
+                            "null\tnull\t64\t\n" +
+                            expected.replace("c\ta\tb\tts\n", ""),
+                    fullJoin,
                     null,
                     true,
                     false
@@ -3030,6 +3218,27 @@ public class JoinTest extends AbstractCairoTest {
                             "4\t4\n" +
                             "5\t5\n"
             );
+            assertHashJoinSql(
+                    "select t1.*, t2.* from t2 right join t1 on i = j and abs(i) > 3",
+                    "i\tj\n" +
+                            "5\t5\n" +
+                            "4\t4\n" +
+                            "1\tnull\n" +
+                            "3\tnull\n" +
+                            "2\tnull\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on i = j and abs(i) > 3",
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\t4\n" +
+                            "5\t5\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t2\n"
+            );
         });
     }
 
@@ -3043,6 +3252,24 @@ public class JoinTest extends AbstractCairoTest {
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and s2 = s1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\t2\tb\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\t4\td\n" +
+                            "5\te\t5\te\n"
+            );
+            assertHashJoinSql(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and s2 = s1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "5\te\t5\te\n" +
+                            "2\tb\t2\tb\n" +
+                            "4\td\t4\td\n" +
+                            "3\tc\t3\tc\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and s2 = s1",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "2\tb\t2\tb\n" +
@@ -3070,27 +3297,26 @@ public class JoinTest extends AbstractCairoTest {
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n"
             );
-        });
-    }
-
-    @Test
-    public void testLeftHashJoinOnFunctionCondition12() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t1 (i int, s1 string)");
-            execute("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            execute("create table t2 (j int, s2 string)");
-            execute("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
-
             assertHashJoinSql(
-                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]') order by i, s2",
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
-                            "1\ta\t1\te\n" +
-                            "2\tb\t2\tb\n" +
-                            "2\tb\t2\td\n" +
-                            "3\tc\tnull\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "2\tb\tnull\t\n" +
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tnull\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
             );
         });
     }
@@ -3104,6 +3330,24 @@ public class JoinTest extends AbstractCairoTest {
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\tnull\t\n" +
+                            "2\tb\tnull\t\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\tnull\t\n" +
+                            "3\tc\tnull\t\n" +
+                            "2\tb\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\tnull\t\n" +
                             "2\tb\tnull\t\n" +
@@ -3125,6 +3369,24 @@ public class JoinTest extends AbstractCairoTest {
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s1 ~ '[abde]') order by j, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t1\ta\n" +
+                            "null\t\t1\te\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t2\td\n" +
+                            "null\t\t3\tc\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ '[abde]') order by j, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t1\ta\n" +
+                            "null\t\t1\te\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t2\td\n" +
+                            "null\t\t3\tc\n"
+            );
         });
     }
 
@@ -3136,6 +3398,14 @@ public class JoinTest extends AbstractCairoTest {
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n"
             );
         });
@@ -3152,6 +3422,25 @@ public class JoinTest extends AbstractCairoTest {
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s2 ~ '[abde]') order by i, s2",
                     "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\td\n" +
+                            "2\tb\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s2 ~ '[abde]') order by i, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t3\tc\n" +
+                            "null\t\t1\tf\n" +
+                            "null\t\t1\tg\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\td\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s2 ~ '[abde]') order by i, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t3\tc\n" +
+                            "null\t\t1\tf\n" +
+                            "null\t\t1\tg\n" +
                             "1\ta\t1\ta\n" +
                             "1\ta\t1\td\n" +
                             "2\tb\tnull\t\n"
@@ -3174,6 +3463,24 @@ public class JoinTest extends AbstractCairoTest {
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
+                    "i\ts1\tts1\tj\ts2\tts2\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n" +
+                            "null\t\t\t3\tc\t1970-01-01T00:00:00.000005Z\n" +
+                            "null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z\n" +
+                            "null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
+                    "i\ts1\tts1\tj\ts2\tts2\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n" +
+                            "null\t\t\t3\tc\t1970-01-01T00:00:00.000005Z\n" +
+                            "null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z\n" +
+                            "null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z\n"
+            );
         });
     }
 
@@ -3193,6 +3500,27 @@ public class JoinTest extends AbstractCairoTest {
                             "3\tc\t3\tc\n" +
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "3\tc\t3\tc\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tnull\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
             );
         });
     }
@@ -3214,6 +3542,29 @@ public class JoinTest extends AbstractCairoTest {
                             "4\tnull\n" +
                             "5\tnull\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on i = j and abs(i) > 5",
+                    "i\tj\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t2\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on i = j and abs(i) > 5",
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t2\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
+            );
         });
     }
 
@@ -3233,6 +3584,28 @@ public class JoinTest extends AbstractCairoTest {
                             "3\t3\n" +
                             "4\tnull\n" +
                             "5\tnull\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on i = j and abs(i) = 3",
+                    "i\tj\n" +
+                            "3\t3\n" +
+                            "null\t1\n" +
+                            "null\t2\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on i = j and abs(i) = 3",
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\t3\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n" +
+                            "null\t1\n" +
+                            "null\t2\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
             );
         });
     }
@@ -3254,6 +3627,24 @@ public class JoinTest extends AbstractCairoTest {
                             "4\tnull\n" +
                             "5\tnull\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on i = j and abs(i) <= 0",
+                    "i\tj\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t2\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on i = j and abs(i) <= 0",
+                    "i\tj\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t2\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
+            );
         });
     }
 
@@ -3273,6 +3664,27 @@ public class JoinTest extends AbstractCairoTest {
                             "3\t3\n" +
                             "4\tnull\n" +
                             "5\tnull\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+                    "i\tj\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "null\t1\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n" +
+                            "null\t1\n" +
+                            "null\t5\n" +
+                            "null\t4\n"
             );
         });
     }
@@ -3294,6 +3706,27 @@ public class JoinTest extends AbstractCairoTest {
                             "4\t4\n" +
                             "5\tnull\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (j = 2 or i = 4)",
+                    "i\tj\n" +
+                            "2\t2\n" +
+                            "4\t4\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t5\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (j = 2 or i = 4)",
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\t2\n" +
+                            "3\tnull\n" +
+                            "4\t4\n" +
+                            "5\tnull\n" +
+                            "null\t1\n" +
+                            "null\t3\n" +
+                            "null\t5\n"
+            );
         });
     }
 
@@ -3313,6 +3746,28 @@ public class JoinTest extends AbstractCairoTest {
                             "3\tnull\n" +
                             "-4\t-4\n" +
                             "5\tnull\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+                    "i\tj\n" +
+                            "-4\t-4\n" +
+                            "null\t1\n" +
+                            "null\t-2\n" +
+                            "null\t3\n" +
+                            "null\t5\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "-4\t-4\n" +
+                            "5\tnull\n" +
+                            "null\t1\n" +
+                            "null\t-2\n" +
+                            "null\t3\n" +
+                            "null\t5\n"
             );
         });
     }
@@ -3334,6 +3789,28 @@ public class JoinTest extends AbstractCairoTest {
                             "4\tnull\t\n" +
                             "5\tnull\t\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and s2 = 'a'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "null\t-2\tb\n" +
+                            "null\t3\tc\n" +
+                            "null\t5\te\n" +
+                            "null\t4\td\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and s2 = 'a'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "2\tnull\t\n" +
+                            "3\tnull\t\n" +
+                            "4\tnull\t\n" +
+                            "5\tnull\t\n" +
+                            "null\t-2\tb\n" +
+                            "null\t3\tc\n" +
+                            "null\t5\te\n" +
+                            "null\t4\td\n"
+            );
         });
     }
 
@@ -3354,6 +3831,27 @@ public class JoinTest extends AbstractCairoTest {
                             "4\t4\td\n" +
                             "5\tnull\t\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and s2 ~ '[ad]'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "4\t4\td\n" +
+                            "null\t-2\tb\n" +
+                            "null\t3\tc\n" +
+                            "null\t5\te\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and s2 ~ '[ad]'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "2\tnull\t\n" +
+                            "3\tnull\t\n" +
+                            "4\t4\td\n" +
+                            "5\tnull\t\n" +
+                            "null\t-2\tb\n" +
+                            "null\t3\tc\n" +
+                            "null\t5\te\n"
+            );
         });
     }
 
@@ -3366,6 +3864,19 @@ public class JoinTest extends AbstractCairoTest {
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\tnull\t\n" +
+                            "2\tb\tnull\t\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\tnull\t\n" +
                             "2\tb\tnull\t\n" +
@@ -3387,6 +3898,24 @@ public class JoinTest extends AbstractCairoTest {
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and (s1 ~ '[abde]') order by j, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t1\ta\n" +
+                            "null\t\t1\te\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t2\td\n" +
+                            "null\t\t3\tc\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ '[abde]') order by j, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t1\ta\n" +
+                            "null\t\t1\te\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t2\td\n" +
+                            "null\t\t3\tc\n"
+            );
         });
     }
 
@@ -3406,6 +3935,30 @@ public class JoinTest extends AbstractCairoTest {
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n"
+            );
+
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and i = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "null\t\t3\tc\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
+            );
+
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and i = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tnull\t\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n" +
+                            "null\t\t3\tc\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
             );
         });
     }
@@ -3427,6 +3980,28 @@ public class JoinTest extends AbstractCairoTest {
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i and j = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "null\t\t3\tc\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and j = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tnull\t\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n" +
+                            "null\t\t3\tc\n" +
+                            "null\t\t2\tb\n" +
+                            "null\t\t5\te\n" +
+                            "null\t\t4\td\n"
+            );
         });
     }
 
@@ -3440,6 +4015,16 @@ public class JoinTest extends AbstractCairoTest {
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i where j = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i where j = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i where j = 1",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n"
             );
@@ -3460,6 +4045,17 @@ public class JoinTest extends AbstractCairoTest {
                             "1\ta\t1\ta\n" +
                             "4\td\tnull\t\n"
             );
+            assertHashJoinSql(
+                    "select * from t1 right join t2 on j = i where j = 1 or j = null",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i where j = 1 or j = null",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "4\td\tnull\t\n"
+            );
         });
     }
 
@@ -3469,9 +4065,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t1 (i int);");
             execute("create table t2 as (select x+10 j from long_sequence(3))");
 
-            String query = "select * from t1 left join t2 on t1.i+10 = t2.j";
-
-            assertSql("i\tj\n", query);
+            assertSql("i\tj\n", "select * from t1 left join t2 on t1.i+10 = t2.j");
+            assertSql("i\tj\n" +
+                    "null\t11\n" +
+                    "null\t12\n" +
+                    "null\t13\n", "select * from t1 right join t2 on t1.i+10 = t2.j");
+            assertSql("i\tj\n" +
+                    "null\t11\n" +
+                    "null\t12\n" +
+                    "null\t13\n", "select * from t1 full join t2 on t1.i+10 = t2.j");
         });
     }
 
@@ -3490,6 +4092,22 @@ public class JoinTest extends AbstractCairoTest {
                             "5\tnull\n",
                     "select * from t1 left join t2 on t1.i+10 = t2.j"
             );
+            assertSql(
+                    "i\tj\n" +
+                            "1\t11\n" +
+                            "2\t12\n" +
+                            "3\t13\n",
+                    "select * from t1 right join t2 on t1.i+10 = t2.j"
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "1\t11\n" +
+                            "2\t12\n" +
+                            "3\t13\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n",
+                    "select * from t1 full join t2 on t1.i+10 = t2.j"
+            );
         });
     }
 
@@ -3507,6 +4125,25 @@ public class JoinTest extends AbstractCairoTest {
                             "4\tnull\n" +
                             "5\tnull\n",
                     "select * from t1 left join t2 on t1.i = - t2.j"
+            );
+
+            assertSql(
+                    "i\tj\n" +
+                            "2\t-2\n" +
+                            "1\t-1\n" +
+                            "null\t0\n",
+                    "select * from t1 right join t2 on t1.i = - t2.j"
+            );
+
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n" +
+                            "null\t0\n",
+                    "select * from t1 full join t2 on t1.i = - t2.j"
             );
         });
     }
@@ -3528,7 +4165,25 @@ public class JoinTest extends AbstractCairoTest {
                             "3\t3\n" +
                             "-4\tnull\n" +
                             "5\t-5\n",
-                    query
+                    "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)"
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "-2\t-2\n" +
+                            "3\t3\n" +
+                            "null\t0\n" +
+                            "5\t-5\n",
+                    "select * from t1 right join t2 on abs(t1.i) = abs(t2.j)"
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "-2\t-2\n" +
+                            "3\t3\n" +
+                            "null\t0\n" +
+                            "5\t-5\n",
+                    "select * from t1 right join t2 on abs(t1.i) = abs(t2.j)"
             );
         });
     }
@@ -3549,6 +4204,27 @@ public class JoinTest extends AbstractCairoTest {
                             "4\t-4\n" +
                             "5\t-5\n",
                     "select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)"
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "null\t-1\n" +
+                            "null\t-2\n" +
+                            "null\t-3\n" +
+                            "4\t-4\n" +
+                            "5\t-5\n",
+                    "select * from t1 right join t2 on case when i < 4 then 0 else i end = abs(j)"
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\t-4\n" +
+                            "5\t-5\n" +
+                            "null\t-1\n" +
+                            "null\t-2\n" +
+                            "null\t-3\n",
+                    "select * from t1 full join t2 on case when i < 4 then 0 else i end = abs(j)"
             );
         });
     }
@@ -3574,6 +4250,28 @@ public class JoinTest extends AbstractCairoTest {
                             "5\t-1\n",
                     "select * from t1 left join t2 on i > 4  "
             );
+            assertSql(
+                    "i\tj\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "5\t-3\n" +
+                            "5\t-2\n" +
+                            "5\t-1\n",
+                    "select * from t1 right join t2 on i > 4  "
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "5\t-3\n" +
+                            "5\t-2\n" +
+                            "5\t-1\n",
+                    "select * from t1 full join t2 on i > 4  "
+            );
         });
     }
 
@@ -3594,6 +4292,24 @@ public class JoinTest extends AbstractCairoTest {
                             "5\t-5\n" +
                             "5\t-4\n",
                     "select * from t1 left join t2 on i > 4 and j < -3 "
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "null\t-3\n" +
+                            "null\t-2\n" +
+                            "null\t-1\n",
+                    "select * from t1 right join t2 on i > 4 and j < -3 "
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "null\t-3\n" +
+                            "null\t-2\n" +
+                            "null\t-1\n",
+                    "select * from t1 right join t2 on i > 4 and j < -3 "
             );
         });
     }
@@ -3619,6 +4335,33 @@ public class JoinTest extends AbstractCairoTest {
                             "5\tnull\n",
                     "select * from t1 left join t2 on i*j >= -4 "
             );
+            assertSql(
+                    "i\tj\n" +
+                            "null\t-5\n" +
+                            "1\t-4\n" +
+                            "1\t-3\n" +
+                            "1\t-2\n" +
+                            "2\t-2\n" +
+                            "1\t-1\n" +
+                            "2\t-1\n" +
+                            "3\t-1\n" +
+                            "4\t-1\n",
+                    "select * from t1 right join t2 on i*j >= -4 "
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-4\n" +
+                            "1\t-3\n" +
+                            "1\t-2\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "2\t-1\n" +
+                            "3\t-1\n" +
+                            "4\t-1\n" +
+                            "5\tnull\n" +
+                            "null\t-5\n",
+                    "select * from t1 full join t2 on i*j >= -4 "
+            );
         });
     }
 
@@ -3639,6 +4382,24 @@ public class JoinTest extends AbstractCairoTest {
                             "5\tnull\n",
                     "select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
             );
+            assertSql(
+                    "i\tj\n" +
+                            "null\t-5\n" +
+                            "null\t-4\n" +
+                            "null\t-3\n" +
+                            "2\t-2\n" +
+                            "1\t-1\n",
+                    "select * from t1 right join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
+            );
+            assertSql(
+                    "i\tj\n" +
+                            "null\t-5\n" +
+                            "null\t-4\n" +
+                            "null\t-3\n" +
+                            "2\t-2\n" +
+                            "1\t-1\n",
+                    "select * from t1 right join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
+            );
         });
     }
 
@@ -3649,8 +4410,6 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 as (select x+10 j from long_sequence(3))");
             execute("create table t3 as (select x+1 k from long_sequence(3))");
 
-            String query = "select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
-
             assertSql(
                     "i\tj\tk\n" +
                             "1\t11\tnull\n" +
@@ -3658,7 +4417,21 @@ public class JoinTest extends AbstractCairoTest {
                             "3\t13\tnull\n" +
                             "4\tnull\tnull\n" +
                             "5\tnull\tnull\n",
-                    query
+                    "select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j"
+            );
+            assertSql(
+                    "i\tj\tk\n" +
+                            "null\tnull\t2\n" +
+                            "null\tnull\t3\n" +
+                            "null\tnull\t4\n",
+                    "select * from t1 right join (select * from t2 right join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j"
+            );
+            assertSql(
+                    "i\tj\tk\n" +
+                            "null\tnull\t2\n" +
+                            "null\tnull\t3\n" +
+                            "null\tnull\t4\n",
+                    "select * from t1 right join (select * from t2 right join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j"
             );
         });
     }
@@ -3669,14 +4442,30 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t1 as (select x i from long_sequence(3))");
             execute("create table t2 as (select x+10 j from long_sequence(3))");
 
-            String query = "select * from t1 left join t2 on i=j and abs(1) = 0";
-
+            assertSql(
+                    "i\tj\n",
+                    "select * from t1 join t2 on i=j and abs(1) = 0");
             assertSql(
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
                             "3\tnull\n",
-                    query);
+                    "select * from t1 left join t2 on i=j and abs(1) = 0");
+            assertSql(
+                    "i\tj\n" +
+                            "null\t12\n" +
+                            "null\t11\n" +
+                            "null\t13\n",
+                    "select * from t1 right join t2 on i=j and abs(1) = 0");
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "null\t12\n" +
+                            "null\t11\n" +
+                            "null\t13\n",
+                    "select * from t1 full join t2 on i=j and abs(1) = 0");
         });
     }
 
@@ -3701,7 +4490,7 @@ public class JoinTest extends AbstractCairoTest {
                             ");"
             );
 
-            final String query = "SELECT\n" +
+            String query = "SELECT\n" +
                     "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
                     "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\"\n" +
                     "FROM\n" +
@@ -3721,7 +4510,69 @@ public class JoinTest extends AbstractCairoTest {
                             "    VirtualRecord\n" +
                             "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]\n" +
                             "        SelectedRecord\n" +
-                            "            Hash Outer Join Light\n" +
+                            "            Hash Left Outer Join Light\n" +
+                            "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: fact_table\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: dim_apTemperature\n"
+            );
+
+            query = "SELECT\n" +
+                    "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  RIGHT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "LIMIT 3;";
+            assertSql(
+                    "dim_ap_temperature__category\tfact_table__date_time_day\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "b\t1970-01-01T00:00:00.000000Z\n" +
+                            "c\t1970-01-01T00:00:00.000000Z\n",
+                    query
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Right Outer Join Light\n" +
+                            "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: fact_table\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: dim_apTemperature\n"
+            );
+
+            query = "SELECT\n" +
+                    "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  FULL JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "LIMIT 3;";
+            assertSql(
+                    "dim_ap_temperature__category\tfact_table__date_time_day\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "b\t1970-01-01T00:00:00.000000Z\n" +
+                            "c\t1970-01-01T00:00:00.000000Z\n",
+                    query
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Full Outer Join Light\n" +
                             "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -3955,6 +4806,51 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterHashJoinOnFunctionCondition12() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (i int, s1 string)");
+            execute("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            execute("create table t2 (j int, s2 string)");
+            execute("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]') order by i, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\te\n" +
+                            "2\tb\t2\tb\n" +
+                            "2\tb\t2\td\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ '[abde]') order by i, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\te\n" +
+                            "2\tb\t2\tb\n" +
+                            "2\tb\t2\td\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n"
+            );
+            assertHashJoinSql(
+                    "select * from t1 full join t2 on j = i and (s1 ~ '[abde]') order by i, s2",
+                    "i\ts1\tj\ts2\n" +
+                            "null\t\t3\tc\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\te\n" +
+                            "2\tb\t2\tb\n" +
+                            "2\tb\t2\td\n" +
+                            "3\tc\tnull\t\n" +
+                            "4\td\tnull\t\n" +
+                            "5\te\tnull\t\n"
+            );
+        });
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -4112,12 +5008,18 @@ public class JoinTest extends AbstractCairoTest {
                             "('ETH-USD', '2001-01-01T00:00:02.000000Z', 3)"
             );
 
-            String query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+            String leftJoinQuery = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
                     "LEFT JOIN (select * from trades where pair = 'BTC-USD' and price > 1) t2 ON(pair)";
+            String rightJoinQuery = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+                    "RIGHT JOIN (select * from trades where pair = 'BTC-USD' and price > 1) t2 ON(pair)";
+            String fullJoinQuery = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+                    "FULL JOIN (select * from trades where pair = 'BTC-USD' and price > 1) t2 ON(pair)";
             String expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
                     "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
                     "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n";
-            assertQueryAndCache(expected, query, "ts", false);
+            assertQueryAndCache(expected, leftJoinQuery, "ts", false);
+            assertQueryAndCache(expected, rightJoinQuery, null, false);
+            assertQueryAndCache(expected, fullJoinQuery, null, false);
         });
     }
 
@@ -4817,6 +5719,10 @@ public class JoinTest extends AbstractCairoTest {
             assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on b = v");
             assertSql(expected, "select i, s, b, j, v from t1 left join t2 on s = v");
             assertSql(expected, "select i, s, b, j, v from t1 left join t2 on b = v");
+            assertSql(expected, "select i, s, b, j, v from t1 right join t2 on s = v");
+            assertSql(expected, "select i, s, b, j, v from t1 right join t2 on b = v");
+            assertSql(expected, "select i, s, b, j, v from t1 full join t2 on s = v");
+            assertSql(expected, "select i, s, b, j, v from t1 full join t2 on b = v");
 
             final String expected2 = "i\ts\tb\tj\tv\n" +
                     "1\ta\ta\t5\te\n" +
@@ -6307,6 +7213,24 @@ public class JoinTest extends AbstractCairoTest {
                     false,
                     fullFatJoins
             );
+
+            assertQueryFullFatNoLeakCheck(
+                    expected,
+                    "select x.*, y.* from y right join x on (kk) order by kk desc, l1 desc",
+                    null,
+                    true,
+                    false,
+                    fullFatJoins
+            );
+
+            assertQueryFullFatNoLeakCheck(
+                    expected,
+                    "select * from x full join y on (kk) order by kk desc, l1 desc",
+                    null,
+                    true,
+                    false,
+                    fullFatJoins
+            );
         });
     }
 
@@ -6334,6 +7258,8 @@ public class JoinTest extends AbstractCairoTest {
 
             // master records should be filtered out because slave records missing
             assertQueryAndCache(expected, "select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b", null, true, false);
+            assertQueryAndCache(expected, "select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b", null, true, false);
+            assertQueryAndCache(expected, "select x.c, x.a, b from y full join x on y.m = x.c order by x.c, b", null, true, false);
 
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -6347,6 +7273,21 @@ public class JoinTest extends AbstractCairoTest {
                             "14\t197\t50\n" +
                             "14\t197\t68\n",
                     "select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b",
+                    null,
+                    true,
+                    false,
+                    fullFatJoins
+            );
+
+            assertQueryFullFatNoLeakCheck(
+                    expected +
+                            "11\t467\tnull\n" +
+                            "12\t347\t0\n" +
+                            "12\t347\t7\n" +
+                            "13\t244\tnull\n" +
+                            "14\t197\t50\n" +
+                            "14\t197\t68\n",
+                    "select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b",
                     null,
                     true,
                     false,
