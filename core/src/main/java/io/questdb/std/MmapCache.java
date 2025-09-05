@@ -76,8 +76,7 @@ public class MmapCache {
             // Cache RO maps only.
             long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
 
-            if (address == -1) {
-                // mmap failed, return 0
+            if (address == FilesFacade.MAP_FAILED) {
                 return address;
             }
             // Cache the mmap record
@@ -182,7 +181,7 @@ public class MmapCache {
                     // No one else uses the record, we can use mremap.
                     // it mremap0() throws then we change nothing
                     newAddress = mremap0(fd, record.address, record.length, newSize, offset, Files.MAP_RO, record.memoryTag, memoryTag);
-                    if (newAddress != -1) {
+                    if (newAddress != FilesFacade.MAP_FAILED) {
                         record.address = newAddress;
                         record.length = newSize;
                         record.memoryTag = memoryTag;
@@ -196,7 +195,7 @@ public class MmapCache {
                     newAddress = mmap0(fd, newSize, 0, Files.MAP_RO, memoryTag);
 
                     // yay, mmap0() did not throw! it could still return -1 though
-                    if (newAddress != -1) {
+                    if (newAddress != FilesFacade.MAP_FAILED) {
                         // we decrease reference count of the old record iff mmap0() succeeded.
                         // Q: Why we don't decrease the reference count even in the presence of failures?
                         // A: Because the semantic of mremap() failure is that the old mapping is still valid
@@ -215,7 +214,7 @@ public class MmapCache {
             }
         }
 
-        // unmap is usually slow OS call, to not block everyone, move it out of synchronized section
+        // unmap is usually a slow OS call, to not block everyone, move it out of the synchronized section
         if (unmapPtr != 0) {
             // Unmap the old address if it was not used anymore
             unmap0(unmapPtr, unmapLen, unmapTag);
