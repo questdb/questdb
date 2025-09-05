@@ -483,7 +483,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         private void closePart() {
             if (partFd > -1) {
-                if (address > 0) {
+                if (address != 0) {
                     ff.munmap(address, partMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
                 }
                 ff.close(partFd);
