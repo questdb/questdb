@@ -159,11 +159,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, -1);
-    }
-
-    @Override
     protected long mapWritePage(int page, long offset) {
         releaseCurrentPage();
         return pageAddress = mapPage(page);

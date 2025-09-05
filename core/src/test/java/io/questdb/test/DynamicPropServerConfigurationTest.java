@@ -42,8 +42,8 @@ import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
@@ -378,7 +378,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // there is no reliable way to wait until the server listener is re-registered
                 serverMain.getEngine().getConfigReloader().reload();
 
-                // while configuration was reloaded, metrics must not be reset
+                // while the configuration was reloaded, metrics must not be reset
                 TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.pgWireMetrics().listenerStateChangeCounter().getValue()));
 
                 // we should be able to open two connections eventually
