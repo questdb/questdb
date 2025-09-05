@@ -1341,7 +1341,9 @@ public class CopyTask {
                 }
             } finally {
                 ff.close(fd);
-                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
+                if (mergeIndexAddr != 0) {
+                    ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
+                }
                 unmap(ff, unmergedIndexes);
             }
         }

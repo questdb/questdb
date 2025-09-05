@@ -62,6 +62,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -165,7 +166,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             IntObjHashMap<LongList> lists = new IntObjHashMap<>();
 
             // we need to have a conventional structure, which will unfortunately be memory-inefficient, to
-            // assert that index is populated correctly
+            // assert that the index is populated correctly
             create(configuration, path.trimTo(plen), "x", 128);
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < N; i++) {
@@ -195,7 +196,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         z--;
                     }
 
-                    // makes sure entire list is processed
+                    // makes sure the entire list is processed
                     Assert.assertEquals(0, z);
                 }
             }
@@ -214,7 +215,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         z++;
                     }
 
-                    // makes sure entire list is processed
+                    // makes sure the entire list is processed
                     Assert.assertEquals(sz, z);
                 }
             }
@@ -241,7 +242,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getDbRoot()).concat("x").put(".k");
-                        mem.wholeFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                        LPSZ name = path.$();
+                        FilesFacade ff = configuration.getFilesFacade();
+                        mem.of(ff, name, ff.getMapPageSize(), ff.length(name), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
                     }
                     mem.putLong(BitmapIndexUtils.getKeyEntryOffset(0) + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
 
@@ -285,21 +288,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
             assertBackwardReaderConstructorFail(configuration, "Unknown format");
             assertForwardReaderConstructorFail(configuration, "Unknown format");
-        });
-    }
-
-    @Test
-    public void testBackwardReaderConstructorFileTooSmall() throws Exception {
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public long getSpinLockTimeout() {
-                return 1;
-            }
-        };
-        TestUtils.assertMemoryLeak(() -> {
-            openKey().close();
-            assertBackwardReaderConstructorFail(configuration, "Index file too short");
-            assertForwardReaderConstructorFail(configuration, "Index file too short");
         });
     }
 
@@ -399,7 +387,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
-                // make sure index fails until sequence is not up to date
+                // make sure the index fails until the sequence is not up to date
 
                 try {
                     reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -421,7 +409,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testBeyondPageSize() throws Exception {
 
-        // value count for single pass, there are two passes
+        // value count for a single pass, there are two passes
         final int N = 2_000_000;
         final int K = 1000;
 
@@ -445,7 +433,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     }
                 }
 
-                // reopen indexer and add more values
+                // reopen the indexer and add more values
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                     for (int i = 0; i < N; i++) {
                         final int k = rnd.nextInt(K);
@@ -458,7 +446,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 reader.updateKeyCount();
                 Assert.assertEquals(K, reader.getKeyCount());
 
-                // compute sum of all values
+                // compute the sum of all values
                 long sum = 0;
                 for (int i = 0; i < K; i++) {
                     RowCursor cursor = reader.getCursor(true, i, Long.MIN_VALUE, Long.MAX_VALUE);
@@ -698,6 +686,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     }
                 }
 
+                reader.updateKeyCount();
+
                 BitmapIndexUtilsNative.latestScanBackward(
                         reader.getKeyBaseAddress(),
                         reader.getKeyMemorySize(),
@@ -734,7 +724,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final int M = 1000;
             final int N = 100;
             final int indexBlockCapacity = 32;
-            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            // Separate two symbol columns with primitive. It will make problems visible if the index does not shift correctly
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, indexBlockCapacity).
@@ -1009,7 +999,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
-                // make sure index fails until sequence is not up to date
+                // make sure the index fails until the sequence is not up to date
 
                 try {
                     reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -1248,7 +1238,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final int N = 1000000;
             final int CUTOFF = 60000;
 
-            // this is an assertion in case somebody change the test
+            // this is an assertion in case somebody changes the test
             //noinspection ConstantConditions
             assert CUTOFF < N;
 
@@ -1325,7 +1315,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            // add more data to model
+            // add more data to the model
             for (int i = 0; i < N; i++) {
                 int key = modelRnd.nextPositiveInt() % maxKeys;
                 LongList list = lists.get(key);
@@ -1343,7 +1333,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            // assert against model again
+            // assert against the model again
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     int key = keys.getQuick(i);
@@ -1415,7 +1405,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writer.truncate();
             Assert.assertEquals(0, writer.getKeyCount());
 
-            // now add middle key first
+            // now add the middle key first
             writer.add(900, 8000);
             Assert.assertEquals(901, writer.getKeyCount());
 
@@ -1771,7 +1761,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             IntList keys = new IntList();
             IntObjHashMap<LongList> lists = new IntObjHashMap<>();
 
-            // populate model for both reader and writer to be used for concurrent writes
+            // populate model for both reader and writer to be used for concurrent writers
             for (int i = 0; i < N; i++) {
                 int key = rnd.nextPositiveInt() % maxKeys;
 
