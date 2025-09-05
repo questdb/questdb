@@ -35,6 +35,9 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.FlattenArrayUtils;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -65,7 +68,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos);
+                flushIntervalNanos,
+                new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks()));
     }
 
     public LineHttpSenderV2(ObjList<String> hosts,
@@ -82,7 +86,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                             long maxRetriesNanos,
                             long minRequestThroughput,
                             long flushIntervalNanos,
-                            int currentAddressIndex) {
+                            int currentAddressIndex,
+                            Rnd rnd) {
         super(hosts,
                 ports,
                 path,
@@ -97,7 +102,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos,
-                currentAddressIndex);
+                currentAddressIndex,
+                rnd);
     }
 
     @SuppressWarnings("unused")
@@ -114,7 +120,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                                int maxNameLength,
                                long maxRetriesNanos,
                                long minRequestThroughput,
-                               long flushIntervalNanos) {
+                               long flushIntervalNanos,
+                               Rnd rnd) {
         super(host,
                 port,
                 path,
@@ -128,7 +135,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos);
+                flushIntervalNanos,
+                rnd);
     }
 
     @Override

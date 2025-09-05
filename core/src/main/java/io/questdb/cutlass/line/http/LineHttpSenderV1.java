@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
@@ -51,7 +52,8 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                                int maxNameLength,
                                long maxRetriesNanos,
                                long minRequestThroughput,
-                               long flushIntervalNanos) {
+                               long flushIntervalNanos,
+                               Rnd rnd) {
         super(host,
                 port,
                 path,
@@ -65,7 +67,8 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos);
+                flushIntervalNanos,
+                rnd);
     }
 
     protected LineHttpSenderV1(ObjList<String> hosts,
@@ -82,7 +85,8 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                                long maxRetriesNanos,
                                long minRequestThroughput,
                                long flushIntervalNanos,
-                               int currentAddressIndex) {
+                               int currentAddressIndex,
+                               Rnd rnd) {
         super(hosts,
                 ports,
                 path,
@@ -97,7 +101,8 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos,
-                currentAddressIndex);
+                currentAddressIndex,
+                rnd);
     }
 
     @Override
