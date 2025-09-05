@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -96,6 +97,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     @Override
     public boolean getCloneSymbolTables() {
         return false;
+    }
+
+    public Decimal256 getDecimal256() {
+        return null;
     }
 
     @Override
