@@ -564,8 +564,8 @@ public class WriterPool extends AbstractPool {
         }
 
         if (e.owner != UNALLOCATED) {
-            LOG.debug().$("<< [table=`").$(tableToken)
-                    .$("`, thread=").$(thread).$(']').$();
+            LOG.debug().$("<< [table=").$(tableToken)
+                    .$(", thread=").$(thread).$(']').$();
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();

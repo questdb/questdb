@@ -175,12 +175,12 @@ public final class PurgingOperator {
                     );
                     cleanupColumnVersions.setPos(cleanupVersionSize);
 
-                    log.info().$("column purge scheduled [table=").$safe(tableToken.getTableName())
+                    log.info().$("column purge scheduled [table=").$(tableToken)
                             .$(", column=").$safe(columnName)
                             .$(", updateTxn=").$(txn)
                             .I$();
                 } else {
-                    log.info().$("column purge complete [table=").$safe(tableToken.getTableName())
+                    log.info().$("column purge complete [table=").$(tableToken)
                             .$(", column=").$safe(columnName)
                             .$(", newColumnVersion=").$(txn - 1)
                             .I$();

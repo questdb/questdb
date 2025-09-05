@@ -171,7 +171,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                         writer.rollback();
                     } catch (Throwable e2) {
                         // Writer is distressed, exception already logged, the pool will handle it when writer is returned
-                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken.getTableName()).I$();
+                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken).I$();
                     }
                     throw e;
                 } finally {
