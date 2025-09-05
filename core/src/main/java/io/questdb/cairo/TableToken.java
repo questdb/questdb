@@ -164,15 +164,15 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
+        if (dbLogName != null) {
+            sink.put(dbLogName).put('/');
+        }
         if (dirNameSameAsTableName) {
             sink.put(dirName);
         } else {
             sink.put("TableToken{tableName=").put(tableName)
                     .put(", dirName=").put(dirName)
                     .put('}');
-        }
-        if (dbLogName != null) {
-            sink.put(", db=").put(dbLogName);
         }
     }
 
