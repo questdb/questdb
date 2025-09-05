@@ -59,6 +59,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Decimal256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1155,6 +1156,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean getCloneSymbolTables() {
             return sqlExecutionContext.getCloneSymbolTables();
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            return sqlExecutionContext.getDecimal256();
         }
 
         @Override

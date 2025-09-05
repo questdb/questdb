@@ -356,5 +356,15 @@ public final class DirectArray extends MutableArray implements Mutable {
         public void zeroMem(int length) {
             throw new UnsupportedOperationException();
         }
+
+        @Override
+        public void putDecimal128(long hi, long lo) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(long hh, long hl, long lh, long ll) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

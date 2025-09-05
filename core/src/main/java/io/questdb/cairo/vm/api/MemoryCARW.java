@@ -115,6 +115,39 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     @Override
+    default void putDecimal128(long high, long low) {
+        final long addr = appendAddressFor(16);
+        Unsafe.getUnsafe().putLong(addr, high);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+    }
+
+    @Override
+    default void putDecimal256(long hh, long hl, long lh, long ll) {
+        final long addr = appendAddressFor(32);
+        Unsafe.getUnsafe().putLong(addr, hh);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hl);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, lh);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, ll);
+    }
+
+
+    @Override
+    default void putDecimal128(long offset, long high, long low) {
+        final long addr = appendAddressFor(offset, 16);
+        Unsafe.getUnsafe().putLong(addr, high);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+    }
+
+    @Override
+    default void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
+        final long addr = appendAddressFor(offset, 32);
+        Unsafe.getUnsafe().putLong(addr, hh);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hl);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, lh);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, ll);
+    }
+
+    @Override
     default void putDouble(double value) {
         Unsafe.getUnsafe().putDouble(appendAddressFor(Double.BYTES), value);
     }

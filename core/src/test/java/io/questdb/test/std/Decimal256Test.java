@@ -72,6 +72,22 @@ public class Decimal256Test {
         }
     }
 
+    @Test
+    public void testAdditionNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.add(Decimal256.fromLong(1, 0));
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
+    public void testAdditionNullOther() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.add(Decimal256.NULL_VALUE);
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
     @Test(expected = NumericException.class)
     public void testAdditionOverflow() {
         Decimal256 m = new Decimal256();
@@ -83,6 +99,64 @@ public class Decimal256Test {
     public void testBigDecimalOverflow() {
         BigDecimal bd = new BigDecimal("1e100");
         Decimal256.fromBigDecimal(bd);
+    }
+
+    @Test
+    public void testComparePrecisionBasic() {
+        Decimal256 ten = Decimal256.fromLong(10, 0);
+        Assert.assertTrue("10 have a precision of 2 (< 3)", ten.comparePrecision(3));
+        Assert.assertTrue("10 have a precision of 2 (== 2)", ten.comparePrecision(2));
+        Assert.assertFalse("10 have a precision of 2 (> 1)", ten.comparePrecision(1));
+
+        Decimal256 mten = Decimal256.fromLong(-10, 0);
+        Assert.assertTrue("-10 have a precision of 2 (< 3)", mten.comparePrecision(3));
+        Assert.assertTrue("-10 have a precision of 2 (== 2)", mten.comparePrecision(2));
+        Assert.assertFalse("-10 have a precision of 2 (> 1)", mten.comparePrecision(1));
+
+        Assert.assertTrue("A precision higher than MAX_SCALE is always true", ten.comparePrecision(Decimal256.MAX_SCALE + 1));
+        Assert.assertFalse("A precision lower than 0 is always false", ten.comparePrecision(-1));
+    }
+
+    @Test
+    public void testComparePrecisionCombinatorics() {
+        // value -> actual precision
+        final Object[][] combinations = new Object[][]{
+                {"0", 0},
+                {"1", 1},
+                {"5", 1},
+                {"9", 1},
+                {"12", 2},
+                {"76", 2},
+                {"99", 2},
+                {"872", 3},
+                {"999", 3},
+                {"12345", 5},
+                {"99999", 5},
+                {"100000", 6},
+                {"654321", 6},
+                {"1234567890", 10},
+                {"98765432101234567890", 20},
+                {"123456789098765432101234567890", 30},
+                {"9876543210123456789098765432101234567890", 40},
+                {"12345678909876543210123456789098765432101234567890", 50},
+                {"987654321012345678909876543210123456789098765432101234567890", 60},
+                {"1234567890987654321012345678909876543210123456789098765432101234567890", 70},
+                {"6123456789098765432101234567890987654321012345678909876543210123456789012345", 76},
+        };
+        for (Object[] combination : combinations) {
+            String value = (String) combination[0];
+            int actualPrecision = (int) combination[1];
+            BigDecimal d = new BigDecimal(value);
+            Decimal256 decimal = Decimal256.fromBigDecimal(d);
+            for (int i = 0; i <= Decimal256.MAX_SCALE; i++) {
+                Assert.assertEquals(String.format("Test failed with decimal %s (p: %d) when compared against %d", decimal, actualPrecision, i), actualPrecision <= i, decimal.comparePrecision(i));
+            }
+            decimal.negate();
+            // Negated values have the same precision as the positive one
+            for (int i = 0; i <= Decimal256.MAX_SCALE; i++) {
+                Assert.assertEquals(String.format("Test failed with decimal %s (p: %d) when compared against %d", decimal, actualPrecision, i), actualPrecision <= i, decimal.comparePrecision(i));
+            }
+        }
     }
 
     @Test
@@ -341,6 +415,22 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testDivideNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.divide(Decimal256.fromLong(1, 0), 0, RoundingMode.DOWN);
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
+    public void testDivideNullOther() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.divide(Decimal256.NULL_VALUE, 0, RoundingMode.DOWN);
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
     public void testDivideOverflow() {
         Decimal256 a = Decimal256.fromDouble(-328049473, 0);
         Decimal256 b = Decimal256.fromDouble(-50582053256.05, 2);
@@ -518,6 +608,46 @@ public class Decimal256Test {
 
         Assert.assertEquals(a, b);
         Assert.assertNotEquals(a, c);
+    }
+
+    @Test
+    public void testFitsInStorageSizeCombinatorics() {
+        // combinations described as
+        // hh, hl, lh, ll, fits in byte, fits in short, fits in int, fits in long, fits in Long128, fits in Long256
+        Object[][] combinations = new Object[][]{
+                {0L, 0L, 0L, 0L, true, true, true, true, true, true},
+                {0L, 0L, 0L, 1L, true, true, true, true, true, true},
+                {-1L, -1L, -1L, -1L, true, true, true, true, true, true},
+                {0L, 0L, 0L, (long) Byte.MAX_VALUE, true, true, true, true, true, true},
+                {-1L, -1L, -1L, (long) Byte.MIN_VALUE + 1, true, true, true, true, true, true},
+                {0L, 0L, 0L, (long) Short.MAX_VALUE, false, true, true, true, true, true},
+                {-1L, -1L, -1L, (long) Short.MIN_VALUE + 1, false, true, true, true, true, true},
+                {0L, 0L, 0L, (long) Integer.MAX_VALUE, false, false, true, true, true, true},
+                {-1L, -1L, -1L, (long) Integer.MIN_VALUE + 1, false, false, true, true, true, true},
+                {0L, 0L, 0L, Long.MAX_VALUE, false, false, false, true, true, true},
+                {-1L, -1L, -1L, Long.MIN_VALUE + 1, false, false, false, true, true, true},
+                {0L, 0L, Long.MAX_VALUE, Long.MIN_VALUE, false, false, false, false, true, true},
+                {-1L, -1L, Long.MIN_VALUE, Long.MIN_VALUE + 1, false, false, false, false, true, true},
+                {Long.MAX_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, false, false, false, false, false, true},
+                {Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE + 1, false, false, false, false, false, true},
+                {Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, false, false, false, false, false, true},
+        };
+        Decimal256 d = new Decimal256();
+        for (var combination : combinations) {
+            d.of((long) combination[0], (long) combination[1], (long) combination[2], (long) combination[3], 0);
+            Assert.assertEquals("Expected " + d + " to fit in a byte", combination[4], d.fitsInStorageSizePow2(0));
+            Assert.assertEquals("Expected " + d + " to fit in a short", combination[5], d.fitsInStorageSizePow2(1));
+            Assert.assertEquals("Expected " + d + " to fit in an integer", combination[6], d.fitsInStorageSizePow2(2));
+            Assert.assertEquals("Expected " + d + " to fit in a long", combination[7], d.fitsInStorageSizePow2(3));
+            Assert.assertEquals("Expected " + d + " to fit in 128-bits", combination[8], d.fitsInStorageSizePow2(4));
+            Assert.assertEquals("Expected " + d + " to fit in 256-bits", combination[9], d.fitsInStorageSizePow2(5));
+        }
+    }
+
+    @Test
+    public void testFitsInStorageSizeInvalid() {
+        Decimal256 d = new Decimal256(0, 0, 0, 1, 0);
+        Assert.assertFalse(d.fitsInStorageSizePow2(6));
     }
 
     @Test
@@ -713,6 +843,22 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testModuloNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.modulo(Decimal256.fromLong(1, 0));
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
+    public void testModuloNullOther() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.modulo(Decimal256.NULL_VALUE);
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
     public void testModuloSimple() {
         // Test 10 % 3 = 1
         Decimal256 a = Decimal256.fromDouble(10.0, 0);
@@ -794,6 +940,22 @@ public class Decimal256Test {
         a.multiply(b);
     }
 
+    @Test
+    public void testMultiplyNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.multiply(Decimal256.fromLong(1, 0));
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
+    public void testMultiplyNullOther() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.multiply(Decimal256.NULL_VALUE);
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
     @Test(expected = NumericException.class)
     public void testMultiplyOverflow128() {
         Decimal256 m = new Decimal256();
@@ -862,6 +1024,13 @@ public class Decimal256Test {
 
         c.multiply(d);
         Assert.assertEquals(21.0, c.toDouble(), 0.01);
+    }
+
+    @Test
+    public void testNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        Assert.assertTrue(m.isNull());
     }
 
     @Test(expected = NumericException.class)
@@ -1271,6 +1440,39 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testStorageSizeBasic() {
+        // value -> expected storage size (pow 2 bytes)
+        final Object[][] cases = new Object[][]{
+                {"0", 0},
+                {"55", 0},
+                {"127", 0},
+                {"128", 1},
+                {"32767", 1},
+                {"32768", 2},
+                {"65565", 2},
+                {"2147483647", 2},
+                {"2147483648", 3},
+                {"12345678901234", 3},
+                {"9223372036854775807", 3},
+                {"9223372036854775808", 4},
+                {"123456789012345678901234567890", 4},
+                {"170141183460469231731687303715884105727", 4},
+                {"170141183460469231731687303715884105728", 5},
+                {"57896044618658097711785492504343953926634992332820282019728792003956564819967", 5},
+        };
+        for (Object[] case0 : cases) {
+            String value = (String) case0[0];
+            int expectedStorageSize = (int) case0[1];
+            BigDecimal d = new BigDecimal(value);
+            Decimal256 decimal = Decimal256.fromBigDecimal(d);
+            Assert.assertEquals(String.format("Test failed with decimal %s", decimal), expectedStorageSize, decimal.getStorageSize());
+            decimal.negate();
+            // Negated values have the storage size as the positive one
+            Assert.assertEquals(String.format("Test failed with decimal %s", decimal), expectedStorageSize, decimal.getStorageSize());
+        }
+    }
+
+    @Test
     public void testSubtractionFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
 
@@ -1285,6 +1487,22 @@ public class Decimal256Test {
             // Test subtraction accuracy
             testSubtractionAccuracy(a, b, i);
         }
+    }
+
+    @Test
+    public void testSubtractionNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.subtract(Decimal256.fromLong(1, 0));
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
+    }
+
+    @Test
+    public void testSubtractionNullOther() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.MAX_VALUE);
+        m.subtract(Decimal256.NULL_VALUE);
+        Assert.assertEquals(Decimal256.NULL_VALUE, m);
     }
 
     @Test

@@ -52,6 +52,7 @@ public class ExpressionParser {
     private static final int BRANCH_CAST_AS = 11;
     private static final int BRANCH_COMMA = 1;
     private static final int BRANCH_CONSTANT = 4;
+    private static final int BRANCH_DECIMAL = 22;
     private static final int BRANCH_DOT = 12;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
     private static final int BRANCH_GEOHASH = 18;
@@ -150,6 +151,7 @@ public class ExpressionParser {
         return branchTag == BRANCH_LITERAL
                 || branchTag == BRANCH_CONSTANT
                 || branchTag == BRANCH_GEOHASH
+                || branchTag == BRANCH_DECIMAL
                 || branchTag == BRANCH_RIGHT_BRACKET
                 || branchTag == BRANCH_RIGHT_PARENTHESIS;
     }
@@ -437,6 +439,7 @@ public class ExpressionParser {
                             case BRANCH_CASE_START:
                             case BRANCH_CASE_CONTROL:
                             case BRANCH_GEOHASH:
+                            case BRANCH_DECIMAL:
                             case BRANCH_LAMBDA:
                                 throw SqlException.position(lastPos).put("'[' is unexpected here");
                             default:
@@ -630,11 +633,12 @@ public class ExpressionParser {
                                         argStackDepth = onNode(listener, node, 2, prevBranch);
                                         continue;
                                     }
-                                    if (thisWasCast && prevBranch != BRANCH_GEOHASH) {
+                                    if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) { // TODO: verify check
                                         // validate type
                                         final short castAsTag = ColumnType.tagOf(node.token);
                                         if ((cannotCastTo(castAsTag, isCastingNull)) ||
-                                                (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
+                                                (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL) ||
+                                                (castAsTag == ColumnType.DECIMAL && node.type == ExpressionNode.LITERAL)
                                         ) {
                                             throw SqlException.$(node.position, "unsupported cast");
                                         }
@@ -688,6 +692,57 @@ public class ExpressionParser {
                         break;
                     case 'd':
                     case 'D':
+                        // Merges a decimal type constant of the form decimal(p, s) to a single node decimal_p[_s]
+                        if (SqlKeywords.isDecimalKeyword(tok)) {
+                            CharSequence decimalTok = GenericLexer.immutableOf(tok);
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || tok.charAt(0) != '(') {
+                                lexer.backTo(lastPos + SqlKeywords.DECIMAL_KEYWORD_LENGTH, decimalTok);
+                                tok = decimalTok;
+                                processDefaultBranch = true;
+                                break;
+                            }
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || tok.charAt(0) == ')') {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, invalid type precision");
+                            }
+                            DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
+                            CharSequence precisionTok = GenericLexer.immutableOf(tok);
+
+                            // The user is not mandated to provide a scale value (defaults to 0)
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing ')'");
+                            } else if (tok.charAt(0) == ')') {
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        lexer.immutablePairOf(decimalTok, '_', precisionTok),
+                                        Integer.MIN_VALUE,
+                                        lastPos
+                                ));
+                            } else if (tok.charAt(0) == ',') {
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok == null) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing scale value");
+                                }
+                                DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        lexer.immutableTripleOf('_', decimalTok, precisionTok, tok),
+                                        Integer.MIN_VALUE,
+                                        lastPos
+                                ));
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok == null || tok.charAt(0) != ')') {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing ')'");
+                                }
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing ',' after precision");
+                            }
+                            thisBranch = BRANCH_DECIMAL;
+                            break OUT;
+                        }
+
                         if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDeclareKeyword(tok)) {
                             lexer.unparseLast();
                             break OUT;
