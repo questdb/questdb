@@ -431,6 +431,53 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFunctionMemoizationBasicColumnRefCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double, c string)");
+            execute("insert into x values(3, 1.0, 'a'), (1, 2.0, 'b')");
+            final String query = "select a, b, a + b c1 from x order by  c1";
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [c1]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,b,memoize(a+b)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+            assertSql(
+                    "a\tb\tc1\n" +
+                            "1\t2.0\t3.0\n" +
+                            "3\t1.0\t4.0\n",
+                    query
+            );
+
+            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b b1 from x) order by  b1";
+            assertPlanNoLeakCheck(
+                    query2,
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b1]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a_alias+1,a_alias+2,b1]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [memoize(a+1),b1]\n" +
+                            "                SelectedRecord\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+            assertSql(
+                    "column\tcolumn1\n" +
+                            "5\t6\n" +
+                            "3\t4\n",
+                    query2
+            );
+        });
+    }
+
+    @Test
     public void testJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");

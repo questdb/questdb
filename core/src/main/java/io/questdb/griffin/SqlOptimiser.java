@@ -7083,8 +7083,8 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = tempExprs.size(); i < n; i++) {
                 final ExpressionNode ast = tempExprs.getQuick(i);
                 int refCount = 1;
-                if (i < columnsSize && parent.getSelectModelType() == SELECT_MODEL_CHOOSE) {
-                    refCount = queryModel.getRefCount(i);
+                if (i < columnsSize && (parent.getSelectModelType() == SELECT_MODEL_CHOOSE) || parent.getSelectModelType() == SELECT_MODEL_VIRTUAL) {
+                    refCount = parent.getRefCount(i);
                 }
 
                 if (ast != null) {
