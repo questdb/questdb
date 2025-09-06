@@ -91,11 +91,6 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
-    public boolean shouldMemoize() {
-        return true;
-    }
-
-    @Override
     public void close() {
         Misc.free(stateA);
         Misc.free(stateB);
@@ -420,6 +415,11 @@ public class JsonExtractFunction implements Function {
     @Override
     public boolean isRuntimeConstant() {
         return pointer == null;
+    }
+
+    @Override
+    public boolean shouldMemoize() {
+        return true;
     }
 
     private long extractLongFromJsonNumber(long res) {

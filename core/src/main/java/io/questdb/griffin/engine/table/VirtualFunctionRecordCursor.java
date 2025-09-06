@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualFunctionRecord;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -40,14 +41,14 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
-    private final ObjList<Function> memoizers;
+    private final ObjList<MemoizerFunction> memoizers;
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
 
     public VirtualFunctionRecordCursor(
             ObjList<Function> functions,
-            ObjList<Function> memoizers,
+            ObjList<MemoizerFunction> memoizers,
             boolean supportsRandomAccess,
             int virtualColumnReservedSlots
     ) {

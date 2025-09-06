@@ -32,9 +32,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public final class ShortFunctionMemoizer extends ShortFunction implements UnaryFunction {
+public final class ShortFunctionMemoizer extends ShortFunction implements MemoizerFunction {
     private final Function fn;
     private Record recordLeft;
     private Record recordRight;
@@ -42,7 +41,6 @@ public final class ShortFunctionMemoizer extends ShortFunction implements UnaryF
     private short valueRight;
 
     public ShortFunctionMemoizer(Function fn) {
-        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
@@ -71,7 +69,7 @@ public final class ShortFunctionMemoizer extends ShortFunction implements UnaryF
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         recordLeft = NullRecord.INSTANCE;
         recordRight = NullRecord.INSTANCE;
-        UnaryFunction.super.init(symbolTableSource, executionContext);
+        MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -102,11 +100,6 @@ public final class ShortFunctionMemoizer extends ShortFunction implements UnaryF
                     .put(record.toString())
                     .put(']');
         }
-    }
-
-    @Override
-    public boolean shouldMemoize() {
-        return true;
     }
 
     @Override

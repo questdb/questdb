@@ -32,7 +32,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -98,7 +97,6 @@ public class GroupByUtils {
             IntList projectionFunctionPositions,
             IntList projectionFunctionFlags,
             GenericRecordMetadata projectionMetadata,
-            PriorityMetadata outPriorityMetadata,
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
@@ -177,7 +175,6 @@ public class GroupByUtils {
                     }
                 }
                 projectionMetadata.add(m);
-                outPriorityMetadata.add(m);
             }
 
             // There are two iterations over the model's columns. The first iterations create value
