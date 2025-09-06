@@ -426,7 +426,7 @@ public class FilesFacadeImpl implements FilesFacade {
         boolean ok = Files.remove(name);
         if (!ok) {
             final int errno = errno();
-            if (Files.errnoFileDoesNotExist(errno)) {
+            if (Files.isErrnoFileDoesNotExist(errno)) {
                 return true;
             }
             if (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN) {

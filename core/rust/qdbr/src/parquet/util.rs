@@ -22,29 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+// must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
+pub const ARRAY_NDIMS_LIMIT: usize = 32;
 
-import io.questdb.cairo.TableReader;
-
-/**
- * Defines a page frame cursor backed with an in-house database table.
- */
-public interface TablePageFrameCursor extends PageFrameCursor, SymbolTableSource {
-
-    @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
-    // same TableReader is available on each page frame
-    TableReader getTableReader();
-
-    /**
-     * Returns the REAL row id of given row on current page.
-     * This is used for e.g. updating rows.
-     *
-     * @param rowIndex - page index of row
-     * @return real row id
-     */
-    long getUpdateRowId(long rowIndex);
-
-    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
+#[inline]
+pub fn align8b(v: usize) -> usize {
+    v.checked_add(7).expect("align8b overflow") & !0x7
 }

@@ -100,6 +100,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public boolean isExternal() {
+        return true;
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return null;
     }

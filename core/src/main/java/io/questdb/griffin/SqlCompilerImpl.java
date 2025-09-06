@@ -660,10 +660,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    private static int estimateIndexValueBlockSizeFromReader(SqlExecutionContext executionContext, TableToken matViewToken, int columnIndex) {
+    private static int estimateIndexValueBlockSizeFromReader(CairoConfiguration configuration, SqlExecutionContext executionContext, TableToken matViewToken, int columnIndex) {
         final int indexValueBlockSize;
         try (TableReader reader = executionContext.getReader(matViewToken)) {
             int symbolCount = reader.getSymbolMapReader(columnIndex).getSymbolCount();
+            if (reader.getPartitionCount() == 0 || symbolCount == 0) {
+                // No data to estimate accurately, fall back to default.
+                return Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+            }
             // we are looking to estimate how many rowids we will need to store for each
             // symbol per partition. To do that wee are assuming the following formula:
             // max(2, table_row_count / table_partition_count / symbol_count / 4)
@@ -1259,15 +1263,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(pos, "table is not partitioned");
             }
 
-            // Tables with ARRAYS cannot be converter to Parquet, for now
-            if (action == PartitionAction.CONVERT_TO_PARQUET) {
-                for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
-                    if (ColumnType.isArray(tableMetadata.getColumnType(i))) {
-                        throw SqlException.$(pos, "tables with array columns cannot be converted to Parquet partitions yet [table=").put(tableToken.getTableName()).put(", column=").put(tableMetadata.getColumnName(i)).put(']');
-                    }
-                }
-            }
-
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
                 alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
@@ -1666,7 +1661,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null) {
-                        indexValueBlockSize = estimateIndexValueBlockSizeFromReader(executionContext, matViewToken, columnIndex);
+                        indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {
                         if (!SqlKeywords.isCapacityKeyword(tok)) {

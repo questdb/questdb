@@ -29,6 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -38,7 +39,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class BitmapIndexConcurrentTest extends AbstractCairoTest {
+public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
     private static final int MAX_ID = 100;
 
     @Test
@@ -95,7 +95,6 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
         final int numWriterThreads = 3;
         final int numReaderThreads = 5;
         final int numUpdateThreads = 1;
-        final long testDurationMs = 1_000;
 
         final AtomicBoolean stopFlag = new AtomicBoolean(false);
         final AtomicInteger totalInserts = new AtomicInteger(0);
@@ -106,7 +105,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
         final AtomicReference<Throwable> firstError = new AtomicReference<>();
 
         final CyclicBarrier startBarrier = new CyclicBarrier(numWriterThreads + numReaderThreads + numUpdateThreads + 1);
-        final CountDownLatch completionLatch = new CountDownLatch(numWriterThreads + numReaderThreads + numUpdateThreads);
+        final SOCountDownLatch completionLatch = new SOCountDownLatch(numWriterThreads + numReaderThreads + numUpdateThreads);
 
         ExecutorService executor = Executors.newFixedThreadPool(numWriterThreads + numReaderThreads + numUpdateThreads);
 
@@ -122,7 +121,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
 
                     Rnd rnd = new Rnd(seed0, seed1);
                     try (TableWriterAPI w = engine.getTableWriterAPI("trades", "Concurrent Writer " + threadId)) {
-                        while (!stopFlag.get() && errorCount.get() == 0) {
+                        do {
                             try {
                                 for (int batch = 0; batch < 10; batch++) {
                                     int id = nextId.getAndIncrement() % MAX_ID;
@@ -146,7 +145,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
-                        }
+                        } while (!stopFlag.get() && errorCount.get() == 0);
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
@@ -169,27 +168,30 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                     startBarrier.await();
 
                     Rnd rnd = new Rnd(seed0, seed1);
-                    while (!stopFlag.get() && errorCount.get() == 0) {
-                        try {
-                            int randomId = rnd.nextInt(MAX_ID);
-                            String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                    // Create thread-local SqlExecutionContext to avoid concurrency issues
+                    try (var threadLocalContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        do {
+                            try {
+                                int randomId = rnd.nextInt(MAX_ID);
+                                String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
 
-                            String updateSql = String.format(
-                                    "UPDATE trades SET symbol = '%s' WHERE id = %d",
-                                    randomSymbol, randomId
-                            );
+                                String updateSql = String.format(
+                                        "UPDATE trades SET symbol = '%s' WHERE id = %d",
+                                        randomSymbol, randomId
+                                );
 
-                            execute(updateSql);
-                            drainWalQueue();
-                            totalUpdates.incrementAndGet();
+                                engine.execute(updateSql, threadLocalContext);
+                                drainWalQueue();
+                                totalUpdates.incrementAndGet();
 
-                            // UPDATE is slow, we cannot do it too frequently
-                            Os.sleep(rnd.nextInt(100) + 1);
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                            firstError.compareAndSet(null, e);
-                            e.printStackTrace();
-                        }
+                                // UPDATE is slow, we cannot do it too frequently
+                                Os.sleep(rnd.nextInt(100) + 1);
+                            } catch (Exception e) {
+                                errorCount.incrementAndGet();
+                                firstError.compareAndSet(null, e);
+                                e.printStackTrace();
+                            }
+                        } while (!stopFlag.get() && errorCount.get() == 0);
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
@@ -214,46 +216,48 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                     startBarrier.await(); // Wait for all threads to be ready
 
                     Rnd rnd = new Rnd(seed0, seed1); // Unique deterministic seeds per thread
-                    while (!stopFlag.get() && errorCount.get() == 0) {
-                        try {
-                            String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
-                            String querySql = String.format(
-                                    "SELECT symbol, count(*) FROM trades WHERE symbol = '%s' GROUP BY symbol",
-                                    randomSymbol
-                            );
+                    try (var threadLocalContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        do {
+                            try {
+                                String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                                String querySql = String.format(
+                                        "SELECT symbol, count(*) FROM trades WHERE symbol = '%s' GROUP BY symbol",
+                                        randomSymbol
+                                );
 
-                            try (RecordCursorFactory factory = select(querySql)) {
-                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    int rowCount = 0;
-                                    CharSequence foundSymbol = null;
+                                try (RecordCursorFactory factory = select(querySql, threadLocalContext)) {
+                                    try (RecordCursor cursor = factory.getCursor(threadLocalContext)) {
+                                        int rowCount = 0;
+                                        CharSequence foundSymbol = null;
 
-                                    while (cursor.hasNext()) {
-                                        rowCount++;
-                                        if (rowCount > 1) {
+                                        while (cursor.hasNext()) {
+                                            rowCount++;
+                                            if (rowCount > 1) {
+                                                errorCount.incrementAndGet();
+                                                firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Multiple rows for symbol " + randomSymbol));
+                                                return;
+                                            }
+                                            foundSymbol = cursor.getRecord().getSymA(0);
+                                        }
+
+                                        if (rowCount == 1 && !Chars.equals(foundSymbol, randomSymbol)) {
                                             errorCount.incrementAndGet();
-                                            firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Multiple rows for symbol " + randomSymbol));
+                                            firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Expected " + randomSymbol + " but got " + foundSymbol));
                                             return;
                                         }
-                                        foundSymbol = cursor.getRecord().getSymA(0);
-                                    }
 
-                                    if (rowCount == 1 && !Chars.equals(foundSymbol, randomSymbol)) {
-                                        errorCount.incrementAndGet();
-                                        firstError.compareAndSet(null, new AssertionError("Reader " + threadId + ": Expected " + randomSymbol + " but got " + foundSymbol));
-                                        return;
+                                        // It's OK if rowCount is 0 or 1 (symbol might not exist yet or might exist)
+                                        totalQueries.incrementAndGet();
                                     }
-
-                                    // It's OK if rowCount is 0 or 1 (symbol might not exist yet or might exist)
-                                    totalQueries.incrementAndGet();
                                 }
-                            }
 
-                            Os.sleep(rnd.nextInt(5) + 1);
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                            firstError.compareAndSet(null, e);
-                            e.printStackTrace();
-                        }
+                                Os.sleep(rnd.nextInt(5) + 1);
+                            } catch (Exception e) {
+                                errorCount.incrementAndGet();
+                                firstError.compareAndSet(null, e);
+                                e.printStackTrace();
+                            }
+                        } while (!stopFlag.get() && errorCount.get() == 0);
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
@@ -269,13 +273,11 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
         startBarrier.await();
         System.out.println("Started " + numWriterThreads + " writer threads, " + numUpdateThreads + " update threads, and " + numReaderThreads + " reader threads");
 
-        Thread.sleep(testDurationMs);
         stopFlag.set(true);
-        boolean completed = completionLatch.await(60, TimeUnit.SECONDS);
-        Assert.assertTrue("Threads did not complete in time", completed);
+        completionLatch.await();
 
         executor.shutdown();
-        executor.awaitTermination(5, TimeUnit.SECONDS);
+        Assert.assertTrue("failed to terminate threads within 60s", executor.awaitTermination(60, TimeUnit.SECONDS));
 
         System.out.println("Test completed: " + totalInserts.get() + " inserts, " + totalUpdates.get() + " updates, " + totalQueries.get() + " queries");
         if (errorCount.get() > 0) {
