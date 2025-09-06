@@ -872,7 +872,7 @@ public class SqlOptimiser implements Mutable {
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
         // CAST ELIMINATION: Removes redundant casts on join keys
-        eliminateRedundantCastsInJoinKeys(node, joinModel);
+        eliminateRedundantCastsInJoinKeys(node, parent);
         traverseNamesAndIndices(parent, node);
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
@@ -1010,8 +1010,8 @@ public class SqlOptimiser implements Mutable {
 
     // Redundant Casts on join keys are eliminated here, which ensures that the most efficient query plan is executed regardless of the misuse of Cast by the user on join keys
     // Casts on join keys are considered redundant, if type of both the keys are already the same
-    private void eliminateRedundantCastsInJoinKeys(ExpressionNode equalityNode, QueryModel joinModel) throws SqlException {
-        if (equalityNode == null || equalityNode.type != ExpressionNode.OPERATION || !"=".equals(equalityNode.token.toString())) {
+    private void eliminateRedundantCastsInJoinKeys(ExpressionNode equalityNode, QueryModel parentModel) throws SqlException {
+        if (equalityNode == null || equalityNode.type != ExpressionNode.OPERATION || !"=".contentEquals(equalityNode.token)) {
             return;
         }
 
@@ -1020,8 +1020,8 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode unwrappedRight = unwrapAllCasts(equalityNode.rhs);
 
         if (isSimpleColumn(unwrappedLeft) && isSimpleColumn(unwrappedRight)) {
-            int leftType = findType(unwrappedLeft, joinModel);
-            int rightType = findType(unwrappedRight, joinModel);
+            int leftType = findType(unwrappedLeft, parentModel);
+            int rightType = findType(unwrappedRight, parentModel);
 
             // Remove casts only if underlying column types match exactly
             if (leftType != ColumnType.UNDEFINED && leftType == rightType) {
@@ -1074,7 +1074,7 @@ public class SqlOptimiser implements Mutable {
         if (qualifiedName == null) {
             return null;
         }
-        int dotIndex = Chars.indexOf(qualifiedName, '.');
+        int dotIndex = Chars.indexOfLastUnquoted(qualifiedName, '.');
         if (dotIndex == -1) {
             return qualifiedName;
         }
