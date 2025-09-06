@@ -79,7 +79,7 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final String path;
     private final int port;
     private final CharSequence questDBVersion;
-    private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
+    private final Rnd rnd;
     private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
@@ -104,7 +104,8 @@ public abstract class AbstractLineHttpSender implements Sender {
             int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
-            long flushIntervalNanos
+            long flushIntervalNanos,
+            Rnd rnd
     ) {
         this(
                 host,
@@ -120,7 +121,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos
+                flushIntervalNanos,
+                rnd
         );
     }
 
@@ -138,7 +140,8 @@ public abstract class AbstractLineHttpSender implements Sender {
             int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
-            long flushIntervalNanos
+            long flushIntervalNanos,
+            Rnd rnd
     ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
@@ -162,6 +165,46 @@ public abstract class AbstractLineHttpSender implements Sender {
         this.questDBVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
         this.maxNameLength = maxNameLength;
+        this.rnd = rnd;
+    }
+
+    private static HttpClient.ResponseHeaders sendWithRetries(HttpClient client, HttpClient.Request req, Rnd rnd, long maxRetriesNanos) {
+        long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
+        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        for (; ; ) {
+            try {
+                HttpClient.ResponseHeaders response = req.send();
+                response.await();
+                DirectUtf8Sequence statusCode = response.getStatusCode();
+                if (isSuccessResponse(statusCode)) {
+                    return response;
+                }
+                if (!isRetryableHttpStatus(statusCode)) {
+                    // no point in retrying if the status code is not retryable
+                    return response;
+                }
+
+                long nowNanos = System.nanoTime();
+                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
+                        ? nowNanos + maxRetriesNanos
+                        : retryingDeadlineNanos;
+                if (nowNanos >= retryingDeadlineNanos) {
+                    return response;
+                }
+            } catch (HttpClientException e) {
+                // network I/O error -> we retry
+                long nowNanos = System.nanoTime();
+                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
+                        ? nowNanos + maxRetriesNanos
+                        : retryingDeadlineNanos;
+                if (nowNanos >= retryingDeadlineNanos) {
+                    throw e;
+                }
+            }
+            // ok, retrying
+            client.disconnect(); // forces reconnect
+            retryBackoff = backoff(rnd, retryBackoff);
+        }
     }
 
     public static AbstractLineHttpSender createLineSender(
@@ -181,6 +224,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             int protocolVersion
     ) {
         HttpClient cli = null;
+        Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
 
         // if user does not set protocol version explicit, client will try to detect it from server
         if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
@@ -190,9 +234,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
             }
             try {
-                HttpClient.Request req = cli.newRequest(host, port).GET();
-                HttpClient.ResponseHeaders response = req.url(clientConfiguration.getSettingsPath()).send();
-                response.await();
+                HttpClient.Request req = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath());
+                HttpClient.ResponseHeaders response = sendWithRetries(cli, req, rnd, maxRetriesNanos);
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (Utf8s.equalsNcAscii("200", statusCode)) {
                     try (JsonSettingsParser parser = new JsonSettingsParser()) {
@@ -238,7 +281,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                     maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
-                    flushIntervalNanos
+                    flushIntervalNanos,
+                    rnd
             );
         } else {
             return new LineHttpSenderV2(
@@ -255,7 +299,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                     maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
-                    flushIntervalNanos
+                    flushIntervalNanos,
+                    rnd
             );
         }
     }
@@ -437,7 +482,7 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
 
-    private int backoff(int retryBackoff) {
+    private static int backoff(Rnd rnd, int retryBackoff) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
         int backoff = retryBackoff + jitter;
         Os.sleep(backoff);
@@ -525,7 +570,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                         throwOnHttpErrorResponse(statusCode, response);
                     }
                     client.disconnect(); // forces reconnect, just in case
-                    retryBackoff = backoff(retryBackoff);
+                    retryBackoff = backoff(rnd, retryBackoff);
                     continue;
                 }
                 throwOnHttpErrorResponse(statusCode, response);
@@ -545,7 +590,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     throw new LineSenderException("Could not flush buffer: ").put(url)
                             .put(" Connection Failed").put(": ").put(e.getMessage());
                 }
-                retryBackoff = backoff(retryBackoff);
+                retryBackoff = backoff(rnd, retryBackoff);
             }
         }
         pendingRows = 0;
@@ -553,7 +598,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         request = newRequest();
     }
 
-    private boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
+    private static boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
         if (statusCode == null || statusCode.size() != 3 || statusCode.byteAt(0) != '5') {
             return false;
         }

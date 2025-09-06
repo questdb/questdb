@@ -261,6 +261,12 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
+        _ => Err(fmt_err!(
+            InvalidType,
+            "unexpected type {} for column {}",
+            column_type,
+            column_name,
+        )),
     }
 }
 

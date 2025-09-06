@@ -356,7 +356,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 LongList updatedColumnInfo = cleanTask.getUpdatedColumnInfo();
                 for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
                     TableWriter.Row row = writer.newRow(cleanTask.timestamp);
-                    row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName().getDirName());
+                    row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableToken().getDirName());
                     row.putSym(COLUMN_NAME_COLUMN, cleanTask.getColumnName());
                     row.putInt(TABLE_ID_COLUMN, cleanTask.getTableId());
                     row.putLong(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());
