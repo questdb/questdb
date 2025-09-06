@@ -474,6 +474,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "3\t4\n",
                     query2
             );
+
+            final String query3 = "select sum(a_alias + 1), sum(a_alias + 2) from (select a + 1 a_alias, b b1 from x)";
+            assertPlanNoLeakCheck(
+                    query3,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [sum(a_alias+1),sum(a_alias+2)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [memoize(a+1)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+            assertSql(
+                    "sum\tsum1\n" +
+                            "8\t10\n",
+                    query3
+            );
+
+            final String query4 = "select b1, a_alias from (select a + 1 a_alias, b b1 from x) where a_alias > 10";
+            assertPlanNoLeakCheck(
+                    query4,
+                    "Filter filter: 10<a_alias\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [b1,memoize(a+1)]\n" +
+                            "        SelectedRecord\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
         });
     }
 

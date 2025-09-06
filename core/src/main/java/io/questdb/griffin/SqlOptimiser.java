@@ -6990,7 +6990,7 @@ public class SqlOptimiser implements Mutable {
         if (parent == null) {
             // init ref count to 1 for top queryModel
             for (int i = 0, n = columns.size(); i < n; i++) {
-                queryModel.incrementColumnRefCount(i, 1);
+                queryModel.incrementColumnRefCount(columns.getQuick(i).getAlias(), 1);
             }
         }
 
@@ -7083,8 +7083,8 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = tempExprs.size(); i < n; i++) {
                 final ExpressionNode ast = tempExprs.getQuick(i);
                 int refCount = 1;
-                if (i < columnsSize && (parent.getSelectModelType() == SELECT_MODEL_CHOOSE) || parent.getSelectModelType() == SELECT_MODEL_VIRTUAL) {
-                    refCount = parent.getRefCount(i);
+                if (i < columnsSize && (parent.getSelectModelType() == SELECT_MODEL_CHOOSE || parent.getSelectModelType() == SELECT_MODEL_VIRTUAL)) {
+                    refCount = parent.getRefCount(columns.getQuick(i).getAlias());
                 }
 
                 if (ast != null) {
