@@ -149,8 +149,8 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             assert pageAddress == 0;
             pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
         }
-        ff.madvise(pageAddress, newSize, madviseOpts);
         size = newSize;
+        ff.madvise(pageAddress, size, madviseOpts);
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
