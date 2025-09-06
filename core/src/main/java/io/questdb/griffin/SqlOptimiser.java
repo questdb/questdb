@@ -7134,6 +7134,12 @@ public class SqlOptimiser implements Mutable {
     }
 
     void collectColumnRefCountRecursive(QueryModel parent, QueryModel queryModel) {
+        ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            collectColumnRefCount(parent, joinModels.getQuick(i));
+        }
+        collectColumnRefCount(parent, queryModel.getUnionModel());
+
         QueryModel parentModel = queryModel;
         if (queryModel.getSelectModelType() == SELECT_MODEL_NONE) {
             if (queryModel.getJoinModels().size() < 2) {
@@ -7145,11 +7151,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         collectColumnRefCount(parentModel, queryModel.getNestedModel());
-        collectColumnRefCount(parentModel, queryModel.getUnionModel());
-        ObjList<QueryModel> joinModels = queryModel.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            collectColumnRefCount(parentModel, joinModels.getQuick(i));
-        }
     }
 
     QueryModel optimise(
