@@ -507,6 +507,32 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFunctionMemoizationUnionModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double)");
+            execute("create table y (c int, d string)");
+            assertPlanNoLeakCheck(
+                    "select a1 + 1 , a1 + 2 from (select a + 1 a1 from x) union select a1 + 1 , a1 + 2 from (select c + 1 a1 from y) ",
+                    "Union\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a1+1,a1+2]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [memoize(a+1)]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a1+1,a1+2]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [memoize(c+1)]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
     public void testJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
