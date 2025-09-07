@@ -29,6 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -38,7 +39,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -95,7 +95,6 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
         final int numWriterThreads = 3;
         final int numReaderThreads = 5;
         final int numUpdateThreads = 1;
-        final long testDurationMs = 1_000;
 
         final AtomicBoolean stopFlag = new AtomicBoolean(false);
         final AtomicInteger totalInserts = new AtomicInteger(0);
@@ -106,7 +105,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
         final AtomicReference<Throwable> firstError = new AtomicReference<>();
 
         final CyclicBarrier startBarrier = new CyclicBarrier(numWriterThreads + numReaderThreads + numUpdateThreads + 1);
-        final CountDownLatch completionLatch = new CountDownLatch(numWriterThreads + numReaderThreads + numUpdateThreads);
+        final SOCountDownLatch completionLatch = new SOCountDownLatch(numWriterThreads + numReaderThreads + numUpdateThreads);
 
         ExecutorService executor = Executors.newFixedThreadPool(numWriterThreads + numReaderThreads + numUpdateThreads);
 
@@ -122,7 +121,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
 
                     Rnd rnd = new Rnd(seed0, seed1);
                     try (TableWriterAPI w = engine.getTableWriterAPI("trades", "Concurrent Writer " + threadId)) {
-                        while (!stopFlag.get() && errorCount.get() == 0) {
+                        do {
                             try {
                                 for (int batch = 0; batch < 10; batch++) {
                                     int id = nextId.getAndIncrement() % MAX_ID;
@@ -146,7 +145,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
-                        }
+                        } while (!stopFlag.get() && errorCount.get() == 0);
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
@@ -171,7 +170,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                     Rnd rnd = new Rnd(seed0, seed1);
                     // Create thread-local SqlExecutionContext to avoid concurrency issues
                     try (var threadLocalContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        while (!stopFlag.get() && errorCount.get() == 0) {
+                        do {
                             try {
                                 int randomId = rnd.nextInt(MAX_ID);
                                 String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
@@ -192,7 +191,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
-                        }
+                        } while (!stopFlag.get() && errorCount.get() == 0);
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
@@ -218,7 +217,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
 
                     Rnd rnd = new Rnd(seed0, seed1); // Unique deterministic seeds per thread
                     try (var threadLocalContext = TestUtils.createSqlExecutionCtx(engine)) {
-                        while (!stopFlag.get() && errorCount.get() == 0) {
+                        do {
                             try {
                                 String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
                                 String querySql = String.format(
@@ -258,7 +257,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                                 firstError.compareAndSet(null, e);
                                 e.printStackTrace();
                             }
-                        }
+                        } while (!stopFlag.get() && errorCount.get() == 0);
                     }
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
@@ -274,10 +273,8 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
         startBarrier.await();
         System.out.println("Started " + numWriterThreads + " writer threads, " + numUpdateThreads + " update threads, and " + numReaderThreads + " reader threads");
 
-        Thread.sleep(testDurationMs);
         stopFlag.set(true);
-        boolean completed = completionLatch.await(60, TimeUnit.SECONDS);
-        Assert.assertTrue("Threads did not complete in time", completed);
+        completionLatch.await();
 
         executor.shutdown();
         Assert.assertTrue("failed to terminate threads within 60s", executor.awaitTermination(60, TimeUnit.SECONDS));

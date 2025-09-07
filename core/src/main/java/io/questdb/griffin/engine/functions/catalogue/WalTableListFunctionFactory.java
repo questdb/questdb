@@ -313,7 +313,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             }
                         }
                     } catch (CairoException ex) {
-                        if (ex.errnoFileCannotRead()) {
+                        if (ex.isFileCannotRead()) {
                             return false;
                         }
                         throw ex;
