@@ -2342,10 +2342,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean findIfnodeExpressionContainsChildTableRef(ExpressionNode node, QueryModel targetModel) throws SqlException {
-        ChildTableColumnFinder ctcf = new ChildTableColumnFinder(targetModel, false);
-//        childTableColumnFinder.targetModel = targetModel;
-        traversalAlgo.traverse(node, ctcf);
-        return ctcf.found;
+        childTableColumnFinder.targetModel = targetModel;
+        traversalAlgo.traverse(node, childTableColumnFinder);
+        return childTableColumnFinder.found;
     }
 
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -2631,6 +2630,7 @@ public class SqlOptimiser implements Mutable {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
         QueryModel virtualModel = null;
+        childTableColumnFinder.resetValues();
         if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
                 targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
 
@@ -7406,6 +7406,11 @@ public class SqlOptimiser implements Mutable {
                         found = true;
                 }
             }
+        }
+
+        private void resetValues() {
+            found = false;
+            targetModel = null;
         }
     }
 
