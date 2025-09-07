@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -35,10 +33,8 @@ import io.questdb.griffin.engine.functions.CharFunction;
 
 public final class CharFunctionMemoizer extends CharFunction implements MemoizerFunction {
     private final Function fn;
-    private Record recordLeft;
-    private Record recordRight;
-    private char valueLeft;
-    private char valueRight;
+    private boolean validValue;
+    private char value;
 
     public CharFunctionMemoizer(Function fn) {
         this.fn = fn;
@@ -51,13 +47,11 @@ public final class CharFunctionMemoizer extends CharFunction implements Memoizer
 
     @Override
     public char getChar(Record rec) {
-        if (recordLeft == rec) {
-            return valueLeft;
+        if (!validValue) {
+            value = fn.getChar(rec);
+            validValue = true;
         }
-        if (recordRight == rec) {
-            return valueRight;
-        }
-        return fn.getChar(rec);
+        return value;
     }
 
     @Override
@@ -67,8 +61,6 @@ public final class CharFunctionMemoizer extends CharFunction implements Memoizer
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        recordLeft = NullRecord.INSTANCE;
-        recordRight = NullRecord.INSTANCE;
         MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -79,27 +71,7 @@ public final class CharFunctionMemoizer extends CharFunction implements Memoizer
 
     @Override
     public void memoize(Record record) {
-        if (recordLeft == record) {
-            valueLeft = fn.getChar(record);
-        } else if (recordRight == record) {
-            valueRight = fn.getChar(record);
-        } else if (recordLeft == NullRecord.INSTANCE) {
-            recordLeft = record;
-            valueLeft = fn.getChar(record);
-        } else if (recordRight == NullRecord.INSTANCE) {
-            assert supportsRandomAccess();
-            recordRight = record;
-            valueRight = fn.getChar(record);
-        } else {
-            throw CairoException.nonCritical().
-                    put("CharFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
-                    .put(recordLeft.toString())
-                    .put(", recordRight=")
-                    .put(recordRight.toString())
-                    .put(", newRecord=")
-                    .put(record.toString())
-                    .put(']');
-        }
+        validValue = false;
     }
 
     @Override

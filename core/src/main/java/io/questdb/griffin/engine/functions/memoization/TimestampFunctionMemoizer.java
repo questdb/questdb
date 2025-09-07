@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -35,10 +33,8 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 
 public final class TimestampFunctionMemoizer extends TimestampFunction implements MemoizerFunction {
     private final Function fn;
-    private Record recordLeft;
-    private Record recordRight;
-    private long valueLeft;
-    private long valueRight;
+    private boolean validValue;
+    private long value;
 
     public TimestampFunctionMemoizer(Function fn) {
         this.fn = fn;
@@ -56,19 +52,15 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
 
     @Override
     public long getTimestamp(Record rec) {
-        if (recordLeft == rec) {
-            return valueLeft;
+        if (!validValue) {
+            value = fn.getTimestamp(rec);
+            validValue = true;
         }
-        if (recordRight == rec) {
-            return valueRight;
-        }
-        return fn.getTimestamp(rec);
+        return value;
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        recordLeft = NullRecord.INSTANCE;
-        recordRight = NullRecord.INSTANCE;
         MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -79,27 +71,7 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
 
     @Override
     public void memoize(Record record) {
-        if (recordLeft == record) {
-            valueLeft = fn.getTimestamp(record);
-        } else if (recordRight == record) {
-            valueRight = fn.getTimestamp(record);
-        } else if (recordLeft == NullRecord.INSTANCE) {
-            recordLeft = record;
-            valueLeft = fn.getTimestamp(record);
-        } else if (recordRight == NullRecord.INSTANCE) {
-            assert supportsRandomAccess();
-            recordRight = record;
-            valueRight = fn.getTimestamp(record);
-        } else {
-            throw CairoException.nonCritical().
-                    put("TimestampFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
-                    .put(recordLeft.toString())
-                    .put(", recordRight=")
-                    .put(recordRight.toString())
-                    .put(", newRecord=")
-                    .put(record.toString())
-                    .put(']');
-        }
+        validValue = false;
     }
 
     @Override

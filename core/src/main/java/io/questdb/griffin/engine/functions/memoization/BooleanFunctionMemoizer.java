@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -35,10 +33,8 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 
 public final class BooleanFunctionMemoizer extends BooleanFunction implements MemoizerFunction {
     private final Function fn;
-    private Record recordLeft;
-    private Record recordRight;
-    private boolean valueLeft;
-    private boolean valueRight;
+    private boolean validValue;
+    private boolean value;
 
     public BooleanFunctionMemoizer(Function fn) {
         this.fn = fn;
@@ -51,13 +47,11 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Me
 
     @Override
     public boolean getBool(Record rec) {
-        if (recordLeft == rec) {
-            return valueLeft;
+        if (!validValue) {
+            value = fn.getBool(rec);
+            validValue = true;
         }
-        if (recordRight == rec) {
-            return valueRight;
-        }
-        return fn.getBool(rec);
+        return value;
     }
 
     @Override
@@ -67,8 +61,6 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Me
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        recordLeft = NullRecord.INSTANCE;
-        recordRight = NullRecord.INSTANCE;
         MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -79,27 +71,7 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Me
 
     @Override
     public void memoize(Record record) {
-        if (recordLeft == record) {
-            valueLeft = fn.getBool(record);
-        } else if (recordRight == record) {
-            valueRight = fn.getBool(record);
-        } else if (recordLeft == NullRecord.INSTANCE) {
-            recordLeft = record;
-            valueLeft = fn.getBool(record);
-        } else if (recordRight == NullRecord.INSTANCE) {
-            assert supportsRandomAccess();
-            recordRight = record;
-            valueRight = fn.getBool(record);
-        } else {
-            throw CairoException.nonCritical().
-                    put("BooleanFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
-                    .put(recordLeft.toString())
-                    .put(", recordRight=")
-                    .put(recordRight.toString())
-                    .put(", newRecord=")
-                    .put(record.toString())
-                    .put(']');
-        }
+        validValue = false;
     }
 
     @Override

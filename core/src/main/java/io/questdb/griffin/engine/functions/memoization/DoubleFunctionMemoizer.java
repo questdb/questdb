@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -35,10 +33,8 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 
 public final class DoubleFunctionMemoizer extends DoubleFunction implements MemoizerFunction {
     private final Function fn;
-    private Record recordLeft;
-    private Record recordRight;
-    private double valueLeft;
-    private double valueRight;
+    private boolean validValue;
+    private double value;
 
     public DoubleFunctionMemoizer(Function fn) {
         this.fn = fn;
@@ -51,13 +47,11 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Memo
 
     @Override
     public double getDouble(Record rec) {
-        if (recordLeft == rec) {
-            return valueLeft;
+        if (!validValue) {
+            value = fn.getDouble(rec);
+            validValue = true;
         }
-        if (recordRight == rec) {
-            return valueRight;
-        }
-        return fn.getDouble(rec);
+        return value;
     }
 
     @Override
@@ -67,8 +61,6 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Memo
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        recordLeft = NullRecord.INSTANCE;
-        recordRight = NullRecord.INSTANCE;
         MemoizerFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -79,27 +71,7 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Memo
 
     @Override
     public void memoize(Record record) {
-        if (recordLeft == record) {
-            valueLeft = fn.getDouble(record);
-        } else if (recordRight == record) {
-            valueRight = fn.getDouble(record);
-        } else if (recordLeft == NullRecord.INSTANCE) {
-            recordLeft = record;
-            valueLeft = fn.getDouble(record);
-        } else if (recordRight == NullRecord.INSTANCE) {
-            assert supportsRandomAccess();
-            recordRight = record;
-            valueRight = fn.getDouble(record);
-        } else {
-            throw CairoException.nonCritical().
-                    put("DoubleFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
-                    .put(recordLeft.toString())
-                    .put(", recordRight=")
-                    .put(recordRight.toString())
-                    .put(", newRecord=")
-                    .put(record.toString())
-                    .put(']');
-        }
+        validValue = false;
     }
 
     @Override
