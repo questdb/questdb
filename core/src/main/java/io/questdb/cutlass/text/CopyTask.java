@@ -524,7 +524,8 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
             String tableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(tableName, tableName, cairoEngine.getNextTableId(), false, false, false);
+            String dbLogName = configuration.getDbLogName();
+            TableToken tableToken = new TableToken(tableName, tableName, dbLogName, cairoEngine.getNextTableId(), false, false, false);
 
             final int columnCount = metadata.getColumnCount();
             try (
@@ -910,7 +911,8 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, engine.getNextTableId(), false, false, false);
+            String dbLogName = engine.getConfiguration().getDbLogName();
+            TableToken tableToken = new TableToken(publicTableName, publicTableName, dbLogName, engine.getNextTableId(), false, false, false);
             createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
 
             try (
@@ -1339,7 +1341,9 @@ public class CopyTask {
                 }
             } finally {
                 ff.close(fd);
-                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
+                if (mergeIndexAddr != 0) {
+                    ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
+                }
                 unmap(ff, unmergedIndexes);
             }
         }

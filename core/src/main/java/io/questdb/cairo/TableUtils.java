@@ -849,7 +849,7 @@ public final class TableUtils {
             long spinLockTimeout
     ) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (ex.errnoFileCannotRead()) {
+        if (ex.isFileCannotRead()) {
             if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").$safe(tableName)
                         .$(", msg=").$safe(ex.getFlyweightMessage())
@@ -1098,7 +1098,9 @@ public final class TableUtils {
     public static void mapAppendColumnBufferRelease(FilesFacade ff, long address, long offset, long size, int memoryTag) {
         long alignedOffset = Files.floorPageSize(offset);
         long alignedExtraLen = offset - alignedOffset;
-        ff.munmap(address - alignedExtraLen, size + alignedExtraLen, memoryTag);
+        long adjustedAddress = address - alignedExtraLen;
+        assert adjustedAddress > 0 : "address <= alignedExtraLen";
+        ff.munmap(adjustedAddress, size + alignedExtraLen, memoryTag);
     }
 
     public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
@@ -1180,7 +1182,7 @@ public final class TableUtils {
      */
     public static long mapRWNoAlloc(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
-        if (addr > -1) {
+        if (addr != FilesFacade.MAP_FAILED) {
             return addr;
         }
         int errno = ff.errno();
@@ -1188,15 +1190,6 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
         }
         throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
-    }
-
-    public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
-        try {
-            return TableUtils.mapRW(ff, fd, size, memoryTag);
-        } catch (CairoException e) {
-            ff.close(fd);
-            throw e;
-        }
     }
 
     public static long mremap(
@@ -1286,7 +1279,7 @@ public final class TableUtils {
             return fd;
         }
         int errno = ff.errno();
-        if (Files.errnoFileCannotRead(errno)) {
+        if (Files.isErrnoFileCannotRead(errno)) {
             throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
         }
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
@@ -1299,7 +1292,7 @@ public final class TableUtils {
             return fd;
         }
         int errno = ff.errno();
-        if (Files.errnoFileCannotRead(errno)) {
+        if (Files.isErrnoFileCannotRead(errno)) {
             throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
         }
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
