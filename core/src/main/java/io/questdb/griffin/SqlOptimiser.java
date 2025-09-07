@@ -3494,10 +3494,7 @@ public class SqlOptimiser implements Mutable {
             QueryColumn c = model.getBottomUpColumns().getQuick(i);
             ExpressionNode timestampColumnAst = c.getAst();
             int dot = Chars.indexOfLastUnquoted(timestampColumnAst.token, '.');
-            /*
-            ast of timestamp column for parent model will always contain reference to alias/tableNameExpr child tables
-            else it will be ambiguous reference
-            */
+
             if (dot > -1) {
                 CharSequence tableAlias = timestampColumnAst.token.subSequence(0, dot);
                 if (((
@@ -3506,6 +3503,11 @@ public class SqlOptimiser implements Mutable {
                                 (targetModel.getAlias() != null
                                         && Chars.equalsIgnoreCase(tableAlias, targetModel.getAlias().token))))
                         && (Chars.equalsIgnoreCase(c.getAlias(), baseTableModel.getTimestamp().token))) {
+                    timestampColumnPresentInQuery = true;
+                    break;
+                }
+            } else {
+                if (Chars.equalsIgnoreCase(c.getAlias(), baseTableModel.getTimestamp().token)) {
                     timestampColumnPresentInQuery = true;
                     break;
                 }
