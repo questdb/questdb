@@ -3473,8 +3473,9 @@ public class JoinTest extends AbstractCairoTest {
                             "null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z\n"
             );
             assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
+                    "select * from t1 full join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
                     "i\ts1\tts1\tj\ts2\tts2\n" +
+                            "2\tb\t1970-01-01T00:00:00.000002Z\tnull\t\t\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n" +
                             "null\t\t\t3\tc\t1970-01-01T00:00:00.000005Z\n" +
@@ -3637,8 +3638,13 @@ public class JoinTest extends AbstractCairoTest {
                             "null\t4\n"
             );
             assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) <= 0",
+                    "select * from t1 full join t2 on i = j and abs(i) <= 0",
                     "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n" +
                             "null\t1\n" +
                             "null\t3\n" +
                             "null\t2\n" +
@@ -4304,12 +4310,16 @@ public class JoinTest extends AbstractCairoTest {
             );
             assertSql(
                     "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
                             "5\t-5\n" +
                             "5\t-4\n" +
                             "null\t-3\n" +
                             "null\t-2\n" +
                             "null\t-1\n",
-                    "select * from t1 right join t2 on i > 4 and j < -3 "
+                    "select * from t1 full join t2 on i > 4 and j < -3 "
             );
         });
     }
