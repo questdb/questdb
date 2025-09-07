@@ -6963,13 +6963,6 @@ public class SqlOptimiser implements Mutable {
         return outerModel;
     }
 
-    static boolean isInSubQueryModel(CharSequence alias, QueryModel model) {
-        if (model == null) {
-            return false;
-        }
-        return model.getColumnAliasIndex(alias) > 0;
-    }
-
     @SuppressWarnings("unused")
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
@@ -7026,7 +7019,7 @@ public class SqlOptimiser implements Mutable {
                         } else {
                             final CharSequence tableName = columnRef.subSequence(0, dot);
                             final CharSequence columnName = columnRef.subSequence(dot + 1, columnRef.length());
-                            if (queryModel.getTableNameExpr() != null && Chars.equalsIgnoreCase(tableName, queryModel.getTableNameExpr().token)) {
+                            if (queryModel.getAlias() != null && Chars.equalsIgnoreCase(tableName, queryModel.getAlias().token)) {
                                 if (child == null || !child.getAliasToColumnMap().contains(columnName)) {
                                     queryModel.incrementColumnRefCount(columnRef, 1);
                                 }
@@ -7100,8 +7093,8 @@ public class SqlOptimiser implements Mutable {
                             } else {
                                 final CharSequence tableName = columnRef.subSequence(0, dot);
                                 final CharSequence columnName = columnRef.subSequence(dot + 1, columnRef.length());
-                                if (queryModel.getTableNameExpr() != null && Chars.equalsIgnoreCase(tableName, queryModel.getTableNameExpr().token)) {
-                                    queryModel.incrementColumnRefCount(columnRef, refCount);
+                                if (queryModel.getAlias() != null && Chars.equalsIgnoreCase(tableName, queryModel.getAlias().token)) {
+                                    queryModel.incrementColumnRefCount(columnName, refCount);
                                 }
                             }
                         } else if (node.type == FUNCTION) {
