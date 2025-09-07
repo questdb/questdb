@@ -75,7 +75,7 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
             valueB.copyFrom(fn.getLong256B(rec));
             validBValue = true;
         }
-        return valueA;
+        return valueB;
     }
 
     @Override
