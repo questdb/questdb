@@ -104,7 +104,7 @@ public class PathTest {
 
     @Test
     public void testConcatTableToken() {
-        path.concat(new TableToken("root", "root", 0, false, false, false)).$();
+        path.concat(new TableToken("root", "root", null, 0, false, false, false)).$();
         Assert.assertEquals("root", path.toString());
     }
 

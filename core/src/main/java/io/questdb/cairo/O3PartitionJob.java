@@ -264,7 +264,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 partitionUpdater.updateFileMetadata();
             } finally {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                if (parquetAddr != 0) {
+                    ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
             }
 
             // Update indexes
@@ -2565,7 +2567,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
         } finally {
-            ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
         }
     }
 
