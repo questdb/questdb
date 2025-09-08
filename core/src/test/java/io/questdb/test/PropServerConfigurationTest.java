@@ -503,10 +503,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
-        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
         Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
         Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
-        Assert.assertEquals(0, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
         Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
