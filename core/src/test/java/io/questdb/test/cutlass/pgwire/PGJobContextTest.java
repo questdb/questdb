@@ -7388,6 +7388,75 @@ nodejs code:
     }
 
     @Test
+    public void testPlanWithIndexAndBindingVariables() throws Exception {
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            // columns:
+            // hc = high-cardinality column - must be preferred for index-scans
+            // lc = low-cardinality column
+            execute("CREATE TABLE 'idx' ( " +
+                    "hc SYMBOL CAPACITY 256 INDEX," +
+                    "lc SYMBOL CAPACITY 256 INDEX," +
+                    "ts TIMESTAMP " +
+                    ") timestamp(ts) PARTITION BY DAY BYPASS WAL");
+            execute("insert into idx select concat('hc', x%10) as hc, concat('lc', x%2) as lc, x::timestamp from long_sequence(100);");
+
+            try (PreparedStatement ps = connection.prepareStatement("explain\n" +
+                    "select * from idx\n" +
+                    "where hc in (?, ?) and lc in (?, ?)\n" +
+                    "and ts >= '1970-01-01T00:00:00.000077Z' and ts <= '1970-01-01T00:00:00.279828Z'\n" +
+                    "order by ts asc;\n")) {
+                ps.setString(1, "hc_1");
+                ps.setString(2, "hc_2");
+                ps.setString(3, "lc_1");
+                ps.setString(4, "lc_2");
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet("QUERY PLAN[VARCHAR]\n" +
+                            "FilterOnValues\n" +
+                            "    Table-order scan\n" +
+                            "        Index forward scan on: hc deferred: true\n" +
+                            "          symbolFilter: hc=$0::string\n" +
+                            "          filter: lc in [$2::string,$3::string]\n" +
+                            "        Index forward scan on: hc deferred: true\n" +
+                            "          symbolFilter: hc=$1::string\n" +
+                            "          filter: lc in [$2::string,$3::string]\n" +
+                            "    Interval forward scan on: idx\n" +
+                            "      intervals: [(\"1970-01-01T00:00:00.000077Z\",\"1970-01-01T00:00:00.279828Z\")]\n", new StringSink(), rs);
+                }
+            }
+
+            // swap the order of the predicates - the plan must still do index-scan on the high-cardinality column
+            try (PreparedStatement ps = connection.prepareStatement("explain\n" +
+                    "select * from idx\n" +
+                    "where lc in (?, ?) and hc in (?, ?)\n" +
+                    "and ts >= '1970-01-01T00:00:00.000077Z' and ts <= '1970-01-01T00:00:00.279828Z'\n" +
+                    "order by ts asc;\n")) {
+                ps.setString(1, "lc_1");
+                ps.setString(2, "lc_2");
+                ps.setString(3, "hc_1");
+                ps.setString(4, "hc_2");
+
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet("QUERY PLAN[VARCHAR]\n" +
+                            "FilterOnValues\n" +
+                            "    Table-order scan\n" +
+                            "        Index forward scan on: hc deferred: true\n" + // still scanning on the high-cardinality column
+                            "          symbolFilter: hc=$2::string\n" +
+                            "          filter: lc in [$0::string,$1::string]\n" +
+                            "        Index forward scan on: hc deferred: true\n" +
+                            "          symbolFilter: hc=$3::string\n" +
+                            "          filter: lc in [$0::string,$1::string]\n" +
+                            "    Interval forward scan on: idx\n" +
+                            "      intervals: [(\"1970-01-01T00:00:00.000077Z\",\"1970-01-01T00:00:00.279828Z\")]\n", new StringSink(), rs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPrepareInsertAsSelect() throws Exception {
         skipOnWalRun(); // the test uses non-partitioned tables
 
