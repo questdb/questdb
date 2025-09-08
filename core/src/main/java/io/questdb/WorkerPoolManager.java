@@ -34,6 +34,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -41,22 +42,21 @@ public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
     protected final WorkerPool sharedPoolNetwork;
+    // When parallel querying is disabled, query pool will be null. All Network and Write pools will always be created.
+    @Nullable
+    protected final WorkerPool sharedPoolQuery;
+    protected final WorkerPool sharedPoolWrite;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
-    private final WorkerPool sharedPoolMatViews;
-    // When parallel querying is disabled, query pool will be null. All Network and Write pools will always be created.
-    private final WorkerPool sharedPoolQuery;
-    private final WorkerPool sharedPoolWrite;
 
     public WorkerPoolManager(ServerConfiguration config) {
         sharedPoolNetwork = new WorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
         sharedPoolQuery = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getSharedWorkerPoolQueryConfiguration()) : null;
         sharedPoolWrite = new WorkerPool(config.getSharedWorkerPoolWriteConfiguration());
-        sharedPoolMatViews = new WorkerPool(config.getSharedWorkerPoolMatViewsConfiguration());
 
-        WorkerPool sharedPoolQuery = this.sharedPoolQuery != null ? this.sharedPoolQuery : sharedPoolNetwork;
-        configureWorkerPools(sharedPoolQuery, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
+        WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
+        configureWorkerPools(queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
@@ -70,10 +70,6 @@ public abstract class WorkerPoolManager implements Target {
 
     public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         return getWorkerPool(config, requester, sharedPoolWrite);
-    }
-
-    public WorkerPool getSharedPoolMatViews() {
-        return sharedPoolMatViews;
     }
 
     public int getSharedQueryWorkerCount() {

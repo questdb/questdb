@@ -1835,7 +1835,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return sharedWorkerPoolMatViewsConfiguration;
     }
 

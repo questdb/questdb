@@ -247,7 +247,7 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
+            public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
                 return null;
             }
 

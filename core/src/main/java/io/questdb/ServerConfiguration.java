@@ -68,6 +68,8 @@ public interface ServerConfiguration {
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
+    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
+
     MemoryConfiguration getMemoryConfiguration();
 
     Metrics getMetrics();
@@ -81,8 +83,6 @@ public interface ServerConfiguration {
     default String getReleaseType() {
         return OSS;
     }
-
-    WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration();
 
     WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration();
 

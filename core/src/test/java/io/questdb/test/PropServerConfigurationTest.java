@@ -503,14 +503,14 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
-        Assert.assertFalse(configuration.getSharedWorkerPoolMatViewsConfiguration().isEnabled());
-        Assert.assertFalse(configuration.getSharedWorkerPoolMatViewsConfiguration().haltOnError());
-        Assert.assertEquals("mat-view-refresh", configuration.getSharedWorkerPoolMatViewsConfiguration().getPoolName());
-        Assert.assertEquals(0, configuration.getSharedWorkerPoolMatViewsConfiguration().getWorkerCount());
-        Assert.assertEquals(10, configuration.getSharedWorkerPoolMatViewsConfiguration().getSleepTimeout());
-        Assert.assertEquals(7_000, configuration.getSharedWorkerPoolMatViewsConfiguration().getNapThreshold());
-        Assert.assertEquals(10_000, configuration.getSharedWorkerPoolMatViewsConfiguration().getSleepThreshold());
-        Assert.assertEquals(1000, configuration.getSharedWorkerPoolMatViewsConfiguration().getYieldThreshold());
+        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
+        Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
+        Assert.assertEquals(0, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 
@@ -1386,15 +1386,15 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
             Assert.assertFalse(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
-            Assert.assertTrue(configuration.getSharedWorkerPoolMatViewsConfiguration().isEnabled());
-            Assert.assertTrue(configuration.getSharedWorkerPoolMatViewsConfiguration().haltOnError());
-            Assert.assertEquals("mat-view-refresh", configuration.getSharedWorkerPoolMatViewsConfiguration().getPoolName());
-            Assert.assertEquals(3, configuration.getSharedWorkerPoolMatViewsConfiguration().getWorkerCount());
-            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getSharedWorkerPoolMatViewsConfiguration().getWorkerAffinity());
-            Assert.assertEquals(55, configuration.getSharedWorkerPoolMatViewsConfiguration().getSleepTimeout());
-            Assert.assertEquals(23, configuration.getSharedWorkerPoolMatViewsConfiguration().getNapThreshold());
-            Assert.assertEquals(33, configuration.getSharedWorkerPoolMatViewsConfiguration().getSleepThreshold());
-            Assert.assertEquals(33033, configuration.getSharedWorkerPoolMatViewsConfiguration().getYieldThreshold());
+            Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
+            Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getMatViewRefreshPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
 
             Assert.assertEquals(32, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
         }

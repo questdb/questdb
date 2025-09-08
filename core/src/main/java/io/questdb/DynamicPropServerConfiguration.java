@@ -306,9 +306,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         // nested object is kept non-reloadable
-        return serverConfig.get().getSharedWorkerPoolMatViewsConfiguration();
+        return serverConfig.get().getMatViewRefreshPoolConfiguration();
     }
 
     @Override

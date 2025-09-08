@@ -105,7 +105,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return sharedPoolMatViewsConfiguration;
     }
 
