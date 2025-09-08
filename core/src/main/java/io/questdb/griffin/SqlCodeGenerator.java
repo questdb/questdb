@@ -310,7 +310,8 @@ import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
-    public static final int GKK_HOUR_INT = 1;
+    public static final int GKK_MICRO_HOUR_INT = 1;
+    public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
@@ -4536,6 +4537,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // vector aggregate function and fail (or fallback to default impl)
 
             int hourIndex = -1; // assume "hour(timestamp) does not exist
+            int timestampType = 0;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 QueryColumn qc = columns.getQuick(i);
                 if (qc.getAst() == null || qc.getAst().type != FUNCTION) {
@@ -4550,7 +4552,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (isHourKeyword(columnExpr.token) && columnExpr.paramCount == 1 && columnExpr.rhs.type == LITERAL) {
                     // check the column type via aliasToColumnMap
                     QueryColumn tableColumn = nested.getAliasToColumnMap().get(columnExpr.rhs.token);
-                    if (tableColumn != null && ColumnType.isTimestamp(tableColumn.getColumnType())) {
+                    timestampType = tableColumn.getColumnType();
+                    if (tableColumn != null && ColumnType.isTimestamp(timestampType)) {
                         hourIndex = i;
                     }
                 }
@@ -4565,7 +4568,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
                     tempKeyIndex.add(hourIndex);
                     // storage dimension for Rosti is INT when we use hour(). This function produces INT.
-                    tempKeyKinds.add(GKK_HOUR_INT);
+                    tempKeyKinds.add(ColumnType.getTimestampDriver(timestampType).getGKKHourInt());
                     arrayColumnTypes.add(ColumnType.INT);
                 } else {
                     factory = Misc.free(factory);
@@ -4656,7 +4659,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     if (tempVaf.size() == 0) { // similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id
-                        int keyKind = hourIndex != -1 ? SqlCodeGenerator.GKK_HOUR_INT : SqlCodeGenerator.GKK_VANILLA_INT;
+                        int keyKind = hourIndex != -1 ? ColumnType.getTimestampDriver(timestampType).getGKKHourInt() : SqlCodeGenerator.GKK_VANILLA_INT;
                         CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
                         countFunction.pushValueTypes(arrayColumnTypes);
                         tempVaf.add(countFunction);

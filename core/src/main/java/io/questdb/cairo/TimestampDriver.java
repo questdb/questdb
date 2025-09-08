@@ -312,6 +312,8 @@ public interface TimestampDriver {
      */
     int getDoy(long timestamp);
 
+    int getGKKHourInt();
+
     /**
      * Gets the hour of day from a timestamp value.
      *

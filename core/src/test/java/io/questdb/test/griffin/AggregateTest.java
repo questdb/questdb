@@ -92,7 +92,7 @@ public class AggregateTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
-        timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_MICRO;
+        timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampTypeName = ColumnType.nameOf(timestampType);
     }
 
@@ -138,7 +138,7 @@ public class AggregateTest extends AbstractCairoTest {
         TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY);
         tt1.col("tts", ColumnType.LONG).timestamp("ts", timestampType);
         createPopulateTable(tt1, 100, "2020-01-01", 2);
-        String expected = replaceTimestampSuffix("ts\tcount\n" +
+        String expected = replaceTimestampSuffix1("ts\tcount\n" +
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
                 "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n", timestampTypeName).replaceAll("TIMESTAMP", timestampTypeName);
 
@@ -195,7 +195,7 @@ public class AggregateTest extends AbstractCairoTest {
         tt1.col("tts", ColumnType.LONG).timestamp("ts", timestampType)
                 .col("ID", ColumnType.LONG);
         createPopulateTable(tt1, 100, "2020-01-01", 2);
-        String expected = replaceTimestampSuffix("ts\tcount\n" +
+        String expected = replaceTimestampSuffix1("ts\tcount\n" +
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
                 "2020-01-01T00:57:35.980000Z:TIMESTAMP\t1:LONG\n", timestampTypeName).replaceAll("TIMESTAMP", timestampTypeName);
         String sql = "select ts, count() from tt1 WHERE id > 0 ORDER BY ts LIMIT 2";
@@ -337,7 +337,7 @@ public class AggregateTest extends AbstractCairoTest {
     public void testGroupByWithSymbolKey1() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE records (\n" +
-                    "  ts TIMESTAMP,\n" +
+                    "  ts " + timestampTypeName + ",\n" +
                     "  account_uuid SYMBOL,\n" +
                     "  requests LONG\n" +
                     ") timestamp (ts)");
@@ -447,7 +447,7 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testHourDouble() throws Exception {
         assertQuery(
-                replaceTimestampSuffix("hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
+                replaceTimestampSuffix1("hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
                         "0\t15105.0\t15105.0\t15105.0\t1.8362081935174857E-5\t0.999916269120484\t1.0\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t15098.0\t15098.0\t15098.0\t3.921217994906634E-5\t0.9999575311567217\t1.0\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z\n" +
                         "2\t11642.0\t11642.0\t11642.0\t1.8566421983501336E-5\t0.9999768905891359\t1.0\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n", timestampTypeName),
@@ -1729,9 +1729,9 @@ public class AggregateTest extends AbstractCairoTest {
 
     private static void runCountTestWithColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         engine.execute("create table x ( tstmp " + timestampTypeName + " ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        engine.execute("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        engine.execute("insert into x values  (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp) ", sqlExecutionContext);
         engine.execute("alter table x add column k int", sqlExecutionContext);
-        engine.execute("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
+        engine.execute("insert into x values ((1+3600L*1000000)::timestamp, 3), ((2*3600L*1000000)::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), ((3*3600L*1000000)::timestamp, 0) ", sqlExecutionContext);
         engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
         engine.execute(
                 "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
@@ -1806,7 +1806,7 @@ public class AggregateTest extends AbstractCairoTest {
 
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         engine.execute("create table x ( tstmp " + timestampTypeName + " ) timestamp (tstmp) partition by hour", sqlExecutionContext);
-        engine.execute("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        engine.execute("insert into x values  (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp) ", sqlExecutionContext);
         engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
         engine.execute("insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
         engine.execute("alter table x add column k int", sqlExecutionContext);

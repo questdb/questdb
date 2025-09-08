@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -449,6 +450,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Micros.getDoy(timestamp);
+    }
+
+    @Override
+    public int getGKKHourInt() {
+        return SqlCodeGenerator.GKK_MICRO_HOUR_INT;
     }
 
     @Override
