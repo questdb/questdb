@@ -328,4 +328,32 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (i int)");
+
+            assertException(
+                    "select * from tab where i > (select max(i) from tab)",
+                    24,
+                    "left operand must be a TIMESTAMP, found: INT"
+            );
+        });
+    }
+
+    @Test
+    public void testPreventVarcharImplicitCastingToTimestampInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            assertException(
+                    "select * from x where a <= (select '1970-01-01T00:00:00.000000Z'::varchar)",
+                    22,
+                    "left operand must be a TIMESTAMP, found: VARCHAR"
+            );
+        });
+    }
 }
