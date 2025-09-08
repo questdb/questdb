@@ -143,19 +143,14 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     private void setSize0(long newSize) {
-        try {
-            if (size > 0) {
-                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
-            } else {
-                assert pageAddress == 0;
-                pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
-            }
-            ff.madvise(pageAddress, newSize, madviseOpts);
-            size = newSize;
-        } catch (Throwable e) {
-            close();
-            throw e;
+        if (size > 0) {
+            pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+        } else {
+            assert pageAddress == 0;
+            pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
         }
+        size = newSize;
+        ff.madvise(pageAddress, size, madviseOpts);
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
