@@ -104,14 +104,12 @@ public class LineTCPSenderMain {
         int n = 1;
         final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
         for (int i = 0; i < n; i++) {
-            int k = i;
-            new Thread(() -> doSend(k, haltLatch, ccy, ccyDist, venue, venueDist, pool, poolDist)).start();
+            new Thread(() -> doSend(haltLatch, ccy, ccyDist, venue, venueDist, pool, poolDist)).start();
         }
         haltLatch.await();
     }
 
     private static void doSend(
-            int k,
             SOCountDownLatch haltLatch,
             String[] ccy,
             int[] ccyDist,
@@ -121,10 +119,6 @@ public class LineTCPSenderMain {
             int[] poolDist
     ) {
         final long count = 30_000_000;
-        String hostIPv4 = "127.0.0.1";
-        int port = 9009; // 8089 influx
-        int bufferCapacity = 4 * 1024;
-
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
         Clock clock = new MicrosecondClockImpl();

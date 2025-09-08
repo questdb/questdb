@@ -195,22 +195,6 @@ public class CairoTable implements Sinkable {
         this.dedup = dedup;
     }
 
-    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
-        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
-    }
-
-    public void setMatViewTimerInterval(int matViewTimerInterval) {
-        this.matViewTimerInterval = matViewTimerInterval;
-    }
-
-    public void setMatViewTimerStart(long matViewTimerStart) {
-        this.matViewTimerStart = matViewTimerStart;
-    }
-
-    public void setMatViewTimerUnit(char matViewTimerUnit) {
-        this.matViewTimerUnit = matViewTimerUnit;
-    }
-
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }

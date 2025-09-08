@@ -1605,32 +1605,6 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_decode_file() {
-    //     let file = File::open("/Users/alpel/temp/db/requests_log.parquet").unwrap();
-    //     let mut decoder = ParquetDecoder::read(file).unwrap();
-    //     let row_group_count = decoder.row_group_count as usize;
-    //     let column_count = decoder.columns.len();
-    //
-    //     for column_index in 0..column_count {
-    //         let mut col_row_count = 0usize;
-    //
-    //         let column_type = decoder.columns[column_index].typ;
-    //         for row_group_index in 0..row_group_count {
-    //             decoder
-    //                 .decode_column_chunk(row_group_index, column_index, column_type)
-    //                 .unwrap();
-    //
-    //             let ccb = &decoder.column_buffers[column_index];
-    //             assert_eq!(ccb.data_vec.len(), ccb.data_size);
-    //
-    //             col_row_count += ccb.row_count;
-    //         }
-    //
-    //         assert_eq!(col_row_count, decoder.row_count);
-    //     }
-    // }
-
     #[test]
     fn test_decode_int_long_column_v2_nulls_multi_groups() {
         let row_count = 10000;

@@ -41,25 +41,25 @@ public class CopyTimestampBenchmark {
     }
 
     public static void setup() throws SqlException {
-        execute("drop table if exists tab", configuration);
-        execute("create table tab (ts timestamp) timestamp(ts) partition by year", configuration);
-        execute("drop table if exists tab1", configuration);
-        execute("create table tab1 (ts timestamp_ns) timestamp(ts) partition by year", configuration);
-        execute("insert into tab select timestamp_sequence(0, x) ts from long_sequence(100000000)", configuration);
+        execute("drop table if exists tab");
+        execute("create table tab (ts timestamp) timestamp(ts) partition by year");
+        execute("drop table if exists tab1");
+        execute("create table tab1 (ts timestamp_ns) timestamp(ts) partition by year");
+        execute("insert into tab select timestamp_sequence(0, x) ts from long_sequence(100000000)");
     }
 
     public static void testInsert() throws SqlException {
         long start = System.nanoTime();
-        execute("insert into tab1 select ts from tab", configuration);
+        execute("insert into tab1 select ts from tab");
 
         System.out.println("convert micro to nanos for 100_000_000 cost times: " + (System.nanoTime() - start) + " ns");
     }
 
-    private static void execute(String ddl, CairoConfiguration configuration) throws SqlException {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+    private static void execute(String ddl) throws SqlException {
+        try (CairoEngine engine = new CairoEngine(CopyTimestampBenchmark.configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            CopyTimestampBenchmark.configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,
