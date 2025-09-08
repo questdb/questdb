@@ -1386,7 +1386,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int jitMaxInListSizeThreshold() {
-        return 4;
+        return 10;
     }
 
     @Override
