@@ -1385,6 +1385,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int jitMaxInListSizeThreshold() {
+        return 4;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return false;
     }

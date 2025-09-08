@@ -121,7 +121,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
+        if (runtimeConstCount + constCount == argCount) {
             final IntList positions = new IntList();
             positions.addAll(argPositions);
             return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
@@ -174,12 +174,12 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final LongHashSet inList;
+        private final LongHashSet inSet;
         private final Function tsFunc;
 
-        public InLongConstFunction(Function tsFunc, LongHashSet inList) {
+        public InLongConstFunction(Function tsFunc, LongHashSet inSet) {
             this.tsFunc = tsFunc;
-            this.inList = inList;
+            this.inSet = inSet;
         }
 
         @Override
@@ -190,7 +190,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long val = tsFunc.getLong(rec);
-            return negated != inList.contains(val);
+            return negated != inSet.contains(val);
         }
 
         @Override
@@ -199,12 +199,12 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inList);
+            sink.val(" in ").val(inSet);
         }
     }
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final LongHashSet inList;
+        private final LongHashSet inSet;
         private final Function keyFunc;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
@@ -214,7 +214,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.inList = new LongHashSet((int) ((valueFunctions.size() - 1) / LongHashSet.DEFAULT_LOAD_FACTOR));
+            this.inSet = new LongHashSet((int) ((valueFunctions.size() - 1) / LongHashSet.DEFAULT_LOAD_FACTOR));
         }
 
         @Override
@@ -225,14 +225,14 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long val = keyFunc.getLong(rec);
-            return negated != inList.contains(val);
+            return negated != inSet.contains(val);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
-            inList.clear();
-            parseToLong(valueFunctions, valueFunctionPositions, inList);
+            inSet.clear();
+            parseToLong(valueFunctions, valueFunctionPositions, inSet);
         }
 
         @Override
@@ -241,7 +241,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inList);
+            sink.val(" in ").val(inSet);
         }
     }
 

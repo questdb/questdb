@@ -185,11 +185,11 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
-    @NotNull
-    String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
-
     @Nullable
     String getDbLogName();
+
+    @NotNull
+    String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     boolean getDebugWalApplyBlockFailureNoRetry();
 
@@ -213,9 +213,9 @@ public interface CairoConfiguration {
     @NotNull
     FactoryProvider getFactoryProvider();
 
-    int getFileOperationRetryCount();
-
     boolean getFileDescriptorCacheEnabled();
+
+    int getFileOperationRetryCount();
 
     @NotNull
     FilesFacade getFilesFacade();
@@ -760,6 +760,8 @@ public interface CairoConfiguration {
     boolean isWalSupported();
 
     boolean isWriterMixedIOEnabled();
+
+    int jitMaxInListSizeThreshold();
 
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.

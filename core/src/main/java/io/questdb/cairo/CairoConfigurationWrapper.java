@@ -1366,6 +1366,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int jitMaxInListSizeThreshold() {
+        return getDelegate().jitMaxInListSizeThreshold();
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return getDelegate().mangleTableDirNames();
     }
