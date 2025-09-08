@@ -140,7 +140,7 @@ public class OrderByNegativeLimitFuzzTest extends AbstractCairoTest {
         return filter;
     }
 
-    private @Nullable String generateInterval(Rnd rnd, int nPartitions) throws Exception {
+    private @Nullable String generateInterval(Rnd rnd, int nPartitions) {
         if (nPartitions < 0) {
             return null;
         }
@@ -160,7 +160,7 @@ public class OrderByNegativeLimitFuzzTest extends AbstractCairoTest {
         return "ts >= " + start + " AND ts < " + end;
     }
 
-    private String generateWhereClause(Rnd rnd, int nPartitions, @Nullable Object[] columns) throws Exception {
+    private String generateWhereClause(Rnd rnd, int nPartitions, @Nullable Object[] columns) {
         String interval = generateInterval(rnd, nPartitions);
         String filter = generateFilter(rnd, columns);
         if (interval == null && filter == null) {

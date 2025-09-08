@@ -54,5 +54,4 @@ public class ToCharTimestampVCFunctionFactoryTest extends AbstractFunctionFactor
     protected FunctionFactory getFunctionFactory() {
         return new ToStrTimestampFunctionFactory();
     }
-
 }

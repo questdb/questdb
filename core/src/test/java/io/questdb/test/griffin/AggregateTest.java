@@ -2184,7 +2184,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    private interface CustomisableRunnable {
+    public interface CustomisableRunnable {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampType) throws Exception;
     }
 

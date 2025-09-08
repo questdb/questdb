@@ -63,7 +63,7 @@ public class LineTcpMeasurementEvent implements Closeable {
     private final boolean stringToCharCastAllowed;
     private boolean commitOnWriterClose;
     private TableUpdateDetails tableUpdateDetails;
-    private byte timestampUnit;
+    private final byte timestampUnit;
     private int writerWorkerId;
 
     LineTcpMeasurementEvent(

@@ -51,7 +51,6 @@ public class NanosFormatUtils {
     public static final DateFormat WEEK_FORMAT;
     public static final DateFormat YEAR_FORMAT;
     private static final DateFormat[] FORMATS;
-    private static final DateFormat[] HTTP_FORMATS;
     static int prevCenturyLow;
     static long referenceYear;
     static int thisCenturyLimit;
@@ -380,15 +379,6 @@ public class NanosFormatUtils {
         // 3. PostgreSQL's binary wire protocol also uses microsecond precision, making this
         //    consistent across both text and binary formats
         PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
-        final String[] httpPatterns = new String[]{ // priority sorted
-                "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
-                "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID
-        };
-        HTTP_FORMATS = new DateFormat[httpPatterns.length];
-        for (int i = 0; i < httpPatterns.length; i++) {
-            HTTP_FORMATS[i] = compiler.compile(httpPatterns[i]);
-        }
-
         final String[] patterns = new String[]{ // priority sorted
                 NSEC_UTC_PATTERN,
                 PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz

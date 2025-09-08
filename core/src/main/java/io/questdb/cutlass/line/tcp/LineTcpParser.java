@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
@@ -81,7 +80,6 @@ public class LineTcpParser implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
     private static final IntHashSet binaryFormatSupportType = new IntHashSet();
     private static final boolean[] controlBytes;
-    private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
@@ -102,8 +100,7 @@ public class LineTcpParser implements QuietCloseable {
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser(CairoConfiguration configuration) {
-        this.cairoConfiguration = configuration;
+    public LineTcpParser() {
     }
 
     @Override

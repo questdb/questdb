@@ -221,7 +221,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             filter.put(" and s = 's_0' ");
         }
 
-        String projection = "";
+        String projection;
         // (ts TIMESTAMP, i INT, s SYMBOL)
         String slaveTimestampColumnName = "ts1";
         switch (projectionType) {

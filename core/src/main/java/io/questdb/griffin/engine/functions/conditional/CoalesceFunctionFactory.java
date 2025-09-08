@@ -853,7 +853,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             long lo0 = args0.getLong128Lo(rec);
             if (lo0 != Numbers.LONG_NULL) {
-                return hi0; // if lo is not NaN then we know Long128 is not null and we can return hi0 even if it is NaN
+                return hi0; // if lo is not NaN then we know Long128 is not null, and we can return hi0 even if it is NaN
             }
             // ok, both hi and lo are NaN, we use the value from the second argument
             return args1.getLong128Hi(rec);

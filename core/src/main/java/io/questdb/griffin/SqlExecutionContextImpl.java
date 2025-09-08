@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
@@ -75,7 +76,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean containsSecret;
     private int intervalFunctionType;
     private int jitMode;
-    private MicrosecondClock microClock;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory

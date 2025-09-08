@@ -73,24 +73,18 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         return this;
     }
 
-    public void rebuildAll(int timestampType) {
-        reindex(configuration.getFilesFacade(), null, null, timestampType);
+    public void rebuildAll() {
+        reindex(configuration.getFilesFacade(), null, null);
     }
 
     public void reindex(
             @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName,
-            int timestampType
+            @Nullable CharSequence columnName
     ) {
-        reindex(configuration.getFilesFacade(), partitionName, columnName, timestampType);
+        reindex(configuration.getFilesFacade(), partitionName, columnName);
     }
 
-    public void reindex(
-            FilesFacade ff,
-            @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName,
-            int timestampType
-    ) {
+    public void reindex(FilesFacade ff, @Nullable CharSequence partitionName, @Nullable CharSequence columnName) {
         try {
             lock(ff);
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
@@ -143,16 +137,16 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         );
     }
 
-    public void reindexAllInPartition(CharSequence partitionName, int timestampType) {
-        reindex(partitionName, null, timestampType);
+    public void reindexAllInPartition(CharSequence partitionName) {
+        reindex(partitionName, null);
     }
 
-    public void reindexColumn(CharSequence columnName, int timestampType) {
-        reindex(null, columnName, timestampType);
+    public void reindexColumn(CharSequence columnName) {
+        reindex(null, columnName);
     }
 
-    public void reindexColumn(FilesFacade ff, CharSequence columnName, int timestampType) {
-        reindex(ff, null, columnName, timestampType);
+    public void reindexColumn(FilesFacade ff, CharSequence columnName) {
+        reindex(ff, null, columnName);
     }
 
     public void reindexColumn(

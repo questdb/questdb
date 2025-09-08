@@ -39,7 +39,7 @@ import org.junit.Test;
 
 public class ToStrDateAndTimestampTest extends AbstractCairoTest {
     @Test
-    public void testToStrBehavior() throws Exception {
+    public void testToStrBehavior() {
         String[] inputs = {
                 "2020-01-01T17:16:30.192Z",
                 "2019-03-10T07:16:30.192Z",

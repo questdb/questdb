@@ -24,6 +24,9 @@
 
 package io.questdb.test.std.datetime.nanotime;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
@@ -642,39 +645,37 @@ public class NanosTest {
         }
     }
 
-    // todo: potentially move this to the driver
-/*
     @Test
     public void testParseWW() throws NumericException {
-        DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
+        DateFormat byWeek = driver.getPartitionDirFormatMethod(PartitionBy.WEEK);
         try {
-            byWeek.parse("2020-W00", DateFormatUtils.EN_LOCALE);
+            byWeek.parse("2020-W00", EN_LOCALE);
             Assert.fail("ISO Week 00 is invalid");
         } catch (NumericException ignore) {
         }
 
         try {
-            byWeek.parse("2020-W54", DateFormatUtils.EN_LOCALE);
+            byWeek.parse("2020-W54", EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Nanos.toString(byWeek.parse("2020-W01", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2020-12-28T00:00:00.000Z", Nanos.toString(byWeek.parse("2020-W53", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2021-01-04T00:00:00.000Z", Nanos.toString(byWeek.parse("2021-W01", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Nanos.toString(byWeek.parse("2020-W01", EN_LOCALE)));
+        Assert.assertEquals("2020-12-28T00:00:00.000Z", Nanos.toString(byWeek.parse("2020-W53", EN_LOCALE)));
+        Assert.assertEquals("2021-01-04T00:00:00.000Z", Nanos.toString(byWeek.parse("2021-W01", EN_LOCALE)));
 
         try {
-            byWeek.parse("2019-W53", DateFormatUtils.EN_LOCALE);
+            byWeek.parse("2019-W53", EN_LOCALE);
             Assert.fail("2019 has 52 ISO weeks");
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Nanos.toString(byWeek.parse("2020-W01", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2014-12-22T00:00:00.000Z", Nanos.toString(byWeek.parse("2014-W52", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2015-12-28T00:00:00.000Z", Nanos.toString(byWeek.parse("2015-W53", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Nanos.toString(byWeek.parse("2020-W01", EN_LOCALE)));
+        Assert.assertEquals("2014-12-22T00:00:00.000Z", Nanos.toString(byWeek.parse("2014-W52", EN_LOCALE)));
+        Assert.assertEquals("2015-12-28T00:00:00.000Z", Nanos.toString(byWeek.parse("2015-W53", EN_LOCALE)));
     }
 
-*/
     @Test(expected = NumericException.class)
     public void testParseWrongDay() {
         parseNSecUTC("2013-09-31T00:00:00.000Z");

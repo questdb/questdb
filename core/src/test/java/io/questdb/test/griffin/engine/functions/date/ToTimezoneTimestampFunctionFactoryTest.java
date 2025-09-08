@@ -29,7 +29,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -157,7 +156,6 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidConstantOffset() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
         assertMemoryLeak(() -> {
             try {
                 assertExceptionNoLeakCheck("select to_timezone(0, '25:40')");
@@ -170,7 +168,6 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidConstantTimeZone() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
         assertMemoryLeak(() -> {
             try {
                 assertExceptionNoLeakCheck("select to_timezone(0, 'UUU')");
@@ -183,7 +180,6 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullConstantTimeZone() throws Exception {
-        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
         assertMemoryLeak(() -> {
             try {
                 assertExceptionNoLeakCheck("select to_timezone(0, null)");

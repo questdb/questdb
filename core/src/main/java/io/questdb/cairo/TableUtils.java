@@ -761,11 +761,10 @@ public final class TableUtils {
                 return Numbers.IPv4_NULL;
             case ColumnType.VARCHAR:
             case ColumnType.BINARY:
+            case ColumnType.ARRAY:
                 return NULL_LEN;
             case ColumnType.STRING:
                 return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
-            case ColumnType.ARRAY:
-                return NULL_LEN;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;

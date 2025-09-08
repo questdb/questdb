@@ -98,7 +98,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                serverMain.ddl("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, u uuid, tss timestamp, " +
+                serverMain.execute("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, u uuid, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -676,7 +676,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
-                serverMain.ddl("create table foo (ts TIMESTAMP, d LONG256) timestamp(ts) partition by day wal;");
+                serverMain.execute("create table foo (ts TIMESTAMP, d LONG256) timestamp(ts) partition by day wal;");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -761,7 +761,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1024"
             )) {
                 String tableName = "empty_arrays_test";
-                serverMain.ddl("CREATE TABLE " + tableName +
+                serverMain.execute("CREATE TABLE " + tableName +
                         " (a1 double[], a2 double[][], a3 double[][][], ts TIMESTAMP)" +
                         " TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
@@ -827,7 +827,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "arr_double_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (a1 double[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (a1 double[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -859,7 +859,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1024"
             )) {
                 String tableName = "esoteric_arrays_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (a1 double[][][], a2 double[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (a1 double[][][], a2 double[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -968,9 +968,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 for (int i = 0; i < 10; i++) {
-                    serverMain.ddl("drop table " + tableName);
+                    serverMain.execute("drop table " + tableName);
                     assertSql(serverMain.getEngine(), "SELECT count() from tables() where table_name='" + tableName + "'", "count\n0\n");
-                    serverMain.ddl("create table " + tableName + " (" +
+                    serverMain.execute("create table " + tableName + " (" +
                             "balance1 symbol capacity 16, " +
                             "balance10 symbol capacity 16, " +
                             "timestamp timestamp)" +
@@ -1009,7 +1009,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "arr_double_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
+                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
                         "a1 DOUBLE[][][], a2 DOUBLE[][][], a3 DOUBLE[][][], a4 DOUBLE[][][], " +
                         "b1 DOUBLE[], b2 DOUBLE[][], b3 DOUBLE[][][], " +
                         "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1073,7 +1073,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "arr_exception_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, a1 DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, a1 DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1104,7 +1104,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "arr_large_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (ts TIMESTAMP, arr DOUBLE[])" +
+                serverMain.execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -1141,7 +1141,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "arr_long_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
+                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
                         "a1 LONG[][][], a2 LONG[][][], a3 LONG[][][], a4 LONG[][][], " +
                         "b1 LONG[], b2 LONG[][], b3 LONG[][][], " +
                         "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1207,7 +1207,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "arr_nullable_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, l1 LONG, a1 DOUBLE[], " +
+                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, l1 LONG, a1 DOUBLE[], " +
                         "a2 DOUBLE[][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -1244,7 +1244,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "simple_double_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
+                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
                         "a double, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -1314,7 +1314,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "h2o_feet";
-                serverMain.ddl("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int count = 10;
 
@@ -1405,7 +1405,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
                     PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false"
             )) {
-                serverMain.ddl("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                serverMain.execute("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -1445,7 +1445,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false",
                     PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false"
             )) {
-                serverMain.ddl("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                serverMain.execute("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -1576,7 +1576,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                serverMain.ddl("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -1603,7 +1603,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                serverMain.ddl("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -1643,7 +1643,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                serverMain.ddl("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)

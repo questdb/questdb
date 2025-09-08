@@ -472,7 +472,7 @@ public final class WhereClauseParser implements Mutable {
                 final Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampEqualsFunction(executionContext, timestampDriver, model, node, func, b.position);
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
                 } catch (Throwable th) {
                     Misc.free(func);
                     throw th;
@@ -581,7 +581,7 @@ public final class WhereClauseParser implements Mutable {
             final Function func = functionParser.parseFunction(b, m, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    return analyzeTimestampEqualsFunction(executionContext, timestampDriver, model, node, func, b.position);
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
                 }
                 Misc.free(func);
             } catch (Throwable th) {
@@ -726,7 +726,7 @@ public final class WhereClauseParser implements Mutable {
                             checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
                             // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
                             // This is same as equals
-                            return analyzeTimestampEqualsFunction(executionContext, timestampDriver, model, in, func, inArg.position);
+                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, func, inArg.position);
                         }
                     } catch (Throwable th) {
                         Misc.free(func);
@@ -1085,7 +1085,7 @@ public final class WhereClauseParser implements Mutable {
                 Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampNotEqualsFunction(executionContext, timestampDriver, model, node, func, b.position);
+                    return analyzeTimestampNotEqualsFunction(timestampDriver, model, node, func, b.position);
                 } catch (Throwable th) {
                     Misc.free(func);
                     throw th;
@@ -1356,7 +1356,6 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeTimestampEqualsFunction(
-            SqlExecutionContext executionContext,
             TimestampDriver timestampDriver,
             IntrinsicModel model,
             ExpressionNode node,
@@ -1520,7 +1519,6 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean analyzeTimestampNotEqualsFunction(
-            SqlExecutionContext executionContext,
             TimestampDriver timestampDriver,
             IntrinsicModel model,
             ExpressionNode node,

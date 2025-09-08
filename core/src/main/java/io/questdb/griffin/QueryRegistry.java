@@ -124,7 +124,7 @@ public class QueryRegistry {
      *
      * @param query            - query text
      * @param executionContext - execution context
-     * @return non-negative id assigned to given query. Id may be used to look query up in registry.
+     * @return non-negative id assigned to given query. It may be used to look query up in registry.
      */
     public long register(CharSequence query, SqlExecutionContext executionContext) {
         final long queryId = idSeq.getAndIncrement();

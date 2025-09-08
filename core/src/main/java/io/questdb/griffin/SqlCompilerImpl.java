@@ -2953,14 +2953,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnNames.add(columnName);
             }
             executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-
-            // read table's timestamp type
-            int timestampType;
-            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-                timestampType = metadata.getTimestampType();
-            }
-
-            indexBuilder.reindex(partition, columnName, timestampType);
+            indexBuilder.reindex(partition, columnName);
         }
         compiledQuery.ofRepair();
     }

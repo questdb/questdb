@@ -418,7 +418,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
-            this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, timestampType, partitionBy != PartitionBy.NONE);
+            this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             this.parquetStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
             this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
@@ -3170,7 +3170,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CairoConfiguration configuration,
             Path path,
             int rootLen,
-            int timestampType,
             boolean partitioned
     ) {
         path.concat(COLUMN_VERSION_FILE_NAME);

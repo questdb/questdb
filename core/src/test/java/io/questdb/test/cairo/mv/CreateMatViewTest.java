@@ -57,7 +57,6 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static org.junit.Assert.*;
 
 public class CreateMatViewTest extends AbstractCairoTest {

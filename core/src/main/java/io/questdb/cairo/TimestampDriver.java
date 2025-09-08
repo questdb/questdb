@@ -467,6 +467,13 @@ public interface TimestampDriver {
      */
     int getTimestampType();
 
+    /**
+     * Creates converted from a given type to the type supported by the driver implementation.
+     *
+     * @param srcTimestampType type of the timestamp to convert from.
+     * @return either converter or null. When the value is null, the long should be taken verbatim. The driver decided
+     * that it is either not able to convert or the type is the same as of this driver's.
+     */
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
     TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone);

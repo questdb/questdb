@@ -39,7 +39,7 @@ public class MicroTimestampDriverTest extends AbstractCairoTest {
     TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
 
     @Test
-    public void testFromChronosUnit() throws Exception {
+    public void testFromChronosUnit() {
         Assert.assertEquals(1, driver.from(1000, ChronoUnit.NANOS));
         Assert.assertEquals(1, driver.from(1, ChronoUnit.MICROS));
         Assert.assertEquals(1000, driver.from(1, ChronoUnit.MILLIS));
@@ -61,7 +61,7 @@ public class MicroTimestampDriverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFromTimestampUnit() throws Exception {
+    public void testFromTimestampUnit() {
         Assert.assertEquals(56799L, driver.from(56799001, CommonUtils.TIMESTAMP_UNIT_NANOS));
         Assert.assertEquals(56799L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_MICROS));
         Assert.assertEquals(56799_000L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_MILLIS));
@@ -71,7 +71,7 @@ public class MicroTimestampDriverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImplicitCast() throws Exception {
+    public void testImplicitCast() {
         Assert.assertEquals(Numbers.LONG_NULL, driver.implicitCast(null));
         long expected2020_01_01 = 1577836800000000L; // 2020-01-01T00:00:00Z in micros
         Assert.assertEquals(expected2020_01_01, driver.implicitCast("2020-01-01T00:00:00Z"));

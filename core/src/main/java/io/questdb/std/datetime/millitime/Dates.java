@@ -69,10 +69,6 @@ public final class Dates {
         return millis + days * DAY_MILLIS;
     }
 
-    public static long addHours(long millis, int hours) {
-        return millis + hours * HOUR_MILLIS;
-    }
-
     public static long addMonths(final long millis, int months) {
         if (months == 0) {
             return millis;
@@ -170,10 +166,6 @@ public final class Dates {
 
     public static long floorHH(long millis) {
         return millis - millis % HOUR_MILLIS;
-    }
-
-    public static long floorMI(long millis) {
-        return millis - millis % MINUTE_MILLIS;
     }
 
     public static long floorMM(long millis) {

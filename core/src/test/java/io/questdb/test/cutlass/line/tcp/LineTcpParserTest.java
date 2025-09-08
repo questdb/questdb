@@ -134,7 +134,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
             LineTcpParser.ParseResult expectedParseResult
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LineTcpParser lineTcpParser = new LineTcpParser(configuration)) {
+            try (LineTcpParser lineTcpParser = new LineTcpParser()) {
                 sink.clear();
                 sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set
                 byte[] bytes = sink.toString().getBytes(Files.UTF_8);

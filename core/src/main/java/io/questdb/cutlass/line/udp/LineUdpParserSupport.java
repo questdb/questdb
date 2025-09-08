@@ -52,7 +52,7 @@ public class LineUdpParserSupport {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
         // 0 len values, return null type.
-        // the goal of this method is to guess the potential type
+        // the goal of this method is to guess the potential type,
         // and then it will be parsed accordingly by 'putValue'.
         int valueLen = value.length();
         if (valueLen > 0) {

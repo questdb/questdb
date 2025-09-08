@@ -29,8 +29,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.map.OrderedMap;
-import io.questdb.cairo.map.Unordered4Map;
-import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -115,14 +113,6 @@ public final class TestDefaults {
                 return f.apply(rec);
             }
         };
-    }
-
-    public static Unordered4Map createUnorderedMap4(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new Unordered4Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
-    }
-
-    public static Unordered8Map createUnorderedMap8(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new Unordered8Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
     }
 
     public static VirtualRecord createVirtualRecord(Function... functions) {

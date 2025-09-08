@@ -548,27 +548,27 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testRollingFileWriterByDay() throws Exception {
+    public void testRollingFileWriterByDay() {
         testRollOnDate("mylog-${date:yyyy-MM-dd}.log", 24 * 60000, "day", "mylog-2015-05");
     }
 
     @Test
-    public void testRollingFileWriterByHour() throws Exception {
+    public void testRollingFileWriterByHour() {
         testRollOnDate("mylog-${date:yyyy-MM-dd-hh}.log", 100000, "hour", "mylog-2015-05-03");
     }
 
     @Test
-    public void testRollingFileWriterByMinute() throws Exception {
+    public void testRollingFileWriterByMinute() {
         testRollOnDate("mylog-${date:yyyy-MM-dd-hh-mm}.log", 1000, "minute", "mylog-2015-05-03");
     }
 
     @Test
-    public void testRollingFileWriterByMonth() throws Exception {
+    public void testRollingFileWriterByMonth() {
         testRollOnDate("mylog-${date:yyyy-MM}.log", 30 * 24 * 60000, "month", "mylog-2015");
     }
 
     @Test
-    public void testRollingFileWriterBySize() throws Exception {
+    public void testRollingFileWriterBySize() {
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
@@ -651,12 +651,12 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testRollingFileWriterByYear() throws Exception {
+    public void testRollingFileWriterByYear() {
         testRollOnDate("mylog-${date:yyyy-MM}.log", 12 * 30 * 24 * 60000L, "year", "mylog-201");
     }
 
     @Test
-    public void testRollingFileWriterDateParse() throws Exception {
+    public void testRollingFileWriterDateParse() {
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
@@ -683,7 +683,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testRollingFileWriterDateParsePushFilesMid() throws Exception {
+    public void testRollingFileWriterDateParsePushFilesMid() {
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
@@ -967,7 +967,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testSpaceInRollEvery() throws Exception {
+    public void testSpaceInRollEvery() {
         final String logFile = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
 
         final MicrosecondClock clock = new TestMicrosecondClock(

@@ -956,7 +956,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     private static void execute(TestServerMain serverMain, final String sql) {
-        serverMain.ddl(sql);
+        serverMain.execute(sql);
     }
 
     private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {

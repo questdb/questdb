@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -61,20 +60,17 @@ public class MatViewOomTest extends AbstractCairoTest {
         testOom(true);
     }
 
-    private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
-        engine.execute(sqlText, sqlExecutionContext);
-    }
-
     private void testOom(boolean enableParallelSql) throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts #TIMESTAMP" +
-                            ") timestamp(ts) partition by DAY WAL;"
-            );
+
+            CharSequence sqlText = "create table base_price (" +
+                    "sym varchar, price double, ts #TIMESTAMP" +
+                    ") timestamp(ts) partition by DAY WAL;";
+
+            sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+            engine.execute(sqlText, sqlExecutionContext);
 
             execute(
                     "insert into base_price select " +

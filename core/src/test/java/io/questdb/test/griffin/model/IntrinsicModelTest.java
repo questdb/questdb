@@ -163,7 +163,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testIntersectContain2() throws Exception {
+    public void testIntersectContain2() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
@@ -175,7 +175,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testIntersectMergeOverlap() throws Exception {
+    public void testIntersectMergeOverlap() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
@@ -187,7 +187,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testIntersectMergeOverlap2() throws Exception {
+    public void testIntersectMergeOverlap2() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
@@ -199,7 +199,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testIntersectNoOverlap() throws Exception {
+    public void testIntersectNoOverlap() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
@@ -213,7 +213,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testIntersectSame() throws Exception {
+    public void testIntersectSame() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
@@ -225,7 +225,7 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testIntersectTwoOverlapOne2() throws Exception {
+    public void testIntersectTwoOverlapOne2() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));

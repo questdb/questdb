@@ -145,7 +145,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final String TIMESTAMP_NS_TYPE_NAME = "TIMESTAMP_NS";
-    protected static final String TIMESTAMP_TYPE_NAME = "TIMESTAMP";
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
     private static final double EPSILON = 0.000001;
@@ -158,9 +157,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
-    protected static final MicrosecondClock defaultMicrosecondClock = (MicrosecondClock) () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    protected static final NanosecondClock defaultNanosecondClock = (NanosecondClock) () -> currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
+    protected static final NanosecondClock defaultNanosecondClock = () -> currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
     protected static NanosecondClock testNanoClock = defaultNanosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;
@@ -722,8 +721,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             } else {
                 // make sure to close update/insert operation
-                try (UpdateOperation ignore = cq.getUpdateOperation();
-                     InsertOperation insert = cq.popInsertOperation();) {
+                try (
+                        UpdateOperation ignore = cq.getUpdateOperation();
+                        InsertOperation ignored = cq.popInsertOperation()
+                ) {
                     execute(compiler, sql, sqlExecutionContext);
                 }
             }

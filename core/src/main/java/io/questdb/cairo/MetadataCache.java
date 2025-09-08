@@ -255,7 +255,7 @@ public class MetadataCache implements QuietCloseable {
                         column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
                     } else {
                         LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").$safe(columnName).I$();
-                        loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader(), table.getTimestampType());
+                        loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
                     }
                 }
 
@@ -295,8 +295,7 @@ public class MetadataCache implements QuietCloseable {
             TableToken token,
             Path path,
             CairoConfiguration configuration,
-            ColumnVersionReader columnVersionReader,
-            int timestampType
+            ColumnVersionReader columnVersionReader
     ) {
         final CharSequence columnName = column.getName();
         final int writerIndex = column.getWriterIndex();

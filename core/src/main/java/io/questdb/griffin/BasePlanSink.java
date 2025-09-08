@@ -219,7 +219,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
-    static class EscapingStringSink extends StringSink {
+    protected static class EscapingStringSink extends StringSink {
 
         @Override
         public StringSink put(@Nullable CharSequence cs) {
@@ -286,7 +286,7 @@ public abstract class BasePlanSink implements PlanSink {
         }
     }
 
-    static class HtmlEscapingStringSink extends EscapingStringSink {
+    protected static class HtmlEscapingStringSink extends EscapingStringSink {
         protected void escape(char c) {
             if (c == '<') {
                 super.put("&lt;");

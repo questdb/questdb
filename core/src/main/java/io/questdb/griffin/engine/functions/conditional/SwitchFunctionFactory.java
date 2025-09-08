@@ -131,30 +131,30 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         switch (ColumnType.tagOf(keyType)) {
             case ColumnType.CHAR:
-                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
+                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
             case ColumnType.INT:
             case ColumnType.IPv4:
-                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
+                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
             case ColumnType.BYTE:
-                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
+                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
             case ColumnType.SHORT:
-                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
+                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
             case ColumnType.LONG:
-                return getLongKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
+                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
             case ColumnType.FLOAT:
-                return getFloatKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.DOUBLE:
-                return getDoubleKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.DATE:
-                return getLongKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
+                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
             case ColumnType.TIMESTAMP:
-                return getTimestampKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
+                return getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
             case ColumnType.BOOLEAN:
-                return getIfElseFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.VARCHAR: // varchar is treated as char sequence, this works, but it's suboptimal
-                return getCharSequenceKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             default:
                 throw SqlException.
                         $(argPositions.getQuick(0), "type ")
@@ -208,12 +208,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getStrA(record);
     }
 
-    private static long getTimestamp(Function function, Record record) {
-        return function.getTimestamp(record);
-    }
-
     private Function getCharSequenceKeyedFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -274,7 +269,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getDoubleKeyedFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -315,7 +309,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getFloatKeyedFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -353,7 +346,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getIfElseFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -410,7 +402,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getIntKeyedFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -449,7 +440,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getLongKeyedFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -487,7 +477,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getTimestampKeyedFunction(
-            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
