@@ -304,10 +304,9 @@ public class NanosTest {
 
     @Test
     public void testFloorMM() {
-        // TODO(puzpuzpuz): fix floorMM
-//        testFloorMM("1961-01-12T23:45:51.123123123Z", "1961-01-01T00:00:00.000000000Z");
-//        testFloorMM("1969-01-12T23:45:51.123123123Z", "1969-01-01T00:00:00.000000000Z");
-//        testFloorMM("1969-06-15T01:01:00.345345345Z", "1969-06-01T00:00:00.000000000Z");
+        testFloorMM("1961-01-12T23:45:51.123123123Z", "1961-01-01T00:00:00.000000000Z");
+        testFloorMM("1969-01-12T23:45:51.123123123Z", "1969-01-01T00:00:00.000000000Z");
+        testFloorMM("1969-06-15T01:01:00.345345345Z", "1969-06-01T00:00:00.000000000Z");
         testFloorMM("1970-01-12T23:45:51.045000234Z", "1970-01-01T00:00:00.000000000Z");
         testFloorMM("1970-02-12T23:45:51.283000000Z", "1970-02-01T00:00:00.000000000Z");
         testFloorMM("1970-11-12T23:45:51.045901405Z", "1970-11-01T00:00:00.000000000Z");
@@ -317,11 +316,10 @@ public class NanosTest {
 
     @Test
     public void testFloorMMEpoch() {
-        // TODO(puzpuzpuz): fix floorMM
-//        assertNanos(
-//                "1969-11-01T00:00:00.000000000Z",
-//                Nanos.floorMM(parseNSecUTC("1969-10-12T23:45:51.045045045Z"), 3)
-//        );
+        assertNanos(
+                "1969-10-01T00:00:00.000000000Z",
+                Nanos.floorMM(parseNSecUTC("1969-10-12T23:45:51.045045045Z"), 3)
+        );
         assertNanos(
                 "1970-10-01T00:00:00.000000000Z",
                 Nanos.floorMM(parseNSecUTC("1970-10-12T23:45:51.045901781Z"), 3)
@@ -335,12 +333,12 @@ public class NanosTest {
                 Nanos.floorMM(parseNSecUTC("1970-02-12T23:45:51.045981401Z"), 3)
         );
         assertNanos(
-                "1970-01-01T00:00:00.000000000Z",
-                Nanos.floorMM(parseNSecUTC("1969-11-12T23:45:51.045201112Z"), 3)
+                "1969-08-01T00:00:00.000000000Z",
+                Nanos.floorMM(parseNSecUTC("1969-11-12T23:45:51.045201112Z"), 5)
         );
         assertNanos(
-                "1970-06-01T00:00:00.000000000Z",
-                Nanos.floorMM(parseNSecUTC("1969-05-12T23:45:51.045511341Z"), 5)
+                "1969-01-01T00:00:00.000000000Z",
+                Nanos.floorMM(parseNSecUTC("1969-05-12T23:45:51.045511341Z"), 6)
         );
     }
 

@@ -186,9 +186,8 @@ public class MonthTimestampSamplerTest {
             final long ts = timestampDriver.parseFloorLiteral(src[i]);
             final long roundedTs = sampler.round(ts);
             Assert.assertEquals(floorMethod.floor(ts), roundedTs);
-            // TODO(puzpuzpuz): fix floorMM
-//            Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
-//            Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
+            Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
+            Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
         }
     }
 
