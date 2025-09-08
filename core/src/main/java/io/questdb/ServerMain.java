@@ -365,10 +365,6 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(copyRequestJob);
                             sharedPoolWrite.freeOnExit(copyRequestJob);
                         }
-
-                        if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-                            setupMatViewJobs(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
-                        }
                     }
 
                     // telemetry
@@ -388,17 +384,17 @@ public class ServerMain implements Closeable {
 
         engine.buildMatViewGraph();
 
-        if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
+        if (matViewEnabled && !isReadOnly) {
             // create dedicated worker pool for materialized view refresh
-            WorkerPool matViewRefreshWorkerPool = workerPoolManager.getInstanceWrite(
-                    config.getMatViewRefreshPoolConfiguration(),
-                    WorkerPoolManager.Requester.MAT_VIEW_REFRESH
+            setupMatViewJobs(
+                    workerPoolManager.getSharedPoolMatViews(),
+                    engine,
+                    workerPoolManager.getSharedQueryWorkerCount()
             );
-            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            WorkerPool walApplyWorkerPool = workerPoolManager.getInstanceWrite(
+            WorkerPool walApplyWorkerPool = workerPoolManager.getSharedPoolWrite(
                     config.getWalApplyPoolConfiguration(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
@@ -459,19 +455,15 @@ public class ServerMain implements Closeable {
         return Services.INSTANCE;
     }
 
-    protected void setupMatViewJobs(
-            WorkerPool sharedPoolWrite,
-            CairoEngine engine,
-            int sharedQueryWorkerCount
-    ) {
-        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
+    protected void setupMatViewJobs(WorkerPool sharedPoolMatViews, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = sharedPoolMatViews.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
             final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, sharedQueryWorkerCount);
-            sharedPoolWrite.assign(i, matViewRefreshJob);
-            sharedPoolWrite.freeOnExit(matViewRefreshJob);
+            sharedPoolMatViews.assign(i, matViewRefreshJob);
+            sharedPoolMatViews.freeOnExit(matViewRefreshJob);
         }
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
-        sharedPoolWrite.assign(matViewTimerJob);
+        sharedPoolMatViews.assign(matViewTimerJob);
     }
 
     protected void setupWalApplyJob(

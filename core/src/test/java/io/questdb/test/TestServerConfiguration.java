@@ -238,7 +238,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+    public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
         return confMatViewRefreshPool;
     }
 
@@ -253,7 +253,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
         return confSharedPool;
     }
 }

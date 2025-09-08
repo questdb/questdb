@@ -304,7 +304,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
+    private final WorkerPoolConfiguration sharedWorkerPoolMatViewsConfiguration = new PropSharedWorkerPoolMatViewsConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
     private final int matViewRefreshWorkerCount;
@@ -361,7 +361,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final PropWorkerPoolConfiguration querySharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-query");
+    private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int readerPoolMaxSegments;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
@@ -1660,7 +1660,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int queryWorkers = configureSharedThreadPool(
                     properties, env,
-                    this.querySharedWorkerPoolConfiguration,
+                    this.sharedWorkerPoolQueryConfiguration,
                     PropertyKey.SHARED_QUERY_WORKER_COUNT,
                     PropertyKey.SHARED_QUERY_WORKER_AFFINITY,
                     sharedWorkerCountSett,
@@ -1723,7 +1723,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
-                querySharedWorkerPoolConfiguration.sharedWorkerCount = 0;
+                sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
@@ -1835,8 +1835,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return matViewRefreshPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
+        return sharedWorkerPoolMatViewsConfiguration;
     }
 
     @Override
@@ -1855,7 +1855,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
         return networkSharedWorkerPoolConfiguration;
     }
 
@@ -1870,8 +1870,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
-        return querySharedWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+        return sharedWorkerPoolQueryConfiguration;
     }
 
     @Override
@@ -1880,7 +1880,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
         return writeSharedWorkerPoolConfiguration;
     }
 
@@ -5161,7 +5161,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropMatViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropSharedWorkerPoolMatViewsConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
@@ -5205,11 +5205,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return matViewRefreshWorkerHaltOnError;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return matViewRefreshWorkerCount > 0;
         }
     }
 

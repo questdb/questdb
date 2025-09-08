@@ -42,26 +42,26 @@ import io.questdb.mp.WorkerPoolConfiguration;
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
     private final DefaultHttpServerConfiguration httpServerConfiguration;
-    private final DefaultWorkerPoolConfiguration networkWorkerPoolConfiguration;
+    private final DefaultWorkerPoolConfiguration sharedPoolNetworkConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
+    private final WorkerPoolConfiguration sharedPoolMatViewsConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
-    private final DefaultWorkerPoolConfiguration queryWorkerPoolConfiguration;
+    private final DefaultWorkerPoolConfiguration sharedPoolQueryConfiguration;
     private final WorkerPoolConfiguration walApplyPoolConfiguration;
-    private final DefaultWorkerPoolConfiguration writeWorkerPoolConfiguration;
+    private final DefaultWorkerPoolConfiguration sharedPoolWriteConfiguration;
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
         this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
         this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
-        this.networkWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_network");
-        this.queryWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
-        this.writeWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
-        this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
+        this.sharedPoolNetworkConfiguration = new DefaultWorkerPoolConfiguration("shared_network");
+        this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
+        this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
+        this.sharedPoolMatViewsConfiguration = new DefaultWorkerPoolConfiguration("shared_mat_views");
         this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply");
     }
 
@@ -90,8 +90,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        return networkWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        return sharedPoolNetworkConfiguration;
     }
 
     @Override
@@ -105,8 +105,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return matViewRefreshPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolMatViewsConfiguration() {
+        return sharedPoolMatViewsConfiguration;
     }
 
     @Override
@@ -135,8 +135,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
-        return queryWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+        return sharedPoolQueryConfiguration;
     }
 
     @Override
@@ -145,8 +145,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
-        return writeWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return sharedPoolWriteConfiguration;
     }
 
     private static class DefaultWorkerPoolConfiguration implements WorkerPoolConfiguration {
