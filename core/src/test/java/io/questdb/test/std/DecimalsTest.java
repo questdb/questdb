@@ -36,6 +36,68 @@ import org.junit.Test;
  */
 public class DecimalsTest extends AbstractTest {
     @Test
+    public void testGetMaxLongBoundaryConditions() {
+        Assert.assertEquals(9L, Decimals.getMaxLong(1));
+        Assert.assertEquals(999999999999999999L, Decimals.getMaxLong(18));
+        Assert.assertEquals(Long.MAX_VALUE, Decimals.getMaxLong(19));
+    }
+
+    @Test
+    public void testGetMaxLongConsistencyWithGetLongPrecision() {
+        for (int precision = 1; precision <= 18; precision++) {
+            long maxValue = Decimals.getMaxLong(precision);
+            Assert.assertEquals("Precision mismatch for max value of precision " + precision,
+                    precision, Decimals.getLongPrecision(maxValue));
+
+            if (precision < 18) {
+                long nextValue = maxValue + 1;
+                Assert.assertEquals("Next value should require precision " + (precision + 1),
+                        precision + 1, Decimals.getLongPrecision(nextValue));
+            }
+        }
+    }
+
+    @Test(expected = AssertionError.class)
+    public void testGetMaxLongInvalidPrecisionNegative() {
+        Decimals.getMaxLong(-1);
+    }
+
+    @Test(expected = AssertionError.class)
+    public void testGetMaxLongInvalidPrecisionZero() {
+        Decimals.getMaxLong(0);
+    }
+
+    @Test
+    public void testGetMaxLongPrecision19AndAbove() {
+        Assert.assertEquals(Long.MAX_VALUE, Decimals.getMaxLong(19));
+        Assert.assertEquals(Long.MAX_VALUE, Decimals.getMaxLong(20));
+        Assert.assertEquals(Long.MAX_VALUE, Decimals.getMaxLong(38));
+        Assert.assertEquals(Long.MAX_VALUE, Decimals.getMaxLong(76));
+    }
+
+    @Test
+    public void testGetMaxLongPrecision1to18() {
+        Assert.assertEquals(9L, Decimals.getMaxLong(1));
+        Assert.assertEquals(99L, Decimals.getMaxLong(2));
+        Assert.assertEquals(999L, Decimals.getMaxLong(3));
+        Assert.assertEquals(9999L, Decimals.getMaxLong(4));
+        Assert.assertEquals(99999L, Decimals.getMaxLong(5));
+        Assert.assertEquals(999999L, Decimals.getMaxLong(6));
+        Assert.assertEquals(9999999L, Decimals.getMaxLong(7));
+        Assert.assertEquals(99999999L, Decimals.getMaxLong(8));
+        Assert.assertEquals(999999999L, Decimals.getMaxLong(9));
+        Assert.assertEquals(9999999999L, Decimals.getMaxLong(10));
+        Assert.assertEquals(99999999999L, Decimals.getMaxLong(11));
+        Assert.assertEquals(999999999999L, Decimals.getMaxLong(12));
+        Assert.assertEquals(9999999999999L, Decimals.getMaxLong(13));
+        Assert.assertEquals(99999999999999L, Decimals.getMaxLong(14));
+        Assert.assertEquals(999999999999999L, Decimals.getMaxLong(15));
+        Assert.assertEquals(9999999999999999L, Decimals.getMaxLong(16));
+        Assert.assertEquals(99999999999999999L, Decimals.getMaxLong(17));
+        Assert.assertEquals(999999999999999999L, Decimals.getMaxLong(18));
+    }
+
+    @Test
     public void testGetStorageSizeCombinatorics() {
         // Combinations of precision -> storage size needed (in bytes)
         int[][] combinations = {
