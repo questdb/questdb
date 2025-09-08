@@ -489,7 +489,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         }
         sink.putAscii(']');
     }
-    
+
     public void toSinkSorted(@NotNull CharSink<?> sink) {
         LongList temp = new LongList(size());
         temp.addAll(this);
@@ -497,7 +497,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
         temp.toSink(sink);
         temp.clear();
     }
-
 
     /**
      * {@inheritDoc}
