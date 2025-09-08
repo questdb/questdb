@@ -884,14 +884,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuMvRefreshWorkers = 2;
         int cpuSpare = 0;
 
-        if (cpuAvailable > 8) {
-            cpuMvRefreshWorkers = 3;
+        if (cpuAvailable > 32) {
+            cpuMvRefreshWorkers = 4;
+            cpuSpare = 2;
         } else if (cpuAvailable > 16) {
             cpuMvRefreshWorkers = 3;
             cpuSpare = 1;
-        } else if (cpuAvailable > 32) {
-            cpuMvRefreshWorkers = 4;
-            cpuSpare = 2;
+        } else if (cpuAvailable > 8) {
+            cpuMvRefreshWorkers = 3;
         }
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
