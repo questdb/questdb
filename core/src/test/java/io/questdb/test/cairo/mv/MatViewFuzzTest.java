@@ -70,7 +70,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testBaseTableCanHaveColumnsAdded() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0.2);
+            setFuzzParams(rnd, 0.2, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1);
         });
@@ -186,7 +186,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testManyTablesPeriodView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             // Timer refresh tests mess with the clock, so set the spin timeout
             // to a large value to avoid false positive errors.
@@ -211,7 +211,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testManyTablesTimerView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             // Timer refresh tests mess with the clock, so set the spin timeout
             // to a large value to avoid false positive errors.
@@ -225,7 +225,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testManyTablesView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
         });
@@ -407,7 +407,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testSingleTablePeriodView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             // Timer refresh tests mess with the clock, so set the spin timeout
             // to a large value to avoid false positive errors.
@@ -421,7 +421,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testSingleTableTimerView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             // Timer refresh tests mess with the clock, so set the spin timeout
             // to a large value to avoid false positive errors.
@@ -436,7 +436,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 1);
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1);
         });
@@ -450,7 +450,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 10);
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 4);
         });
@@ -552,11 +552,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createPeriodMatView(String viewSql, String mvName, long start, int length, char lengthUnit, boolean deferred) throws SqlException {
-        currentMicros = start;
-        execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " period (length " + length + lengthUnit + ") as (" + viewSql + ") partition by DAY");
-    }
-
     private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit, boolean deferred) throws SqlException {
         sink.clear();
         MicrosFormatUtils.appendDateTimeUSec(sink, start);
@@ -640,6 +635,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = viewSqls.getQuick(i);
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
+                // Check that the view exists.
+                assertSql(
+                        "count\n" +
+                                "1\n",
+                        "select count() " +
+                                "from materialized_views " +
+                                "where view_name = '" + mvName + "';"
+                );
                 if (expectValidMatViews) {
                     assertSql(
                             "count\n" +
@@ -654,15 +657,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             viewSql,
                             mvName,
                             LOG
-                    );
-                } else {
-                    // Simply check that the view exists.
-                    assertSql(
-                            "count\n" +
-                                    "1\n",
-                            "select count() " +
-                                    "from materialized_views " +
-                                    "where view_name = '" + mvName + "';"
                     );
                 }
             }
@@ -834,10 +828,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void setFuzzParams(Rnd rnd, double colAddProb) {
-        setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, 0.0);
-    }
-
     private void setFuzzParams(Rnd rnd, double colAddProb, double truncateProb) {
         setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, truncateProb);
     }
@@ -972,7 +962,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             AtomicBoolean stop = new AtomicBoolean();
             Thread refreshJob = startRefreshJob(0, stop, rnd);
 
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd, 0, 0);
 
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();

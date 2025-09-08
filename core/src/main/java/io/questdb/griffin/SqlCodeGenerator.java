@@ -306,8 +306,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -407,10 +407,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList tempAggIndex = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
     private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
+    private final ObjList<Function> tempInnerProjectionFunctions = new ObjList<>();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempKeyIndexesInBase = new IntList();
     private final IntList tempKeyKinds = new IntList();
     private final GenericRecordMetadata tempMetadata = new GenericRecordMetadata();
+    private final ObjList<Function> tempOuterProjectionFunctions = new ObjList<>();
     private final IntList tempSymbolSkewIndexes = new IntList();
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
@@ -3949,8 +3951,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final int columnCount = baseMetadata.getColumnCount();
                 final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-                final ObjList<Function> outerProjectionFunctions = new ObjList<>(columnCount);
-                final ObjList<Function> innerProjectionFunctions = new ObjList<>(columnCount);
+                tempOuterProjectionFunctions.clear();
+                tempInnerProjectionFunctions.clear();
                 final GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
                 final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
                 final IntList projectionFunctionFlags = new IntList(columnCount);
@@ -3965,8 +3967,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         false,
                         groupByFunctions,
                         groupByFunctionPositions,
-                        outerProjectionFunctions,
-                        innerProjectionFunctions,
+                        tempOuterProjectionFunctions,
+                        tempInnerProjectionFunctions,
                         recordFunctionPositions,
                         projectionFunctionFlags,
                         projectionMetadata,
@@ -3984,7 +3986,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factory,
                         projectionMetadata,
                         groupByFunctions,
-                        outerProjectionFunctions,
+                        new ObjList<>(tempOuterProjectionFunctions),
                         timestampSampler,
                         model,
                         listColumnFilterA,
@@ -4005,8 +4007,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int columnCount = model.getColumns().size();
             final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            tempInnerProjectionFunctions.clear();
             final ObjList<Function> outerProjectionFunctions = new ObjList<>(columnCount);
-            final ObjList<Function> innerProjectionFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
             final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
             final IntList projectionFunctionFlags = new IntList(columnCount);
@@ -4022,7 +4024,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByFunctions,
                     groupByFunctionPositions,
                     outerProjectionFunctions,
-                    innerProjectionFunctions,
+                    tempInnerProjectionFunctions,
                     recordFunctionPositions,
                     projectionFunctionFlags,
                     projectionMetadata,
@@ -4274,6 +4276,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
+        } finally {
+            tempInnerProjectionFunctions.clear();
+            tempOuterProjectionFunctions.clear();
         }
     }
 
@@ -4709,8 +4714,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int columnCount = model.getColumns().size();
             final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-            final ObjList<Function> outerProjectionFunctions = new ObjList<>(columnCount);
-            final ObjList<Function> innerProjectionFunctions = new ObjList<>(columnCount);
+            tempInnerProjectionFunctions.clear();
+            tempOuterProjectionFunctions.clear();
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
             final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
             final IntList projectionFunctionFlags = new IntList(columnCount);
@@ -4725,8 +4730,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
-                    outerProjectionFunctions,
-                    innerProjectionFunctions,
+                    tempOuterProjectionFunctions,
+                    tempInnerProjectionFunctions,
                     recordFunctionPositions,
                     projectionFunctionFlags,
                     outerProjectionMetadata,
@@ -4749,7 +4754,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 enableParallelGroupBy = false;
             }
 
-            ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+            ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
             if (
                     enableParallelGroupBy
                             && SqlUtil.isParallelismSupported(keyFunctions)
@@ -4784,7 +4789,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (keyTypesCopy.getColumnCount() == 0) {
                         assert keyFunctions.size() == 0;
-                        assert outerProjectionFunctions.size() == groupByFunctions.size();
+                        assert tempOuterProjectionFunctions.size() == groupByFunctions.size();
 
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
                                 asm,
@@ -4822,7 +4827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
                             executionContext,
                             model.getColumns(),
-                            innerProjectionFunctions,
+                            tempInnerProjectionFunctions,
                             executionContext.getSharedQueryWorkerCount(),
                             baseMetadata
                     );
@@ -4840,7 +4845,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     valueTypesCopy,
                                     groupByFunctions,
                                     extractWorkerFunctionsConditionally(
-                                            innerProjectionFunctions,
+                                            tempInnerProjectionFunctions,
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
@@ -4848,12 +4853,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ),
                                     keyFunctions,
                                     extractWorkerFunctionsConditionally(
-                                            innerProjectionFunctions,
+                                            tempInnerProjectionFunctions,
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
                                     ),
-                                    outerProjectionFunctions,
+                                    new ObjList<>(tempOuterProjectionFunctions),
                                     compiledFilter,
                                     bindVarMemory,
                                     bindVarFunctions,
@@ -4874,7 +4879,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (keyTypes.getColumnCount() == 0) {
-                assert outerProjectionFunctions.size() == groupByFunctions.size();
+                assert tempOuterProjectionFunctions.size() == groupByFunctions.size();
                 return new GroupByNotKeyedRecordCursorFactory(
                         asm,
                         configuration,
@@ -4899,7 +4904,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             outerProjectionMetadata,
                             groupByFunctions,
                             keyFunctions,
-                            outerProjectionFunctions
+                            new ObjList<>(tempOuterProjectionFunctions)
                     ),
                     executionContext
             );

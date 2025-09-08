@@ -895,7 +895,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             )) {
                 store.lock();
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
-                store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
+                store.writeEntry(new TableToken("tab1", "tab1~1", null, 1, true, false, false), OPERATION_ADD);
             }
 
             simulateEngineRestart();

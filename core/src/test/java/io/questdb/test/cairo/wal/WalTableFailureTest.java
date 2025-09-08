@@ -1039,7 +1039,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            TableToken ignored = new TableToken(tableName, tableName, 123, false, false, false);
+            TableToken ignored = new TableToken(tableName, tableName, null, 123, false, false, false);
             createStandardWalTable(tableName);
 
             drainWalQueue();

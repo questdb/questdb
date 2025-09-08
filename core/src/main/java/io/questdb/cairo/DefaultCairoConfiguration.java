@@ -286,6 +286,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable String getDbLogName() {
+        return null;
+    }
+
+    @Override
     public @NotNull String getDbRoot() {
         return dbRoot;
     }

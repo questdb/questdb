@@ -257,6 +257,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable String getDbLogName() {
+        return getDelegate().getDbLogName();
+    }
+
+    @Override
     public @NotNull String getDbRoot() {
         return getDelegate().getDbRoot();
     }
