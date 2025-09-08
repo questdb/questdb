@@ -129,7 +129,7 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
+            if (ex.isFileCannotRead() && engine.isTableDropped(tableToken)) {
                 LOG.info().$("could not open sequencer, table is dropped [table=").$(tableToken)
                         .$(", path=").$(path)
                         .$(", error=").$safe(ex.getMessage())

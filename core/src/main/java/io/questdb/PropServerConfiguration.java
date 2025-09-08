@@ -199,6 +199,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
+    private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
     private final int defaultSeqPartTxnCount;
@@ -352,9 +353,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
+    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
-    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -819,6 +820,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+        this.dbLogName = getString(properties, env, PropertyKey.DEBUG_DB_LOG_NAME, null);
         String tmpRoot;
         boolean absDbDir = new File(this.dbDirectory).isAbsolute();
         if (absDbDir) {
@@ -898,23 +900,30 @@ public class PropServerConfiguration implements ServerConfiguration {
             ff.mkdirs(path.of(this.dbRoot).slash(), this.mkdirMode);
             path.of(this.dbRoot).concat(TableUtils.TAB_INDEX_FILE_NAME);
             final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-            final long fileSize = ff.length(tableIndexFd);
-            if (fileSize < Long.BYTES) {
-                if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
-                    ff.close(tableIndexFd);
-                    throw CairoException.critical(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(Files.PAGE_SIZE).put(']');
+            try {
+                final long fileSize = ff.length(tableIndexFd);
+                if (fileSize < Long.BYTES) {
+                    if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
+                        throw CairoException.critical(ff.errno())
+                                .put("Could not allocate [file=").put(path)
+                                .put(", actual=").put(fileSize)
+                                .put(", desired=").put(Files.PAGE_SIZE).put(']');
+                    }
                 }
+                final long tableIndexMem = TableUtils.mapRW(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+                try {
+                    Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
+                    if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
+                        Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
+                    }
+                    this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
+                    this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
+                } finally {
+                    ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                ff.close(tableIndexFd);
             }
-
-            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
-            Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
-            if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
-                Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
-            }
-            this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
-            this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
-            ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
-            ff.close(tableIndexFd);
 
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
@@ -2981,6 +2990,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getDbRoot() {
             return dbRoot;
+        }
+
+        @Override
+        public @Nullable String getDbLogName() {
+            return dbLogName;
         }
 
         @Override
@@ -5222,33 +5236,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
-        @Override
-        public int getBlocks() {
-            return pgSelectCacheBlockCount;
-        }
-
-        @Override
-        public LongGauge getCachedGauge() {
-            return metrics.pgWireMetrics().cachedSelectsGauge();
-        }
-
-        @Override
-        public Counter getHiCounter() {
-            return metrics.pgWireMetrics().selectCacheHitCounter();
-        }
-
-        @Override
-        public Counter getMissCounter() {
-            return metrics.pgWireMetrics().selectCacheMissCounter();
-        }
-
-        @Override
-        public int getRows() {
-            return pgSelectCacheRowCount;
-        }
-    }
-
     private class PropPGConfiguration implements PGConfiguration {
 
         @Override
@@ -5554,6 +5541,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean readOnlySecurityContext() {
             return pgReadOnlySecurityContext || isReadOnlyInstance;
+        }
+    }
+
+    private class PropPGWireConcurrentCacheConfiguration implements ConcurrentCacheConfiguration {
+        @Override
+        public int getBlocks() {
+            return pgSelectCacheBlockCount;
+        }
+
+        @Override
+        public LongGauge getCachedGauge() {
+            return metrics.pgWireMetrics().cachedSelectsGauge();
+        }
+
+        @Override
+        public Counter getHiCounter() {
+            return metrics.pgWireMetrics().selectCacheHitCounter();
+        }
+
+        @Override
+        public Counter getMissCounter() {
+            return metrics.pgWireMetrics().selectCacheMissCounter();
+        }
+
+        @Override
+        public int getRows() {
+            return pgSelectCacheRowCount;
         }
     }
 

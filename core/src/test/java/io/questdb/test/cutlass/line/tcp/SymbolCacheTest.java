@@ -779,7 +779,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
     private static class TestTableWriterAPI implements TableWriterAPI {
 
-        private final static TableToken emptyTableToken = new TableToken("", "", 0, false, false, false);
+        private final static TableToken emptyTableToken = new TableToken("", "", null, 0, false, false, false);
         private final int watermark;
 
         public TestTableWriterAPI() {
