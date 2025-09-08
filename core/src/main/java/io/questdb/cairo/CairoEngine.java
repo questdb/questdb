@@ -1727,7 +1727,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), fromTableToken.isMatView(), fromTableToken.isWal());
         if (toTableToken == null) {
             LOG.error()
-                    .$("rename target exists [from='").$safe(fromTableToken.getTableName())
+                    .$("rename target exists [from='").$(fromTableToken)
                     .$("', to='").$safe(toTableName)
                     .I$();
             throw CairoException.nonCritical().put("Rename target exists");
