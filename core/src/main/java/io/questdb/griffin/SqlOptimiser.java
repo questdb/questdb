@@ -688,6 +688,37 @@ public class SqlOptimiser implements Mutable {
         model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
     }
 
+    private void addTimestampColumnToTopDownColumnsIfRequired(QueryModel originalModel, QueryModel targetModel,
+                                                              QueryModel baseTableModel, QueryModel level4, QueryModel level5) {
+        boolean timestampColumnPresentInQuery = false;
+
+        for (int i = 0, n = targetModel.getOrderBy().size(); i < n; i++) {
+            ExpressionNode orderByAst = targetModel.getOrderBy().getQuick(i);
+            boolean found = isTimestampColumnPresentInSelectOrOrderBy(orderByAst, targetModel, baseTableModel);
+            if (found) {
+                timestampColumnPresentInQuery = true;
+                break;
+            }
+        }
+        if (!timestampColumnPresentInQuery) {
+            for (int i = 0, n = originalModel.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn c = originalModel.getBottomUpColumns().getQuick(i);
+                ExpressionNode timestampColumnAst = c.getAst();
+                boolean found = isTimestampColumnPresentInSelectOrOrderBy(timestampColumnAst, targetModel, baseTableModel);
+                if (found) {
+                    timestampColumnPresentInQuery = true;
+                    break;
+                }
+            }
+        }
+        if (!timestampColumnPresentInQuery) {
+            QueryColumn newQC = queryColumnPool.next();
+            newQC.of(baseTableModel.getTimestamp().token, baseTableModel.getTimestamp());
+            level4.setTimestamp(baseTableModel.getTimestamp());
+            level5.getTopDownColumns().add(newQC);
+        }
+    }
+
     private void addTimestampToProjection(
             CharSequence columnName,
             ExpressionNode columnAst,
@@ -2675,6 +2706,22 @@ public class SqlOptimiser implements Mutable {
         return checkSimpleIntegerColumn(column, model) != null;
     }
 
+    private boolean isTimestampColumnPresentInSelectOrOrderBy(ExpressionNode columnAst, QueryModel targetModel, QueryModel baseTableModel) {
+        int dot = Chars.indexOfLastUnquoted(columnAst.token, '.');
+        CharSequence columnAlias = columnAst.token.subSequence(dot + 1, columnAst.token.length());
+        if (dot > -1) {
+            CharSequence tableAlias = columnAst.token.subSequence(0, dot);
+            return ((
+                    (targetModel.getTableNameExpr() != null
+                            && Chars.equalsIgnoreCase(tableAlias, targetModel.getTableNameExpr().token)) ||
+                            (targetModel.getAlias() != null
+                                    && Chars.equalsIgnoreCase(tableAlias, targetModel.getAlias().token))))
+                    && (Chars.equalsIgnoreCase(columnAlias, baseTableModel.getTimestamp().token));
+        } else {
+            return Chars.equalsIgnoreCase(columnAlias, baseTableModel.getTimestamp().token);
+        }
+    }
+
     private ExpressionNode makeJoinAlias() {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
         characterStoreEntry.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
@@ -3485,40 +3532,12 @@ public class SqlOptimiser implements Mutable {
         QueryModel level5 = queryModelPool.next();
         level5.setSelectModelType(SELECT_MODEL_CHOOSE);
         propagateColumnsFromLowerToHigherModel(level4, level5, true);
-        boolean timestampColumnPresentInQuery = false;
         /*
-         If timestamp column is not present in the query, add it to the top-down columns of level-5 model
+         If timestamp column is not present in the query (select or order-by),
+         add it to the top-down columns of level-5 model
          else it doesn't recognise timestamp column in level-4 model
         */
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn c = model.getBottomUpColumns().getQuick(i);
-            ExpressionNode timestampColumnAst = c.getAst();
-            int dot = Chars.indexOfLastUnquoted(timestampColumnAst.token, '.');
-
-            if (dot > -1) {
-                CharSequence tableAlias = timestampColumnAst.token.subSequence(0, dot);
-                if (((
-                        (targetModel.getTableNameExpr() != null
-                                && Chars.equalsIgnoreCase(tableAlias, targetModel.getTableNameExpr().token)) ||
-                                (targetModel.getAlias() != null
-                                        && Chars.equalsIgnoreCase(tableAlias, targetModel.getAlias().token))))
-                        && (Chars.equalsIgnoreCase(c.getAlias(), baseTableModel.getTimestamp().token))) {
-                    timestampColumnPresentInQuery = true;
-                    break;
-                }
-            } else {
-                if (Chars.equalsIgnoreCase(c.getAlias(), baseTableModel.getTimestamp().token)) {
-                    timestampColumnPresentInQuery = true;
-                    break;
-                }
-            }
-        }
-        if (!timestampColumnPresentInQuery) {
-            QueryColumn newQC = queryColumnPool.next();
-            newQC.of(baseTableModel.getTimestamp().token, baseTableModel.getTimestamp());
-            level4.setTimestamp(baseTableModel.getTimestamp());
-            level5.getTopDownColumns().add(newQC);
-        }
+        addTimestampColumnToTopDownColumnsIfRequired(originalModel, targetModel, baseTableModel, level4, level5);
         level5.setNestedModel(level4);
 
 
