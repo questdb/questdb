@@ -305,7 +305,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
-    private final WorkerPoolConfiguration sharedWorkerPoolMatViewsConfiguration = new PropSharedWorkerPoolMatViewsConfiguration();
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
     private final int matViewRefreshWorkerCount;
@@ -329,7 +329,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
-    private final PropWorkerPoolConfiguration networkSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
@@ -362,7 +361,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int readerPoolMaxSegments;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
@@ -375,6 +373,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final long sequencerCheckInterval;
+    private final PropWorkerPoolConfiguration sharedWorkerPoolNetworkConfiguration = new PropWorkerPoolConfiguration("shared-network");
+    private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
+    private final PropWorkerPoolConfiguration sharedWorkerPoolWriteConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinEvacuationThreshold;
@@ -513,7 +514,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walWriterEventAppendPageSize;
     private final int walWriterPoolMaxSegments;
     private final long workStealTimeoutNanos;
-    private final PropWorkerPoolConfiguration writeSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final long writerAsyncCommandBusyWaitTimeout;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int writerAsyncCommandQueueCapacity;
@@ -1300,8 +1300,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
-            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuMvRefreshWorkers); // Use shared write pool by default
-
+            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuMvRefreshWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
             this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
@@ -1661,7 +1660,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // IO will be slightly higher priority than query and write pools to make the server more responsive
             int networkPoolWorkerCount = configureSharedThreadPool(
                     properties, env,
-                    this.networkSharedWorkerPoolConfiguration,
+                    this.sharedWorkerPoolNetworkConfiguration,
                     PropertyKey.SHARED_NETWORK_WORKER_COUNT,
                     PropertyKey.SHARED_NETWORK_WORKER_AFFINITY,
                     sharedWorkerCountSett,
@@ -1689,7 +1688,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int writeWorkers = configureSharedThreadPool(
                     properties, env,
-                    this.writeSharedWorkerPoolConfiguration,
+                    this.sharedWorkerPoolWriteConfiguration,
                     PropertyKey.SHARED_WRITE_WORKER_COUNT,
                     PropertyKey.SHARED_WRITE_WORKER_AFFINITY,
                     sharedWorkerCountSett,
@@ -1851,7 +1850,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return sharedWorkerPoolMatViewsConfiguration;
+        return matViewRefreshPoolConfiguration;
     }
 
     @Override
@@ -1870,11 +1869,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-        return networkSharedWorkerPoolConfiguration;
-    }
-
-    @Override
     public PGConfiguration getPGWireConfiguration() {
         return pgConfiguration;
     }
@@ -1885,18 +1879,23 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        return sharedWorkerPoolNetworkConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
         return sharedWorkerPoolQueryConfiguration;
     }
 
     @Override
-    public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-        return walApplyPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return sharedWorkerPoolWriteConfiguration;
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-        return writeSharedWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+        return walApplyPoolConfiguration;
     }
 
     @Override
@@ -5181,7 +5180,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropSharedWorkerPoolMatViewsConfiguration implements WorkerPoolConfiguration {
+    private class PropMatViewsRefreshPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;

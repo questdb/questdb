@@ -42,17 +42,17 @@ import io.questdb.mp.WorkerPoolConfiguration;
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
     private final DefaultHttpServerConfiguration httpServerConfiguration;
-    private final DefaultWorkerPoolConfiguration sharedPoolNetworkConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
-    private final WorkerPoolConfiguration sharedPoolMatViewsConfiguration;
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
+    private final DefaultWorkerPoolConfiguration sharedPoolNetworkConfiguration;
     private final DefaultWorkerPoolConfiguration sharedPoolQueryConfiguration;
-    private final WorkerPoolConfiguration walApplyPoolConfiguration;
     private final DefaultWorkerPoolConfiguration sharedPoolWriteConfiguration;
+    private final WorkerPoolConfiguration walApplyPoolConfiguration;
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
@@ -61,7 +61,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.sharedPoolNetworkConfiguration = new DefaultWorkerPoolConfiguration("shared_network");
         this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
         this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
-        this.sharedPoolMatViewsConfiguration = new DefaultWorkerPoolConfiguration("shared_mat_views");
+        this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
         this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply");
     }
 
@@ -90,11 +90,6 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-        return sharedPoolNetworkConfiguration;
-    }
-
-    @Override
     public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
         return lineTcpReceiverConfiguration;
     }
@@ -106,7 +101,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
 
     @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return sharedPoolMatViewsConfiguration;
+        return matViewRefreshPoolConfiguration;
     }
 
     @Override
@@ -135,18 +130,23 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        return sharedPoolNetworkConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
         return sharedPoolQueryConfiguration;
     }
 
     @Override
-    public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-        return walApplyPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return sharedPoolWriteConfiguration;
     }
 
     @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-        return sharedPoolWriteConfiguration;
+    public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+        return walApplyPoolConfiguration;
     }
 
     private static class DefaultWorkerPoolConfiguration implements WorkerPoolConfiguration {
