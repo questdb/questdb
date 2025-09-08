@@ -1396,7 +1396,8 @@ public class SqlParser {
 
         final ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
         if (partitionByExpr != null) {
-            if (builder.getTimestampExpr() == null) {
+            // timestamp may be can infered from select query.
+            if (builder.getSelectText() == null && builder.getTimestampExpr() == null) {
                 throw SqlException.$(partitionByExpr.position, "partitioning is possible only on tables with designated timestamps");
             }
             final int partitionBy = PartitionBy.fromString(partitionByExpr.token);

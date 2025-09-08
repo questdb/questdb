@@ -383,7 +383,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         OUT:
         while (true) {
             try {
-                SWITCH:
                 switch (state.queryState) {
                     case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
                         // Initialize parquet export
@@ -398,7 +397,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
                         // fall through
-
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT:
                         int completion;
                         try {

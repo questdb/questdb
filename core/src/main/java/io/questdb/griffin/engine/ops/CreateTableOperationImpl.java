@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -79,6 +80,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int maxUncommittedRows;
     private long o3MaxLag;
     private int partitionBy;
+    private int partitionByPosition;
     private String selectText;
     private int selectTextPosition;
     private String sqlText;
@@ -106,6 +108,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             @NotNull String tableName,
             int tableNamePosition,
             int partitionBy,
+            int partitionByPosition,
             @Nullable String volumeAlias,
             int volumePosition,
             @Nullable String likeTableName,
@@ -116,6 +119,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
+        this.partitionByPosition = partitionByPosition;
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
         this.likeTableName = likeTableName;
@@ -134,6 +138,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             @NotNull String tableName,
             int tableNamePosition,
             int partitionBy,
+            int partitionByPosition,
             @Nullable String volumeAlias,
             int volumePosition,
             boolean ignoreIfExists,
@@ -217,6 +222,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int selectTextPosition,
             boolean ignoreIfExists,
             int partitionBy,
+            int partitionByPosition,
             @Nullable String timestampColumnName,
             int timestampColumnNamePosition,
             @Nullable String volumeAlias,
@@ -237,6 +243,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.selectText = selectText;
         this.selectTextPosition = selectTextPosition;
         this.partitionBy = partitionBy;
+        this.partitionByPosition = partitionByPosition;
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
@@ -284,6 +291,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
             }
         }
+        if (impl.timestampIndex == -1 && impl.partitionBy != PartitionBy.NONE) {
+            throw SqlException.position(impl.partitionByPosition)
+                    .put("partitioning is possible only on tables with designated timestamps");
+        }
+
         ObjList<CharSequence> castColNames = impl.colNameToCastClausePos.keys();
         for (int i = 0, n = castColNames.size(); i < n; i++) {
             CharSequence castColName = castColNames.get(i);

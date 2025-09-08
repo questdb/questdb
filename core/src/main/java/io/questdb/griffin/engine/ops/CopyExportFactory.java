@@ -133,17 +133,14 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
                     if (this.selectText != null) {
                         // need to create a temp table which we will use for the export
-
                         exportIdSink.clear();
                         exportIdSink.put("copy.");
                         Numbers.appendHex(exportIdSink, copyID, true);
                         this.tableName = exportIdSink.toString();
-
                         // we need a new execution context that uses our circuit breaker, so copy cancel will apply
                         // to the query
                         SqlExecutionContextImpl queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
                         assert securityContext != null;
-
                         // increment for query task
                         circuitBreaker.inc();
                         queryExecutionContext.with(securityContext, null, null, -1, circuitBreaker);
