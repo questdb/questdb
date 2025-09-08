@@ -281,8 +281,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
                         if (token == null || token.getTableId() != tableId) {
                             LOG.debug().$("table deleted, skipping [tableDir=").$safe(tableName).I$();
-                            taskPool.push(task);
-                            task = null;
                             continue;
                         }
                         int timestampType;

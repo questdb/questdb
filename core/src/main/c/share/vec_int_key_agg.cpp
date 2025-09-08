@@ -135,26 +135,24 @@ typedef long128_t accumulator_t;
 
 typedef int32_t (*to_int_fn)(jlong, int);
 
-inline int32_t micro_to_hour(jlong ptr, int i) {
+template<int64_t HOUR_UNIT>
+inline int32_t timestamp_to_hour(jlong ptr, int i) {
     const auto p = reinterpret_cast<int64_t *>(ptr);
     MM_PREFETCH_T0(p + i + 64);
-    const auto micro = p[i];
-    if (PREDICT_TRUE(micro > -1)) {
-        return ((micro / HOUR_MICROS) % DAY_HOURS);
+    const auto timestamp = p[i];
+    if (PREDICT_TRUE(timestamp > -1)) {
+        return ((timestamp / HOUR_UNIT) % DAY_HOURS);
     } else {
-        return DAY_HOURS - 1 + (((micro + 1) / HOUR_MICROS) % DAY_HOURS);
+        return DAY_HOURS - 1 + (((timestamp + 1) / HOUR_UNIT) % DAY_HOURS);
     }
 }
 
+inline int32_t micro_to_hour(jlong ptr, int i) {
+    return timestamp_to_hour<HOUR_MICROS>(ptr, i);
+}
+
 inline int32_t nano_to_hour(jlong ptr, int i) {
-    const auto p = reinterpret_cast<int64_t *>(ptr);
-    MM_PREFETCH_T0(p + i + 64);
-    const auto nano = p[i];
-    if (PREDICT_TRUE(nano > -1)) {
-      return ((nano / HOUR_NANOS) % DAY_HOURS);
-    } else {
-      return DAY_HOURS - 1 + (((nano + 1) / HOUR_NANOS) % DAY_HOURS);
-    }
+    return timestamp_to_hour<HOUR_NANOS>(ptr, i);
 }
 
 inline int32_t to_int(jlong ptr, int i) {
