@@ -111,7 +111,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
 
         Decimal256 d = sqlExecutionContext.getDecimal256();
-        d.setFromLong(value, 0);
+        d.ofLong(value, 0);
         if (targetScale != 0 && value != 0) {
             // No overflow possible as we already checked the precision before
             d.rescale(targetScale);
@@ -422,7 +422,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
                         type
                 ).position(position);
             }
-            scaler.setFromLong(value, 0);
+            scaler.ofLong(value, 0);
             scaler.rescale(targetScale);
             return true;
         }

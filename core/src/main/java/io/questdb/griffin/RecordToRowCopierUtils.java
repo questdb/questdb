@@ -1219,7 +1219,7 @@ public class RecordToRowCopierUtils {
             return;
         }
         final int fromScale = ColumnType.getDecimalScale(fromType);
-        decimal256.setFromLong(value, fromScale);
+        decimal256.ofLong(value, fromScale);
         transferDecimal(row, col, decimal256, fromType, toType);
     }
 
@@ -1243,7 +1243,7 @@ public class RecordToRowCopierUtils {
             return;
         }
         final int fromScale = ColumnType.getDecimalScale(fromType);
-        decimal256.setFromLong(value, fromScale);
+        decimal256.ofLong(value, fromScale);
         transferDecimal(row, col, decimal256, fromType, toType);
     }
 
@@ -1255,7 +1255,7 @@ public class RecordToRowCopierUtils {
             return;
         }
         final int fromScale = ColumnType.getDecimalScale(fromType);
-        decimal256.setFromLong(value, fromScale);
+        decimal256.ofLong(value, fromScale);
         transferDecimal(row, col, decimal256, fromType, toType);
     }
 
@@ -1267,7 +1267,7 @@ public class RecordToRowCopierUtils {
             return;
         }
         final int fromScale = ColumnType.getDecimalScale(fromType);
-        decimal256.setFromLong(value, fromScale);
+        decimal256.ofLong(value, fromScale);
         transferDecimal(row, col, decimal256, fromType, toType);
     }
 

@@ -2238,7 +2238,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         }
                         row.putArray(33, array);
 
-                        decimal256.setFromLong(i, 0);
+                        decimal256.ofLong(i, 0);
                         row.putDecimal(34, decimal256);
                         row.putDecimal(35, decimal256);
                         row.putDecimal(36, decimal256);

@@ -433,7 +433,7 @@ public class Decimal256 implements Sinkable {
         validateScale(scale);
 
         Decimal256 result = new Decimal256();
-        result.setFromLong(value, scale);
+        result.ofLong(value, scale);
         return result;
     }
 
@@ -1112,7 +1112,7 @@ public class Decimal256 implements Sinkable {
      * @param value the long value
      * @param scale the desired scale
      */
-    public void setFromLong(long value, int scale) {
+    public void ofLong(long value, int scale) {
         validateScale(scale);
 
         this.scale = scale;

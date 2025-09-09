@@ -150,7 +150,7 @@ public class Decimal256SubtractBenchmark {
             case "MIXED_256_128":
                 // Subtraction of 256-bit minus 128-bit value: large 256-bit - normal 128-bit
                 decimal256Minuend = new Decimal256();
-                decimal256Minuend.setFromLong(123456789098765432L, 6);
+                decimal256Minuend.ofLong(123456789098765432L, 6);
                 decimal256Subtrahend = Decimal256.fromDouble(789.123, 3);
                 bigDecimalMinuend = new BigDecimal("123456789098.765432");
                 bigDecimalSubtrahend = new BigDecimal("789.123");
