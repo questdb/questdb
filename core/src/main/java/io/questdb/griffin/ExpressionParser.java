@@ -633,7 +633,7 @@ public class ExpressionParser {
                                         argStackDepth = onNode(listener, node, 2, prevBranch);
                                         continue;
                                     }
-                                    if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) { // TODO: verify check
+                                    if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {
                                         // validate type
                                         final short castAsTag = ColumnType.tagOf(node.token);
                                         if ((cannotCastTo(castAsTag, isCastingNull)) ||
@@ -692,7 +692,7 @@ public class ExpressionParser {
                         break;
                     case 'd':
                     case 'D':
-                        // Merges a decimal type constant of the form decimal(p, s) to a single node decimal_p[_s]
+                        // Merges a decimal type constant of the form decimal(p[, s]) to a single node decimal_p[_s]
                         if (SqlKeywords.isDecimalKeyword(tok)) {
                             CharSequence decimalTok = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
@@ -704,7 +704,7 @@ public class ExpressionParser {
                             }
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) == ')') {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, invalid type precision");
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
                             }
                             DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
                             CharSequence precisionTok = GenericLexer.immutableOf(tok);
@@ -712,7 +712,7 @@ public class ExpressionParser {
                             // The user is not mandated to provide a scale value (defaults to 0)
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing ')'");
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
                             } else if (tok.charAt(0) == ')') {
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
@@ -723,7 +723,7 @@ public class ExpressionParser {
                             } else if (tok.charAt(0) == ',') {
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing scale value");
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
                                 }
                                 DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
                                 opStack.push(expressionNodePool.next().of(
@@ -734,13 +734,13 @@ public class ExpressionParser {
                                 ));
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null || tok.charAt(0) != ')') {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing ')'");
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
                                 }
                             } else {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL, missing ',' after precision");
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, expected ',' or ')' after precision");
                             }
                             thisBranch = BRANCH_DECIMAL;
-                            break OUT;
+                            break;
                         }
 
                         if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDeclareKeyword(tok)) {
