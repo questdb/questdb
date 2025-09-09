@@ -52,6 +52,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
@@ -413,6 +414,40 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         GeoHashes.append(l, bitFlags, response);
     }
 
+    private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        byte l = rec.getDecimal8(col);
+        Decimals.append(l == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+    }
+
+    private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        short l = rec.getDecimal16(col);
+        Decimals.append(l == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+    }
+
+    private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        int l = rec.getDecimal32(col);
+        Decimals.append(l == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+    }
+
+    private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long l = rec.getDecimal64(col);
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+    }
+
+    private static void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long hi = rec.getDecimal128Hi(col);
+        long lo = rec.getDecimal128Lo(col);
+        Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+    }
+
+    private static void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long hh = rec.getDecimal256HH(col);
+        long hl = rec.getDecimal256HL(col);
+        long lh = rec.getDecimal256LH(col);
+        long ll = rec.getDecimal256LL(col);
+        Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+    }
+
     private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col) {
         final int i = rec.getIPv4(col);
         if (i == Numbers.IPv4_NULL) {
@@ -538,6 +573,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case ColumnType.IPv4:
             case ColumnType.INTERVAL:
             case ColumnType.ARRAY:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
                 break;
             default:
                 throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
@@ -718,6 +759,24 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.ARRAY:
                     putArrayValue(response, columnIdx, columnType);
+                    break;
+                case ColumnType.DECIMAL8:
+                    putDecimal8Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL16:
+                    putDecimal16Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL32:
+                    putDecimal32Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL64:
+                    putDecimal64Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL128:
+                    putDecimal128Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL256:
+                    putDecimal256Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
                     break;
                 default:
                     // this should never happen since metadata are already validated
