@@ -165,7 +165,7 @@ public class TruncateTest extends AbstractCairoTest {
                     println(factory, cursor);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table=y");
                 }
             }
         });
@@ -1007,7 +1007,7 @@ public class TruncateTest extends AbstractCairoTest {
                     println(factory, cursor);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table=y");
                 }
             }
         });
