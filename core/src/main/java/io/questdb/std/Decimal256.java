@@ -1033,6 +1033,23 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Set this Decimal256 from a long value with the specified scale.
+     *
+     * @param value the long value
+     * @param scale the desired scale
+     */
+    public void ofLong(long value, int scale) {
+        validateScale(scale);
+
+        this.scale = scale;
+        this.ll = value;
+        final long s = value < 0 ? -1L : 0L;
+        this.lh = s;
+        this.hl = s;
+        this.hh = s;
+    }
+
+    /**
      * Set this Decimal256 to the null value.
      */
     public void ofNull() {
@@ -1041,6 +1058,111 @@ public class Decimal256 implements Sinkable {
         lh = Decimals.DECIMAL256_LH_NULL;
         ll = Decimals.DECIMAL256_LL_NULL;
         scale = 0;
+    }
+
+    /**
+     * Parses a CharSequence decimal and store the result into the given Decimal256.
+     *
+     * @param cs is the CharSequence to be parsed
+     * @return the precision of the decimal
+     */
+    public int ofString(CharSequence cs, int precision, int scale) throws NumericException {
+        int lo = 0;
+        int hi = cs.length();
+
+        // We don't want to parse the m suffix, we can safely skip it
+        if (hi > 0 && (cs.charAt(hi - 1) == 'm' || cs.charAt(hi - 1) == 'M')) {
+            hi--;
+        }
+
+        while (lo < hi && cs.charAt(lo) == ' ') {
+            lo++;
+        }
+
+        if (lo == hi) {
+            throw NumericException.instance().put("invalid decimal: empty value");
+        }
+
+        // Parses sign
+        boolean negative = false;
+        if (cs.charAt(lo) == '-') {
+            negative = true;
+            lo++;
+        } else if (cs.charAt(lo) == '+') {
+            lo++;
+        }
+
+        if (lo == hi) {
+            throw NumericException.instance().put("invalid decimal: empty value");
+        }
+
+        // Remove leading zeros
+        while (lo < hi - 1 && cs.charAt(lo) == '0') {
+            lo++;
+        }
+
+        // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
+        // measure the given precision/scale.
+        int dot = validateDecimalLiteral(cs, lo, hi);
+
+        int s = dot == -1 ? 0 : (hi - dot - 1);
+        if (scale == -1) {
+            scale = s;
+        } else if (s > scale) {
+            throw NumericException.instance()
+                    .put("decimal '").put(cs)
+                    .put("' has ").put(s).put(" decimal places but scale is limited to ").put(scale);
+        }
+        if (scale > Decimals.MAX_SCALE) {
+            throw NumericException.instance()
+                    .put("decimal '").put(cs)
+                    .put("' exceeds maximum allowed scale of ").put(Decimals.MAX_SCALE);
+        }
+
+        int prec = hi - lo - (dot == -1 ? 0 : 1) - s + scale;
+        if (precision == -1) {
+            precision = prec;
+        } else if (prec > precision) {
+            throw NumericException.instance()
+                    .put("decimal '").put(cs)
+                    .put("' requires precision of ").put(prec)
+                    .put(" but is limited to ").put(precision);
+        }
+        if (precision > Decimals.MAX_PRECISION) {
+            throw NumericException.instance()
+                    .put("decimal '").put(cs)
+                    .put("' exceeds maximum allowed precision of ").put(Decimals.MAX_PRECISION);
+        }
+
+        of(0, 0, 0, 0, 0);
+        // Actual parsing of the number on a second pass, we're relying on Decimal256 to do
+        // the proper scaling.
+        int pow = prec;
+        for (int p = lo; p < hi; p++) {
+            if (p == dot) {
+                continue;
+            }
+
+            pow--;
+            int times = cs.charAt(p) - '0';
+            if (times == 0) {
+                continue;
+            }
+
+            final int offset = (times - 1) * 4;
+            final long bHH = Decimal256.POWERS_TEN_TABLE[pow][offset];
+            final long bHL = Decimal256.POWERS_TEN_TABLE[pow][offset + 1];
+            final long bLH = Decimal256.POWERS_TEN_TABLE[pow][offset + 2];
+            final long bLL = Decimal256.POWERS_TEN_TABLE[pow][offset + 3];
+            uncheckedAdd(this, bHH, bHL, bLH, bLL);
+        }
+        this.scale = scale;
+
+        if (negative) {
+            negate();
+        }
+
+        return precision;
     }
 
     /**
@@ -1104,23 +1226,6 @@ public class Decimal256 implements Sinkable {
 
         // TODO: optimize the rounding logic by replacing the division by a multiply + shift
         divide(divider, hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
-    }
-
-    /**
-     * Set this Decimal256 from a long value with the specified scale.
-     *
-     * @param value the long value
-     * @param scale the desired scale
-     */
-    public void ofLong(long value, int scale) {
-        validateScale(scale);
-
-        this.scale = scale;
-        this.ll = value;
-        final long s = value < 0 ? -1L : 0L;
-        this.lh = s;
-        this.hl = s;
-        this.hh = s;
     }
 
     /**
@@ -1261,10 +1366,61 @@ public class Decimal256 implements Sinkable {
         result.hh = r;
     }
 
+    private static void uncheckedAdd(Decimal256 result, long bHH, long bHL, long bLH, long bLL) {
+        long r = result.ll + bLL;
+        long carry = hasCarry(result.ll, r) ? 1L : 0L;
+        result.ll = r;
+
+        long t = result.lh + carry;
+        carry = hasCarry(result.lh, t) ? 1L : 0L;
+        r = t + bLH;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.lh = r;
+
+        t = result.hl + carry;
+        carry = hasCarry(result.hl, t) ? 1L : 0L;
+        r = t + bHL;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.hl = r;
+        result.hh = result.hh + carry + bHH;
+    }
+
+    private static boolean isDigit(char c) {
+        return '0' <= c && c <= '9';
+    }
+
     private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
         for (int i = 0; i < 8; i++) {
             bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
         }
+    }
+
+    /**
+     * Pass over a literal and validates that it only contains digits and at most 1 dot.
+     * If a dot is found, it returns its position, -1 otherwise.
+     */
+    private static int validateDecimalLiteral(CharSequence cs, int lo, int hi) throws NumericException {
+        int dot = -1;
+        boolean digitFound = false;
+        for (int p = lo; p < hi; p++) {
+            char c  = cs.charAt(p);
+            if (isDigit(c)) {
+                digitFound = true;
+                continue;
+            } else if (c == '.' && dot == -1) {
+                dot = p;
+                continue;
+            }
+            throw NumericException.instance()
+                    .put("invalid decimal: '").put(cs)
+                    .put("' contains invalid character '").put(c).put("'");
+        }
+        if (!digitFound) {
+            throw NumericException.instance()
+                    .put("invalid decimal: '").put(cs)
+                    .put("' contains no digits");
+        }
+        return dot;
     }
 
     /**

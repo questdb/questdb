@@ -749,7 +749,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (len > 1 && (tok.charAt(len - 1) == 'm' || tok.charAt(len - 1) == 'M')) {
-            return DecimalUtil.parseDecimalConstant(tok, len, position, -1, -1);
+            return DecimalUtil.parseDecimalConstant(position, sqlExecutionContext.getDecimal256(), tok, -1, -1);
         }
         //endregion
 
@@ -862,7 +862,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     (fromType == ColumnType.DOUBLE || fromType == ColumnType.FLOAT)) {
                 int precision = ColumnType.getDecimalPrecision(castToType);
                 int scale = ColumnType.getDecimalScale(castToType);
-                return DecimalUtil.parseDecimalConstant(node.lhs.token, node.lhs.token.length(), node.lhs.position, precision, scale);
+                return DecimalUtil.parseDecimalConstant(node.lhs.position, sqlExecutionContext.getDecimal256(), node.lhs.token, precision, scale);
             }
 
             // If a bind variable of unknown type appears inside a cast expression, we should

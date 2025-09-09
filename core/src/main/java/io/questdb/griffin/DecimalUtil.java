@@ -44,138 +44,22 @@ public final class DecimalUtil {
     /**
      * Parses a decimal from a literal to the most adapted decimal type as a constant.
      * The literal may end with [m/M] but not necessarily.
-     * @param tok token containing the literal
-     * @param len length of the token
      * @param position the position in the SQL query for error reporting
+     * @param tok token containing the literal
+     * @param decimal to parse and store the resulting value
      * @param precision of the decimal (or -1 to infer from literal)
      * @param scale of the decimal (or -1 to infer from literal)
      * @return a ConstantFunction containing the value parsed
      * @throws SqlException if the value couldn't be parsed with detailed error message
      */
-    public static @NotNull ConstantFunction parseDecimalConstant(final CharSequence tok, final int len, int position, int precision, int scale) throws SqlException {
-        int lo = 0;
-        int hi = len;
-
-        // We don't want to parse the m suffix, we can safely skip it
-        if (hi > 0 && (tok.charAt(hi - 1) == 'm' || tok.charAt(hi - 1) == 'M')) {
-            hi--;
+    public static @NotNull ConstantFunction parseDecimalConstant(int position, Decimal256 decimal, final CharSequence tok, int precision, int scale) throws SqlException {
+        try {
+            precision = decimal.ofString(tok, precision, scale);
+        } catch (NumericException ex) {
+            throw SqlException.position(position).put(ex);
         }
 
-        while (lo < hi && tok.charAt(lo) == ' ') {
-            lo++;
-        }
-
-        if (lo == hi) {
-            throw SqlException.position(position).put("invalid decimal: empty value");
-        }
-
-        // Parses sign
-        boolean negative = false;
-        if (tok.charAt(lo) == '-') {
-            negative = true;
-            lo++;
-        } else if (tok.charAt(lo) == '+') {
-            lo++;
-        }
-
-        if (lo == hi) {
-            throw SqlException.position(position).put("invalid decimal: empty value");
-        }
-
-        // Remove leading zeros
-        while (lo < hi - 1 && tok.charAt(lo) == '0') {
-            lo++;
-        }
-
-        // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
-        // measure the given precision/scale.
-        int dot = validateDecimalLiteral(tok, lo, hi, position);
-
-        int s = dot == -1 ? 0 : (hi - dot - 1);
-        if (scale == -1) {
-            scale = s;
-        } else if (s > scale) {
-            throw SqlException.position(position)
-                    .put("decimal '").put(tok, 0, len)
-                    .put("' has ").put(s).put(" decimal places but scale is limited to ").put(scale);
-        }
-        if (scale > Decimals.MAX_SCALE) {
-            throw SqlException.position(position)
-                    .put("decimal '").put(tok)
-                    .put("' exceeds maximum allowed scale of ").put(Decimals.MAX_SCALE);
-        }
-
-        int prec = hi - lo - (dot == -1 ? 0 : 1) - s + scale;
-        if (precision == -1) {
-            precision = prec;
-        } else if (prec > precision) {
-            throw SqlException.position(position)
-                    .put("decimal '").put(tok, 0, len)
-                    .put("' requires precision of ").put(prec)
-                    .put(" but is limited to ").put(precision);
-        }
-        if (precision > Decimals.MAX_PRECISION) {
-            throw SqlException.position(position)
-                    .put("decimal '").put(tok, 0, len)
-                    .put("' exceeds maximum allowed precision of ").put(Decimals.MAX_PRECISION);
-        }
-
-        long hh = 0L;
-        long hl = 0L;
-        long lh = 0L;
-        long ll = 0L;
-        // Actual parsing of the number on a second pass, we're relying on Decimal256 to do
-        // the proper scaling.
-        int pow = prec;
-        for (int p = lo; p < hi; p++) {
-            if (p == dot) {
-                continue;
-            }
-
-            pow--;
-            int times = tok.charAt(p) - '0';
-            if (times == 0) {
-                continue;
-            }
-
-            final long multiplierHH = pow >= 58 ? Decimal256.POWERS_TEN_TABLE_HH[pow - 58] : 0L;
-            final long multiplierHL = pow >= 39 ? Decimal256.POWERS_TEN_TABLE_HL[pow - 39] : 0L;
-            final long multiplierLH = pow >= 20 ? Decimal256.POWERS_TEN_TABLE_LH[pow - 20] : 0L;
-            final long multiplierLL = Decimal256.POWERS_TEN_TABLE_LL[pow];
-            // TODO: replace loop with all possibilities for each power (76 * 9 cases)
-            for (int i = 0; i < times; i++) {
-                long r = ll + multiplierLL;
-                long carry = Long.compareUnsigned(r, ll) < 0 ? 1L : 0L;
-                ll = r;
-
-                long t = lh + carry;
-                carry = Long.compareUnsigned(t, lh) < 0 ? 1L : 0L;
-                r = t + multiplierLH;
-                carry |= Long.compareUnsigned(r, t) < 0 ? 1L : 0L;
-                lh = r;
-
-                t = hl + carry;
-                carry = Long.compareUnsigned(t, hl) < 0 ? 1L : 0L;
-                r = t + multiplierHL;
-                carry |= Long.compareUnsigned(r, t) < 0 ? 1L : 0L;
-                hl = r;
-
-                // No need to check for overflow as we already know the precision
-                hh = hh + multiplierHH + carry;
-            }
-        }
-
-        if (negative) {
-            ll = ~ll + 1;
-            long c = ll == 0L ? 1L : 0L;
-            lh = ~lh + c;
-            c = (c == 1L && lh == 0L) ? 1L : 0L;
-            hl = ~hl + c;
-            c = (c == 1L && hl == 0L) ? 1L : 0L;
-            hh = ~hh + c;
-        }
-
-        return createDecimalConstant(hh, hl, lh, ll, precision, scale);
+        return createDecimalConstant(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl(), precision, decimal.getScale());
     }
 
     /**
@@ -218,38 +102,6 @@ public final class DecimalUtil {
             default:
                 return Decimal256Constant.NULL;
         }
-    }
-
-    /**
-     * Pass over a literal and validates that it only contains digits and at most 1 dot.
-     * If a dot is found, it returns its position, -1 otherwise.
-     */
-    private static int validateDecimalLiteral(CharSequence tok, int lo, int hi, int position) throws SqlException {
-        int dot = -1;
-        boolean digitFound = false;
-        for (int p = lo; p < hi; p++) {
-            char c  = tok.charAt(p);
-            if (isDigit(c)) {
-                digitFound = true;
-                continue;
-            } else if (c == '.' && dot == -1) {
-                dot = p;
-                continue;
-            }
-            throw SqlException.position(position)
-                    .put("invalid decimal: '").put(tok, lo, hi)
-                    .put("' contains invalid character '").put(c).put("'");
-        }
-        if (!digitFound) {
-            throw SqlException.position(position)
-                    .put("invalid decimal: '").put(tok, lo, hi)
-                    .put("' contains no digits");
-        }
-        return dot;
-    }
-
-    private static boolean isDigit(char c) {
-        return '0' <= c && c <= '9';
     }
 
     /**
