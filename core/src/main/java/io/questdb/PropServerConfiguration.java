@@ -5228,7 +5228,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean isEnabled() {
-            return walApplyWorkerCount > 0;
+            return matViewRefreshWorkerCount > 0;
         }
     }
 
