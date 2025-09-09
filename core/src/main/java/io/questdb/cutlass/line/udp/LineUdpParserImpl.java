@@ -460,7 +460,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
-                LOG.error().$("mismatched column and value types [table=").$safe(writer.getTableToken().getTableName())
+                LOG.error().$("mismatched column and value types [table=").$(writer.getTableToken())
                         .$(", column=").$safe(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
@@ -482,7 +482,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         .put(", columnName=").put(colNameAsChars)
                         .put(']');
             } else {
-                LOG.error().$("invalid column name [table=").$safe(writer.getTableToken().getTableName())
+                LOG.error().$("invalid column name [table=").$(writer.getTableToken())
                         .$(", columnName=").$safe(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();

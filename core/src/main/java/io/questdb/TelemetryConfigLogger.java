@@ -98,7 +98,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
             );
             updateTelemetryConfig(engine, compiler, sqlExecutionContext, configTableToken);
         } catch (Throwable th) {
-            LOG.error().$("could not update config telemetry [table=`").$safe(TELEMETRY_CONFIG_TABLE_NAME).$("]").$(th).$();
+            LOG.error().$("could not update config telemetry [table=").$(configTableToken).$("]").$(th).$();
         }
     }
 
@@ -190,8 +190,8 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
             }
         } catch (CairoException ex) {
             LOG.error()
-                    .$("could not update config telemetry [table=`").$safe(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, msg=").$safe(ex.getFlyweightMessage())
+                    .$("could not update config telemetry [table=").$(tableToken)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
         }

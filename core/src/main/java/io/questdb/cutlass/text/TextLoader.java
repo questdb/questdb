@@ -171,8 +171,8 @@ public class TextLoader implements Closeable, Mutable {
         }
 
         LOG.info()
-                .$("configured [table=`").$(tableName)
-                .$("`, overwrite=").$(overwrite)
+                .$("configured [table=").$(tableName)
+                .$(", overwrite=").$(overwrite)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampColumn)

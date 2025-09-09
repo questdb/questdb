@@ -500,7 +500,7 @@ public class MetadataCache implements QuietCloseable {
             CairoTable entry = tableMap.get(tableName);
             if (entry != null && tableToken.equals(entry.getTableToken())) {
                 tableMap.remove(tableName);
-                LOG.info().$("dropped [table=").$safe(tableName).I$();
+                LOG.info().$("dropped [table=").$(tableToken).I$();
             }
         }
 

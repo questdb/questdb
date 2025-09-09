@@ -158,14 +158,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
-                        LOG.info().$("closing writer because table has been dropped (2) [table=").$safe(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableToken()).I$();
                         tud.setWriterInError();
                         tud.releaseWriter(false);
                     } else {
-                        LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                        LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                     }
                 } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                    LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                 }
             }
         }

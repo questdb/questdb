@@ -249,7 +249,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, spinLockTimeout);
+                TableUtils.handleMetadataLoadException(tableToken, deadline, ex, millisecondClock, spinLockTimeout);
             }
         }
     }

@@ -248,7 +248,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
-            LOG.debug().$("closed '").$safe(tableToken.getTableName()).$('\'').$();
+            LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
 
@@ -825,7 +825,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debug().$("close outdated partition files [table=").$safe(tableToken.getTableName()).$(", ts=")
+            LOG.debug().$("close outdated partition files [table=").$(tableToken).$(", ts=")
                     .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             if (getPartitionFormat(partitionIndex) == PartitionFormat.NATIVE) {
@@ -919,7 +919,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void createNewColumnList(int columnCount, TableReaderMetadataTransitionIndex transitionIndex, int columnCountShl) {
-        LOG.debug().$("resizing columns file list [table=").$safe(tableToken.getTableName()).I$();
+        LOG.debug().$("resizing columns file list [table=").$(tableToken).I$();
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryCMR> toColumns = new ObjList<>(capacity + 2);
         final LongList toColumnTops = new LongList(capacity / 2);
@@ -1646,7 +1646,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             } catch (CairoException ex) {
                 // This is a temporary solution until we can get multiple versions of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                TableUtils.handleMetadataLoadException(tableToken, deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
 
@@ -1748,7 +1748,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reshuffleColumns(int columnCount, TableReaderMetadataTransitionIndex transitionIndex) {
-        LOG.debug().$("reshuffling columns file list [table=").$safe(tableToken.getTableName()).I$();
+        LOG.debug().$("reshuffling columns file list [table=").$(tableToken).I$();
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {

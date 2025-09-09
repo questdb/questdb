@@ -90,7 +90,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private static void parsePartitionDateVersion(
             Utf8StringSink fileNameSink,
             DirectLongList partitionList,
-            CharSequence tableName,
+            TableToken tableToken,
             DateFormat partitionByFormat
     ) {
         int index = Utf8s.lastIndexOfAscii(fileNameSink, '.');
@@ -121,12 +121,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             } catch (NumericException e) {
                 if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)
                         && !Utf8s.equalsAscii("seq", fileNameSink)) {
-                    LOG.info().$("unknown directory [table=").$safe(tableName).$(", dir=").$(fileNameSink).I$();
+                    LOG.info().$("unknown directory [table=").$(tableToken).$(", dir=").$(fileNameSink).I$();
                 }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }
         } catch (NumericException e) {
-            LOG.error().$("unknown directory [table=").$safe(tableName).$(", dir=").$(fileNameSink).I$();
+            LOG.error().$("unknown directory [table=").$(tableToken).$(", dir=").$(fileNameSink).I$();
         }
     }
 
@@ -150,7 +150,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             try {
                 do {
                     if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(p), ff.findType(p), fileNameSink)) {
-                        parsePartitionDateVersion(fileNameSink, partitionList, tableToken.getDirName(), partitionByFormat);
+                        parsePartitionDateVersion(fileNameSink, partitionList, tableToken, partitionByFormat);
                         path.trimTo(plimit).$();
                     }
                 } while (ff.findNext(p) > 0);
@@ -225,8 +225,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // It is possible that the table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
-                    .$("could not purge partition open [table=`").$(tableToken)
-                    .$("`, msg=").$safe(ex.getFlyweightMessage())
+                    .$("could not purge partition open [table=").$(tableToken)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             LOG.error().$safe(ex.getFlyweightMessage()).$();

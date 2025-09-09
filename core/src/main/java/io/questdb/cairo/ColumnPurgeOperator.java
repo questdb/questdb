@@ -156,7 +156,7 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$safe(task.getTableToken().getTableName())
+                    .$(task.getTableToken())
                     .$(", txn=").$(updateTxn)
                     .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
