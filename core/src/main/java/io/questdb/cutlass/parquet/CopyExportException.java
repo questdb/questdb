@@ -37,13 +37,13 @@ public class CopyExportException extends RuntimeException implements Sinkable, F
     private static final io.questdb.std.ThreadLocal<CopyExportException> tlException = new ThreadLocal<>(CopyExportException::new);
     private final StringSink message = new StringSink();
     private boolean cancelled;
-    private byte phase;
+    private CopyExportRequestTask.Phase phase;
 
-    public static CopyExportException instance(byte phase, CharSequence message) {
+    public static CopyExportException instance(CopyExportRequestTask.Phase phase, CharSequence message) {
         return instance(phase, message, Integer.MIN_VALUE);
     }
 
-    public static CopyExportException instance(byte phase, CharSequence message, int errno) {
+    public static CopyExportException instance(CopyExportRequestTask.Phase phase, CharSequence message, int errno) {
         CopyExportException te = tlException.get();
         te.phase = phase;
         te.cancelled = false;
@@ -66,7 +66,7 @@ public class CopyExportException extends RuntimeException implements Sinkable, F
         return message.toString();
     }
 
-    public byte getPhase() {
+    public CopyExportRequestTask.Phase getPhase() {
         return phase;
     }
 

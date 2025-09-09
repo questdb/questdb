@@ -87,7 +87,15 @@ public class SerialParquetExporter implements Closeable {
     }
 
     public void process(SecurityContext securityContext) {
-        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_STARTED, null, Long.MIN_VALUE);
+        if (task.getCreateOp() != null) {
+            try {
+                task.getCreateOp().execute(task.getExecutionContext(), null);
+            } catch (Throwable e) {
+                LOG.errorW().$("could not populate table reader [msg=").$(e.getMessage()).$(']').$();
+                throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, "", 1);
+            }
+        }
+        statusReporter.report(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.STARTED, null, Long.MIN_VALUE);
 
         final String tableName = task.getTableName();
         final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
@@ -148,7 +156,7 @@ public class SerialParquetExporter implements Closeable {
                         LOG.info().$("converting partition to parquet [table=").$(tableToken)
                                 .$(", partition=").$(partitionName)
                                 .$(", path=").$(toParquetCs).$(']').$();
-                        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_PENDING, toParquetCs, Long.MIN_VALUE);
+                        statusReporter.report(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.PENDING, toParquetCs, Long.MIN_VALUE);
 
 
                         createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
@@ -171,17 +179,17 @@ public class SerialParquetExporter implements Closeable {
                     }
                 } catch (CairoException e) {
                     LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
-                    throw CopyExportException.instance(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                 }
             }
         }
         LOG.info().$("finished parquet conversion [table=").$(tableToken).$(']').$();
-        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
+        statusReporter.report(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Long.MIN_VALUE);
     }
 
     @FunctionalInterface
     public interface PhaseStatusReporter {
-        void report(byte phase, byte status, @Nullable final CharSequence msg, long errors);
+        void report(CopyExportRequestTask.Phase phase, CopyExportRequestTask.Status status, @Nullable final CharSequence msg, long errors);
     }
 
 }

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SecurityContext;
@@ -33,10 +34,14 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -48,8 +53,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SPSequence;
 import io.questdb.network.SuspendEvent;
-import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -120,19 +125,21 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             try {
                 assert processingCursor > -1;
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
+                CreateTableOperationImpl createOp = null;
+                SqlExecutionContextImpl queryExecutionContext = null;
                 if (this.selectText != null) {
                     // need to create a temp table which we will use for the export
                     exportIdSink.clear();
                     exportIdSink.put("copy.");
                     Numbers.appendHex(exportIdSink, copyID, true);
                     this.tableName = exportIdSink.toString();
+                    createOp = validAndCreateTableOp(executionContext);
                     // we need a new execution context that uses our circuit breaker, so copy cancel will apply
                     // to the query
-                    SqlExecutionContextImpl queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
+                    queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
                     assert securityContext != null;
                     circuitBreaker.inc();
                     queryExecutionContext.with(securityContext, null, null, -1, circuitBreaker);
-                    createTempTable(queryExecutionContext);
                 }
                 assert tableName != null;
                 if (executionContext.getTableToken(tableName) == null) {
@@ -141,10 +148,11 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 record.setValue(exportIdSink);
-
                 task.of(
-                        executionContext.getSecurityContext(),
+                        securityContext,
+                        queryExecutionContext,
                         copyID,
+                        createOp,
                         tableName,
                         fileName,
                         sizeLimit,
@@ -157,7 +165,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         suspendEvent,
                         rawArrayEncoding
                 );
-
                 cursor.toTop();
                 return cursor;
             } catch (Throwable ex) {
@@ -165,16 +172,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getMessage()).I$();
-                // cleanup temp table
-                if (Chars.startsWith(tableName, "copy.")) {
-                    LOG.info().$("cleaning up temp table [table=").$(tableName).I$();
-                    try {
-                        executionContext.getCairoEngine().execute("DROP TABLE IF EXISTS '" + tableName + "';");
-                    } catch (SqlException e) {
-                        LOG.errorW().$("cleaning up temp table failed [table=").$(tableName).I$();
-                        throw e;
-                    }
-                }
                 // clear copy context
                 throw ex;
             } finally {
@@ -210,7 +207,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.copyContext = copyImportContext;
 
         if (model.getTableName() != null) {
-            this.tableName = GenericLexer.unquote(model.getTableName()).toString();
+            this.tableName = unquote(model.getTableName()).toString();
 
         } else {
             assert model.getSelectText() != null;
@@ -232,16 +229,28 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.sqlText = sqlText;
     }
 
-    void createTempTable(SqlExecutionContext executionContext) throws SqlException {
-        try (CreateTableOperationImpl impl = new CreateTableOperationImpl(
-                selectText,
-                tableName,
-                partitionBy,
-                false,
-                executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity(),
-                sqlText.toString())) {
-            impl.execute(executionContext, null);
+    private CreateTableOperationImpl validAndCreateTableOp(SqlExecutionContext executionContext) throws SqlException {
+        CreateTableOperationImpl createOp = null;
+        final CairoEngine engine = executionContext.getCairoEngine();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery selectQuery = compiler.compile(selectText, executionContext);
+            try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
+                RecordMetadata metadata = rcf.getMetadata();
+                createOp = new CreateTableOperationImpl(
+                        selectText,
+                        tableName,
+                        partitionBy,
+                        false,
+                        executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity(),
+                        sqlText.toString());
+                createOp.validateAndUpdateMetadataFromSelect(metadata);
+            } catch (Throwable ex) {
+                Misc.free(createOp);
+                throw ex;
+            }
         }
+
+        return createOp;
     }
 
     private static class CopyRecord implements Record {

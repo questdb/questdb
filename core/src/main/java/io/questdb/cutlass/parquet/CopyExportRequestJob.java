@@ -37,7 +37,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -46,9 +45,6 @@ import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-
-import static io.questdb.cutlass.text.CopyImportTask.getPhaseName;
-import static io.questdb.cutlass.text.CopyImportTask.getStatusName;
 
 public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
@@ -118,8 +114,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     // todo: improve outputs so that they make more sense for parquet export
     // i.e presenting the query text instead of a useless copy.id table name
     private void updateStatus(
-            byte phase,
-            byte status,
+            CopyExportRequestTask.Phase phase,
+            CopyExportRequestTask.Status status,
             @Nullable final CharSequence msg,
             long errors
     ) {
@@ -131,8 +127,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 row.putVarchar(1, utf8StringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
-                row.putSym(4, CopyExportRequestTask.getPhaseName(phase));
-                row.putSym(5, CopyExportRequestTask.getStatusName(status));
+                row.putSym(4, phase.getName());
+                row.putSym(5, status.getName());
                 utf8StringSink.clear();
                 utf8StringSink.put(msg);
                 row.putVarchar(6, utf8StringSink);
@@ -145,8 +141,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                         .$(", statusTableName=").$(statusTableToken)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())
-                        .$(", phase=").$(getPhaseName(phase))
-                        .$(", status=").$(getStatusName(phase))
+                        .$(", phase=").$(phase.getName())
+                        .$(", status=").$(status.getName())
                         .$(", msg=").$(msg)
                         .$(", errors=").$(errors)
                         .$(", error=`").$(th).$('`')
@@ -181,27 +177,27 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                         this::updateStatus
                 );
                 serialExporter.process(task.getSecurityContext());
-                if (Chars.startsWith(task.getTableName(), "copy.")) {
-                    updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_STARTED, task.getTableName(), Long.MIN_VALUE);
+                if (task.getCreateOp() != null) {
+                    updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.STARTED, task.getTableName(), Long.MIN_VALUE);
                     try {
                         engine.execute("DROP TABLE IF EXISTS '" + task.getTableName() + "';"); // todo: allocation
                     } catch (SqlException e) {
-                        updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FAILED, e.getMessage(), Long.MIN_VALUE);
+                        updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.FAILED, e.getMessage(), Long.MIN_VALUE);
                     }
-                    updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FINISHED, task.getTableName(), Long.MIN_VALUE);
+                    updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.FINISHED, task.getTableName(), Long.MIN_VALUE);
                 }
                 if (task.getSuspendEvent() != null) {
-                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_STARTED,
+                    updateStatus(CopyExportRequestTask.Phase.SIGNALLING_EXP, CopyExportRequestTask.Status.STARTED,
                             "sending signal to waiting thread [fd=" + task.getSuspendEvent().getFd() + ']', Long.MIN_VALUE);
                     task.getSuspendEvent().trigger();
-                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_FINISHED,
+                    updateStatus(CopyExportRequestTask.Phase.SIGNALLING_EXP, CopyExportRequestTask.Status.FINISHED,
                             "signal sent", Long.MIN_VALUE);
                 }
-                updateStatus(CopyExportRequestTask.PHASE_NONE, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
+                updateStatus(CopyExportRequestTask.Phase.NONE, CopyExportRequestTask.Status.FINISHED, null, Long.MIN_VALUE);
             } catch (CopyExportException e) {
                 updateStatus(
-                        CopyExportRequestTask.PHASE_NONE,
-                        e.isCancelled() ? CopyExportRequestTask.STATUS_CANCELLED : CopyExportRequestTask.STATUS_FAILED,
+                        CopyExportRequestTask.Phase.NONE,
+                        e.isCancelled() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                         e.getMessage(),
                         0
                 );

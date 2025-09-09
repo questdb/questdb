@@ -26,28 +26,20 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.network.SuspendEvent;
-import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
 public class CopyExportRequestTask implements Mutable {
-    public static final byte PHASE_NONE = -1; // -1
-    public static final byte PHASE_CREATING_TEMP_TABLE = PHASE_NONE + 1; // 0
-    public static final byte PHASE_CONVERTING_PARTITIONS = PHASE_CREATING_TEMP_TABLE + 1; // 1
-    public static final byte PHASE_DROPPING_TEMP_TABLE = PHASE_CONVERTING_PARTITIONS + 1; // 2
-    public static final byte PHASE_SIGNALLING_EXP = PHASE_DROPPING_TEMP_TABLE + 1; // 2
-    public static final byte STATUS_STARTED = 0; // 0
-    public static final byte STATUS_FINISHED = STATUS_STARTED + 1; // 1
-    public static final byte STATUS_FAILED = STATUS_FINISHED + 1; // 2
-    public static final byte STATUS_CANCELLED = STATUS_FAILED + 1; // 3
-    public static final byte STATUS_PENDING = STATUS_CANCELLED + 1; // 4
-    private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
-    private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
     private int compressionCodec;
     private int compressionLevel;
     private long copyID;
+    private CreateTableOperation createOp;
     private int dataPageSize;
+    private SqlExecutionContext executionContext;
     private String fileName;
     private int parquetVersion;
     private boolean rawArrayEncoding;
@@ -57,14 +49,6 @@ public class CopyExportRequestTask implements Mutable {
     private boolean statisticsEnabled;
     private @Nullable SuspendEvent suspendEvent;
     private String tableName;
-
-    public static String getPhaseName(byte status) {
-        return PHASE_NAME_MAP.get(status);
-    }
-
-    public static String getStatusName(byte status) {
-        return STATUS_NAME_MAP.get(status);
-    }
 
     @Override
     public void clear() {
@@ -80,6 +64,8 @@ public class CopyExportRequestTask implements Mutable {
         this.sizeLimit = -1;
         this.statisticsEnabled = true;
         this.suspendEvent = null;
+        this.createOp = Misc.free(createOp);
+        this.executionContext = null;
     }
 
     public int getCompressionCodec() {
@@ -94,8 +80,16 @@ public class CopyExportRequestTask implements Mutable {
         return copyID;
     }
 
+    public CreateTableOperation getCreateOp() {
+        return createOp;
+    }
+
     public int getDataPageSize() {
         return dataPageSize;
+    }
+
+    public SqlExecutionContext getExecutionContext() {
+        return executionContext;
     }
 
     public String getFileName() {
@@ -136,36 +130,9 @@ public class CopyExportRequestTask implements Mutable {
 
     public void of(
             SecurityContext securityContext,
+            SqlExecutionContext sqlExecutionContext,
             long copyID,
-            String tableName,
-            String fileName,
-            int sizeLimit,
-            int compressionCodec,
-            int compressionLevel,
-            int rowGroupSize,
-            int dataPageSize,
-            boolean statisticsEnabled,
-            int parquetVersion,
-            boolean rawArrayEncoding
-    ) {
-        this.clear();
-        this.securityContext = securityContext;
-        this.copyID = copyID;
-        this.tableName = tableName;
-        this.fileName = fileName;
-        this.sizeLimit = sizeLimit;
-        this.compressionCodec = compressionCodec;
-        this.compressionLevel = compressionLevel;
-        this.rowGroupSize = rowGroupSize;
-        this.dataPageSize = dataPageSize;
-        this.statisticsEnabled = statisticsEnabled;
-        this.parquetVersion = parquetVersion;
-        this.rawArrayEncoding = rawArrayEncoding;
-    }
-
-    public void of(
-            SecurityContext securityContext,
-            long copyID,
+            CreateTableOperation createOp,
             String tableName,
             String fileName,
             int sizeLimit,
@@ -179,20 +146,69 @@ public class CopyExportRequestTask implements Mutable {
             boolean rawArrayEncoding
     ) {
         this.clear();
-        this.of(securityContext, copyID, tableName, fileName, sizeLimit, compressionCodec, compressionLevel, rowGroupSize, dataPageSize, statisticsEnabled, parquetVersion, rawArrayEncoding);
+        this.executionContext = sqlExecutionContext;
+        this.securityContext = securityContext;
+        this.copyID = copyID;
+        this.tableName = tableName;
+        this.fileName = fileName;
+        this.sizeLimit = sizeLimit;
+        this.compressionCodec = compressionCodec;
+        this.compressionLevel = compressionLevel;
+        this.rowGroupSize = rowGroupSize;
+        this.dataPageSize = dataPageSize;
+        this.statisticsEnabled = statisticsEnabled;
+        this.parquetVersion = parquetVersion;
+        this.rawArrayEncoding = rawArrayEncoding;
         this.suspendEvent = suspendEvent;
+        this.createOp = createOp;
     }
 
-    static {
-        PHASE_NAME_MAP.put(PHASE_NONE, null);
-        PHASE_NAME_MAP.put(PHASE_CREATING_TEMP_TABLE, "creating_temp_table");
-        PHASE_NAME_MAP.put(PHASE_CONVERTING_PARTITIONS, "converting_partitions");
-        PHASE_NAME_MAP.put(PHASE_DROPPING_TEMP_TABLE, "dropping_temp_table");
-        PHASE_NAME_MAP.put(PHASE_SIGNALLING_EXP, "signalling_exp");
-        STATUS_NAME_MAP.put(STATUS_STARTED, "started");
-        STATUS_NAME_MAP.put(STATUS_FINISHED, "finished");
-        STATUS_NAME_MAP.put(STATUS_FAILED, "failed");
-        STATUS_NAME_MAP.put(STATUS_CANCELLED, "cancelled");
-        STATUS_NAME_MAP.put(STATUS_PENDING, "pending");
+    public enum Phase {
+        NONE((byte) -1, null),
+        CREATING_TEMP_TABLE((byte) 0, "creating_temp_table"),
+        CONVERTING_PARTITIONS((byte) 1, "converting_partitions"),
+        DROPPING_TEMP_TABLE((byte) 2, "dropping_temp_table"),
+        SIGNALLING_EXP((byte) 3, "signalling_exp");
+
+        private final String name;
+        private final byte value;
+
+        Phase(byte value, String name) {
+            this.value = value;
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public byte getValue() {
+            return value;
+        }
     }
+
+    public enum Status {
+        STARTED((byte) 0, "started"),
+        FINISHED((byte) 1, "finished"),
+        FAILED((byte) 2, "failed"),
+        CANCELLED((byte) 3, "cancelled"),
+        PENDING((byte) 4, "pending");
+
+        private final String name;
+        private final byte value;
+
+        Status(byte value, String name) {
+            this.value = value;
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public byte getValue() {
+            return value;
+        }
+    }
+
 }

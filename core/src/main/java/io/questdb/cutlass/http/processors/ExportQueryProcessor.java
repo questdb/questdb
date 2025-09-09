@@ -321,7 +321,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private int checkForParquetExportCompletion(String copyID) throws SqlException {
+    private CopyExportRequestTask.Status checkForParquetExportCompletion(String copyID) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             String statusSQL = "SELECT phase, status FROM 'sys.copy_export_log' WHERE id = '" + copyID + "' ORDER BY ts DESC LIMIT 1";
             final CompiledQuery cc = compiler.compile(statusSQL, sqlExecutionContext);
@@ -334,13 +334,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
                     if (phase == null) {
                         if (SqlKeywords.isFinishedKeyword(status)) {
-                            return CopyExportRequestTask.STATUS_FINISHED;
+                            return CopyExportRequestTask.Status.FINISHED;
                         } else if (SqlKeywords.isFailedKeyword(status)) {
-                            return CopyExportRequestTask.STATUS_FAILED;
+                            return CopyExportRequestTask.Status.FAILED;
                         } else if (SqlKeywords.isCancelledKeyword(status)) {
-                            return CopyExportRequestTask.STATUS_CANCELLED;
+                            return CopyExportRequestTask.Status.CANCELLED;
                         } else {
-                            return CopyExportRequestTask.STATUS_PENDING;
+                            return CopyExportRequestTask.Status.PENDING;
                         }
                     }
                 } else {
@@ -348,7 +348,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 }
             }
         }
-        return CopyExportRequestTask.STATUS_PENDING;
+        return CopyExportRequestTask.Status.PENDING;
     }
 
     private void cleanupParquetState(ExportQueryProcessorState state) {
@@ -398,7 +398,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
                         // fall through
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT:
-                        int completion;
+                        CopyExportRequestTask.Status completion;
                         try {
                             completion = checkForParquetExportCompletion(state.copyID);
                         } catch (SqlException e) {
@@ -406,19 +406,19 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             break OUT;
                         }
 
-                        if (completion == CopyExportRequestTask.STATUS_PENDING) {
+                        if (completion == CopyExportRequestTask.Status.PENDING) {
                             throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker());
                         }
 
                         // Handle non-pending completion statuses
                         switch (completion) {
-                            case CopyExportRequestTask.STATUS_FAILED:
+                            case FAILED:
                                 sendException(response, 0, "copy task failed [id=" + state.copyID + ']', state);
                                 break OUT;
-                            case CopyExportRequestTask.STATUS_CANCELLED:
+                            case CANCELLED:
                                 sendException(response, 0, "copy task was cancelled [id=" + state.copyID + ']', state);
                                 break OUT;
-                            case CopyExportRequestTask.STATUS_FINISHED:
+                            case FINISHED:
                                 String exportPath = findParquetExportFile(state.copyID);
                                 if (exportPath == null) {
                                     sendException(response, 0, "exported parquet files not found [id=" + state.copyID + ']', state);
