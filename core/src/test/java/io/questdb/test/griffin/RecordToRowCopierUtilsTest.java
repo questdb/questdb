@@ -37,11 +37,14 @@ import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -49,7 +52,7 @@ import org.junit.Test;
 
 import java.math.BigDecimal;
 
-public class RecordToRowCopierUtilsTest {
+public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     @Test
     public void testCopierDecimal8ToDecimal32() {
         // Converting 1.2 from a Decimal8 with a scale of 1 (1.2) to a Decimal32 with a scale of 3 (1.200)
@@ -72,11 +75,6 @@ public class RecordToRowCopierUtilsTest {
             public byte getDecimal8(int col) {
                 return 12;
             }
-
-            @Override
-            public Decimal256 getDecimal256A(int col) {
-                return new Decimal256();
-            }
         };
 
         TableWriter.Row row = new RowAsserter() {
@@ -85,7 +83,7 @@ public class RecordToRowCopierUtilsTest {
                 Assert.assertEquals(1200, value);
             }
         };
-        copier.copy(rec, row);
+        copier.copy(sqlExecutionContext, rec, row);
     }
 
     @Test
@@ -95,12 +93,12 @@ public class RecordToRowCopierUtilsTest {
         Decimal256 dnull = new Decimal256();
         BytecodeAssembler asm = new BytecodeAssembler();
         dnull.ofNull();
-        boolean[] isNull = new boolean[] { false, true };
-        int[] fromPrecisions = new int[] { 1, 2, 3, 4, 5, 8, 15, 25, 30, 50, 75 };
-        int[] toPrecisions = new int[] { 1, 2, 3, 4, 5, 8, 15, 25, 30, 50, 75 };
-        for (int fromPrecision: fromPrecisions) {
-            for (int toPrecision: toPrecisions) {
-                for (boolean nulled: isNull) {
+        boolean[] isNull = new boolean[]{false, true};
+        int[] fromPrecisions = new int[]{1, 2, 3, 4, 5, 8, 15, 25, 30, 50, 75};
+        int[] toPrecisions = new int[]{1, 2, 3, 4, 5, 8, 15, 25, 30, 50, 75};
+        for (int fromPrecision : fromPrecisions) {
+            for (int toPrecision : toPrecisions) {
+                for (boolean nulled : isNull) {
                     if (nulled) {
                         testDecimalCast(asm, fromPrecision, toPrecision, 0, dnull, true);
                         continue;
@@ -125,6 +123,140 @@ public class RecordToRowCopierUtilsTest {
                 }
             }
         }
+    }
+
+    private static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
+        int fromTag = ColumnType.tagOf(fromType);
+        return new Record() {
+            @Override
+            public long getDecimal128Hi(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
+                return value.isNull() ? Decimals.DECIMAL128_HI_NULL : value.getLh();
+            }
+
+            @Override
+            public long getDecimal128Lo(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
+                return value.isNull() ? Decimals.DECIMAL128_LO_NULL : value.getLl();
+            }
+
+            @Override
+            public short getDecimal16(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL16, fromTag);
+                return value.isNull() ? Short.MIN_VALUE : (short) value.getLl();
+            }
+
+            @Override
+            public long getDecimal256HH(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getHh();
+            }
+
+            @Override
+            public long getDecimal256HL(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getHl();
+            }
+
+            @Override
+            public long getDecimal256LH(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getLh();
+            }
+
+            @Override
+            public long getDecimal256LL(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getLl();
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL32, fromTag);
+                return value.isNull() ? Integer.MIN_VALUE : (int) value.getLl();
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL64, fromTag);
+                return value.isNull() ? Long.MIN_VALUE : value.getLl();
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL8, fromTag);
+                return value.isNull() ? Byte.MIN_VALUE : (byte) value.getLl();
+            }
+        };
+    }
+
+    private static @NotNull TableWriter.Row getDecimalRow(int toType, @Nullable Decimal256 expectedValue) {
+        short toTag = ColumnType.tagOf(toType);
+        return new RowAsserter() {
+            @Override
+            public void putByte(int col, byte value) {
+                Assert.assertEquals(ColumnType.DECIMAL8, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals((byte) (expectedValue.isNull() ? Byte.MIN_VALUE : expectedValue.getLl()), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putDecimal128(int col, long high, long low) {
+                Assert.assertEquals(ColumnType.DECIMAL128, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals(expectedValue.isNull() ? Long.MIN_VALUE : expectedValue.getLh(), high);
+                    Assert.assertEquals(expectedValue.getLl(), low);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putDecimal256(int col, long hh, long hl, long lh, long ll) {
+                Assert.assertEquals(ColumnType.DECIMAL256, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals(expectedValue.getHh(), hh);
+                    Assert.assertEquals(expectedValue.getHl(), hl);
+                    Assert.assertEquals(expectedValue.getLh(), lh);
+                    Assert.assertEquals(expectedValue.getLl(), ll);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putInt(int col, int value) {
+                Assert.assertEquals(ColumnType.DECIMAL32, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals((int) (expectedValue.isNull() ? Integer.MIN_VALUE : expectedValue.getLl()), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putLong(int col, long value) {
+                Assert.assertEquals(ColumnType.DECIMAL64, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals(expectedValue.isNull() ? Long.MIN_VALUE : expectedValue.getLl(), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putShort(int col, short value) {
+                Assert.assertEquals(ColumnType.DECIMAL16, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals((short) (expectedValue.isNull() ? Short.MIN_VALUE : expectedValue.getLl()), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+        };
     }
 
     private void generateValue(Decimal256 d, int precision, int scale) {
@@ -158,7 +290,7 @@ public class RecordToRowCopierUtilsTest {
         Record rec = getDecimalRecord(fromType, value);
         TableWriter.Row row = getDecimalRow(toType, expectedValue);
         try {
-            copier.copy(rec, row);
+            copier.copy(sqlExecutionContext, rec, row);
             if (!fitInTargetType) {
                 Assert.fail(String.format("Expected cast to fail from (%s - p:%s - s:%s) to (%s - p:%s - s:%s) for %s",
                         ColumnType.nameOf(ColumnType.tagOf(fromType)), ColumnType.getDecimalPrecision(fromType), ColumnType.getDecimalScale(fromType),
@@ -175,147 +307,6 @@ public class RecordToRowCopierUtilsTest {
                     ColumnType.nameOf(ColumnType.tagOf(toType)), ColumnType.getDecimalPrecision(toType), ColumnType.getDecimalScale(toType),
                     value));
         }
-    }
-
-    private static @NotNull TableWriter.Row getDecimalRow(int toType, @Nullable Decimal256 expectedValue) {
-        short toTag = ColumnType.tagOf(toType);
-        return new RowAsserter() {
-            @Override
-            public void putByte(int col, byte value) {
-                Assert.assertEquals(ColumnType.DECIMAL8, toTag);
-                if (expectedValue != null) {
-                    Assert.assertEquals((byte) (expectedValue.isNull() ? Byte.MIN_VALUE : expectedValue.getLl()), value);
-                } else {
-                    Assert.fail("Expected casting to fail");
-                }
-            }
-
-            @Override
-            public void putShort(int col, short value) {
-                Assert.assertEquals(ColumnType.DECIMAL16, toTag);
-                if (expectedValue != null) {
-                    Assert.assertEquals((short) (expectedValue.isNull() ? Short.MIN_VALUE : expectedValue.getLl()), value);
-                } else {
-                    Assert.fail("Expected casting to fail");
-                }
-            }
-
-            @Override
-            public void putInt(int col, int value) {
-                Assert.assertEquals(ColumnType.DECIMAL32, toTag);
-                if (expectedValue != null) {
-                    Assert.assertEquals((int) (expectedValue.isNull() ? Integer.MIN_VALUE : expectedValue.getLl()), value);
-                } else {
-                    Assert.fail("Expected casting to fail");
-                }
-            }
-
-            @Override
-            public void putLong(int col, long value) {
-                Assert.assertEquals(ColumnType.DECIMAL64, toTag);
-                if (expectedValue != null) {
-                    Assert.assertEquals(expectedValue.isNull() ? Long.MIN_VALUE : expectedValue.getLl(), value);
-                } else {
-                    Assert.fail("Expected casting to fail");
-                }
-            }
-
-            @Override
-            public void putDecimal128(int col, long high, long low) {
-                Assert.assertEquals(ColumnType.DECIMAL128, toTag);
-                if (expectedValue != null) {
-                    Assert.assertEquals(expectedValue.isNull() ? Long.MIN_VALUE : expectedValue.getLh(), high);
-                    Assert.assertEquals(expectedValue.getLl(), low);
-                } else {
-                    Assert.fail("Expected casting to fail");
-                }
-            }
-
-            @Override
-            public void putDecimal256(int col, long hh, long hl, long lh, long ll) {
-                Assert.assertEquals(ColumnType.DECIMAL256, toTag);
-                if (expectedValue != null) {
-                    Assert.assertEquals(expectedValue.getHh(), hh);
-                    Assert.assertEquals(expectedValue.getHl(), hl);
-                    Assert.assertEquals(expectedValue.getLh(), lh);
-                    Assert.assertEquals(expectedValue.getLl(), ll);
-                } else {
-                    Assert.fail("Expected casting to fail");
-                }
-            }
-        };
-    }
-
-    private static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
-        int fromTag = ColumnType.tagOf(fromType);
-        return new Record() {
-            private final Decimal256 decimal256a = new Decimal256();
-
-            @Override
-            public byte getDecimal8(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL8, fromTag);
-                return value.isNull() ? Byte.MIN_VALUE : (byte) value.getLl();
-            }
-
-            @Override
-            public short getDecimal16(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL16, fromTag);
-                return value.isNull() ? Short.MIN_VALUE : (short) value.getLl();
-            }
-
-            @Override
-            public int getDecimal32(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL32, fromTag);
-                return value.isNull() ? Integer.MIN_VALUE : (int) value.getLl();
-            }
-
-            @Override
-            public long getDecimal64(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL64, fromTag);
-                return value.isNull() ? Long.MIN_VALUE : value.getLl();
-            }
-
-            @Override
-            public long getDecimal128Hi(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                return value.isNull() ? Long.MIN_VALUE : value.getLh();
-            }
-
-            @Override
-            public long getDecimal128Lo(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                return value.isNull() ? -1 : value.getLl();
-            }
-
-            @Override
-            public long getDecimal256HH(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getHh();
-            }
-
-            @Override
-            public long getDecimal256HL(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getHl();
-            }
-
-            @Override
-            public long getDecimal256LH(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getLh();
-            }
-
-            @Override
-            public long getDecimal256LL(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getLl();
-            }
-
-            @Override
-            public Decimal256 getDecimal256A(int col) {
-                return decimal256a;
-            }
-        };
     }
 
     private static class RowAsserter implements TableWriter.Row {

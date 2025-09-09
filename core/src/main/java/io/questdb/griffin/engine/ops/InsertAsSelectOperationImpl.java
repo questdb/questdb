@@ -144,25 +144,24 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
         @Override
         public long execute(SqlExecutionContext executionContext) throws SqlException {
             executionContext.setUseSimpleCircuitBreaker(true);
-            SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (timestampIndex == -1) {
-                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker);
+                        rowCount = SqlCompilerImpl.copyUnordered(executionContext, cursor, writer, copier);
                     } else {
                         if (batchSize != -1) {
                             rowCount = SqlCompilerImpl.copyOrderedBatched(
+                                    executionContext,
                                     writer,
                                     factory.getMetadata(),
                                     cursor,
                                     copier,
                                     timestampIndex,
                                     batchSize,
-                                    o3MaxLag,
-                                    circuitBreaker
+                                    o3MaxLag
                             );
                         } else {
-                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker);
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(executionContext, writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0);
                         }
                     }
                 } catch (Throwable e) {

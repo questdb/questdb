@@ -408,8 +408,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
     }
 
-    public void with(SqlExecutionCircuitBreaker circuitBreaker) {
+    public SqlExecutionContext with(SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
+        return this;
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext) {

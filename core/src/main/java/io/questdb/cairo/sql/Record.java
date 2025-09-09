@@ -228,16 +228,6 @@ public interface Record {
     }
 
     /**
-     * Gets a mutable Decimal256.
-     *
-     * @param col numeric index of the column
-     * @return a Decimal256 object
-     */
-    default Decimal256 getDecimal256A(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
      * Gets the value of a double column by index
      *
      * @param col numeric index of the column

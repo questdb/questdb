@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -73,6 +74,8 @@ public class RecordToRowCopierUtils {
         // Z                boolean     true or false
         // [                reference   one array dimension
 
+        int sGetDecimal256 = asm.poolInterfaceMethod(SqlExecutionContext.class, "getDecimal256", "()Lio/questdb/std/Decimal256;");
+
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
@@ -108,7 +111,6 @@ public class RecordToRowCopierUtils {
         int rGetDecimal256HL = asm.poolInterfaceMethod(Record.class, "getDecimal256HL", "(I)J");
         int rGetDecimal256LH = asm.poolInterfaceMethod(Record.class, "getDecimal256LH", "(I)J");
         int rGetDecimal256LL = asm.poolInterfaceMethod(Record.class, "getDecimal256LL", "(I)J");
-        int rGetDecimal256 = asm.poolInterfaceMethod(Record.class, "getDecimal256A", "(I)Lio/questdb/std/Decimal256;");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
@@ -213,7 +215,7 @@ public class RecordToRowCopierUtils {
         }
 
         int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
+        int copySigIndex = asm.poolUtf8("(Lio/questdb/griffin/SqlExecutionContext;Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
 
         // if we have to do implicit cast from STRING to ARRAYs then we need to create a parser
         // the parser is instantiated in a constructor and stored in a field.
@@ -297,7 +299,7 @@ public class RecordToRowCopierUtils {
                     (ColumnType.tagOf(fromColumnType) == ColumnType.STRING || ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)
             ) {
                 // Build stack with parser in the right position
-                asm.aload(2);
+                asm.aload(3);
                 // Stack: [rowWriter]
                 asm.iconst(toColumnWriterIndex);
                 // Stack: [rowWriter, toColumnIndex]
@@ -305,23 +307,23 @@ public class RecordToRowCopierUtils {
                 // Stack: [rowWriter, toColumnIndex, this]
                 asm.getfield(parserFieldRef);
                 // Stack: [rowWriter, toColumnIndex, parser]
-                asm.aload(1);
+                asm.aload(2);
                 // Stack: [rowWriter, toColumnIndex, parser, record]
                 asm.iconst(i);
                 // Stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
             } else if (!ColumnType.isDecimal(fromColumnType)) {
                 // Original stack building
-                asm.aload(2);
+                asm.aload(3);
                 // stack: [rowWriter]
                 asm.iconst(toColumnWriterIndex);
                 // stack: [rowWriter, toColumnIndex]
-                asm.aload(1);
+                asm.aload(2);
                 // stack: [rowWriter, toColumnIndex, record]
                 asm.iconst(i);
                 // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
             } else {
-                // Original stack building
-                asm.aload(2);
+                // Decimal stack building
+                asm.aload(3);
                 // stack: [rowWriter]
                 asm.iconst(toColumnWriterIndex);
                 // stack: [rowWriter, toColumnIndex]
@@ -1058,7 +1060,7 @@ public class RecordToRowCopierUtils {
                         case ColumnType.UUID:
                             asm.invokeInterface(rGetLong128Lo, 1);
                             // Stack: [RowWriter, toColumnIndex, lo]
-                            asm.aload(1);  // Push record to the stack again
+                            asm.aload(2);  // Push record to the stack again
                             // Stack: [RowWriter, toColumnIndex, lo, Record]
                             asm.iconst(i); // Push column index to a stack
                             // Stack: [RowWriter, toColumnIndex, lo, Record, columnIndex]
@@ -1080,7 +1082,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, toColumnIndex, Record, columnIndex]
                             asm.invokeInterface(rGetLong128Lo, 1);
                             // Stack: [RowWriter, toColumnIndex, lo]
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             // Stack: [RowWriter, toColumnIndex, lo, Record]
                             asm.iconst(i); // Push column index to a stack
                             // Stack: [RowWriter, toColumnIndex, lo, Record, columnIndex]
@@ -1090,7 +1092,7 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.VARCHAR:
                             asm.invokeInterface(rGetLong128Lo, 1);
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             asm.iconst(i); // Push column index to a stack
                             asm.invokeInterface(rGetLong128Hi, 1);
                             asm.invokeStatic(transferUuidToVarcharCol);
@@ -1120,20 +1122,18 @@ public class RecordToRowCopierUtils {
                 case ColumnType.DECIMAL256:
                     // Load Decimal256 to the stack
                     asm.aload(1);
-                    // stack: [rowWriter, toColumnIndex, record]
-                    asm.iconst(i);
-                    // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
-                    asm.invokeInterface(rGetDecimal256, 1);
+                    // stack: [rowWriter, toColumnIndex, sqlExecutionContext]
+                    asm.invokeInterface(sGetDecimal256, 0);
                     // Load both from and to column int to the stack
-                    // Stack: [RowWriter, toColumnIndex]
+                    // Stack: [RowWriter, toColumnIndex, decimal]
                     asm.ldc(fromColumnType_0 + i * 2);
-                    // Stack: [RowWriter, toColumnIndex, fromType]
+                    // Stack: [RowWriter, toColumnIndex, decimal, fromType]
                     asm.ldc(toColumnType_0 + i * 2);
-                    // Stack: [RowWriter, toColumnIndex, fromType, toType]
-                    asm.aload(1);
-                    // stack: [rowWriter, toColumnIndex, fromType, toType, record]
+                    // Stack: [RowWriter, toColumnIndex, decimal, fromType, toType]
+                    asm.aload(2);
+                    // stack: [rowWriter, toColumnIndex, decimal, fromType, toType, record]
                     asm.iconst(i);
-                    // stack: [rowWriter, toColumnIndex, fromType, toType, record, fromColumnIndex]
+                    // stack: [rowWriter, toColumnIndex, decimal, fromType, toType, record, fromColumnIndex]
                     switch (fromColumnTypeTag) {
                         case ColumnType.DECIMAL8:
                             asm.invokeInterface(rGetDecimal8, 1);
@@ -1153,20 +1153,20 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.DECIMAL128:
                             asm.invokeInterface(rGetDecimal128Hi, 1);
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             asm.iconst(i); // Push column index to a stack
                             asm.invokeInterface(rGetDecimal128Lo, 1);
                             asm.invokeStatic(transferDecimal128);
                             break;
                         case ColumnType.DECIMAL256:
                             asm.invokeInterface(rGetDecimal256HH, 1);
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             asm.iconst(i); // Push column index to a stack
                             asm.invokeInterface(rGetDecimal256HL, 1);
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             asm.iconst(i); // Push column index to a stack
                             asm.invokeInterface(rGetDecimal256LH, 1);
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             asm.iconst(i); // Push column index to a stack
                             asm.invokeInterface(rGetDecimal256LL, 1);
                             asm.invokeStatic(transferDecimal256);
@@ -1201,7 +1201,7 @@ public class RecordToRowCopierUtils {
     @SuppressWarnings("unused")
     // Called from dynamically generated bytecode
     public static void transferDecimal128(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, long high, long low) {
-        if (high == Long.MIN_VALUE && low == -1) {
+        if (Decimal128.isNull(high, low)) {
             WriterRowUtils.putNullDecimal(row, col, toType);
             return;
         }
@@ -1226,7 +1226,7 @@ public class RecordToRowCopierUtils {
     @SuppressWarnings("unused")
     // Called from dynamically generated bytecode
     public static void transferDecimal256(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, long hh, long hl, long lh, long ll) {
-        if (hh == Long.MIN_VALUE && hl == -1 && lh == -1 && ll == -1) {
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
             WriterRowUtils.putNullDecimal(row, col, toType);
             return;
         }
