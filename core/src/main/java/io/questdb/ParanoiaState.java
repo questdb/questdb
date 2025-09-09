@@ -65,6 +65,7 @@ public class ParanoiaState {
     public static final boolean VM_PARANOIA_MODE = false;
     // Set to true to enable stricter File Descriptor double close checks, trace closed usages.
     public static boolean FD_PARANOIA_MODE = false;
+    public static final boolean THREAD_LOCAL_PATH_PARANOIA_MODE = false;
 
     public static boolean isInsideJUnitTest() {
         StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();

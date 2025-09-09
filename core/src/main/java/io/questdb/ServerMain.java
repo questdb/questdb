@@ -455,6 +455,10 @@ public class ServerMain implements Closeable {
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
     }
 
+    protected void freeOnExit(Closeable closeable) {
+        freeOnExit.register(closeable);
+    }
+
     protected Services services() {
         return Services.INSTANCE;
     }
