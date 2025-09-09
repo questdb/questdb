@@ -3282,7 +3282,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     copyFactory = compileCopyTo(executionContext.getSecurityContext(), copyModel);
                 }
-
             }
             compiledQuery.ofPseudoSelect(copyFactory);
         }

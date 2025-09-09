@@ -97,7 +97,6 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
                 final CopyImportRequestTask task = copyImportRequestQueue.get(processingCursor);
-
                 long copyID = copyImportContext.assignActiveImportId(executionContext.getSecurityContext());
                 task.of(
                         executionContext.getSecurityContext(),

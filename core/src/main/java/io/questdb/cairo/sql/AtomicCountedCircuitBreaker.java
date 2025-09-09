@@ -36,8 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * and only allows cancelling statement via CANCEL QUERY command.
  */
 public class AtomicCountedCircuitBreaker implements SqlExecutionCircuitBreaker {
-    protected volatile @NotNull AtomicBoolean cancelledFlag = new AtomicBoolean(false);
-    protected volatile @NotNull AtomicInteger inProgress = new AtomicInteger(0);
+    protected volatile @NotNull AtomicBoolean cancelledFlag;
+    protected volatile @NotNull AtomicInteger inProgress;
     private long fd = -1;
     private int testCount = 0;
     private int throttle;
