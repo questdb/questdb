@@ -94,7 +94,11 @@ public class TableSequencerImpl implements TableSequencer {
 
             metadata = new SequencerMetadata(ff, configuration.getCommitMode());
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
-            walIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, WAL_INDEX_FILE_NAME, configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep());
+            walIdGenerator = IDGeneratorFactory.newIDGenerator(
+                    configuration,
+                    WAL_INDEX_FILE_NAME,
+                    configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
+            );
             tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
