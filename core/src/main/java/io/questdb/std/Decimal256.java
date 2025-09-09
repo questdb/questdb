@@ -30,14 +30,14 @@ public class Decimal256 implements Sinkable {
     public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
     public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, 0, 0, 1, 0);
     public static final Decimal256 NULL_VALUE = new Decimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, 0);
-    private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
+    public static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
             1L, 15L,
             159L, 1593L, 15930L, 159309L, 1593091L,
             15930919L, 159309191L, 1593091911L, 15930919111L, 159309191113L,
             1593091911132L, 15930919111324L, 159309191113245L, 1593091911132452L, 15930919111324522L,
             159309191113245227L, 1593091911132452277L,
     };
-    private static final long[] POWERS_TEN_TABLE_HL = new long[]{ // from 10³⁹ to 10⁷⁶
+    public static final long[] POWERS_TEN_TABLE_HL = new long[]{ // from 10³⁹ to 10⁷⁶
             2L,
             29L, 293L, 2938L, 29387L, 293873L,
             2938735L, 29387358L, 293873587L, 2938735877L, 29387358770L,
@@ -48,7 +48,7 @@ public class Decimal256 implements Sinkable {
             8343038602174441244L, -8803334346803345639L, 4200376900514301694L, 5110280857723913709L, -4237423643889517749L,
             -5480748291476074254L, 532749306367912313L,
     };
-    private static final long[] POWERS_TEN_TABLE_LH = new long[]{ // from 10²⁰ to 10⁷⁶
+    public static final long[] POWERS_TEN_TABLE_LH = new long[]{ // from 10²⁰ to 10⁷⁶
             5L, 54L, 542L, 5421L, 54210L,
             542101L, 5421010L, 54210108L, 542101086L, 5421010862L,
             54210108624L, 542101086242L, 5421010862427L, 54210108624275L, 542101086242752L,
@@ -62,7 +62,7 @@ public class Decimal256 implements Sinkable {
             2618431695511421504L, 7737572881404663424L, 3588752519208427776L, -1005962955334825472L, 8387114520361296896L,
             -8362575164934789120L, 8607968719199866880L,
     };
-    private static final long[] POWERS_TEN_TABLE_LL = new long[]{ // from 10⁰ to 10⁷⁶
+    public static final long[] POWERS_TEN_TABLE_LL = new long[]{ // from 10⁰ to 10⁷⁶
             1L, 10L, 100L, 1000L, 10000L,
             100000L, 1000000L, 10000000L, 100000000L, 1000000000L,
             10000000000L, 100000000000L, 1000000000000L, 10000000000000L, 100000000000000L,
