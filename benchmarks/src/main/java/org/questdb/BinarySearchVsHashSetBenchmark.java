@@ -44,14 +44,17 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.TimeUnit;
 
+
+/**
+ * Tests the relative speed and scaling of a binary search over a long list, versus a hash set lookup.
+ */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class BinarySearchVsHashSetBenchmark {
     private final LongList longList = new LongList();
     private final LongHashSet longSet = new LongHashSet();
-    //@Param({"1", "2", "3", "5", "8", "10", "100", "1000", "10000", "100000"})
-    @Param("200")
+    @Param({"1", "2", "3", "5", "8", "10", "100", "200", "1000", "10000", "100000"})
     public int size;
     Rnd rnd = new Rnd();
 
@@ -66,28 +69,25 @@ public class BinarySearchVsHashSetBenchmark {
         new Runner(opt).run();
     }
 
-    // Always present
     @Benchmark
-    public void binarySearch() {
+    public void binarySearchAlwaysPresent() {
         longList.binarySearch(rnd.nextLong(size), Vect.BIN_SEARCH_SCAN_UP);
     }
 
     @Benchmark
-    public void hashSet() {
+    public void binarySearchNeverPresent() {
+        longList.binarySearch(rnd.nextLong(), Vect.BIN_SEARCH_SCAN_UP);
+    }
+
+    @Benchmark
+    public void hashSetAlwaysPresent() {
         longSet.contains(rnd.nextLong(size));
     }
 
-
-    // Almost never present
-//    @Benchmark
-//    public void binarySearch() {
-//        longList.binarySearch(rnd.nextLong(), Vect.BIN_SEARCH_SCAN_UP);
-//    }
-//
-//    @Benchmark
-//    public void hashSet() {
-//        longSet.contains(rnd.nextLong());
-//    }
+    @Benchmark
+    public void hashSetNeverPresent() {
+        longSet.contains(rnd.nextLong());
+    }
 
     @Setup(Level.Iteration)
     public void setup() {
