@@ -2987,13 +2987,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull String getDbRoot() {
-            return dbRoot;
+        public @Nullable String getDbLogName() {
+            return dbLogName;
         }
 
         @Override
-        public @Nullable String getDbLogName() {
-            return dbLogName;
+        public @NotNull String getDbRoot() {
+            return dbRoot;
         }
 
         @Override
@@ -5224,6 +5224,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return matViewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return walApplyWorkerCount > 0;
         }
     }
 
