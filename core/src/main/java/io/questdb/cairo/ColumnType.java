@@ -397,6 +397,10 @@ public final class ColumnType {
         return colType >= GEOBYTE && colType <= GEOLONG;
     }
 
+    public static boolean isDecimalType(int colType) {
+        return colType >= DECIMAL8 && colType <= DECIMAL256;
+    }
+
     public static boolean isInt(int columnType) {
         return columnType == ColumnType.INT;
     }
