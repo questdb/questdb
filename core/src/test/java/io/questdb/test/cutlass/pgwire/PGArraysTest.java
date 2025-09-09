@@ -177,9 +177,9 @@ public class PGArraysTest extends BasePGTest {
             } catch (SQLException ex) {
                 TestUtils.assertContainsEither(
                         ex.getMessage(),
-                        "ERROR: inconvertible types: DOUBLE[] -> DOUBLE[][] [from=$1, to=al]\n" +
-                                "  Position: 23", // text mode: implicit cast from string
                         "inconvertible value: `{\"1.0\",\"2.0\",\"3.0\",\"4.0\",\"5.0\"}` [STRING -> DOUBLE[][]]\n" +
+                                "  Position: 1", // text mode: implicit cast from string
+                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]\n" +
                                 "  Position: 1" // binary array
                 );
             }
@@ -192,9 +192,10 @@ public class PGArraysTest extends BasePGTest {
                 Assert.fail("Wrong array dimension count should fail");
             } catch (SQLException ex) {
                 TestUtils.assertContainsEither(
-                        ex.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][] [from=$1, to=al]\n" +
-                                "  Position: 23", // text mode: implicit cast from string
+                        ex.getMessage(),
                         "inconvertible value: `{{{\"1.0\",\"2.0\",\"3.0\",\"4.0\",\"5.0\"}}}` [STRING -> DOUBLE[][]]\n" +
+                                "  Position: 1", // text mode: implicit cast from string
+                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[][][]]\n" +
                                 "  Position: 1" // binary array
                 );
             }
@@ -443,7 +444,6 @@ public class PGArraysTest extends BasePGTest {
         skipOnWalRun();
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-
             try (Statement statement = connection.createStatement()) {
                 statement.executeQuery("SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6, 7]] arr FROM long_sequence(1)");
                 fail("jagged array should not be allowed");
@@ -455,7 +455,6 @@ public class PGArraysTest extends BasePGTest {
             assertPgWireQuery(connection, "SELECT '{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[] arr FROM long_sequence(1)",
                     "arr[ARRAY]\n" +
                             "null\n");
-
 
             execute("create table tab (arr double[][])");
 
@@ -474,7 +473,6 @@ public class PGArraysTest extends BasePGTest {
             assertPgWireQuery(connection, "SELECT * from tab",
                     "arr[ARRAY]\n" +
                             "null\n");
-
 
             // Issue: PostgreSQL JDBC driver doesn't validate jagged arrays (https://github.com/pgjdbc/pgjdbc/issues/3567)
             // when used as a bind variable in a prepared statement.
@@ -503,11 +501,12 @@ public class PGArraysTest extends BasePGTest {
                             e.getMessage(),
                             "inconvertible value: `{{\"1.0\",\"2.0\"},{\"3.0\"},{\"3.0\"}}` [STRING -> DOUBLE[][]]\n" +
                                     "  Position: 1",
-                            "inconvertible types: DOUBLE[] -> DOUBLE[][] [from=$1, to=arr]\n" +
-                                    "  Position: 25"
+                            "unexpected array size [expected=72, actual=48]\n" +
+                                    "  Position: 1"
                     );
                 }
             }
+
             try (PreparedStatement stmt = connection.prepareStatement("insert into tab values (?)")) {
                 Array arr = connection.createArrayOf("float8", new double[][]{{1.0}, {2.0, 3.0}, {4.0, 5.0}});
                 stmt.setArray(1, arr);
@@ -519,8 +518,8 @@ public class PGArraysTest extends BasePGTest {
                             e.getMessage(),
                             "inconvertible value: `{{\"1.0\"},{\"2.0\",\"3.0\"},{\"4.0\",\"5.0\"}}` [STRING -> DOUBLE[][]]\n" +
                                     "  Position: 1",
-                            "inconvertible types: DOUBLE[] -> DOUBLE[][] [from=$1, to=arr]\n" +
-                                    "  Position: 25"
+                            "unexpected array size [expected=36, actual=60]\n" +
+                                    "  Position: 1"
                     );
                 }
             }
