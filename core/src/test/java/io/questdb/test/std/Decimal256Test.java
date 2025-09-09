@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -1147,6 +1148,7 @@ public class Decimal256Test {
         // Fuzz test for round() method using BigDecimal as oracle
         final int iterations = 10_000;  // Reduced for debugging
         final Rnd rnd = TestUtils.generateRandom(null);
+        rnd.reset(120289594706857L, 1757435072227L);
 
         // All rounding modes except UNNECESSARY (which requires special handling)
         java.math.RoundingMode[] roundingModes = {
@@ -1820,5 +1822,50 @@ public class Decimal256Test {
             // Re-throw other arithmetic exceptions
             throw e;
         }
+    }
+
+    @Test
+    public void testPowersTenTable() {
+        BigDecimal bd = new BigDecimal(1);
+        long[][] table = new long[Decimals.MAX_PRECISION][9 * 4];
+        for (int i = 0; i < Decimals.MAX_PRECISION; i++) {
+            BigDecimal base = bd;
+            for (int j = 0; j < 9; j++) {
+                Decimal256 d = Decimal256.fromBigDecimal(bd);
+                table[i][j * 4] = d.getHh();
+                table[i][j * 4 + 1] = d.getHl();
+                table[i][j * 4 + 2] = d.getLh();
+                table[i][j * 4 + 3] = d.getLl();
+                bd = bd.add(base);
+            }
+        }
+
+        printPowerTable(table);
+
+        long[][] currentTable = Decimal256.getPowersTenTable();
+        for (int i = 0; i < Decimals.MAX_PRECISION; i++) {
+            for (int j = 0; j < 9 * 4; j++) {
+                Assert.assertEquals(table[i][j], currentTable[i][j]);
+            }
+        }
+    }
+
+    private void printPowerTable(long[][] table) {
+        System.err.println("    private static final long[][] POWERS_TEN_TABLE = new long[][]{");
+        for (int i = 0, n = table.length; i < n; i++) {
+            System.err.print("            {");
+            for (int j = 0; j < 9 * 4; j++) {
+                System.err.printf("%dL", table[i][j]);
+                if (j < (9 * 4 - 1)) {
+                    System.err.print(", ");
+                }
+            }
+            System.err.print("}");
+            if (i < n - 1) {
+                System.err.print(",");
+            }
+            System.err.println();
+        }
+        System.err.println("    };");
     }
 }
