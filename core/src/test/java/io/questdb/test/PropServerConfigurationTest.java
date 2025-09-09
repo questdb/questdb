@@ -161,7 +161,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getLimit());
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getEventCapacity());
-        Assert.assertEquals(256, configuration.getHttpServerConfiguration().getIOQueueCapacity());
+        Assert.assertEquals(512, configuration.getHttpServerConfiguration().getIOQueueCapacity());
         Assert.assertEquals(300000, configuration.getHttpServerConfiguration().getTimeout());
         Assert.assertEquals(5000, configuration.getHttpServerConfiguration().getQueueTimeout());
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getInterestQueueCapacity());
@@ -371,7 +371,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getBindPort());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getEventCapacity());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
+        Assert.assertEquals(512, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getTimeout());
         Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
@@ -1259,7 +1259,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertEquals(63, configuration.getHttpServerConfiguration().getLimit());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getEventCapacity());
-            Assert.assertEquals(64, configuration.getHttpServerConfiguration().getIOQueueCapacity());
+            Assert.assertEquals(128, configuration.getHttpServerConfiguration().getIOQueueCapacity());
             Assert.assertEquals(7000000, configuration.getHttpServerConfiguration().getTimeout());
             Assert.assertEquals(1001, configuration.getHttpServerConfiguration().getQueueTimeout());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getInterestQueueCapacity());
@@ -1296,7 +1296,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getBindPort());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getEventCapacity());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
+            Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
             Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getTimeout());
             Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
