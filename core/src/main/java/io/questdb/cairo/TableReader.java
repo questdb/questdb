@@ -387,24 +387,24 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Pretty convoluted logic to calculate upper timestamp bound of the given partition, e.g. by partition index.
-     * First thing of note - the upper bound value is inclusive, it must be a value that will be able to reside in the
+     * Pretty convoluted logic to calculate upper timestamp bound of the given partition, e.g., by partition index.
+     * First thing of note - the upper-bound value is inclusive, it must be a value that will be able to reside in the
      * partition.
      * <p>
      * The value of the upper bound is COMPUTED, rather than retrieved from a store. The inputs for the computation are:
      * - min timestamp of the partition - this is a stored value
-     * - timestamp ceil function, which depends on the partition type. E.g. you could round any timestamp to the
+     * - timestamp ceil function, which depends on the partition type. E.g., you could round any timestamp to the
      * theoretical upper bound. But we cannot use only this method because of partition splits.
-     * - min timestamp of the next partition, e.g. if partition was split, we cannot use ceil function but rather
+     * - min timestamp of the next partition, e.g., if partition was split, we cannot use ceil function but rather
      * the min timestamp of the next partition MINUS ONE (to ensure timestamp is inclusive). However, we cannot use this
-     * method only because of gaps in partitions. E.g. daily partition could have a gap for weekend.
-     * - we also cannot just grab next partition, and we need to be mindful of the partition count. To avoid index out of
-     * bounds errors.
+     * method only because of gaps in partitions. E.g., daily partition could have a gap for weekend.
+     * - we also cannot just grab the next partition, and we need to be mindful of the partition count. To avoid
+     * index-out-of-bounds errors.
      * <p>
      * To calculate the bound we will:
-     * 1. check if we can access next partition. If we cannot - it means this is the last partition, and we can
+     * 1. check if we can access the next partition. If we cannot - it means this is the last partition, and we can
      * use the ceil function and that would be it.
-     * 2. We can access next partition - great, we get its min timestamp but, next gotcha - there could be a gap,
+     * 2. We can access the next partition - great, we get its min timestamp but, next gotcha - there could be a gap,
      * so we take a min between the ceil value and the next timestamp value.
      * <p>
      * <p>
@@ -510,7 +510,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeBitmapIndexCache();
             freeColumns();
             freeParquetPartitions();
-            // Don't forget to copy source metadata upfront - we don't need to deal with metadata transition index.
+            // Remember to copy source metadata upfront - we don't need to deal with metadata transition index.
             metadata.loadFrom(srcReader.metadata);
         }
         // Copy source reader's state.
@@ -583,7 +583,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     /**
      * Opens given partition for reading. Native partitions become immediately readable
-     * after this call through mmapped memory. For Parquet partitions, the file is open
+     * after this call through mapped memory. For Parquet partitions, the file is open
      * for read with fd available via {@link #getParquetAddr(int)}} call.
      *
      * @param partitionIndex partition index
@@ -727,19 +727,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-        int columnBase = getColumnBase(partitionIndex);
+        closePartitionResources(partitionIndex, offset);
         if (partitionSize > -1) {
-            closePartitionResources(partitionIndex, offset);
             openPartitionCount--;
         }
+        int columnBase = getColumnBase(partitionIndex);
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
-        for (int i = baseIndex, n = newBaseIndex - 1; i < n; i++) {
-            // Close columns before deleting the objects.
-            // FD leak caught by failing fuzz tests.
-            Misc.free(columns.get(i));
-        }
         columns.remove(baseIndex, newBaseIndex - 1);
+        bitmapIndexes.remove(baseIndex, newBaseIndex - 1);
 
         int colTopStart = columnBase / 2;
         int columnSlotSize = getColumnBase(1);
@@ -774,7 +770,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
         closePartitionResources(partitionIndex, offset);
-        LOG.infoW().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
+        LOG.info().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
         if (partitionSize > -1) {
             openPartitionCount--;
         }
@@ -794,7 +790,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void closePartitionResources(int partitionIndex, int offset) {
-        // we will call this method even if partition has been closed already, or it doesn't exist
+        // we will call this method even if partition has been closed already, or it doesn't exist,
         // hence we ignore the "unknown" format
         final byte format = getPartitionFormat(partitionIndex);
         switch (format) {

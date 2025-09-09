@@ -301,9 +301,4 @@ public class NullMemoryCMR implements MemoryCMR {
     public long size() {
         return 0;
     }
-
-    @Override
-    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        throw new UnsupportedOperationException();
-    }
 }

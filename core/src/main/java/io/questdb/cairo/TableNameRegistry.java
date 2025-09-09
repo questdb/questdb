@@ -37,13 +37,13 @@ public interface TableNameRegistry extends Closeable {
      * calling code should treat it as table does not exist on queries, table already exists on "create" operations
      * and table does not exit on "drop" operations.
      */
-    TableToken LOCKED_DROP_TOKEN = new TableToken("__locked_drop__", "__locked_drop__", Integer.MAX_VALUE - 1, false, false, false);
+    TableToken LOCKED_DROP_TOKEN = new TableToken("__locked_drop__", "__locked_drop__", null, Integer.MAX_VALUE - 1, false, false, false);
     /**
      * Table token that is used to lock table name during table creation. It is not a valid table token and the
      * calling code should treat it as table does not exist on queries, table retry on "create" operations
      * and table does not exit on "drop" operations.
      */
-    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false, false);
+    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", null, Integer.MAX_VALUE, false, false, false);
 
     static boolean isLocked(TableToken tableToken) {
         return tableToken == LOCKED_TOKEN || tableToken == LOCKED_DROP_TOKEN;

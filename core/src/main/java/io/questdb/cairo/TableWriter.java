@@ -394,7 +394,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             this.path = new Path();
             path.of(root);
-            this.pathRootSize = path.size();
+            this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
             path.concat(tableToken);
             this.other = new Path();
             other.of(root).concat(tableToken);
@@ -1627,7 +1627,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-            parquetMetadata.copyTo(metadata, false);
+            parquetMetadata.copyToSansUnsupported(metadata, false);
 
             parquetColumnIdsAndTypes.clear();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -5108,7 +5108,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tempMem16b != 0) {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
-            LOG.info().$("closed '").$(tableToken).I$();
+            LOG.info().$("closed [table=").$(tableToken).I$();
         }
     }
 
@@ -5686,7 +5686,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexWriter.setMaxValue(partitionSize - 1);
             }
         } finally {
-            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
             Misc.free(parquetDecoder);
         }
     }
@@ -8570,7 +8572,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             return parquetStatBuffers.getMinValueLong(0);
         } finally {
-            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
             Misc.free(parquetDecoder);
         }
     }
@@ -8680,7 +8684,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return parquetDecoder.metadata().rowCount();
         } finally {
-            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
             Misc.free(parquetDecoder);
         }
     }
@@ -8748,7 +8754,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // If table is removed / renamed, this should fail with table does not exist.
             todoCount = openTodoMem();
         } catch (CairoException ex) {
-            if (ex.errnoFileCannotRead()) {
+            if (ex.isFileCannotRead()) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName());
             }
             throw ex;

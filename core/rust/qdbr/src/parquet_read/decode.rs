@@ -864,7 +864,7 @@ pub fn decode_page(
         | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
-                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::String) => {
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -875,7 +875,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Varchar) => {
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -907,7 +907,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, None, ColumnTypeTag::String) => {
+                (Encoding::Plain, _, ColumnTypeTag::String) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -962,10 +962,10 @@ pub fn decode_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::ByteArray, None, _) => {
+        (PhysicalType::ByteArray, _, _) => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
-                (Encoding::Plain, None, ColumnTypeTag::Binary) => {
+                (Encoding::Plain, _, ColumnTypeTag::Binary) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -975,7 +975,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Binary) => {
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -1007,7 +1007,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, None, ColumnTypeTag::Array) => {
+                (Encoding::Plain, _, ColumnTypeTag::Array) => {
                     // raw array encoding
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
@@ -1018,7 +1018,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Array) => {
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -1073,46 +1073,76 @@ pub fn decode_page(
                 _ => Err(encoding_error),
             }
         }
-        (typ, None, _) => {
+        (PhysicalType::Double, _, _) => match (page.encoding(), dict, column_type.tag()) {
+            (Encoding::Plain, _, ColumnTypeTag::Double) => {
+                bufs.aux_vec.clear();
+                bufs.aux_ptr = ptr::null_mut();
+
+                decode_page0(
+                    page,
+                    row_lo,
+                    row_hi,
+                    &mut FixedDoubleColumnSink::new(
+                        &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
+                        bufs,
+                        &DOUBLE_NULL,
+                    ),
+                )?;
+                Ok(())
+            }
+            (
+                Encoding::RleDictionary | Encoding::PlainDictionary,
+                Some(dict_page),
+                ColumnTypeTag::Double,
+            ) => {
+                bufs.aux_vec.clear();
+                bufs.aux_ptr = ptr::null_mut();
+
+                let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
+                let mut slicer = RleDictionarySlicer::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    row_count,
+                    &DOUBLE_NULL,
+                )?;
+                decode_page0(
+                    page,
+                    row_lo,
+                    row_hi,
+                    &mut FixedDoubleColumnSink::new(&mut slicer, bufs, &DOUBLE_NULL),
+                )?;
+                Ok(())
+            }
+            (Encoding::Plain, _, ColumnTypeTag::Array) => {
+                let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
+                decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
+                Ok(())
+            }
+            (
+                Encoding::RleDictionary | Encoding::PlainDictionary,
+                Some(dict_page),
+                ColumnTypeTag::Array,
+            ) => {
+                let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
+                let mut slicer = RleDictionarySlicer::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    row_count,
+                    &DOUBLE_NULL,
+                )?;
+                decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
+                Ok(())
+            }
+            _ => Err(encoding_error),
+        },
+        // check remaining fixed-size types
+        (typ, _, _) => {
             bufs.aux_vec.clear();
             bufs.aux_ptr = ptr::null_mut();
 
             match (page.encoding(), dict, typ, column_type.tag()) {
-                (Encoding::Plain, None, PhysicalType::Double, ColumnTypeTag::Double) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut FixedDoubleColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            bufs,
-                            &DOUBLE_NULL,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    PhysicalType::Double,
-                    ColumnTypeTag::Double,
-                ) => {
-                    let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &DOUBLE_NULL,
-                    )?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut FixedDoubleColumnSink::new(&mut slicer, bufs, &DOUBLE_NULL),
-                    )?;
-                    Ok(())
-                }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
@@ -1135,7 +1165,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, None, PhysicalType::Float, ColumnTypeTag::Float) => {
+                (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -1148,7 +1178,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, None, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
+                (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -1161,7 +1191,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::Rle, None, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
+                (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -1172,34 +1202,11 @@ pub fn decode_page(
                             &[0],
                         ),
                     )?;
-                    Ok(())
-                }
-                (Encoding::Plain, None, PhysicalType::Double, ColumnTypeTag::Array) => {
-                    let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
-                    decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    PhysicalType::Double,
-                    ColumnTypeTag::Array,
-                ) => {
-                    let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &DOUBLE_NULL,
-                    )?;
-                    decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
                     Ok(())
                 }
                 _ => Err(encoding_error),
             }
         }
-        _ => Err(encoding_error),
     };
 
     match decoding_result {

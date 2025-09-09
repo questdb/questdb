@@ -107,20 +107,23 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, final long size, int memoryTag, int opts, int madviseOpts) {
         this.memoryTag = memoryTag;
         this.madviseOpts = madviseOpts;
         try {
             openFile(ff, name);
+            long newSize;
             if (size < 0) {
-                size = ff.length(fd);
-                if (size < 0) {
+                newSize = ff.length(fd);
+                if (newSize < 0) {
                     close();
                     throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
                 }
+            } else {
+                newSize = size;
             }
-            assert !VM_PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
-            map(ff, name, size);
+            assert !VM_PARANOIA_MODE || newSize <= ff.length(fd) || newSize <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
+            map(ff, name, newSize);
         } catch (Throwable e) {
             close();
             throw e;
@@ -131,12 +134,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     public void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         // Override default implementation to defer ff.length() call to use fd instead of path
         of(ff, name, ff.getPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
-    }
-
-    @Override
-    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        // Override default implementation to defer ff.length() call to use fd instead of path
-        of(ff, name, ff.getMapPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     private void openFile(FilesFacade ff, LPSZ name) {
