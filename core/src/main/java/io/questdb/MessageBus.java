@@ -68,7 +68,7 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
-    MPSequence getCopyExportRequestPubSeq();
+    SPSequence getCopyExportRequestPubSeq();
 
     RingQueue<CopyExportRequestTask> getCopyExportRequestQueue();
 
@@ -80,7 +80,7 @@ public interface MessageBus extends Closeable {
 
     RingQueue<CopyImportTask> getCopyImportQueue();
 
-    MPSequence getCopyImportRequestPubSeq();
+    SPSequence getCopyImportRequestPubSeq();
 
     RingQueue<CopyImportRequestTask> getCopyImportRequestQueue();
 

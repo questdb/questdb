@@ -2304,7 +2304,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
 
-    private RecordCursorFactory compileCopyTo(SecurityContext securityContext, CopyModel model) throws SqlException {
+    private RecordCursorFactory compileCopyTo(SecurityContext securityContext, CopyModel model, CharSequence sqlText) throws SqlException {
         assert !model.isCancel();
 
         if (model.getTableName() != null) {
@@ -2317,7 +2317,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 messageBus,
                 engine.getCopyExportContext(),
                 model,
-                securityContext
+                securityContext,
+                sqlText
         );
     }
 
@@ -3280,7 +3281,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (copyModel.getType() == CopyModel.COPY_TYPE_FROM) {
                     copyFactory = compileCopyFrom(executionContext.getSecurityContext(), copyModel);
                 } else {
-                    copyFactory = compileCopyTo(executionContext.getSecurityContext(), copyModel);
+                    copyFactory = compileCopyTo(executionContext.getSecurityContext(), copyModel, sqlText);
                 }
             }
             compiledQuery.ofPseudoSelect(copyFactory);

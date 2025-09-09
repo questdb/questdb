@@ -62,13 +62,13 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnTask> columnTaskQueue;
     private final MCSequence columnTaskSubSeq;
     private final CairoConfiguration configuration;
-    private final MPSequence copyExportRequestPubSeq;
+    private final SPSequence copyExportRequestPubSeq;
     private final RingQueue<CopyExportRequestTask> copyExportRequestQueue;
     private final SCSequence copyExportRequestSubSeq;
     private final SCSequence copyImportColSeq;
     private final SPSequence copyImportPubSeq;
     private final RingQueue<CopyImportTask> copyImportQueue;
-    private final MPSequence copyImportRequestPubSeq;
+    private final SPSequence copyImportRequestPubSeq;
     private final RingQueue<CopyImportRequestTask> copyImportRequestQueue;
     private final SCSequence copyImportRequestSubSeq;
     private final MCSequence copyImportSubSeq;
@@ -201,13 +201,13 @@ public class MessageBusImpl implements MessageBus {
 
             // We allow only a single parallel import to be in-flight, hence queue size of 1.
             this.copyImportRequestQueue = new RingQueue<>(CopyImportRequestTask::new, 1);
-            this.copyImportRequestPubSeq = new MPSequence(copyImportRequestQueue.getCycle());
+            this.copyImportRequestPubSeq = new SPSequence(copyImportRequestQueue.getCycle());
             this.copyImportRequestSubSeq = new SCSequence();
             copyImportRequestPubSeq.then(copyImportRequestSubSeq).then(copyImportRequestPubSeq);
 
             // We allow only a single parallel export to be in-flight, hence queue size of 1.
             this.copyExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, 1);
-            this.copyExportRequestPubSeq = new MPSequence(copyExportRequestQueue.getCycle());
+            this.copyExportRequestPubSeq = new SPSequence(copyExportRequestQueue.getCycle());
             this.copyExportRequestSubSeq = new SCSequence();
             copyExportRequestPubSeq.then(copyExportRequestSubSeq).then(copyExportRequestPubSeq);
 
@@ -309,7 +309,7 @@ public class MessageBusImpl implements MessageBus {
 
 
     @Override
-    public MPSequence getCopyExportRequestPubSeq() {
+    public SPSequence getCopyExportRequestPubSeq() {
         return copyExportRequestPubSeq;
     }
 
@@ -339,7 +339,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getCopyImportRequestPubSeq() {
+    public SPSequence getCopyImportRequestPubSeq() {
         return copyImportRequestPubSeq;
     }
 

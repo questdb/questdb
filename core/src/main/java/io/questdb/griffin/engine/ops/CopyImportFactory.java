@@ -39,8 +39,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
 import io.questdb.griffin.model.CopyModel;
-import io.questdb.mp.MPSequence;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -50,6 +52,7 @@ import io.questdb.std.str.StringSink;
  * nicely with server-side statements in PG Wire and query caching in general.
  */
 public class CopyImportFactory extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(CopyImportFactory.class);
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
@@ -88,16 +91,19 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyImportRequestTask> copyImportRequestQueue = messageBus.getCopyImportRequestQueue();
-        final MPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyImportContext.getCircuitBreaker();
-
-        long activeCopyID = copyImportContext.getActiveImportID();
-        if (activeCopyID == CopyImportContext.INACTIVE_COPY_ID) {
+        long copyID = copyImportContext.assignActiveImportId(executionContext.getSecurityContext());
+        if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
+            final RingQueue<CopyImportRequestTask> copyImportRequestQueue = messageBus.getCopyImportRequestQueue();
+            final SPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
             long processingCursor = copyRequestPubSeq.next();
-            if (processingCursor > -1) {
+            importIdSink.clear();
+            Numbers.appendHex(importIdSink, copyID, true);
+
+            try {
+                assert processingCursor > -1;
                 final CopyImportRequestTask task = copyImportRequestQueue.get(processingCursor);
-                long copyID = copyImportContext.assignActiveImportId(executionContext.getSecurityContext());
+                circuitBreaker.reset();
                 task.of(
                         executionContext.getSecurityContext(),
                         copyID,
@@ -111,25 +117,25 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
                         atomicity
                 );
 
-                circuitBreaker.reset();
-                copyRequestPubSeq.done(processingCursor);
-
-                importIdSink.clear();
-                Numbers.appendHex(importIdSink, copyID, true);
                 record.setValue(importIdSink);
                 cursor.toTop();
                 return cursor;
-            } else {
-                throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
+            } catch (Throwable ex) {
+                copyImportContext.clear();
+                LOG.errorW().$("copy import failed [id=").$(importIdSink).$(", message=").$(ex.getMessage()).I$();
+                throw ex;
+            } finally {
+                copyRequestPubSeq.done(processingCursor);
             }
+        } else {
+            long activeCopyID = copyImportContext.getActiveImportID();
+            importIdSink.clear();
+            Numbers.appendHex(importIdSink, activeCopyID, true);
+            throw SqlException.$(0, "unable to process the import request - another import may be in progress")
+                    .put(" [activeImportId=")
+                    .put(importIdSink)
+                    .put(']');
         }
-
-        importIdSink.clear();
-        Numbers.appendHex(importIdSink, activeCopyID, true);
-        throw SqlException.$(0, "Another import request is in progress. ")
-                .put("[activeImportId=")
-                .put(importIdSink)
-                .put(']');
     }
 
     @Override

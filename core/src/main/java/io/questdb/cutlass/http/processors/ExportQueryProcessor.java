@@ -643,7 +643,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     engine.getCopyExportContext(),
                     model,
                     context.getSecurityContext(),
-                    state.suspendEvent
+                    state.suspendEvent,
+                    state.query
             );
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

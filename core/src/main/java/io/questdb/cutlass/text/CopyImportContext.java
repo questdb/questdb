@@ -41,16 +41,17 @@ public class CopyImportContext implements Mutable {
     private final LongSupplier copyIDSupplier;
     private SecurityContext importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
-
     public CopyImportContext(CairoConfiguration configuration) {
         this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
     public long assignActiveImportId(SecurityContext securityContext) {
         final long id = copyIDSupplier.getAsLong();
-        activeImportID.set(id);
-        this.importOriginatorSecurityContext = securityContext;
-        return id;
+        if (activeImportID.compareAndSet(INACTIVE_COPY_ID, id)) {
+            this.importOriginatorSecurityContext = securityContext;
+            return id;
+        }
+        return INACTIVE_COPY_ID;
     }
 
     @Override
