@@ -463,7 +463,6 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     private static Path newTLPath() {
         if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
-            // Uncomment this line if you need to trace thread local create callstack
             Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet());
             ex.printStackTrace(System.err);
             return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
