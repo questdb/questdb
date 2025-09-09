@@ -129,6 +129,7 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
+    private static final int TYPE_FLAG_ARRAY_WEAK_DIMS = (1 << 19);
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final IntHashSet arrayTypeSet = new IntHashSet();
@@ -197,13 +198,17 @@ public final class ColumnType {
      * <br>
      * The encoded type is laid out as follows:
      * <pre>
-     *     31~19      18~14       13~8           7~0
-     * +----------+----------+-----------+------------------+
-     * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
-     * +----------+----------+-----------+------------------+
-     * |          |  5 bits  |  6 bits   |      8 bits      |
-     * +----------+----------+-----------+------------------+
+     *     31~20      19        18~14       13~8           7~0
+     * +----------+----------+----------+-----------+------------------+
+     * | Reserved | WeakDims |  nDims   | elemType  | ColumnType.ARRAY |
+     * +----------+----------+----------+-----------+------------------+
+     * |          |  1 bit   |  5 bits  |  6 bits   |      8 bits      |
+     * +----------+----------+----------+-----------+------------------+
      * </pre>
+     * <p>
+     * WeakDims bit (19): When set, indicates the dimensionality is tentative and
+     * can be updated based on actual data. This is useful for PostgreSQL wire
+     * protocol where type information doesn't include array dimensions.
      *
      * @param elemType one of the supported array element type tags.
      * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
@@ -217,6 +222,16 @@ public final class ColumnType {
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
                 | (elemType & ARRAY_ELEMTYPE_FIELD_MASK) << ARRAY_ELEMTYPE_FIELD_POS
                 | ARRAY;
+    }
+
+    /**
+     * Encodes an array type with weak dimensionality. The dimensionality is still
+     * encoded but marked as tentative and can be updated based on actual data.
+     * This is useful for PostgreSQL wire protocol where type information doesn't
+     * include array dimensions.
+     */
+    public static int encodeArrayTypeWithWeakDims(short elemType, int nDims) {
+        return encodeArrayType(elemType, nDims, true) | TYPE_FLAG_ARRAY_WEAK_DIMS;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -256,6 +271,14 @@ public final class ColumnType {
      */
     public static boolean isArray(int columnType) {
         return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
+    }
+
+    /**
+     * Checks if an array type has weak dimensionality, meaning the dimensionality
+     * is tentative and can be updated based on actual data.
+     */
+    public static boolean isArrayWithWeakDims(int columnType) {
+        return isArray(columnType) && (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0;
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -412,18 +435,14 @@ public final class ColumnType {
     }
 
     public static boolean isUndefined(int columnType) {
-        return columnType == UNDEFINED;
-    }
-
-    public static boolean isUnderdefined(int columnType) {
         return columnType == UNDEFINED || isUndefinedArray(columnType);
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING ||
-                columnType == BINARY ||
-                columnType == VARCHAR ||
-                tagOf(columnType) == ARRAY;
+        return columnType == STRING
+                || columnType == BINARY
+                || columnType == VARCHAR
+                || tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
@@ -603,7 +622,8 @@ public final class ColumnType {
     }
 
     private static boolean isUndefinedArray(int columnType) {
-        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
+        return tagOf(columnType) == ARRAY
+                && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {

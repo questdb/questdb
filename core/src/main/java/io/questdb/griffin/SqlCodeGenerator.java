@@ -306,8 +306,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -4905,7 +4905,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // define "undefined" functions as string unless it's update.
                 if (model.isUpdate()) {
-                    if (ColumnType.isUnderdefined(function.getType())) {
+                    if (ColumnType.isUndefined(function.getType())) {
                         function.assignType(targetColumnType, executionContext.getBindVariableService());
                     }
                 } else if (function.isUndefined()) {

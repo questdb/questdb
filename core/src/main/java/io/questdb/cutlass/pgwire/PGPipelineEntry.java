@@ -1340,7 +1340,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.FLOAT, 1, false), 0);
                 break;
             case X_PG_ARR_FLOAT8:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, 1), 0);
                 break;
             case X_PG_ARR_DATE:
                 bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.DATE, 1, false), 0);

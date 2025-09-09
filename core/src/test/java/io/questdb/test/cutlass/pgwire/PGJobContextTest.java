@@ -5937,7 +5937,6 @@ nodejs code:
     @Test
     public void testInsertTwoDimensionalArrayBindingVars() throws Exception {
         skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();

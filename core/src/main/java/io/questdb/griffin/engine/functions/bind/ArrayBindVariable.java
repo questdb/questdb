@@ -46,7 +46,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
             return;
         }
         int viewType = view.getType();
-        if (ColumnType.isUnderdefined(viewType)) {
+        if (ColumnType.isUndefined(viewType)) {
             super.type = type;
         }
 
@@ -83,7 +83,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
         if (elementType != ColumnType.LONG && elementType != ColumnType.DOUBLE) {
             throw CairoException.nonCritical().put("unsupported array type, only DOUBLE is currently supported [type=").put(ColumnType.nameOf(elementType)).put(']');
         }
-        if (ColumnType.isUnderdefined(type)) {
+        if (ColumnType.isUndefined(type)) {
             type = view.getType();
         } else {
             if (type != view.getType()) {
