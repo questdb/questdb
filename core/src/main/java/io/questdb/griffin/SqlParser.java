@@ -3681,13 +3681,13 @@ public class SqlParser {
      * select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
      * <p>
      * Notes:
-     * - varchar cast it rewritten in a special way, e.g. removed
+     * - varchar cast is rewritten in a special way, e.g. removed
      * - subset of types is handled more efficiently in the 3-arg function
      * - the remaining type casts are not rewritten, e.g. left as is
      */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCastKeyword(node.token)) {
-            if (node.lhs != null && isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
+            if (node.lhs != null && node.lhs.paramCount == 2 && isJsonExtract(node.lhs.token)) {
                 // rewrite cast such as
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
