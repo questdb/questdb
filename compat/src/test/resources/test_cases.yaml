@@ -3,7 +3,7 @@ variables:
 
 tests:
   - name: Test Array in binding var in a function
-    description: Test inserting and selecting empty array.
+    description: Test selecting function with array argument.
     steps:
       - action: query
         query: "select array_position($[1], 2.0) from long_sequence(1)"
@@ -13,6 +13,36 @@ tests:
         expect:
           result_contains:
             - [ 2 ]
+  - name: Test Insert Array Function
+    description: test insert function with array argument.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE pos_table (pos INT);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 3
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO pos_table (pos) VALUES (array_position($[1], 3.0));"
+              parameters:
+                - value: "{1.0, 2.0, 3.0}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM pos_table"
+        expect:
+          result_contains:
+            - [ 3 ]
+            - [ 3 ]
+            - [ 3 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS pos_table;"
   - name: Test Empty Array
     description: Test inserting and selecting empty array.
     prepare:
