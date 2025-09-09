@@ -46,10 +46,13 @@ public final class DecimalUtil {
      * The literal may end with [m/M] but not necessarily.
      * @param tok token containing the literal
      * @param len length of the token
+     * @param position the position in the SQL query for error reporting
+     * @param precision of the decimal (or -1 to infer from literal)
+     * @param scale of the decimal (or -1 to infer from literal)
      * @return a ConstantFunction containing the value parsed
-     * @throws NumericException if the value couldn't be parsed
+     * @throws SqlException if the value couldn't be parsed with detailed error message
      */
-    public static @NotNull ConstantFunction parseDecimalConstant(final CharSequence tok, final int len) throws NumericException {
+    public static @NotNull ConstantFunction parseDecimalConstant(final CharSequence tok, final int len, int position, int precision, int scale) throws SqlException {
         int lo = 0;
         int hi = len;
 
@@ -63,7 +66,7 @@ public final class DecimalUtil {
         }
 
         if (lo == hi) {
-            throw NumericException.instance();
+            throw SqlException.position(position).put("invalid decimal: empty value");
         }
 
         // Parses sign
@@ -75,22 +78,47 @@ public final class DecimalUtil {
             lo++;
         }
 
-        while (lo < hi && tok.charAt(lo) == '0') {
+        if (lo == hi) {
+            throw SqlException.position(position).put("invalid decimal: empty value");
+        }
+
+        // Remove leading zeros
+        while (lo < hi - 1 && tok.charAt(lo) == '0') {
             lo++;
         }
 
-        if (lo == hi) {
-            throw NumericException.instance();
+        // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
+        // measure the given precision/scale.
+        int dot = validateDecimalLiteral(tok, lo, hi, position);
+
+        int s = dot == -1 ? 0 : (hi - dot - 1);
+        if (scale == -1) {
+            scale = s;
+        } else if (s > scale) {
+            throw SqlException.position(position)
+                    .put("decimal '").put(tok, 0, len)
+                    .put("' has ").put(s).put(" decimal places but scale is limited to ").put(scale);
+        }
+        if (scale > Decimals.MAX_SCALE) {
+            throw SqlException.position(position)
+                    .put("decimal '").put(tok)
+                    .put("' exceeds maximum allowed scale of ").put(Decimals.MAX_SCALE);
         }
 
-        // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
-        // measure the precision/scale.
-        int dot = validateDecimalLiteral(tok, lo, hi);
-        int precision = hi - lo - (dot == -1 ? 0 : 1);
-        if (precision > Decimals.MAX_PRECISION) {
-            throw NumericException.instance();
+        int prec = hi - lo - (dot == -1 ? 0 : 1) - s + scale;
+        if (precision == -1) {
+            precision = prec;
+        } else if (prec > precision) {
+            throw SqlException.position(position)
+                    .put("decimal '").put(tok, 0, len)
+                    .put("' requires precision of ").put(prec)
+                    .put(" but is limited to ").put(precision);
         }
-        int scale = dot == -1 ? 0 : (hi - dot - 1);
+        if (precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(position)
+                    .put("decimal '").put(tok, 0, len)
+                    .put("' exceeds maximum allowed precision of ").put(Decimals.MAX_PRECISION);
+        }
 
         long hh = 0L;
         long hl = 0L;
@@ -98,7 +126,7 @@ public final class DecimalUtil {
         long ll = 0L;
         // Actual parsing of the number on a second pass, we're relying on Decimal256 to do
         // the proper scaling.
-        int pow = precision;
+        int pow = prec;
         for (int p = lo; p < hi; p++) {
             if (p == dot) {
                 continue;
@@ -172,10 +200,31 @@ public final class DecimalUtil {
     }
 
     /**
+     * Creates a new null constant Decimal.
+     */
+    public static @NotNull ConstantFunction createNullDecimalConstant(int precision, int scale) {
+        int type = ColumnType.getDecimalType(precision, scale);
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8:
+                return Decimal8Constant.NULL;
+            case ColumnType.DECIMAL16:
+                return Decimal16Constant.NULL;
+            case ColumnType.DECIMAL32:
+                return Decimal32Constant.NULL;
+            case ColumnType.DECIMAL64:
+                return Decimal64Constant.NULL;
+            case ColumnType.DECIMAL128:
+                return Decimal128Constant.NULL;
+            default:
+                return Decimal256Constant.NULL;
+        }
+    }
+
+    /**
      * Pass over a literal and validates that it only contains digits and at most 1 dot.
      * If a dot is found, it returns its position, -1 otherwise.
      */
-    private static int validateDecimalLiteral(CharSequence tok, int lo, int hi) throws NumericException {
+    private static int validateDecimalLiteral(CharSequence tok, int lo, int hi, int position) throws SqlException {
         int dot = -1;
         boolean digitFound = false;
         for (int p = lo; p < hi; p++) {
@@ -187,10 +236,14 @@ public final class DecimalUtil {
                 dot = p;
                 continue;
             }
-            throw NumericException.instance();
+            throw SqlException.position(position)
+                    .put("invalid decimal: '").put(tok, lo, hi)
+                    .put("' contains invalid character '").put(c).put("'");
         }
         if (!digitFound) {
-            throw NumericException.instance();
+            throw SqlException.position(position)
+                    .put("invalid decimal: '").put(tok, lo, hi)
+                    .put("' contains no digits");
         }
         return dot;
     }
@@ -209,7 +262,7 @@ public final class DecimalUtil {
             return Numbers.parseInt(cs, lo, hi);
         } catch (NumericException e) {
             throw SqlException.position(position)
-                    .put("invalid DECIMAL precision, must be a number");
+                    .put("invalid DECIMAL type, precision must be a number");
         }
     }
 
@@ -223,7 +276,7 @@ public final class DecimalUtil {
             return Numbers.parseInt(cs, lo, hi);
         } catch (NumericException e) {
             throw SqlException.position(position)
-                    .put("invalid DECIMAL scale, must be a number");
+                    .put("invalid DECIMAL type, scale must be a number");
         }
     }
 }
