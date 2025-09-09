@@ -35,16 +35,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
@@ -92,6 +82,13 @@ import io.questdb.griffin.engine.functions.constants.CharTypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
+import io.questdb.griffin.engine.functions.constants.DecimalTypeConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
@@ -110,6 +107,16 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
@@ -119,6 +126,8 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.IntStack;
 import io.questdb.std.Long256Impl;
@@ -734,6 +743,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
 
+        //region decimal
+        if (len >= DECIMAL_KEYWORD_LENGTH + 1 && startsWithDecimalKeyword(tok) && tok.charAt(7) == '_') {
+            return createDecimalTypeConstant(tok, len, position);
+        }
+
+        if (len > 1 && (tok.charAt(len - 1) == 'm' || tok.charAt(len - 1) == 'M')) {
+            return DecimalUtil.parseDecimalConstant(tok, len, position, -1, -1);
+        }
+        //endregion
+
         // long256
         if (Numbers.extractLong256(tok, long256Sink)) {
             return new Long256Constant(long256Sink); // values are copied from this sink
@@ -751,6 +770,58 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } finally {
             sqlExecutionContext.popTimestampRequiredFlag();
         }
+    }
+
+    /**
+     * Creates a DecimalTypeConstant function from a token representing a decimal type specification.
+     * <p>
+     * This function parses tokens in the format DECIMAL_p or DECIMAL_p_s, where 'p' represents
+     * the precision (total number of digits) and 's' represents the scale (number of decimal places).
+     * The token format uses underscores as separators because parentheses are handled separately
+     * by the expression parser.
+     *
+     * @param tok      the token containing the decimal type specification (e.g., "DECIMAL_10" or "DECIMAL_10_2")
+     * @param len      the length of the token
+     * @param position the position in the SQL query for error reporting
+     * @return a DecimalTypeConstant containing the validated precision and scale
+     * @throws SqlException if:
+     *                      - precision is not between 1 and MAX_PRECISION
+     *                      - scale is not between 0 and MAX_SCALE
+     *                      - the token format is invalid or contains non-numeric values
+     */
+    private Function createDecimalTypeConstant(CharSequence tok, int len, int position) throws SqlException {
+        // A decimal type is of the format DECIMAL_p[_s], to this point we have only validated `DECIMAL_`.
+        int precision;
+        int scale = 0;
+        if (tok instanceof GenericLexer.FloatingSequencePair) {
+            CharSequence cs1 = ((GenericLexer.FloatingSequencePair) tok).cs1;
+            precision = DecimalUtil.parsePrecision(position, cs1, 0, cs1.length());
+        } else if (tok instanceof GenericLexer.FloatingSequenceTriple) {
+            CharSequence cs1 = ((GenericLexer.FloatingSequenceTriple) tok).cs1;
+            CharSequence cs2 = ((GenericLexer.FloatingSequenceTriple) tok).cs2;
+            precision = DecimalUtil.parsePrecision(position, cs1, 0, cs1.length());
+            scale = DecimalUtil.parseScale(position, cs2, 0, cs2.length());
+        } else {
+            // Slower path
+            int sepIndex = Chars.indexOf(tok, 8, '_');
+            precision = DecimalUtil.parsePrecision(position, tok, 8, sepIndex == -1 ? len : sepIndex);
+            if (sepIndex != -1) {
+                scale = DecimalUtil.parseScale(position, tok, sepIndex + 1, len);
+            }
+        }
+
+        if (precision <= 0 || precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(position)
+                    .put("invalid DECIMAL type, the precision must be between 1 and ")
+                    .put(Decimals.MAX_PRECISION);
+        }
+        if (scale < 0 || scale > Decimals.MAX_SCALE) {
+            throw SqlException.position(position)
+                    .put("invalid DECIMAL type, the scale must be between 0 and ")
+                    .put(Decimals.MAX_SCALE);
+        }
+
+        return new DecimalTypeConstant(precision, scale);
     }
 
     private Function createFunction(
@@ -778,9 +849,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         && argCount == 2
                         && args.getQuick(1).isConstant()
         ) skipAssigningType:{
+            Function arg0 = args.getQuick(0);
+            final int fromType = arg0.getType();
+            final int castToType = args.getQuick(1).getType();
             // If this the cast into same type, return the first argument
-            if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
+            if (args.getQuick(0).getType() == castToType) {
                 return args.getQuick(0);
+            }
+
+            // We manually handle the float/double to decimal cast here to avoid precision loss
+            if (node.lhs.type == ExpressionNode.CONSTANT && ColumnType.isDecimal(castToType) &&
+                    (fromType == ColumnType.DOUBLE || fromType == ColumnType.FLOAT)) {
+                int precision = ColumnType.getDecimalPrecision(castToType);
+                int scale = ColumnType.getDecimalScale(castToType);
+                return DecimalUtil.parseDecimalConstant(node.lhs.token, node.lhs.token.length(), node.lhs.position, precision, scale);
             }
 
             // If a bind variable of unknown type appears inside a cast expression, we should
@@ -789,9 +871,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // whatever happens to be the first cast function in the traversal order, and force
             // the bind variable to that type. This will then fail when an actual value is bound
             // to the variable, and it's most likely not that arbitrary type.
-            Function arg0 = args.getQuick(0);
-            if (ColumnType.isUnderdefined(arg0.getType())) {
-                final int castToType = args.getQuick(1).getType();
+            if (ColumnType.isUnderdefined(fromType)) {
                 short castToTypeTag = ColumnType.tagOf(castToType);
                 final int assignType;
                 switch (castToTypeTag) {
@@ -906,7 +986,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     factory.supportImplicitCastCharToStr() &&
                                     arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
-                            (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
+                            (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType)) ||
+                            (sigArgTypeTag == ColumnType.DECIMAL && ColumnType.isDecimal(argType))) {
                         match = mergeWithExactMatch(match);
                         continue;
                     }
@@ -1289,6 +1370,52 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return new ArrayConstant((FunctionArray) array);
                 }
                 return function;
+            case ColumnType.DECIMAL8:
+                if (function instanceof Decimal8Constant) {
+                    return function;
+                } else {
+                    return new Decimal8Constant(function.getDecimal8(null), type);
+                }
+            case ColumnType.DECIMAL16:
+                if (function instanceof Decimal16Constant) {
+                    return function;
+                } else {
+                    return new Decimal16Constant(function.getDecimal16(null), type);
+                }
+            case ColumnType.DECIMAL32:
+                if (function instanceof Decimal32Constant) {
+                    return function;
+                } else {
+                    return new Decimal32Constant(function.getDecimal32(null), type);
+                }
+            case ColumnType.DECIMAL64:
+                if (function instanceof Decimal64Constant) {
+                    return function;
+                } else {
+                    return new Decimal64Constant(function.getDecimal64(null), type);
+                }
+            case ColumnType.DECIMAL128:
+                if (function instanceof Decimal128Constant) {
+                    return function;
+                } else {
+                    return new Decimal128Constant(
+                            function.getDecimal128Hi(null),
+                            function.getDecimal128Lo(null),
+                            type
+                    );
+                }
+            case ColumnType.DECIMAL256:
+                if (function instanceof Decimal256Constant) {
+                    return function;
+                } else {
+                    return new Decimal256Constant(
+                            function.getDecimal256HH(null),
+                            function.getDecimal256HL(null),
+                            function.getDecimal256LH(null),
+                            function.getDecimal256LL(null),
+                            type
+                    );
+                }
             default:
                 return function;
         }
