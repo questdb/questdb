@@ -122,7 +122,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.ioEventSubSeq = new MCSequence(ioEventQueue.getCycle());
         this.ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
 
-        this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
+        this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getDisconnectQueueCapacity());
         this.disconnectPubSeq = new MPSequence(disconnectQueue.getCycle());
         this.disconnectSubSeq = new SCSequence();
         this.disconnectPubSeq.then(disconnectSubSeq).then(disconnectPubSeq);

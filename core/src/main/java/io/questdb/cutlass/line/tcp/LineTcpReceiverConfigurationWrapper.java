@@ -136,6 +136,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public int getDisconnectQueueCapacity() {
+        return getDelegate().getDisconnectQueueCapacity();
+    }
+
+    @Override
     public String getDispatcherLogName() {
         return getDelegate().getDispatcherLogName();
     }
@@ -173,11 +178,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public int getIOQueueCapacity() {
         return getDelegate().getIOQueueCapacity();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override
@@ -253,6 +253,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public NetworkFacade getNetworkFacade() {
         return getDelegate().getNetworkFacade();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override
