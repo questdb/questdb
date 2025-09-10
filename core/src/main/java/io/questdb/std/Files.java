@@ -125,12 +125,9 @@ public final class Files {
         return -1;
     }
 
-    public static boolean errnoFileCannotRead(int errno) {
-        return errnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
-    }
-
-    public static boolean errnoFileDoesNotExist(int errno) {
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    public static int errnoInvalidParameter() {
+        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
+                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
     }
 
     public static boolean exists(long fd) {
@@ -287,6 +284,15 @@ public final class Files {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
     }
 
+    public static boolean isErrnoFileCannotRead(int errno) {
+        return isErrnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
+    }
+
+    public static boolean isErrnoFileDoesNotExist(int errno) {
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST ||
+                (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
     public native static boolean isSoftLink(long lpszPath);
 
     public static boolean isSoftLink(LPSZ path) {
@@ -350,18 +356,8 @@ public final class Files {
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        if (newSize < 1) {
-            throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(previousSize)
-                    .put(", newSize=").put(newSize)
-                    .put(", offset=").put(offset)
-                    .put(", fd=").put(fd)
-                    .put(", memoryTag=").put(memoryTag)
-                    .put(']');
-        }
-
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheKey = fdCache.toMmapCacheKey(fd);
-
         return mmapCache.mremap(osFd, mmapCacheKey, address, previousSize, newSize, offset, flags, memoryTag);
     }
 

@@ -200,6 +200,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
+    private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
     private final int defaultSeqPartTxnCount;
@@ -305,7 +306,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
     private final int matViewRefreshWorkerCount;
@@ -329,7 +330,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
-    private final PropWorkerPoolConfiguration networkSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
@@ -362,7 +362,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
-    private final PropWorkerPoolConfiguration querySharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-query");
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int readerPoolMaxSegments;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
@@ -375,6 +374,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final long sequencerCheckInterval;
+    private final PropWorkerPoolConfiguration sharedWorkerPoolNetworkConfiguration = new PropWorkerPoolConfiguration("shared-network");
+    private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
+    private final PropWorkerPoolConfiguration sharedWorkerPoolWriteConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinEvacuationThreshold;
@@ -513,7 +515,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walWriterEventAppendPageSize;
     private final int walWriterPoolMaxSegments;
     private final long workStealTimeoutNanos;
-    private final PropWorkerPoolConfiguration writeSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final long writerAsyncCommandBusyWaitTimeout;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int writerAsyncCommandQueueCapacity;
@@ -820,6 +821,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+        this.dbLogName = getString(properties, env, PropertyKey.DEBUG_DB_LOG_NAME, null);
         String tmpRoot;
         boolean absDbDir = new File(this.dbDirectory).isAbsolute();
         if (absDbDir) {
@@ -880,12 +882,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
+        int cpuMvRefreshWorkers = 2;
         int cpuSpare = 0;
 
-        if (cpuAvailable > 16) {
-            cpuSpare = 1;
-        } else if (cpuAvailable > 32) {
+        if (cpuAvailable > 32) {
+            cpuMvRefreshWorkers = 4;
             cpuSpare = 2;
+        } else if (cpuAvailable > 16) {
+            cpuMvRefreshWorkers = 3;
+            cpuSpare = 1;
+        } else if (cpuAvailable > 8) {
+            cpuMvRefreshWorkers = 3;
         }
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
@@ -894,23 +901,30 @@ public class PropServerConfiguration implements ServerConfiguration {
             ff.mkdirs(path.of(this.dbRoot).slash(), this.mkdirMode);
             path.of(this.dbRoot).concat(TableUtils.TAB_INDEX_FILE_NAME);
             final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-            final long fileSize = ff.length(tableIndexFd);
-            if (fileSize < Long.BYTES) {
-                if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
-                    ff.close(tableIndexFd);
-                    throw CairoException.critical(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(Files.PAGE_SIZE).put(']');
+            try {
+                final long fileSize = ff.length(tableIndexFd);
+                if (fileSize < Long.BYTES) {
+                    if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
+                        throw CairoException.critical(ff.errno())
+                                .put("Could not allocate [file=").put(path)
+                                .put(", actual=").put(fileSize)
+                                .put(", desired=").put(Files.PAGE_SIZE).put(']');
+                    }
                 }
+                final long tableIndexMem = TableUtils.mapRW(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+                try {
+                    Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
+                    if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
+                        Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
+                    }
+                    this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
+                    this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
+                } finally {
+                    ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                ff.close(tableIndexFd);
             }
-
-            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
-            Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
-            if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
-                Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
-            }
-            this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
-            this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
-            ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
-            ff.close(tableIndexFd);
 
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
@@ -1287,7 +1301,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
-            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, 0); // Use shared write pool by default
+            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuMvRefreshWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
             this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
@@ -1647,7 +1661,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // IO will be slightly higher priority than query and write pools to make the server more responsive
             int networkPoolWorkerCount = configureSharedThreadPool(
                     properties, env,
-                    this.networkSharedWorkerPoolConfiguration,
+                    this.sharedWorkerPoolNetworkConfiguration,
                     PropertyKey.SHARED_NETWORK_WORKER_COUNT,
                     PropertyKey.SHARED_NETWORK_WORKER_AFFINITY,
                     sharedWorkerCountSett,
@@ -1661,7 +1675,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int queryWorkers = configureSharedThreadPool(
                     properties, env,
-                    this.querySharedWorkerPoolConfiguration,
+                    this.sharedWorkerPoolQueryConfiguration,
                     PropertyKey.SHARED_QUERY_WORKER_COUNT,
                     PropertyKey.SHARED_QUERY_WORKER_AFFINITY,
                     sharedWorkerCountSett,
@@ -1675,7 +1689,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int writeWorkers = configureSharedThreadPool(
                     properties, env,
-                    this.writeSharedWorkerPoolConfiguration,
+                    this.sharedWorkerPoolWriteConfiguration,
                     PropertyKey.SHARED_WRITE_WORKER_COUNT,
                     PropertyKey.SHARED_WRITE_WORKER_AFFINITY,
                     sharedWorkerCountSett,
@@ -1722,9 +1736,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
-            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled) {
+            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
-                querySharedWorkerPoolConfiguration.sharedWorkerCount = 0;
+                sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
@@ -1856,11 +1870,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        return networkSharedWorkerPoolConfiguration;
-    }
-
-    @Override
     public PGConfiguration getPGWireConfiguration() {
         return pgConfiguration;
     }
@@ -1871,18 +1880,23 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
-        return querySharedWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        return sharedWorkerPoolNetworkConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+        return sharedWorkerPoolQueryConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return sharedWorkerPoolWriteConfiguration;
     }
 
     @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         return walApplyPoolConfiguration;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
-        return writeSharedWorkerPoolConfiguration;
     }
 
     @Override
@@ -2972,6 +2986,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getDbDirectory() {
             return dbDirectory;
+        }
+
+        @Override
+        public @Nullable String getDbLogName() {
+            return dbLogName;
         }
 
         @Override
@@ -5168,7 +5187,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropMatViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropMatViewsRefreshPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public Metrics getMetrics() {
             return metrics;
