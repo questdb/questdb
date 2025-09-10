@@ -621,6 +621,7 @@ public final class ColumnType {
                 || (fromType == UUID && toType == STRING);
     }
 
+    // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
     private static boolean isUndefinedArray(int columnType) {
         return tagOf(columnType) == ARRAY
                 && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
