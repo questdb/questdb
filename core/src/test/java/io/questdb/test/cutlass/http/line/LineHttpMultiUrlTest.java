@@ -79,9 +79,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             t1.start();
             t2.start();
             t3.start();
-            t3.join(35_000);
-            t2.join(35_000);
-            t1.join(35_000);
+            t3.join();
+            t2.join();
+            t1.join();
 
             long c1 = t1Count.get();
             long c2 = t2Count.get();
@@ -187,13 +187,27 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testServersAllDown() throws Exception {
+        int expectedErrno;
+        switch (Os.type) {
+            case Os.WINDOWS:
+                expectedErrno = 10049;
+                break;
+            case Os.LINUX:
+                expectedErrno = 111;
+                break;
+            case Os.FREEBSD:
+            case Os.DARWIN:
+                expectedErrno = 61;
+            default:
+                throw new AssertionError("unsupported OS: " + Os.type);
+        }
         TestUtils.assertMemoryLeak(() -> {
             try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
                 sender.table("line").longColumn("foo", 123).atNow();
                 sender.flush();
                 Assert.fail();
             } catch (LineSenderException e) {
-                Assert.assertEquals(61, e.getErrno());
+                Assert.assertEquals(expectedErrno, e.getErrno());
             }
         });
     }
@@ -329,7 +343,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 if (serverMain.hasStarted()) {
                     // close it
                     serverMain.close();
-                    Os.sleep(50);
+                    Os.sleep(500);
                 }
 
                 if (serverMain.hasBeenClosed()) {
@@ -348,15 +362,14 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             }
         } finally {
             if (serverMain == null || serverMain.hasBeenClosed()) {
-
+                System.out.println(Thread.currentThread() + " is creating a new server, current serverMain = + " + serverMain);
                 serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
                 serverMain.start();
                 Os.sleep(50);
-
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = null;
-            for (int i = 0; i < 100_000; i++) {
+            for (int i = 0; i < 5_000; i++) {
                 tt = serverMain.getEngine().getTableTokenIfExists("line");
                 if (tt != null) {
                     break;
@@ -367,6 +380,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             try (TxReader txReader = new TxReader(serverMain.getEngine().getConfiguration().getFilesFacade())) {
                 count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), txReader));
             }
+            System.out.println(Thread.currentThread() + " is closing the server " + serverMain);
             Misc.free(serverMain);
             Path.clearThreadLocals();
         }

@@ -264,11 +264,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                     try {
                         response = sendWithRetries(cli, req, rnd, maxRetriesNanos);
                     } catch (HttpClientException e) {
-                        if (e.getErrno() == 61) {
-                            // server completely down
-                            continue;
-                        }
-                        throw e;
+                        // try another one
+                        continue;
                     }
                     response.await();
                     statusCode = response.getStatusCode();
@@ -732,10 +729,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     throw new LineSenderException("Could not flush buffer: ").put(url)
                             .put(" Connection Failed").put(": ").put(e.getMessage()).errno(e.getErrno());
                 }
-                if (e.getErrno() == 61) {
-                    // either a 404 or completely down
-                    rotateAddress();
-                }
+                rotateAddress();
                 retryBackoff = backoff(rnd, retryBackoff);
             }
         }
