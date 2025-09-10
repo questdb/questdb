@@ -13,6 +13,7 @@ tests:
         expect:
           result_contains:
             - [ 2 ]
+
   - name: Test Insert Array Function
     description: test insert function with array argument.
     prepare:
@@ -43,6 +44,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS pos_table;"
+
   - name: Test Empty Array
     description: Test inserting and selecting empty array.
     prepare:
@@ -75,6 +77,44 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
+  - name: Test Array Operators
+    description: Test operators for arrays, including bind variable arguments.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE array_op_table (arr double[]);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO array_op_table VALUES ($[1]);"
+              parameters:
+                - value: "{1, 2, 3}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT arr * $[1] arr1, arr / $[2] arr2, arr + $[3] arr3, arr - $[4] arr4 FROM array_op_table"
+        parameters:
+          - value: "{3, 3, 3}"
+            type: "ARRAY_FLOAT8"
+          - value: "{1, 2, 3}"
+            type: "ARRAY_FLOAT8"
+          - value: "{3, 2, 1}"
+            type: "ARRAY_FLOAT8"
+          - value: "{1, 1, 1}"
+            type: "ARRAY_FLOAT8"
+        expect:
+          result_contains:
+            - [ "{3.0,6.0,9.0}", "{1.0,1.0,1.0}", "{4.0,4.0,4.0}", "{0.0,1.0,2.0}" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS array_op_table;"
 
   - name: Test Array
     description: Test inserting and selecting data with an array.
@@ -110,6 +150,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS array_table;"
+
   - name: Test non Vanilla Arrays
     description: Selecting sliced arrays
     exclude: [ 'golang', 'sqlx' ]
@@ -184,6 +225,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS test_table;"
+
   - name: Binding in projection
     description: Test binding variable in projection, without any function
     prepare:
@@ -222,6 +264,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
   - name: In Varchar Test
     description: Test inserting and selecting data with a varchar using the IN clause.
     prepare:
@@ -260,6 +303,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
   - name: Insert and Select Test
     description: Test inserting and selecting data.
     prepare:
@@ -343,6 +387,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
   - name: Smoke Test
     description: Testing another test-case inside the same file
     iterations: 2
@@ -356,6 +401,7 @@ tests:
             - [ 3 ]
             - [ 4 ]
             - [ 5 ]
+
   - name: Parquet test
     description: This test uses the built-in Parquet demo data
     steps:
@@ -367,6 +413,7 @@ tests:
         expect:
           result_contains:
             - [ 'BTC-USD', 'buy', 66991.56, 0.00014933, '2024-07-26T07:52:48.243272Z' ]
+
   - name: Large Result Set test
     description: Fetches a large result set
     iterations: 2
@@ -383,6 +430,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
   - name: Alter table test
     description: Test altering a table
     iterations: 10
@@ -438,6 +486,7 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
   - name: Select With Limit Test
     description: Test inserting and selecting data.
     prepare:
