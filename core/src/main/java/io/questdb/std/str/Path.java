@@ -201,7 +201,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public void extend(int newCapacity) {
         assert newCapacity > capacity;
         int size = size();
-        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
+        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, memoryTag);
         tailPtr = headPtr + size;
         capacity = newCapacity;
     }
@@ -246,7 +246,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         // Copy binary array representation instead of trying to UTF8 encode it
         int len = other.size();
         if (headPtr == 0L) {
-            headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
+            headPtr = Unsafe.malloc(len + 1, memoryTag);
             capacity = len;
         } else if (capacity < len) {
             extend(len);
@@ -400,7 +400,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     public void resetCapacity() {
         if (headPtr != 0L) {
-            headPtr = Unsafe.realloc(headPtr, capacity + 1, initialCapacity + 1, MemoryTag.NATIVE_PATH);
+            headPtr = Unsafe.realloc(headPtr, capacity + 1, initialCapacity + 1, memoryTag);
             tailPtr = headPtr;
             capacity = initialCapacity;
         }
@@ -478,7 +478,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     private void checkClosed() {
         if (headPtr == 0L) {
-            headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+            headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
         }
     }
 
