@@ -52,6 +52,7 @@ import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
@@ -70,6 +71,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
 
 public class ServerMain implements Closeable {
     private final Bootstrap bootstrap;
@@ -284,7 +287,7 @@ public class ServerMain implements Closeable {
 
     public synchronized void start(boolean addShutdownHook) {
         if (!closed.get() && running.compareAndSet(false, true)) {
-            initialize();
+            initialize(bootstrap.getLog());
 
             if (addShutdownHook) {
                 addShutdownHook();
@@ -316,7 +319,7 @@ public class ServerMain implements Closeable {
         }));
     }
 
-    private synchronized void initialize() {
+    private synchronized void initialize(Log log) {
         initialized = true;
         final ServerConfiguration config = bootstrap.getConfiguration();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
@@ -365,10 +368,6 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(copyRequestJob);
                             sharedPoolWrite.freeOnExit(copyRequestJob);
                         }
-
-                        if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-                            setupMatViewJobs(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
-                        }
                     }
 
                     // telemetry
@@ -388,17 +387,30 @@ public class ServerMain implements Closeable {
 
         engine.buildMatViewGraph();
 
-        if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-            // create dedicated worker pool for materialized view refresh
-            WorkerPool matViewRefreshWorkerPool = workerPoolManager.getInstanceWrite(
-                    config.getMatViewRefreshPoolConfiguration(),
-                    WorkerPoolManager.Requester.MAT_VIEW_REFRESH
-            );
-            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        if (matViewEnabled && !isReadOnly) {
+            if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
+                // This starts mat view refresh jobs only when there is a dedicated pool for mat view refresh
+                // this will not use shared pool write because getWorkerCount() > 0
+                WorkerPool mvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
+                        config.getMatViewRefreshPoolConfiguration(),
+                        WorkerPoolManager.Requester.MAT_VIEW_REFRESH
+                );
+
+                setupMatViewJobs(
+                        mvRefreshWorkerPool,
+                        engine,
+                        workerPoolManager.getSharedQueryWorkerCount()
+                );
+            } else {
+                log.advisory().$("mat view refresh is disabled; set ")
+                        .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
+                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$();
+            }
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            WorkerPool walApplyWorkerPool = workerPoolManager.getInstanceWrite(
+            WorkerPool walApplyWorkerPool = workerPoolManager.getSharedPoolWrite(
                     config.getWalApplyPoolConfiguration(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
@@ -463,19 +475,15 @@ public class ServerMain implements Closeable {
         return Services.INSTANCE;
     }
 
-    protected void setupMatViewJobs(
-            WorkerPool sharedPoolWrite,
-            CairoEngine engine,
-            int sharedQueryWorkerCount
-    ) {
-        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
+    protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = mvWorkerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
             final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, sharedQueryWorkerCount);
-            sharedPoolWrite.assign(i, matViewRefreshJob);
-            sharedPoolWrite.freeOnExit(matViewRefreshJob);
+            mvWorkerPool.assign(i, matViewRefreshJob);
+            mvWorkerPool.freeOnExit(matViewRefreshJob);
         }
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
-        sharedPoolWrite.assign(matViewTimerJob);
+        mvWorkerPool.assign(matViewTimerJob);
     }
 
     protected void setupWalApplyJob(
