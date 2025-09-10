@@ -104,7 +104,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         final int nArgs = argsCopy.size() - 1;
         if (nArgs > nDims) {
             throw SqlException
-                    .position(argPositions.get(nDims + 1))
+                    .position(argPositions.get(nDims))
                     .put("too many array access arguments [nDims=").put(nDims)
                     .put(", nArgs=").put(nArgs)
                     .put(']');
