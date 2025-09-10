@@ -38,10 +38,11 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastStrToDecimalFunctionFactory implements FunctionFactory {
+public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
     /**
-     * Create a new instance of a Function that can cast a string to a decimal.
+     * Create a new instance of a Function that can cast a varchar to a decimal.
      *
      * @param decimal    is a mutable instance that can be used to parse constant instances.
      * @param position   of the value in the query string
@@ -58,7 +59,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Sξ)";
+        return "cast(Øξ)";
     }
 
     @Override
@@ -79,15 +80,15 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         final int targetScale = ColumnType.getDecimalScale(targetType);
 
-        CharSequence cs = value.getStrA(null);
-        if (cs == null) {
+        Utf8Sequence sequence = value.getVarcharA(null);
+        if (sequence == null) {
             return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
         }
 
         try {
-            decimal.ofString(cs, targetPrecision, targetScale);
+            decimal.ofString(sequence.asAsciiCharSequence(), targetPrecision, targetScale);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, targetType).position(position);
+            throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, targetType).position(position);
         }
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
@@ -98,14 +99,14 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            CharSequence cs = this.arg.getStrA(rec);
-            if (cs == null) {
+            Utf8Sequence sequence = this.arg.getVarcharA(rec);
+            if (sequence == null) {
                 return false;
             }
             try {
-                decimal.ofString(cs, precision, scale);
+                decimal.ofString(sequence.asAsciiCharSequence(), precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, type).position(position);
             }
             return true;
         }

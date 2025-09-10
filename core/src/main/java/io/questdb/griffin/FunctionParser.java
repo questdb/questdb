@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactor
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
@@ -1175,19 +1176,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.VARCHAR:
                 if (toType == ColumnType.UUID) {
                     return new CastVarcharToUuidFunctionFactory.Func(function);
-                }
-                if (toType == ColumnType.TIMESTAMP) {
+                } else if (toType == ColumnType.TIMESTAMP) {
                     return new CastVarcharToTimestampFunctionFactory.Func(function);
-                }
-                if (ColumnType.isGeoHash(toType)) {
+                } else if (ColumnType.isGeoHash(toType)) {
                     return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
+                } else if (ColumnType.isDecimal(toType)) {
+                    return CastVarcharToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
                 break;
             case ColumnType.UUID:
                 if (toType == ColumnType.STRING) {
                     return new CastUuidToStrFunctionFactory.Func(function);
-                }
-                if (toType == ColumnType.VARCHAR) {
+                } else if (toType == ColumnType.VARCHAR) {
                     return new CastUuidToVarcharFunctionFactory.Func(function);
                 }
                 break;

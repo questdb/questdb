@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.cast;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
+public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastExplains() throws Exception {
@@ -40,7 +40,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['123.45']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '123.45' AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('123.45' as varchar) AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
 
                     // Runtime value without scale
                     assertSql("QUERY PLAN\n" +
@@ -49,14 +49,14 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['123']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '123' AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('123' as varchar) AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
 
                     // Expression should be constant folded
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
                                     "  functions: [1.00]\n" +
                                     "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast('1' as DECIMAL(5, 2))");
+                            "EXPLAIN SELECT cast(cast('1' as varchar) as DECIMAL(5, 2))");
                 }
         );
     }
@@ -65,14 +65,14 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testCastExplainsForDifferentDecimalTypes() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    // DECIMAL8 (uses CastStrToDecimalFunctionFactory)
+                    // DECIMAL8 (uses CastVarcharToDecimalFunctionFactory)
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
                                     "  functions: [value::DECIMAL(2,0)]\n" +
                                     "    VirtualRecord\n" +
                                     "      functions: ['99']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '99' AS value) SELECT cast(value as DECIMAL(2)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('99' as varchar) AS value) SELECT cast(value as DECIMAL(2)) FROM data");
 
                     // DECIMAL16
                     assertSql("QUERY PLAN\n" +
@@ -81,7 +81,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['9999']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '9999' AS value) SELECT cast(value as DECIMAL(4)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('9999' as varchar) AS value) SELECT cast(value as DECIMAL(4)) FROM data");
 
                     // DECIMAL32
                     assertSql("QUERY PLAN\n" +
@@ -90,7 +90,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['999999999']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '999999999' AS value) SELECT cast(value as DECIMAL(9)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('999999999' as varchar) AS value) SELECT cast(value as DECIMAL(9)) FROM data");
 
                     // DECIMAL64
                     assertSql("QUERY PLAN\n" +
@@ -99,7 +99,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['999999999999999999']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '999999999999999999' AS value) SELECT cast(value as DECIMAL(18)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('999999999999999999' as varchar) AS value) SELECT cast(value as DECIMAL(18)) FROM data");
 
                     // DECIMAL128
                     assertSql("QUERY PLAN\n" +
@@ -108,7 +108,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['9223372036854775807']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '9223372036854775807' AS value) SELECT cast(value as DECIMAL(19)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('9223372036854775807' as varchar) AS value) SELECT cast(value as DECIMAL(19)) FROM data");
 
                     // DECIMAL256
                     assertSql("QUERY PLAN\n" +
@@ -117,7 +117,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['9223372036854775807']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '9223372036854775807' AS value) SELECT cast(value as DECIMAL(40)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('9223372036854775807' as varchar) AS value) SELECT cast(value as DECIMAL(40)) FROM data");
 
                     // DECIMAL8 with scale
                     assertSql("QUERY PLAN\n" +
@@ -126,33 +126,33 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "    VirtualRecord\n" +
                                     "      functions: ['9']\n" +
                                     "        long_sequence count: 1\n",
-                            "EXPLAIN WITH data AS (SELECT '9' AS value) SELECT cast(value as DECIMAL(2,1)) FROM data");
+                            "EXPLAIN WITH data AS (SELECT cast('9' as varchar) AS value) SELECT cast(value as DECIMAL(2,1)) FROM data");
 
                     // Constant folding for all decimal types
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
                                     "  functions: [99]\n" +
                                     "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast('99' as DECIMAL(2))");
+                            "EXPLAIN SELECT cast(cast('99' as varchar) as DECIMAL(2))");
 
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
                                     "  functions: [9999]\n" +
                                     "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast('9999' as DECIMAL(4))");
+                            "EXPLAIN SELECT cast(cast('9999' as varchar) as DECIMAL(4))");
 
                     // Constant folding with scale
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
                                     "  functions: [9.0]\n" +
                                     "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast('9' as DECIMAL(2,1))");
+                            "EXPLAIN SELECT cast(cast('9' as varchar) as DECIMAL(2,1))");
 
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
                                     "  functions: [99.00]\n" +
                                     "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast('99' as DECIMAL(4,2))");
+                            "EXPLAIN SELECT cast(cast('99' as varchar) as DECIMAL(4,2))");
                 }
         );
     }
@@ -164,20 +164,20 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "0.00\n",
-                            "select cast('0' as DECIMAL(3,2))"
+                            "select cast(cast('0' as varchar) as DECIMAL(3,2))"
                     );
 
                     // Any non-zero value should overflow
                     assertException(
-                            "select cast('1' as DECIMAL(2,2))",
+                            "select cast(cast('1' as varchar) as DECIMAL(2,2))",
                             12,
-                            "inconvertible value: `1` [STRING -> DECIMAL(2,2)]"
+                            "inconvertible value: `1` [VARCHAR -> DECIMAL(2,2)]"
                     );
 
                     assertException(
-                            "select cast('-1' as DECIMAL(2,2))",
+                            "select cast(cast('-1' as varchar) as DECIMAL(2,2))",
                             12,
-                            "inconvertible value: `-1` [STRING -> DECIMAL(2,2)]"
+                            "inconvertible value: `-1` [VARCHAR -> DECIMAL(2,2)]"
                     );
                 }
         );
@@ -188,21 +188,21 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertException(
-                            "select cast('abc' as DECIMAL(5,2))",
+                            "select cast(cast('abc' as varchar) as DECIMAL(5,2))",
                             12,
-                            "inconvertible value: `abc` [STRING -> DECIMAL(5,2)]"
+                            "inconvertible value: `abc` [VARCHAR -> DECIMAL(5,2)]"
                     );
 
                     assertException(
-                            "select cast('12.34.56' as DECIMAL(5,2))",
+                            "select cast(cast('12.34.56' as varchar) as DECIMAL(5,2))",
                             12,
-                            "inconvertible value: `12.34.56` [STRING -> DECIMAL(5,2)]"
+                            "inconvertible value: `12.34.56` [VARCHAR -> DECIMAL(5,2)]"
                     );
 
                     assertException(
-                            "select cast('not_a_number' as DECIMAL(10))",
+                            "select cast(cast('not_a_number' as varchar) as DECIMAL(10))",
                             12,
-                            "inconvertible value: `not_a_number` [STRING -> DECIMAL(10,0)]"
+                            "inconvertible value: `not_a_number` [VARCHAR -> DECIMAL(10,0)]"
                     );
                 }
         );
@@ -216,41 +216,41 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "1.0000000000\n",
-                            "select cast('1' as DECIMAL(20,10))"
+                            "select cast(cast('1' as varchar) as DECIMAL(20,10))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "123.000000000000000000\n",
-                            "select cast('123' as DECIMAL(21,18))"
+                            "select cast(cast('123' as varchar) as DECIMAL(21,18))"
                     );
                 }
         );
     }
 
     @Test
-    public void testCastMaxStringValues() throws Exception {
+    public void testCastMaxVarcharValues() throws Exception {
         assertMemoryLeak(
                 () -> {
                     // Max long value to decimal with sufficient precision
                     assertSql(
                             "cast\n" +
                                     "9223372036854775807\n",
-                            "select cast('9223372036854775807' as DECIMAL(19))"
+                            "select cast(cast('9223372036854775807' as varchar) as DECIMAL(19))"
                     );
 
                     // Min long value to decimal with sufficient precision
                     assertSql(
                             "cast\n" +
                                     "-9223372036854775807\n",
-                            "select cast('-9223372036854775807' as DECIMAL(19))"
+                            "select cast(cast('-9223372036854775807' as varchar) as DECIMAL(19))"
                     );
 
                     // Max long with scale requires higher precision
                     assertSql(
                             "cast\n" +
                                     "9223372036854775807.00\n",
-                            "select cast('9223372036854775807' as DECIMAL(21,2))"
+                            "select cast(cast('9223372036854775807' as varchar) as DECIMAL(21,2))"
                     );
                 }
         );
@@ -263,13 +263,13 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "-1\n",
-                            "select cast('-1' as DECIMAL(2))"
+                            "select cast(cast('-1' as varchar) as DECIMAL(2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-123.00\n",
-                            "select cast('-123' as DECIMAL(5,2))"
+                            "select cast(cast('-123' as varchar) as DECIMAL(5,2))"
                     );
                 }
         );
@@ -280,15 +280,15 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertException(
-                            "select cast('10000' as DECIMAL(4))",
+                            "select cast(cast('10000' as varchar) as DECIMAL(4))",
                             12,
-                            "inconvertible value: `10000` [STRING -> DECIMAL(4,0)]"
+                            "inconvertible value: `10000` [VARCHAR -> DECIMAL(4,0)]"
                     );
 
                     assertException(
-                            "select cast('-10000' as DECIMAL(4))",
+                            "select cast(cast('-10000' as varchar) as DECIMAL(4))",
                             12,
-                            "inconvertible value: `-10000` [STRING -> DECIMAL(4,0)]"
+                            "inconvertible value: `-10000` [VARCHAR -> DECIMAL(4,0)]"
                     );
                 }
         );
@@ -299,15 +299,15 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertException(
-                            "select cast('10000000000' as DECIMAL(9))",
+                            "select cast(cast('10000000000' as varchar) as DECIMAL(9))",
                             12,
-                            "inconvertible value: `10000000000` [STRING -> DECIMAL(9,0)]"
+                            "inconvertible value: `10000000000` [VARCHAR -> DECIMAL(9,0)]"
                     );
 
                     assertException(
-                            "select cast('-10000000000' as DECIMAL(9))",
+                            "select cast(cast('-10000000000' as varchar) as DECIMAL(9))",
                             12,
-                            "inconvertible value: `-10000000000` [STRING -> DECIMAL(9,0)]"
+                            "inconvertible value: `-10000000000` [VARCHAR -> DECIMAL(9,0)]"
                     );
                 }
         );
@@ -318,15 +318,15 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertException(
-                            "select cast('128' as DECIMAL(2))",
+                            "select cast(cast('128' as varchar) as DECIMAL(2))",
                             12,
-                            "inconvertible value: `128` [STRING -> DECIMAL(2,0)]"
+                            "inconvertible value: `128` [VARCHAR -> DECIMAL(2,0)]"
                     );
 
                     assertException(
-                            "select cast('-129' as DECIMAL(2))",
+                            "select cast(cast('-129' as varchar) as DECIMAL(2))",
                             12,
-                            "inconvertible value: `-129` [STRING -> DECIMAL(2,0)]"
+                            "inconvertible value: `-129` [VARCHAR -> DECIMAL(2,0)]"
                     );
                 }
         );
@@ -338,78 +338,78 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // 100 with scale 2 requires precision of at least 5 (100.00)
                     assertException(
-                            "select cast('100' as DECIMAL(4,2))",
+                            "select cast(cast('100' as varchar) as DECIMAL(4,2))",
                             12,
-                            "inconvertible value: `100` [STRING -> DECIMAL(4,2)]"
+                            "inconvertible value: `100` [VARCHAR -> DECIMAL(4,2)]"
                     );
 
                     // 1000 with scale 3 requires precision of at least 7 (1000.000)
                     assertException(
-                            "select cast('1000' as DECIMAL(5,3))",
+                            "select cast(cast('1000' as varchar) as DECIMAL(5,3))",
                             12,
-                            "inconvertible value: `1000` [STRING -> DECIMAL(5,3)]"
+                            "inconvertible value: `1000` [VARCHAR -> DECIMAL(5,3)]"
                     );
                 }
         );
     }
 
     @Test
-    public void testCastSignedStrings() throws Exception {
+    public void testCastSignedVarchars() throws Exception {
         assertMemoryLeak(
                 () -> {
                     assertSql(
                             "cast\n" +
                                     "123\n",
-                            "select cast('+123' as DECIMAL(3))"
+                            "select cast(cast('+123' as varchar) as DECIMAL(3))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-456\n",
-                            "select cast('-456' as DECIMAL(3))"
+                            "select cast(cast('-456' as varchar) as DECIMAL(3))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "78.90\n",
-                            "select cast('+78.90' as DECIMAL(4,2))"
+                            "select cast(cast('+78.90' as varchar) as DECIMAL(4,2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-12.34\n",
-                            "select cast('-12.34' as DECIMAL(4,2))"
+                            "select cast(cast('-12.34' as varchar) as DECIMAL(4,2))"
                     );
                 }
         );
     }
 
     @Test
-    public void testCastStringWithDecimals() throws Exception {
+    public void testCastVarcharWithDecimals() throws Exception {
         assertMemoryLeak(
                 () -> {
                     assertSql(
                             "cast\n" +
                                     "123.45\n",
-                            "select cast('123.45' as DECIMAL(5,2))"
+                            "select cast(cast('123.45' as varchar) as DECIMAL(5,2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-123.45\n",
-                            "select cast('-123.45' as DECIMAL(5,2))"
+                            "select cast(cast('-123.45' as varchar) as DECIMAL(5,2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "0.00\n",
-                            "select cast('0.00' as DECIMAL(3,2))"
+                            "select cast(cast('0.00' as varchar) as DECIMAL(3,2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "999.999\n",
-                            "select cast('999.999' as DECIMAL(6,3))"
+                            "select cast(cast('999.999' as varchar) as DECIMAL(6,3))"
                     );
                 }
         );
@@ -422,19 +422,19 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "9223372036854775807\n",
-                            "select cast('9223372036854775807' as DECIMAL(19))"
+                            "select cast(cast('9223372036854775807' as varchar) as DECIMAL(19))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-9223372036854775807\n",
-                            "select cast('-9223372036854775807' as DECIMAL(19))"
+                            "select cast(cast('-9223372036854775807' as varchar) as DECIMAL(19))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as string) as DECIMAL(19))"
+                            "select cast(cast(null as varchar) as DECIMAL(19))"
                     );
                 }
         );
@@ -447,19 +447,19 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "9999\n",
-                            "select cast('9999' as DECIMAL(4))"
+                            "select cast(cast('9999' as varchar) as DECIMAL(4))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-9999\n",
-                            "select cast('-9999' as DECIMAL(4))"
+                            "select cast(cast('-9999' as varchar) as DECIMAL(4))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as string) as DECIMAL(4))"
+                            "select cast(cast(null as varchar) as DECIMAL(4))"
                     );
                 }
         );
@@ -472,19 +472,19 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "9223372036854775807\n",
-                            "select cast('9223372036854775807' as DECIMAL(40))"
+                            "select cast(cast('9223372036854775807' as varchar) as DECIMAL(40))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-9223372036854775807\n",
-                            "select cast('-9223372036854775807' as DECIMAL(40))"
+                            "select cast(cast('-9223372036854775807' as varchar) as DECIMAL(40))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as string) as DECIMAL(40))"
+                            "select cast(cast(null as varchar) as DECIMAL(40))"
                     );
                 }
         );
@@ -497,19 +497,19 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "999999999\n",
-                            "select cast('999999999' as DECIMAL(9))"
+                            "select cast(cast('999999999' as varchar) as DECIMAL(9))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-999999999\n",
-                            "select cast('-999999999' as DECIMAL(9))"
+                            "select cast(cast('-999999999' as varchar) as DECIMAL(9))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as string) as DECIMAL(9))"
+                            "select cast(cast(null as varchar) as DECIMAL(9))"
                     );
                 }
         );
@@ -522,19 +522,19 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "999999999999999999\n",
-                            "select cast('999999999999999999' as DECIMAL(18))"
+                            "select cast(cast('999999999999999999' as varchar) as DECIMAL(18))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-999999999999999999\n",
-                            "select cast('-999999999999999999' as DECIMAL(18))"
+                            "select cast(cast('-999999999999999999' as varchar) as DECIMAL(18))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as string) as DECIMAL(18))"
+                            "select cast(cast(null as varchar) as DECIMAL(18))"
                     );
                 }
         );
@@ -547,19 +547,19 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "99\n",
-                            "select cast('99' as DECIMAL(2))"
+                            "select cast(cast('99' as varchar) as DECIMAL(2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "-99\n",
-                            "select cast('-99' as DECIMAL(2))"
+                            "select cast(cast('-99' as varchar) as DECIMAL(2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as string) as DECIMAL(2))"
+                            "select cast(cast(null as varchar) as DECIMAL(2))"
                     );
                 }
         );
@@ -573,28 +573,28 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "123.00\n",
-                            "select cast('123' as DECIMAL(5,2))"
+                            "select cast(cast('123' as varchar) as DECIMAL(5,2))"
                     );
 
                     // Cast '99' to DECIMAL(4,2) should result in 99.00
                     assertSql(
                             "cast\n" +
                                     "99.00\n",
-                            "select cast('99' as DECIMAL(4,2))"
+                            "select cast(cast('99' as varchar) as DECIMAL(4,2))"
                     );
 
                     // Cast '-99' to DECIMAL(4,2) should result in -99.00
                     assertSql(
                             "cast\n" +
                                     "-99.00\n",
-                            "select cast('-99' as DECIMAL(4,2))"
+                            "select cast(cast('-99' as varchar) as DECIMAL(4,2))"
                     );
 
                     // Cast '0' to DECIMAL(5,3) should result in 0.000
                     assertSql(
                             "cast\n" +
                                     "0.000\n",
-                            "select cast('0' as DECIMAL(5,3))"
+                            "select cast(cast('0' as varchar) as DECIMAL(5,3))"
                     );
                 }
         );
@@ -607,25 +607,25 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertSql(
                             "cast\n" +
                                     "0\n",
-                            "select cast('0' as DECIMAL(5,0))"
+                            "select cast(cast('0' as varchar) as DECIMAL(5,0))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "0.0\n",
-                            "select cast('0' as DECIMAL(5,1))"
+                            "select cast(cast('0' as varchar) as DECIMAL(5,1))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "0.00\n",
-                            "select cast('0' as DECIMAL(5,2))"
+                            "select cast(cast('0' as varchar) as DECIMAL(5,2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "0.000\n",
-                            "select cast('0' as DECIMAL(5,3))"
+                            "select cast(cast('0' as varchar) as DECIMAL(5,3))"
                     );
                 }
         );
@@ -637,16 +637,16 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Runtime overflow for DECIMAL(4,2) - max value is 99.99
                     assertException(
-                            "WITH data AS (SELECT '100' AS value) SELECT cast(value as DECIMAL(4,2)) FROM data",
-                            49,
-                            "inconvertible value: `100` [STRING -> DECIMAL(4,2)]"
+                            "WITH data AS (SELECT cast('100' as varchar) AS value) SELECT cast(value as DECIMAL(4,2)) FROM data",
+                            66,
+                            "inconvertible value: `100` [VARCHAR -> DECIMAL(4,2)]"
                     );
 
                     // Runtime overflow for DECIMAL(5,3) - max value is 99.999
                     assertException(
-                            "WITH data AS (SELECT '100' AS value) SELECT cast(value as DECIMAL(5,3)) FROM data",
-                            49,
-                            "inconvertible value: `100` [STRING -> DECIMAL(5,3)]"
+                            "WITH data AS (SELECT cast('100' as varchar) AS value) SELECT cast(value as DECIMAL(5,3)) FROM data",
+                            66,
+                            "inconvertible value: `100` [VARCHAR -> DECIMAL(5,3)]"
                     );
                 }
         );
@@ -658,16 +658,16 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Runtime overflow for DECIMAL(2)
                     assertException(
-                            "WITH data AS (SELECT '128' AS value) SELECT cast(value as DECIMAL(2)) FROM data",
-                            49,
-                            "inconvertible value: `128` [STRING -> DECIMAL(2,0)]"
+                            "WITH data AS (SELECT cast('128' as varchar) AS value) SELECT cast(value as DECIMAL(2)) FROM data",
+                            66,
+                            "inconvertible value: `128` [VARCHAR -> DECIMAL(2,0)]"
                     );
 
                     // Runtime overflow for DECIMAL(4)
                     assertException(
-                            "WITH data AS (SELECT '10000' AS value) SELECT cast(value as DECIMAL(4)) FROM data",
-                            51,
-                            "inconvertible value: `10000` [STRING -> DECIMAL(4,0)]"
+                            "WITH data AS (SELECT cast('10000' as varchar) AS value) SELECT cast(value as DECIMAL(4)) FROM data",
+                            68,
+                            "inconvertible value: `10000` [VARCHAR -> DECIMAL(4,0)]"
                     );
                 }
         );
@@ -683,7 +683,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-92233720368547758\t-92233720368547758.00\n" +
                                     "12345678901234567\t12345678901234567.00\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '92233720368547758' value UNION ALL SELECT '-92233720368547758' UNION ALL SELECT '12345678901234567' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('92233720368547758' as varchar) value UNION ALL SELECT cast('-92233720368547758' as varchar) UNION ALL SELECT cast('12345678901234567' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(19,2)) as decimal_value FROM data"
                     );
                 }
@@ -700,7 +700,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-99\t-99.00\n" +
                                     "12\t12.00\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '99' value UNION ALL SELECT '-99' UNION ALL SELECT '12' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('99' as varchar) value UNION ALL SELECT cast('-99' as varchar) UNION ALL SELECT cast('12' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data"
                     );
                 }
@@ -717,7 +717,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-92233720368547758\t-92233720368547758.0000000000\n" +
                                     "12345678901234567\t12345678901234567.0000000000\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '92233720368547758' value UNION ALL SELECT '-92233720368547758' UNION ALL SELECT '12345678901234567' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('92233720368547758' as varchar) value UNION ALL SELECT cast('-92233720368547758' as varchar) UNION ALL SELECT cast('12345678901234567' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(40,10)) as decimal_value FROM data"
                     );
                 }
@@ -734,7 +734,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-999999\t-999999.000\n" +
                                     "123456\t123456.000\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '999999' value UNION ALL SELECT '-999999' UNION ALL SELECT '123456' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('999999' as varchar) value UNION ALL SELECT cast('-999999' as varchar) UNION ALL SELECT cast('123456' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(9,3)) as decimal_value FROM data"
                     );
                 }
@@ -751,7 +751,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-999999999999\t-999999999999.000000\n" +
                                     "123456789012\t123456789012.000000\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '999999999999' value UNION ALL SELECT '-999999999999' UNION ALL SELECT '123456789012' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('999999999999' as varchar) value UNION ALL SELECT cast('-999999999999' as varchar) UNION ALL SELECT cast('123456789012' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(18,6)) as decimal_value FROM data"
                     );
                 }
@@ -768,7 +768,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-9\t-9.0\n" +
                                     "0\t0.0\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '9' value UNION ALL SELECT '-9' UNION ALL SELECT '0' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('9' as varchar) value UNION ALL SELECT cast('-9' as varchar) UNION ALL SELECT cast('0' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data"
                     );
                 }
@@ -785,7 +785,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-9223372036854775807\t-9223372036854775807\n" +
                                     "1234567890123456789\t1234567890123456789\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '9223372036854775807' value UNION ALL SELECT '-9223372036854775807' UNION ALL SELECT '1234567890123456789' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('9223372036854775807' as varchar) value UNION ALL SELECT cast('-9223372036854775807' as varchar) UNION ALL SELECT cast('1234567890123456789' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(19)) as decimal_value FROM data"
                     );
                 }
@@ -802,7 +802,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-9999\t-9999\n" +
                                     "1234\t1234\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '9999' value UNION ALL SELECT '-9999' UNION ALL SELECT '1234' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('9999' as varchar) value UNION ALL SELECT cast('-9999' as varchar) UNION ALL SELECT cast('1234' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(4)) as decimal_value FROM data"
                     );
                 }
@@ -819,7 +819,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-9223372036854775807\t-9223372036854775807\n" +
                                     "1234567890123456789\t1234567890123456789\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '9223372036854775807' value UNION ALL SELECT '-9223372036854775807' UNION ALL SELECT '1234567890123456789' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('9223372036854775807' as varchar) value UNION ALL SELECT cast('-9223372036854775807' as varchar) UNION ALL SELECT cast('1234567890123456789' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data"
                     );
                 }
@@ -836,7 +836,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-999999999\t-999999999\n" +
                                     "123456789\t123456789\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '999999999' value UNION ALL SELECT '-999999999' UNION ALL SELECT '123456789' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('999999999' as varchar) value UNION ALL SELECT cast('-999999999' as varchar) UNION ALL SELECT cast('123456789' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(9)) as decimal_value FROM data"
                     );
                 }
@@ -853,7 +853,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-999999999999999999\t-999999999999999999\n" +
                                     "123456789012345678\t123456789012345678\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '999999999999999999' value UNION ALL SELECT '-999999999999999999' UNION ALL SELECT '123456789012345678' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('999999999999999999' as varchar) value UNION ALL SELECT cast('-999999999999999999' as varchar) UNION ALL SELECT cast('123456789012345678' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(18)) as decimal_value FROM data"
                     );
                 }
@@ -871,7 +871,7 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "-99\t-99\n" +
                                     "0\t0\n" +
                                     "\t\n",
-                            "WITH data AS (SELECT '99' value UNION ALL SELECT '-99' UNION ALL SELECT '0' UNION ALL SELECT null) " +
+                            "WITH data AS (SELECT cast('99' as varchar) value UNION ALL SELECT cast('-99' as varchar) UNION ALL SELECT cast('0' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data"
                     );
                 }
