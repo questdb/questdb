@@ -91,11 +91,11 @@ public class ServerMain implements Closeable {
     public ServerMain(final Bootstrap bootstrap) {
         this.bootstrap = bootstrap;
         // create cairo engine
-        engine = freeOnExit.register(bootstrap.newCairoEngine());
+        engine = freeOnExit(bootstrap.newCairoEngine());
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
-            freeOnExit.register(config.getFactoryProvider());
+            freeOnExit(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {
             Misc.free(freeOnExit);
@@ -335,7 +335,7 @@ public class ServerMain implements Closeable {
 
                     QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
                     sharedPoolQuery.assign(queryTracingJob);
-                    freeOnExit.register(queryTracingJob);
+                    freeOnExit(queryTracingJob);
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
@@ -374,7 +374,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine);
-                        freeOnExit.register(telemetryJob);
+                        freeOnExit(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPoolWrite.assign(telemetryJob);
                         }
@@ -406,20 +406,20 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit.register(httpServer = services().createHttpServer(
+        freeOnExit(httpServer = services().createHttpServer(
                 config,
                 engine,
                 workerPoolManager
         ));
 
         // http min
-        freeOnExit.register(services().createMinHttpServer(
+        freeOnExit(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 workerPoolManager
         ));
 
         // pg wire
-        freeOnExit.register(pgServer = services().createPGWireServer(
+        freeOnExit(pgServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager
@@ -433,14 +433,14 @@ public class ServerMain implements Closeable {
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
             // ilp/tcp
-            freeOnExit.register(services().createLineTcpReceiver(
+            freeOnExit(services().createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager
             ));
 
             // ilp/udp
-            freeOnExit.register(services().createLineUdpReceiver(
+            freeOnExit(services().createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -455,8 +455,8 @@ public class ServerMain implements Closeable {
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
     }
 
-    protected void freeOnExit(Closeable closeable) {
-        freeOnExit.register(closeable);
+    protected <T extends Closeable> T freeOnExit(T closeable) {
+        return freeOnExit.register(closeable);
     }
 
     protected Services services() {
