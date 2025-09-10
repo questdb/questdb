@@ -299,119 +299,18 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimalScaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimalScaledFunc extends AbstractCastToDecimalFunction {
         private final long maxUnscaledValue;
         private final long minUnscaledValue;
-        private final int position;
-        private final Decimal256 scaler = new Decimal256();
-        private final int targetScale;
-        private final Function value;
-        private boolean is_null;
 
         public CastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
-            super(targetType);
-            this.position = position;
-            this.value = value;
+            super(value, targetType, position);
             this.maxUnscaledValue = maxUnscaledValue;
             this.minUnscaledValue = -maxUnscaledValue;
-            targetScale = ColumnType.getDecimalScale(targetType);
-            this.is_null = false;
         }
 
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public long getDecimal128Hi(Record rec) {
-            if (!loadValue(rec)) {
-                is_null = true;
-                return Decimals.DECIMAL128_HI_NULL;
-            }
-            return scaler.getLh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            if (is_null) {
-                return Decimals.DECIMAL128_LO_NULL;
-            }
-            return scaler.getLl();
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            if (!loadValue(rec)) {
-                return Decimals.DECIMAL16_NULL;
-            }
-            return (short) scaler.getLl();
-        }
-
-        @Override
-        public long getDecimal256HH(Record rec) {
-            if (!loadValue(rec)) {
-                is_null = true;
-                return Decimals.DECIMAL256_HH_NULL;
-            }
-            return scaler.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            if (is_null) {
-                return Decimals.DECIMAL256_HL_NULL;
-            }
-            return scaler.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            if (is_null) {
-                return Decimals.DECIMAL256_LH_NULL;
-            }
-            return scaler.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            if (is_null) {
-                return Decimals.DECIMAL256_LL_NULL;
-            }
-            return scaler.getLl();
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            if (!loadValue(rec)) {
-                return Decimals.DECIMAL32_NULL;
-            }
-            return (int) scaler.getLl();
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            if (!loadValue(rec)) {
-                return Decimals.DECIMAL64_NULL;
-            }
-            return scaler.getLl();
-        }
-
-        @Override
-        public byte getDecimal8(Record rec) {
-            if (!loadValue(rec)) {
-                return Decimals.DECIMAL8_NULL;
-            }
-            return (byte) scaler.getLl();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(value).val("::").val(ColumnType.nameOf(type)).val("s");
-        }
-
-        private boolean loadValue(Record rec) {
-            long value = this.value.getLong(rec);
+        protected boolean cast(Record rec) {
+            long value = this.arg.getLong(rec);
             if (value == Numbers.LONG_NULL) {
                 return false;
             }
@@ -422,8 +321,8 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
                         type
                 ).position(position);
             }
-            scaler.ofLong(value, 0);
-            scaler.rescale(targetScale);
+            decimal.ofLong(value, 0);
+            decimal.rescale(scale);
             return true;
         }
     }
