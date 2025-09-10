@@ -2,6 +2,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -28,8 +29,8 @@ public class Decimal256 implements Sinkable {
      * Maximum allowed scale (number of decimal places)
      */
     public static final int MAX_SCALE = 76;
-    public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, -1, -1, -1, 0);
-    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, 0, 0, 1, 0);
+    public static final Decimal256 MAX_VALUE = new Decimal256(1593091911132452277L, 532749306367912313L, 8607968719199866879L, -1L, 0); // 10⁷⁶ - 1
+    public static final Decimal256 MIN_VALUE = new Decimal256(-1593091911132452278L, -532749306367912314L, -8607968719199866880L, 1L, 0); // -10⁷⁶ + 1
     public static final Decimal256 NULL_VALUE = new Decimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, 0);
     // @formatter:off
     /**
@@ -236,6 +237,15 @@ public class Decimal256 implements Sinkable {
         this.lh = lh;
         this.ll = ll;
         this.scale = scale;
+    }
+
+    private boolean hasUnsignOverflowed() {
+        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0;
+    }
+
+    private boolean hasOverflowed() {
+        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0 ||
+                compareTo(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
     }
 
     /**
@@ -997,6 +1007,10 @@ public class Decimal256 implements Sinkable {
             }
         }
 
+        if (hasUnsignOverflowed()) {
+            throw NumericException.instance().put("Overflow in multiplication: result exceeds maximum precision");
+        }
+
         if (isNegative) {
             negate();
         }
@@ -1301,8 +1315,112 @@ public class Decimal256 implements Sinkable {
      */
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        BigDecimal bd = toBigDecimal();
-        sink.put(bd.toPlainString());
+        if (isNull()) {
+            return;
+        }
+
+        long hh = this.hh;
+        long hl = this.hl;
+        long lh = this.lh;
+        long ll = this.ll;
+        if (isNegative()) {
+            ll = ~ll + 1;
+            long c = ll == 0L ? 1L : 0L;
+            lh = ~lh + c;
+            c = (c == 1L && lh == 0L) ? 1L : 0L;
+            hl = ~hl + c;
+            c = (c == 1L && hl == 0L) ? 1L : 0L;
+            hh = ~hh + c;
+            sink.put('-');
+        }
+
+        boolean printed = false;
+        boolean afterDot = false;
+        for (int i = MAX_SCALE - 1; i >= 0; i--) {
+            if (i == scale - 1) {
+                if (!printed) {
+                    sink.put('0');
+                }
+                afterDot = true;
+                sink.put('.');
+            }
+
+            // Fast path, we expect most digits to be 0
+            if (compareToPowerOfTen(hh, hl, lh, ll, i, 1) < 0) {
+                if (afterDot || printed) {
+                    sink.put('0');
+                }
+                continue;
+            }
+
+            // We do a binary search to retrieve the digit we need to display at a specific power
+            int mul;
+            if (compareToPowerOfTen(hh, hl, lh, ll, i, 5) >= 0) {
+                if (compareToPowerOfTen(hh, hl, lh, ll, i, 7) >= 0) {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 9) >= 0) {
+                        mul = 9;
+                    } else if (compareToPowerOfTen(hh, hl, lh, ll, i, 8) >= 0) {
+                        mul = 8;
+                    } else {
+                        mul = 7;
+                    }
+                } else {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 6) >= 0) {
+                        mul = 6;
+                    } else {
+                        mul = 5;
+                    }
+                }
+            } else {
+                if (compareToPowerOfTen(hh, hl, lh, ll, i, 3) >= 0) {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 4) >= 0) {
+                        mul = 4;
+                    } else {
+                        mul = 3;
+                    }
+                } else {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 2) >= 0) {
+                        mul = 2;
+                    } else {
+                        mul = 1;
+                    }
+                }
+            }
+            sink.putAscii((char) ('0' + mul));
+            printed = true;
+
+            // Subtract the value and continue again
+            int offset = (mul - 1) * 4;
+
+            long bLL = ~POWERS_TEN_TABLE[i][offset + 3] + 1;
+            long c = bLL == 0L ? 1L : 0L;
+            long r = ll + bLL;
+            long carry = hasCarry(ll, r) ? 1L : 0L;
+            ll = r;
+
+            long bLH = ~POWERS_TEN_TABLE[i][offset + 2] + c;
+            c = (c == 1L && bLH == 0L) ? 1L : 0L;
+            long t = lh + carry;
+            carry = hasCarry(lh, t) ? 1L : 0L;
+            r = t + bLH;
+            carry |= hasCarry(t, r) ? 1L : 0L;
+            lh = r;
+
+            long bHL = ~POWERS_TEN_TABLE[i][offset + 1] + c;
+            c = (c == 1L && bHL == 0L) ? 1L : 0L;
+            t = hl + carry;
+            carry = hasCarry(hl, t) ? 1L : 0L;
+            r = t + bHL;
+            carry |= hasCarry(t, r) ? 1L : 0L;
+            hl = r;
+
+            long bHH = ~POWERS_TEN_TABLE[i][offset] + c;
+            hh += carry + bHH;
+        }
+
+        if (!printed && !afterDot) {
+            sink.put('0');
+        }
     }
 
     /**
@@ -1313,7 +1431,9 @@ public class Decimal256 implements Sinkable {
      */
     @Override
     public String toString() {
-        return toBigDecimal().toPlainString();
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
     }
 
     private static void add(Decimal256 result,
@@ -1364,6 +1484,9 @@ public class Decimal256 implements Sinkable {
             throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
         }
         result.hh = r;
+        if (result.hasOverflowed()) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
+        }
     }
 
     private static void uncheckedAdd(Decimal256 result, long bHH, long bHL, long bLH, long bLL) {
@@ -1446,6 +1569,24 @@ public class Decimal256 implements Sinkable {
             return Long.compareUnsigned(lh, bLH);
         }
         return Long.compareUnsigned(ll, bLL);
+    }
+
+    private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {
+        final int offset = (multiplier - 1) * 4;
+        long bHH = POWERS_TEN_TABLE[pow][offset];
+        if (aHH != bHH) {
+            return Long.compare(aHH, bHH);
+        }
+        long bHL = POWERS_TEN_TABLE[pow][offset + 1];
+        if (aHL != bHL) {
+            return Long.compareUnsigned(aHL, bHL);
+        }
+        long bLH = POWERS_TEN_TABLE[pow][offset + 2];
+        if (aLH != bLH) {
+            return Long.compareUnsigned(aLH, bLH);
+        }
+        long bLL = POWERS_TEN_TABLE[pow][offset + 3];
+        return Long.compareUnsigned(aLL, bLL);
     }
 
     private void multiply128(long h, long l) {
@@ -2395,6 +2536,10 @@ public class Decimal256 implements Sinkable {
         // Fill highest 64 bits
         for (int i = 0; i < 8 && byteIndex >= 0; i++, byteIndex--) {
             this.hh |= ((long) (bytes[byteIndex] & 0xFF)) << (i * 8);
+        }
+
+        if (hasUnsignOverflowed()) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
         }
     }
 

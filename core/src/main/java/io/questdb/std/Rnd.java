@@ -178,7 +178,11 @@ public class Rnd {
                 sink.of(0, 0, nextLong(), nextLong(), scale);
                 break;
             default: // Ultra large 256-bit values (using all four longs)
-                sink.of(nextLong(), nextLong(), nextLong(), nextLong(), scale);
+                long hh = nextLong();
+                while (hh >= Decimal256.MAX_VALUE.getHh() || hh <= Decimal256.MIN_VALUE.getHh()) {
+                    hh = nextLong();
+                }
+                sink.of(hh, nextLong(), nextLong(), nextLong(), scale);
                 break;
         }
     }
