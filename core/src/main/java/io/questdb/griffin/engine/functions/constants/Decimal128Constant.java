@@ -29,15 +29,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
 import io.questdb.std.Decimal128;
-import io.questdb.std.Decimals;
 
 public class Decimal128Constant extends AbstractDecimalFunction implements ConstantFunction {
-    public static final Decimal128Constant NULL = new Decimal128Constant(
-            Decimals.DECIMAL128_HI_NULL,
-            Decimals.DECIMAL128_LO_NULL,
-            ColumnType.DECIMAL128
-    );
-
     private final long hi;
     private final long lo;
 

@@ -29,6 +29,30 @@ import org.junit.Test;
 
 public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
+    private void testConstantCast(long inputValue, String expectedOutput, String targetType) throws Exception {
+        assertMemoryLeak(
+                () -> assertSql(
+                        "cast\n" + expectedOutput + "\n",
+                        "select cast(" + inputValue + " as " + targetType + ")"
+                )
+        );
+    }
+
+    private void testConstantCastWithNull(long inputValue, String expectedOutput, String targetType) throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "cast\n" + expectedOutput + "\n",
+                            "select cast(" + inputValue + " as " + targetType + ")"
+                    );
+                    assertSql(
+                            "cast\n\n",
+                            "select cast(cast(null as long) as " + targetType + ")"
+                    );
+                }
+        );
+    }
+
     @Test
     public void testCastExplains() throws Exception {
         assertMemoryLeak(
@@ -529,27 +553,8 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastToDecimal8() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "99\n",
-                            "select cast(99 as DECIMAL(2))"
-                    );
-
-                    assertSql(
-                            "cast\n" +
-                                    "-99\n",
-                            "select cast(-99 as DECIMAL(2))"
-                    );
-
-                    assertSql(
-                            "cast\n" +
-                                    "\n",
-                            "select cast(cast(null as long) as DECIMAL(2))"
-                    );
-                }
-        );
+        testConstantCastWithNull(99, "99", "DECIMAL(2)");
+        testConstantCast(-99, "-99", "DECIMAL(2)");
     }
 
     @Test

@@ -83,7 +83,7 @@ public final class Constants {
             case ColumnType.DECIMAL128:
             case ColumnType.DECIMAL256:
                 int precision = ColumnType.getDecimalPrecision(columnType);
-                int scale = ColumnType.getDecimalPrecision(columnType);
+                int scale = ColumnType.getDecimalScale(columnType);
                 return DecimalUtil.createNullDecimalConstant(precision, scale);
             default:
                 return nullConstants.getQuick(typeTag);

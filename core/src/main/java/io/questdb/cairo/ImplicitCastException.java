@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -95,6 +96,18 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(']');
     }
 
+    public static ImplicitCastException inconvertibleValue(Sinkable sinkable, int fromType, int toType) {
+        ImplicitCastException ice = instance();
+        ice.put("inconvertible value: ");
+        sinkable.toSink(ice.message);
+
+        return ice.put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']');
+    }
+
     public static ImplicitCastException inconvertibleValue(Utf8Sequence value, int fromType, int toType) {
         ImplicitCastException ice = instance();
         ice.put("inconvertible value: ");
@@ -141,11 +154,21 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
     }
 
     @Override
+    public int getPosition() {
+        return position;
+    }
+
+    @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public ImplicitCastException position(int position) {
+        this.position = position;
+        return this;
     }
 
     public ImplicitCastException put(long value) {
@@ -171,15 +194,5 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
     public ImplicitCastException put(char c) {
         message.put(c);
         return this;
-    }
-
-    public ImplicitCastException position(int position) {
-        this.position = position;
-        return this;
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 }

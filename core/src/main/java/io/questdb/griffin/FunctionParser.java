@@ -57,6 +57,7 @@ import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
@@ -241,6 +242,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return IntervalColumn.newInstance(index);
             case ColumnType.ARRAY:
                 return new ArrayColumn(index, columnType);
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                return new DecimalColumn(index, columnType);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")

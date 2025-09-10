@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
 import io.questdb.std.Decimals;
 
 public class Decimal64Constant extends AbstractDecimalFunction implements ConstantFunction {
-
-    public static final Decimal64Constant NULL = new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.DECIMAL64);
-
     private final long value;
 
     public Decimal64Constant(long value, int typep) {

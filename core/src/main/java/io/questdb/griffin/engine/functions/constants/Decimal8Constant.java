@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
 import io.questdb.std.Decimals;
 
 public class Decimal8Constant extends AbstractDecimalFunction implements ConstantFunction {
-
-    public static final Decimal8Constant NULL = new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.DECIMAL8);
-
     private final byte value;
 
     public Decimal8Constant(byte value, int typep) {

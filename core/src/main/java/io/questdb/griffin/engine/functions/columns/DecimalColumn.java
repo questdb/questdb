@@ -22,55 +22,87 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
-import io.questdb.std.Decimal256;
+import org.jetbrains.annotations.TestOnly;
 
-public class Decimal256Constant extends AbstractDecimalFunction implements ConstantFunction {
-    private final long hh;
-    private final long hl;
-    private final long lh;
-    private final long ll;
+public class DecimalColumn extends AbstractDecimalFunction {
+    private final int columnIndex;
 
-    public Decimal256Constant(long hh, long hl, long lh, long ll, int typep) {
-        super(typep);
-        this.hh = hh;
-        this.hl = hl;
-        this.lh = lh;
-        this.ll = ll;
+    public DecimalColumn(int columnIndex, int columnType) {
+        super(columnType);
+        this.columnIndex = columnIndex;
+    }
+
+    public static DecimalColumn newInstance(int columnIndex, int columnType) {
+        return new DecimalColumn(columnIndex, columnType);
+    }
+
+    @TestOnly
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
+    public long getDecimal128Hi(Record rec) {
+        return rec.getDecimal128Hi(columnIndex);
+    }
+
+    @Override
+    public long getDecimal128Lo(Record rec) {
+        return rec.getDecimal128Lo(columnIndex);
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return rec.getDecimal16(columnIndex);
     }
 
     @Override
     public long getDecimal256HH(Record rec) {
-        return hh;
+        return rec.getDecimal256HH(columnIndex);
     }
 
     @Override
     public long getDecimal256HL(Record rec) {
-        return hl;
+        return rec.getDecimal256HL(columnIndex);
     }
 
     @Override
     public long getDecimal256LH(Record rec) {
-        return lh;
+        return rec.getDecimal256LH(columnIndex);
     }
 
     @Override
     public long getDecimal256LL(Record rec) {
-        return ll;
+        return rec.getDecimal256LL(columnIndex);
     }
 
     @Override
-    public boolean isNullConstant() {
-        return Decimal256.isNull(hh, hl, lh, ll);
+    public int getDecimal32(Record rec) {
+        return rec.getDecimal32(columnIndex);
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return rec.getDecimal64(columnIndex);
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return rec.getDecimal8(columnIndex);
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return true;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.valDecimal(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+        sink.putColumnName(columnIndex);
     }
 }

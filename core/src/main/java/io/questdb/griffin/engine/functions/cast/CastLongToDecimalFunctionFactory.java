@@ -119,14 +119,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         // We don't try to narrow the type on its actual precision so that the user may pre-widen the constant decimal
         // to avoid doing it at query execution.
-        return DecimalUtil.createDecimalConstant(
-                d.getHh(),
-                d.getHl(),
-                d.getLh(),
-                d.getLl(),
-                targetPrecision,
-                targetScale
-        );
+        return DecimalUtil.createDecimalConstant(d, targetPrecision, targetScale);
     }
 
     private static class CastDecimal128UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {

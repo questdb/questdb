@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
@@ -32,10 +34,13 @@ import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class DecimalUtil {
     private DecimalUtil() {
@@ -76,17 +81,23 @@ public final class DecimalUtil {
         int type = ColumnType.getDecimalType(precision, scale);
         switch (ColumnType.tagOf(type)) {
             case ColumnType.DECIMAL8:
-                return Decimal8Constant.NULL;
+                return new Decimal8Constant(Decimals.DECIMAL8_NULL, type);
             case ColumnType.DECIMAL16:
-                return Decimal16Constant.NULL;
+                return new Decimal16Constant(Decimals.DECIMAL16_NULL, type);
             case ColumnType.DECIMAL32:
-                return Decimal32Constant.NULL;
+                return new Decimal32Constant(Decimals.DECIMAL32_NULL, type);
             case ColumnType.DECIMAL64:
-                return Decimal64Constant.NULL;
+                return new Decimal64Constant(Decimals.DECIMAL64_NULL, type);
             case ColumnType.DECIMAL128:
-                return Decimal128Constant.NULL;
+                return new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, type);
             default:
-                return Decimal256Constant.NULL;
+                return new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL,
+                        type
+                );
         }
     }
 
@@ -139,6 +150,67 @@ public final class DecimalUtil {
         } catch (NumericException e) {
             throw SqlException.position(position)
                     .put("invalid DECIMAL type, scale must be a number");
+        }
+    }
+
+    /**
+     * Load any decimal value from a Function into a Decimal256
+     */
+    public static void load(Decimal256 decimal, Function value, @Nullable Record rec) {
+        final int fromType = value.getType();
+        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+
+        switch (Decimals.getStorageSizePow2(fromPrecision)) {
+            case 0:
+                byte b = value.getDecimal8(rec);
+                if (b == Decimals.DECIMAL8_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(b, fromScale);
+                }
+                break;
+            case 1:
+                short s = value.getDecimal16(rec);
+                if (s == Decimals.DECIMAL16_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(s, fromScale);
+                }
+                break;
+            case 2:
+                int i = value.getDecimal32(rec);
+                if (i == Decimals.DECIMAL32_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(i, fromScale);
+                }
+                break;
+            case 3:
+                long l = value.getDecimal64(rec);
+                if (l == Decimals.DECIMAL64_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(l, fromScale);
+                }
+                break;
+            case 4:
+                long hi = value.getDecimal128Hi(rec);
+                long lo = value.getDecimal128Lo(rec);
+                if (Decimal128.isNull(hi, lo)) {
+                    decimal.ofNull();
+                } else {
+                    long v = hi < 0 ? -1 : 0;
+                    decimal.of(v, v, hi, lo, fromScale);
+                }
+                break;
+            default:
+                long hh = value.getDecimal256HH(rec);
+                long hl = value.getDecimal256HL(rec);
+                long lh = value.getDecimal256LH(rec);
+                long ll = value.getDecimal256LL(rec);
+                decimal.of(hh, hl, lh, ll, fromScale);
+                break;
         }
     }
 }

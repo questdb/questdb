@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
 import io.questdb.std.Decimals;
 
 public class Decimal16Constant extends AbstractDecimalFunction implements ConstantFunction {
-
-    public static final Decimal16Constant NULL = new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.DECIMAL16);
-
     private final short value;
 
     public Decimal16Constant(short value, int typep) {

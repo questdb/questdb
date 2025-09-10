@@ -385,37 +385,6 @@ public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastVarcharWithDecimals() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "123.45\n",
-                            "select cast(cast('123.45' as varchar) as DECIMAL(5,2))"
-                    );
-
-                    assertSql(
-                            "cast\n" +
-                                    "-123.45\n",
-                            "select cast(cast('-123.45' as varchar) as DECIMAL(5,2))"
-                    );
-
-                    assertSql(
-                            "cast\n" +
-                                    "0.00\n",
-                            "select cast(cast('0.00' as varchar) as DECIMAL(3,2))"
-                    );
-
-                    assertSql(
-                            "cast\n" +
-                                    "999.999\n",
-                            "select cast(cast('999.999' as varchar) as DECIMAL(6,3))"
-                    );
-                }
-        );
-    }
-
-    @Test
     public void testCastToDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -542,24 +511,36 @@ public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastToDecimal8() throws Exception {
+        testConstantCastWithNull("99", "99", "DECIMAL(2)");
+        testConstantCast("-99", "-99", "DECIMAL(2)");
+    }
+
+    @Test
+    public void testCastVarcharWithDecimals() throws Exception {
         assertMemoryLeak(
                 () -> {
                     assertSql(
                             "cast\n" +
-                                    "99\n",
-                            "select cast(cast('99' as varchar) as DECIMAL(2))"
+                                    "123.45\n",
+                            "select cast(cast('123.45' as varchar) as DECIMAL(5,2))"
                     );
 
                     assertSql(
                             "cast\n" +
-                                    "-99\n",
-                            "select cast(cast('-99' as varchar) as DECIMAL(2))"
+                                    "-123.45\n",
+                            "select cast(cast('-123.45' as varchar) as DECIMAL(5,2))"
                     );
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
-                            "select cast(cast(null as varchar) as DECIMAL(2))"
+                                    "0.00\n",
+                            "select cast(cast('0.00' as varchar) as DECIMAL(3,2))"
+                    );
+
+                    assertSql(
+                            "cast\n" +
+                                    "999.999\n",
+                            "select cast(cast('999.999' as varchar) as DECIMAL(6,3))"
                     );
                 }
         );
@@ -873,6 +854,30 @@ public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "\t\n",
                             "WITH data AS (SELECT cast('99' as varchar) value UNION ALL SELECT cast('-99' as varchar) UNION ALL SELECT cast('0' as varchar) UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    private void testConstantCast(String inputString, String expectedOutput, String targetType) throws Exception {
+        assertMemoryLeak(
+                () -> assertSql(
+                        "cast\n" + expectedOutput + "\n",
+                        "select cast(cast('" + inputString + "' as varchar) as " + targetType + ")"
+                )
+        );
+    }
+
+    private void testConstantCastWithNull(String inputString, String expectedOutput, String targetType) throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "cast\n" + expectedOutput + "\n",
+                            "select cast(cast('" + inputString + "' as varchar) as " + targetType + ")"
+                    );
+                    assertSql(
+                            "cast\n\n",
+                            "select cast(cast(null as varchar) as " + targetType + ")"
                     );
                 }
         );
