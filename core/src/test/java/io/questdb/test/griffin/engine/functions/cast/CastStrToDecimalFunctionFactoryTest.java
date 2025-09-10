@@ -35,20 +35,20 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Runtime value needs parsing
                     assertSql("QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [value::DECIMAL(5,2)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['123.45']\n" +
-                            "        long_sequence count: 1\n", 
+                                    "VirtualRecord\n" +
+                                    "  functions: [value::DECIMAL(5,2)]\n" +
+                                    "    VirtualRecord\n" +
+                                    "      functions: ['123.45']\n" +
+                                    "        long_sequence count: 1\n",
                             "EXPLAIN WITH data AS (SELECT '123.45' AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
 
                     // Runtime value without scale
                     assertSql("QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [value::DECIMAL(5,0)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['123']\n" +
-                            "        long_sequence count: 1\n", 
+                                    "VirtualRecord\n" +
+                                    "  functions: [value::DECIMAL(5,0)]\n" +
+                                    "    VirtualRecord\n" +
+                                    "      functions: ['123']\n" +
+                                    "        long_sequence count: 1\n",
                             "EXPLAIN WITH data AS (SELECT '123' AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
 
                     // Expression should be constant folded

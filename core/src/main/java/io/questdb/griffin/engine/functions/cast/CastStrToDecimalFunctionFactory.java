@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -34,25 +33,20 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-
-import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
 public class CastStrToDecimalFunctionFactory implements FunctionFactory {
     /**
      * Create a new instance of a Function that can cast a string to a decimal.
-     * @param decimal is a mutable instance that can be used to parse constant instances.
-     * @param position of the value in the query string
+     *
+     * @param decimal    is a mutable instance that can be used to parse constant instances.
+     * @param position   of the value in the query string
      * @param targetType of the final decimal
-     * @param value that will be used to retrieve the str
+     * @param value      that will be used to retrieve the str
      * @return an instance of a function that will handle the parsing
      * @throws SqlException if constant folding failed
      */
@@ -61,23 +55,6 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             return newConstantInstance(decimal, position, targetType, value);
         }
         return new Func(value, targetType, position);
-    }
-
-    private static ConstantFunction newConstantInstance(Decimal256 decimal, int position, int targetType, Function value) throws SqlException {
-        final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        final int targetScale = ColumnType.getDecimalScale(targetType);
-
-        CharSequence cs = value.getStrA(null);
-        if (cs == null) {
-            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
-        }
-
-        try {
-            decimal.ofString(cs, targetPrecision, targetScale);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, targetType).position(position);
-        }
-        return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
 
     @Override
@@ -97,6 +74,23 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         int argPosition = argPositions.getQuick(0);
         int targetType = args.getQuick(1).getType();
         return newInstance(sqlExecutionContext.getDecimal256(), argPosition, targetType, value);
+    }
+
+    private static ConstantFunction newConstantInstance(Decimal256 decimal, int position, int targetType, Function value) throws SqlException {
+        final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
+        final int targetScale = ColumnType.getDecimalScale(targetType);
+
+        CharSequence cs = value.getStrA(null);
+        if (cs == null) {
+            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
+        }
+
+        try {
+            decimal.ofString(cs, targetPrecision, targetScale);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, targetType).position(position);
+        }
+        return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
 
     private static class Func extends AbstractCastToDecimalFunction {
