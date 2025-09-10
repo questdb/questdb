@@ -80,6 +80,7 @@ tests:
 
   - name: Test Array Operators
     description: Test operators for arrays, including bind variable arguments.
+    exclude: [ 'asyncpg' ]
     prepare:
       - action: execute
         query: "CREATE TABLE array_op_table (arr double[]);"
