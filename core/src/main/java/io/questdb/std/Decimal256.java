@@ -239,15 +239,6 @@ public class Decimal256 implements Sinkable {
         this.scale = scale;
     }
 
-    private boolean hasUnsignOverflowed() {
-        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0;
-    }
-
-    private boolean hasOverflowed() {
-        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0 ||
-                compareTo(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
-    }
-
     /**
      * Static addition method.
      *
@@ -516,6 +507,127 @@ public class Decimal256 implements Sinkable {
 
         BigInteger unscaledValue = new BigInteger(bytes);
         return new BigDecimal(unscaledValue, scale);
+    }
+
+    /**
+     * Writes the string representation of the given Decimal256 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
+    public static void toSink(@NotNull CharSink<?> sink, long hh, long hl, long lh, long ll, int scale) {
+        toSink(sink, hh, hl, lh, ll, scale, MAX_SCALE);
+    }
+
+    /**
+     * Writes the string representation of the given Decimal256 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
+    public static void toSink(@NotNull CharSink<?> sink, long hh, long hl, long lh, long ll, int scale, int precision) {
+        if (isNull(hh, hl, lh, ll)) {
+            return;
+        }
+
+        if (hh < 0) {
+            ll = ~ll + 1;
+            long c = ll == 0L ? 1L : 0L;
+            lh = ~lh + c;
+            c = (c == 1L && lh == 0L) ? 1L : 0L;
+            hl = ~hl + c;
+            c = (c == 1L && hl == 0L) ? 1L : 0L;
+            hh = ~hh + c;
+            sink.put('-');
+        }
+
+        boolean printed = false;
+        boolean afterDot = false;
+        for (int i = precision - 1; i >= 0; i--) {
+            if (i == scale - 1) {
+                if (!printed) {
+                    sink.put('0');
+                }
+                afterDot = true;
+                sink.put('.');
+            }
+
+            // Fast path, we expect most digits to be 0
+            if (compareToPowerOfTen(hh, hl, lh, ll, i, 1) < 0) {
+                if (afterDot || printed) {
+                    sink.put('0');
+                }
+                continue;
+            }
+
+            // We do a binary search to retrieve the digit we need to display at a specific power
+            int mul;
+            if (compareToPowerOfTen(hh, hl, lh, ll, i, 5) >= 0) {
+                if (compareToPowerOfTen(hh, hl, lh, ll, i, 7) >= 0) {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 9) >= 0) {
+                        mul = 9;
+                    } else if (compareToPowerOfTen(hh, hl, lh, ll, i, 8) >= 0) {
+                        mul = 8;
+                    } else {
+                        mul = 7;
+                    }
+                } else {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 6) >= 0) {
+                        mul = 6;
+                    } else {
+                        mul = 5;
+                    }
+                }
+            } else {
+                if (compareToPowerOfTen(hh, hl, lh, ll, i, 3) >= 0) {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 4) >= 0) {
+                        mul = 4;
+                    } else {
+                        mul = 3;
+                    }
+                } else {
+                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 2) >= 0) {
+                        mul = 2;
+                    } else {
+                        mul = 1;
+                    }
+                }
+            }
+            sink.putAscii((char) ('0' + mul));
+            printed = true;
+
+            // Subtract the value and continue again
+            int offset = (mul - 1) * 4;
+
+            long bLL = ~POWERS_TEN_TABLE[i][offset + 3] + 1;
+            long c = bLL == 0L ? 1L : 0L;
+            long r = ll + bLL;
+            long carry = hasCarry(ll, r) ? 1L : 0L;
+            ll = r;
+
+            long bLH = ~POWERS_TEN_TABLE[i][offset + 2] + c;
+            c = (c == 1L && bLH == 0L) ? 1L : 0L;
+            long t = lh + carry;
+            carry = hasCarry(lh, t) ? 1L : 0L;
+            r = t + bLH;
+            carry |= hasCarry(t, r) ? 1L : 0L;
+            lh = r;
+
+            long bHL = ~POWERS_TEN_TABLE[i][offset + 1] + c;
+            c = (c == 1L && bHL == 0L) ? 1L : 0L;
+            t = hl + carry;
+            carry = hasCarry(hl, t) ? 1L : 0L;
+            r = t + bHL;
+            carry |= hasCarry(t, r) ? 1L : 0L;
+            hl = r;
+
+            long bHH = ~POWERS_TEN_TABLE[i][offset] + c;
+            hh += carry + bHH;
+        }
+
+        if (!printed && !afterDot) {
+            sink.put('0');
+        }
     }
 
     /**
@@ -1315,112 +1427,7 @@ public class Decimal256 implements Sinkable {
      */
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        if (isNull()) {
-            return;
-        }
-
-        long hh = this.hh;
-        long hl = this.hl;
-        long lh = this.lh;
-        long ll = this.ll;
-        if (isNegative()) {
-            ll = ~ll + 1;
-            long c = ll == 0L ? 1L : 0L;
-            lh = ~lh + c;
-            c = (c == 1L && lh == 0L) ? 1L : 0L;
-            hl = ~hl + c;
-            c = (c == 1L && hl == 0L) ? 1L : 0L;
-            hh = ~hh + c;
-            sink.put('-');
-        }
-
-        boolean printed = false;
-        boolean afterDot = false;
-        for (int i = MAX_SCALE - 1; i >= 0; i--) {
-            if (i == scale - 1) {
-                if (!printed) {
-                    sink.put('0');
-                }
-                afterDot = true;
-                sink.put('.');
-            }
-
-            // Fast path, we expect most digits to be 0
-            if (compareToPowerOfTen(hh, hl, lh, ll, i, 1) < 0) {
-                if (afterDot || printed) {
-                    sink.put('0');
-                }
-                continue;
-            }
-
-            // We do a binary search to retrieve the digit we need to display at a specific power
-            int mul;
-            if (compareToPowerOfTen(hh, hl, lh, ll, i, 5) >= 0) {
-                if (compareToPowerOfTen(hh, hl, lh, ll, i, 7) >= 0) {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 9) >= 0) {
-                        mul = 9;
-                    } else if (compareToPowerOfTen(hh, hl, lh, ll, i, 8) >= 0) {
-                        mul = 8;
-                    } else {
-                        mul = 7;
-                    }
-                } else {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 6) >= 0) {
-                        mul = 6;
-                    } else {
-                        mul = 5;
-                    }
-                }
-            } else {
-                if (compareToPowerOfTen(hh, hl, lh, ll, i, 3) >= 0) {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 4) >= 0) {
-                        mul = 4;
-                    } else {
-                        mul = 3;
-                    }
-                } else {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 2) >= 0) {
-                        mul = 2;
-                    } else {
-                        mul = 1;
-                    }
-                }
-            }
-            sink.putAscii((char) ('0' + mul));
-            printed = true;
-
-            // Subtract the value and continue again
-            int offset = (mul - 1) * 4;
-
-            long bLL = ~POWERS_TEN_TABLE[i][offset + 3] + 1;
-            long c = bLL == 0L ? 1L : 0L;
-            long r = ll + bLL;
-            long carry = hasCarry(ll, r) ? 1L : 0L;
-            ll = r;
-
-            long bLH = ~POWERS_TEN_TABLE[i][offset + 2] + c;
-            c = (c == 1L && bLH == 0L) ? 1L : 0L;
-            long t = lh + carry;
-            carry = hasCarry(lh, t) ? 1L : 0L;
-            r = t + bLH;
-            carry |= hasCarry(t, r) ? 1L : 0L;
-            lh = r;
-
-            long bHL = ~POWERS_TEN_TABLE[i][offset + 1] + c;
-            c = (c == 1L && bHL == 0L) ? 1L : 0L;
-            t = hl + carry;
-            carry = hasCarry(hl, t) ? 1L : 0L;
-            r = t + bHL;
-            carry |= hasCarry(t, r) ? 1L : 0L;
-            hl = r;
-
-            long bHH = ~POWERS_TEN_TABLE[i][offset] + c;
-            hh += carry + bHH;
-        }
-
-        if (!printed && !afterDot) {
-            sink.put('0');
-        }
+        toSink(sink, hh, hl, lh, ll, scale);
     }
 
     /**
@@ -1489,6 +1496,34 @@ public class Decimal256 implements Sinkable {
         }
     }
 
+    private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {
+        final int offset = (multiplier - 1) * 4;
+        long bHH = POWERS_TEN_TABLE[pow][offset];
+        if (aHH != bHH) {
+            return Long.compare(aHH, bHH);
+        }
+        long bHL = POWERS_TEN_TABLE[pow][offset + 1];
+        if (aHL != bHL) {
+            return Long.compareUnsigned(aHL, bHL);
+        }
+        long bLH = POWERS_TEN_TABLE[pow][offset + 2];
+        if (aLH != bLH) {
+            return Long.compareUnsigned(aLH, bLH);
+        }
+        long bLL = POWERS_TEN_TABLE[pow][offset + 3];
+        return Long.compareUnsigned(aLL, bLL);
+    }
+
+    private static boolean isDigit(char c) {
+        return '0' <= c && c <= '9';
+    }
+
+    private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
+        for (int i = 0; i < 8; i++) {
+            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
+        }
+    }
+
     private static void uncheckedAdd(Decimal256 result, long bHH, long bHL, long bLH, long bLL) {
         long r = result.ll + bLL;
         long carry = hasCarry(result.ll, r) ? 1L : 0L;
@@ -1506,16 +1541,6 @@ public class Decimal256 implements Sinkable {
         carry |= hasCarry(t, r) ? 1L : 0L;
         result.hl = r;
         result.hh = result.hh + carry + bHH;
-    }
-
-    private static boolean isDigit(char c) {
-        return '0' <= c && c <= '9';
-    }
-
-    private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
-        for (int i = 0; i < 8; i++) {
-            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
-        }
     }
 
     /**
@@ -1571,22 +1596,13 @@ public class Decimal256 implements Sinkable {
         return Long.compareUnsigned(ll, bLL);
     }
 
-    private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {
-        final int offset = (multiplier - 1) * 4;
-        long bHH = POWERS_TEN_TABLE[pow][offset];
-        if (aHH != bHH) {
-            return Long.compare(aHH, bHH);
-        }
-        long bHL = POWERS_TEN_TABLE[pow][offset + 1];
-        if (aHL != bHL) {
-            return Long.compareUnsigned(aHL, bHL);
-        }
-        long bLH = POWERS_TEN_TABLE[pow][offset + 2];
-        if (aLH != bLH) {
-            return Long.compareUnsigned(aLH, bLH);
-        }
-        long bLL = POWERS_TEN_TABLE[pow][offset + 3];
-        return Long.compareUnsigned(aLL, bLL);
+    private boolean hasOverflowed() {
+        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0 ||
+                compareTo(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
+    }
+
+    private boolean hasUnsignOverflowed() {
+        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0;
     }
 
     private void multiply128(long h, long l) {

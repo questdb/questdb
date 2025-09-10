@@ -187,14 +187,6 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Check whether the given decimal128 is null or not.
-     * @return true if the value is null.
-     */
-    public static boolean isNull(long hi, long lo) {
-        return hi == Decimals.DECIMAL128_HI_NULL && lo == Decimals.DECIMAL128_LO_NULL;
-    }
-
-    /**
      * Add two Decimal128 numbers and store the result in sink
      *
      * @param a    First operand
@@ -278,6 +270,15 @@ public class Decimal128 implements Sinkable {
         validateScale(scale);
         long h = value < 0 ? -1L : 0L;
         return new Decimal128(h, value, scale);
+    }
+
+    /**
+     * Check whether the given decimal128 is null or not.
+     *
+     * @return true if the value is null.
+     */
+    public static boolean isNull(long hi, long lo) {
+        return hi == Decimals.DECIMAL128_HI_NULL && lo == Decimals.DECIMAL128_LO_NULL;
     }
 
     /**
@@ -816,6 +817,34 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Returns the max high 64-bits part that can fit in the given precision.
+     */
+    private static long getMaxHi(int precision) {
+        return 0;
+    }
+
+    /**
+     * Returns the max low 64-bits part that can fit in the given precision.
+     */
+    private static long getMaxLo(int precision) {
+        return 0;
+    }
+
+    /**
+     * Returns the min high 64-bits part that can fit in the given precision.
+     */
+    private static long getMinHi(int precision) {
+        return 0;
+    }
+
+    /**
+     * Returns the min low 64-bits part that can fit in the given precision.
+     */
+    private static long getMinLo(int precision) {
+        return 0;
+    }
+
+    /**
      * Compare two longs as if they were unsigned.
      * Returns true iff one is bigger than two.
      */
@@ -1135,33 +1164,5 @@ public class Decimal128 implements Sinkable {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
         return Long.compareUnsigned(sum, a) < 0;
-    }
-
-    /**
-     * Returns the max high 64-bits part that can fit in the given precision.
-     */
-    private static long getMaxHi(int precision) {
-return 0;
-    }
-
-    /**
-     * Returns the max low 64-bits part that can fit in the given precision.
-     */
-    private static long getMaxLo(int precision) {
-return 0;
-    }
-
-    /**
-     * Returns the min high 64-bits part that can fit in the given precision.
-     */
-    private static long getMinHi(int precision) {
-return 0;
-    }
-
-    /**
-     * Returns the min low 64-bits part that can fit in the given precision.
-     */
-    private static long getMinLo(int precision) {
-return 0;
     }
 }
