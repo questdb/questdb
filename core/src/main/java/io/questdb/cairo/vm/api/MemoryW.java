@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -47,24 +46,24 @@ public interface MemoryW extends Closeable {
     void putChar(long offset, char value);
 
     /**
-     * Writes a Decimal value to memory using 256 bits.
-     * 
-     * @param offset the memory offset to write to
-     * @param hh the highest 64-bit part of the value
-     * @param hl  the high 64-bit part of the value
-     * @param lh the middle 64-bit part of the value
-     * @param ll the low 64-bit part of the value
-     */
-    void putDecimal256(long offset, long hh, long hl, long lh, long ll);
-
-    /**
      * Writes a Decimal value to memory using 128 bits.
      *
      * @param offset the memory offset to write to
-     * @param high the high 64-bit part of the value
-     * @param low  the low 64-bit part of the value
+     * @param high   the high 64-bit part of the value
+     * @param low    the low 64-bit part of the value
      */
     void putDecimal128(long offset, long high, long low);
+
+    /**
+     * Writes a Decimal value to memory using 256 bits.
+     *
+     * @param offset the memory offset to write to
+     * @param hh     the highest 64-bit part of the value
+     * @param hl     the high 64-bit part of the value
+     * @param lh     the middle 64-bit part of the value
+     * @param ll     the low 64-bit part of the value
+     */
+    void putDecimal256(long offset, long hh, long hl, long lh, long ll);
 
     void putDouble(long offset, double value);
 

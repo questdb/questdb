@@ -200,10 +200,10 @@ class WalEventWriter implements Closeable {
                 break;
             case ColumnType.DECIMAL256:
                 eventMem.putDecimal256(
-                    function.getDecimal256HH(null),
-                    function.getDecimal256HL(null),
-                    function.getDecimal256LH(null),
-                    function.getDecimal256LL(null)
+                        function.getDecimal256HH(null),
+                        function.getDecimal256HL(null),
+                        function.getDecimal256LH(null),
+                        function.getDecimal256LL(null)
                 );
                 break;
             default:
