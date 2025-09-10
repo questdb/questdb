@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
@@ -59,7 +60,7 @@ public final class DecimalUtil {
             throw SqlException.position(position).put(ex);
         }
 
-        return createDecimalConstant(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl(), precision, decimal.getScale());
+        return createDecimalConstant(decimal, precision, decimal.getScale());
     }
 
     /**
@@ -81,6 +82,13 @@ public final class DecimalUtil {
             default:
                 return new Decimal256Constant(hh, hl, lh, ll, type);
         }
+    }
+
+    /**
+     * Creates a new constant Decimal from the given 256-bit decimal value.
+     */
+    public static @NotNull ConstantFunction createDecimalConstant(Decimal256 d, int precision, int scale) {
+        return createDecimalConstant(d.getHh(), d.getHl(), d.getLh(), d.getLl(), precision, scale);
     }
 
     /**

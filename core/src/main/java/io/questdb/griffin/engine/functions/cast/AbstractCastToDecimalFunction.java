@@ -142,7 +142,7 @@ public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunct
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(arg).val("::").val(ColumnType.nameOf(type)).val(scale > 0 ? 's' : 'u');
+        sink.val(arg).val("::").val(ColumnType.nameOf(type));
     }
 
     /**

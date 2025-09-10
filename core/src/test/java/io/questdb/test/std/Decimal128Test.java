@@ -1729,4 +1729,17 @@ public class Decimal128Test {
             throw e;
         }
     }
+
+    @Test
+    public void testX() {
+        BigDecimal bd = new BigDecimal(1);
+        System.out.println("private static final long[] POWERS_TEN_TABLE_HH = {");
+        for (int i = 0; i < 77; i++) {
+
+            Decimal128 d = Decimal128.fromBigDecimal(bd);
+            System.out.printf("%d, // 10^%d\n", d.getHigh(), i+1);
+            bd = bd.multiply(BigDecimal.TEN).add(BigDecimal.valueOf(9));
+        }
+        System.out.println("};");
+    }
 }
