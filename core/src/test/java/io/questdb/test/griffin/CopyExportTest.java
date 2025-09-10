@@ -333,6 +333,20 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetFailsWithSpecifyPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
+            execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
+            assertException(
+                    "copy test_table to 'export' with format parquet partition_by MONTH",
+                    61,
+                    "PARTITION BY cannot be used when exporting from a table"
+            );
+        });
+
+    }
+
+    @Test
     public void testCopyParquetLargeTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table large_table (id int, value string)");
@@ -444,15 +458,6 @@ public class CopyExportTest extends AbstractCairoTest {
                 "copy test_table to 'output' with format parquet compression_codec",
                 65,
                 "invalid compression codec, expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
-        );
-    }
-
-    @Test
-    public void testCopyParquetTableDoesNotExist() throws Exception {
-        assertException(
-                "copy nonexistent_table to 'output' with format parquet",
-                5,
-                "table does not exist [table=nonexistent_table]"
         );
     }
 
@@ -919,13 +924,13 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyWithPartitionBy() throws Exception {
+    public void testCopyWithPartitionByTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
             execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
 
             CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy test_table to 'output11' with format parquet partition_by DAY", sqlExecutionContext);
+                    runAndFetchCopyExportID("copy test_table to 'output11' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {

@@ -167,6 +167,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
+        this.partitionByPosition = partitionByPosition;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));

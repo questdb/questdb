@@ -148,7 +148,7 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
         sink.type("Copy");
     }
 
-    private static class CopyRecord implements Record {
+    public static class CopyRecord implements Record {
         private CharSequence value;
 
         @Override

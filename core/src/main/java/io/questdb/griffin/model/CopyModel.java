@@ -65,6 +65,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private boolean header;
     private int parquetVersion;
     private int partitionBy;
+    private int partitionByPos;
     private boolean rawArrayEncoding;
     private int rowGroupSize;
     private int selectStartPos;
@@ -93,6 +94,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         timestampFormat = null;
         timestampColumnName = null;
         partitionBy = -1;
+        partitionByPos = 0;
+        selectStartPos = 0;
         delimiter = -1;
         atomicity = -1;
         type = COPY_TYPE_UNKNOWN;
@@ -147,6 +150,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public int getPartitionByPos() {
+        return partitionByPos;
     }
 
     public int getRowGroupSize() {
@@ -255,8 +262,9 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.parquetVersion = parquetVersion;
     }
 
-    public void setPartitionBy(int partitionBy) {
+    public void setPartitionBy(int partitionBy, int pos) {
         this.partitionBy = partitionBy;
+        this.partitionByPos = pos;
     }
 
     public void setRawArrayEncoding(boolean rawArrayEncoding) {

@@ -101,15 +101,14 @@ public class SerialParquetExporter implements Closeable {
         final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
         @Nullable CharSequence toParquetCs;
         int lastSlash;
-
         tableToken = cairoEngine.getTableTokenIfExists(tableName);
-
         if (tableToken == null) {
-            // check quoted
             throw CairoException.tableDoesNotExist(tableName);
         }
-
-        securityContext.authorizeSelectOnAnyColumn(tableToken);
+        
+        if (task.getCreateOp() == null) {
+            securityContext.authorizeSelectOnAnyColumn(tableToken);
+        }
 
         final int compressionCodec = task.getCompressionCodec();
         final int compressionLevel = task.getCompressionLevel();

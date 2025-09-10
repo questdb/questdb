@@ -1561,13 +1561,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
-    private CharSequence authorizeSelectForCopy(SecurityContext securityContext, CopyModel model) {
+    private void authorizeSelectForCopy(SecurityContext securityContext, CopyModel model) {
         final CharSequence tableName = unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(tableName);
         if (tt != null) {
             securityContext.authorizeSelectOnAnyColumn(tt);
         }
-        return tableName;
     }
 
     private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
@@ -2279,7 +2278,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private RecordCursorFactory compileCopyFrom(SecurityContext securityContext, CopyModel model) throws SqlException {
         assert !model.isCancel();
-
         final CharSequence tableName = authorizeInsertForCopy(securityContext, model);
 
         if (model.getTimestampColumnName() == null

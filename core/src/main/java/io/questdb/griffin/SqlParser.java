@@ -835,7 +835,7 @@ public class SqlParser {
                             if (partitionBy == -1) {
                                 throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
                             }
-                            model.setPartitionBy(partitionBy);
+                            model.setPartitionBy(partitionBy, lexer.lastTokenPosition());
                             tok = optTok(lexer);
                         } else if (isTimestampKeyword(tok)) {
                             tok = tok(lexer, "timestamp column name expected");
@@ -909,7 +909,7 @@ public class SqlParser {
                             case CopyModel.COPY_OPTION_PARTITION_BY:
                                 final ExpressionNode partitionByExpr = expectLiteral(lexer);
                                 final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
-                                model.setPartitionBy(partitionBy);
+                                model.setPartitionBy(partitionBy, partitionByExpr.position);
                                 break;
                             case CopyModel.COPY_OPTION_SIZE_LIMIT:
                                 // todo: add this when table writer has appropriate support for it

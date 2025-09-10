@@ -30,13 +30,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
@@ -67,11 +66,11 @@ import static io.questdb.std.GenericLexer.unquote;
  * nicely with server-side statements in PG Wire and query caching in general.
  */
 public class CopyExportFactory extends AbstractRecordCursorFactory {
-    private static final Log LOG = LogFactory.getLog(CopyExportFactory.class);
 
+    private static final Log LOG = LogFactory.getLog(CopyExportFactory.class);
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final StringSink exportIdSink = new StringSink();
-    private final CopyRecord record = new CopyRecord();
+    private final CopyImportFactory.CopyRecord record = new CopyImportFactory.CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private int compressionCodec;
     private int compressionLevel;
@@ -81,9 +80,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private MessageBus messageBus;
     private int parquetVersion;
     private int partitionBy;
+    private int partitionByPos;
     private boolean rawArrayEncoding = false;
     private int rowGroupSize;
-    private @Nullable SecurityContext securityContext;
+    private SecurityContext securityContext;
     private @Nullable String selectText = null;
     private int sizeLimit;
     private CharSequence sqlText;
@@ -118,7 +118,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        long copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
+        long copyID = copyContext.assignActiveExportId(securityContext);
         if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
             final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
             final SPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
@@ -129,7 +129,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 assert processingCursor > -1;
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 CreateTableOperationImpl createOp = null;
-                SqlExecutionContextImpl queryExecutionContext = null;
+                SqlExecutionContextImpl createSelectContext = null;
                 if (this.selectText != null) {
                     // prepare to create a temp table
                     exportIdSink.clear();
@@ -137,22 +137,22 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     Numbers.appendHex(exportIdSink, copyID, true);
                     this.tableName = exportIdSink.toString();
                     createOp = validAndCreateTableOp(executionContext);
-                    queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
-                    assert securityContext != null;
-                    queryExecutionContext.with(securityContext, null, null, -1, circuitBreaker);
+                    createSelectContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
+                    createSelectContext.with(securityContext, null, null, -1, circuitBreaker);
                 } else {
                     if (executionContext.getTableTokenIfExists(tableName) == null) {
                         throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
                     }
+                    if (partitionBy != PartitionBy.NONE) {
+                        throw SqlException.$(partitionByPos, "PARTITION BY cannot be used when exporting from a table");
+                    }
                 }
-                assert tableName != null;
-
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 record.setValue(exportIdSink);
                 task.of(
                         securityContext,
-                        queryExecutionContext,
+                        createSelectContext,
                         copyID,
                         createOp,
                         tableName,
@@ -174,7 +174,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getMessage()).I$();
-                // clear copy context
                 throw ex;
             } finally {
                 copyRequestPubSeq.done(processingCursor);
@@ -221,6 +220,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.securityContext = securityContext;
         this.selectText = model.getSelectText();
         this.partitionBy = model.getPartitionBy();
+        this.partitionByPos = model.getPartitionByPos();
         this.sizeLimit = model.getSizeLimit();
         this.compressionCodec = model.getCompressionCodec();
         this.compressionLevel = model.getCompressionLevel();
@@ -238,7 +238,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery selectQuery = compiler.compile(selectText, executionContext);
             try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
-                RecordMetadata metadata = rcf.getMetadata();
                 createOp = new CreateTableOperationImpl(
                         selectText,
                         tableName,
@@ -247,46 +246,22 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity(),
                         sqlText.toString(),
                         false);
-                createOp.validateAndUpdateMetadataFromSelect(metadata);
+                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata());
             }
-        } catch (SqlException e) {
-            e.setPosition(e.getPosition() + tableOrSelectTextPos);
+        } catch (SqlException ex) {
+            ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
             Misc.free(createOp);
-            throw e;
-        } catch (CairoException e) {
-            e.position(tableOrSelectTextPos + e.getPosition());
+            throw ex;
+        } catch (CairoException ex) {
+            ex.position(tableOrSelectTextPos + ex.getPosition());
             Misc.free(createOp);
-            throw e;
+            throw ex;
         } catch (Throwable ex) {
             Misc.free(createOp);
             throw ex;
         }
 
         return createOp;
-    }
-
-    private static class CopyRecord implements Record {
-        private CharSequence value;
-
-        @Override
-        public CharSequence getStrA(int col) {
-            return value;
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            // the sink is immutable
-            return getStrA(col);
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return value.length();
-        }
-
-        public void setValue(CharSequence value) {
-            this.value = value;
-        }
     }
 
     static {

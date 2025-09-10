@@ -96,10 +96,6 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             final AtomicBooleanCircuitBreaker circuitBreaker = copyExportContext.getCircuitBreaker();
             copyExportContext.getExportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
             circuitBreaker.cancel();
-            // Cancelled active import, probably :)
-            // This action is async and there is no guarantee that target table does not exist
-            // to determine if COPY has stopped the client has to wait for status table to
-            // be updated.
             status = "cancelled";
         } else {
             status = null;
