@@ -57,10 +57,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final Exception creationStackTrace;
     private final int initialCapacity;
     private final LPSZ lpsz = new PathLPSZ();
     private final int memoryTag;
-    private final Exception stackTrace;
     private boolean ascii;
     private int capacity;
     private long headPtr;
@@ -88,7 +88,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
             randomSeed();
         }
         ascii = true;
-        this.stackTrace = stackTrace;
+        creationStackTrace = stackTrace;
     }
 
 
@@ -150,9 +150,11 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     @Override
     public void close() {
         if (headPtr != 0L) {
-            if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE && stackTrace != null) {
-                System.err.print("Closing path: ");
-                stackTrace.printStackTrace(System.err);
+            if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE && creationStackTrace != null) {
+                synchronized (System.err) {
+                    System.err.print("Closing ");
+                    creationStackTrace.printStackTrace(System.err);
+                }
             }
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
@@ -464,7 +466,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static Path newTLPath() {
         if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
             Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet());
-            ex.printStackTrace(System.err);
+            synchronized (System.err) {
+                System.err.print("Creating ");
+                ex.printStackTrace(System.err);
+            }
             return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
         } else {
             return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL);
