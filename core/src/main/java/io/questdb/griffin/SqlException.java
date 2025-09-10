@@ -44,9 +44,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private int error;
     private int position;
 
-    protected SqlException() {
-    }
-
     public static SqlException $(int position, CharSequence message) {
         return position(position).put(message);
     }
@@ -153,6 +150,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException walRecoverable(int position) {
         return position(position).errorCode(EXCEPTION_WAL_RECOVERABLE);
+    }
+
+    public int getErrorCode() {
+        return error;
     }
 
     @Override

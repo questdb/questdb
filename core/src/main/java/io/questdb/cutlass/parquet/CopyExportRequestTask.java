@@ -164,50 +164,39 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public enum Phase {
-        NONE((byte) -1, null),
-        CREATING_TEMP_TABLE((byte) 0, "creating_temp_table"),
-        CONVERTING_PARTITIONS((byte) 1, "converting_partitions"),
-        DROPPING_TEMP_TABLE((byte) 2, "dropping_temp_table"),
-        SIGNALLING_EXP((byte) 3, "signalling_exp");
+        NONE(""),
+        WAITING("wait_to_run"),
+        POPULATING_TEMP_TABLE("populating_data_to_temp_table"),
+        CONVERTING_PARTITIONS("converting_partitions"),
+        DROPPING_TEMP_TABLE("dropping_temp_table"),
+        SIGNALLING_EXP("signalling_exp");
 
         private final String name;
-        private final byte value;
 
-        Phase(byte value, String name) {
-            this.value = value;
+        Phase(String name) {
             this.name = name;
         }
 
         public String getName() {
             return name;
-        }
-
-        public byte getValue() {
-            return value;
         }
     }
 
     public enum Status {
-        STARTED((byte) 0, "started"),
-        FINISHED((byte) 1, "finished"),
-        FAILED((byte) 2, "failed"),
-        CANCELLED((byte) 3, "cancelled"),
-        PENDING((byte) 4, "pending");
+        STARTED("started"),
+        FINISHED("finished"),
+        FAILED("failed"),
+        CANCELLED("cancelled"),
+        PENDING("pending");
 
         private final String name;
-        private final byte value;
 
-        Status(byte value, String name) {
-            this.value = value;
+        Status(String name) {
             this.name = name;
         }
 
         public String getName() {
             return name;
-        }
-
-        public byte getValue() {
-            return value;
         }
     }
 

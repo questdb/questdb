@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -49,6 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
 
+import static io.questdb.cairo.CairoException.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.createDirsOrFail;
 
 public class SerialParquetExporter implements Closeable {
@@ -87,108 +89,127 @@ public class SerialParquetExporter implements Closeable {
     }
 
     public void process(SecurityContext securityContext) {
-        if (task.getCreateOp() != null) {
-            try {
+        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
+        try {
+            if (task.getCreateOp() != null) {
+                phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
+                statusReporter.report(phase, CopyExportRequestTask.Status.PENDING, task, null, 0);
+                LOG.info().$("starting to create temporary table and populate with data [table=").$(task.getTableName()).$(']').$();
                 task.getCreateOp().execute(task.getExecutionContext(), null);
-            } catch (Throwable e) {
-                LOG.errorW().$("could not populate table reader [msg=").$(e.getMessage()).$(']').$();
-                throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, "", 1);
+                LOG.info().$("completed creating temporary table and populating with data [table=").$(task.getTableName()).$(']').$();
             }
-        }
-        statusReporter.report(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.STARTED, null, Long.MIN_VALUE);
 
-        final String tableName = task.getTableName();
-        final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
-        @Nullable CharSequence toParquetCs;
-        int lastSlash;
-        tableToken = cairoEngine.getTableTokenIfExists(tableName);
-        if (tableToken == null) {
-            throw CairoException.tableDoesNotExist(tableName);
-        }
-        
-        if (task.getCreateOp() == null) {
-            securityContext.authorizeSelectOnAnyColumn(tableToken);
-        }
+            phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
+            statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, 0);
+            final String tableName = task.getTableName();
+            final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
+            @Nullable CharSequence toParquetCs;
+            int lastSlash;
+            tableToken = cairoEngine.getTableTokenIfExists(tableName);
+            if (tableToken == null) {
+                throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
+            }
+            if (task.getCreateOp() == null) {
+                securityContext.authorizeSelectOnAnyColumn(tableToken);
+            }
 
-        final int compressionCodec = task.getCompressionCodec();
-        final int compressionLevel = task.getCompressionLevel();
-        final int rowGroupSize = task.getRowGroupSize();
-        final int dataPageSize = task.getDataPageSize();
-        final boolean statisticsEnabled = task.isStatisticsEnabled();
-        final int parquetVersion = task.getParquetVersion();
-        final boolean rawArrayEncoding = task.isRawArrayEncoding();
+            final int compressionCodec = task.getCompressionCodec();
+            final int compressionLevel = task.getCompressionLevel();
+            final int rowGroupSize = task.getRowGroupSize();
+            final int dataPageSize = task.getDataPageSize();
+            final boolean statisticsEnabled = task.isStatisticsEnabled();
+            final int parquetVersion = task.getParquetVersion();
+            final boolean rawArrayEncoding = task.isRawArrayEncoding();
 
-        try (TableReader reader = cairoEngine.getReader(tableToken)) {
-            final int partitionCount = reader.getPartitionCount();
-            final int partitionBy = reader.getPartitionedBy();
+            if (circuitBreaker.checkIfTripped()) {
+                LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
+                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+            }
 
-            if (partitionCount == 0) {
-                // empty table
-                throw CairoException.tableDoesNotExist(tableName);
-            } else {
-                try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
-                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                        if (circuitBreaker.checkIfTripped()) {
-                            LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
-                            throw CairoException.queryCancelled();
+            try (TableReader reader = cairoEngine.getReader(tableToken)) {
+                final int partitionCount = reader.getPartitionCount();
+                final int partitionBy = reader.getPartitionedBy();
+
+                if (partitionCount == 0) {
+                    throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
+                } else {
+                    try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
+                        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                            if (circuitBreaker.checkIfTripped()) {
+                                LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
+                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                            }
+                            final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+
+                            if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                                // todo: copy the file directly
+                                continue;
+                            }
+
+                            reader.openPartition(partitionIndex);
+                            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+
+                            // prepare output file path
+                            toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
+                            PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                    .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
+                            toParquet.put(".parquet");
+                            toParquetCs = toParquet.asAsciiCharSequence();
+                            lastSlash = Chars.lastIndexOf(toParquetCs, 0, toParquetCs.length() - 1, '/');
+                            CharSequence partitionName = toParquetCs.subSequence(lastSlash + 1, toParquetCs.length() - 8);
+
+                            // log start
+                            LOG.info().$("converting partition to parquet [table=").$(tableToken)
+                                    .$(", partition=").$(partitionName)
+                                    .$(", path=").$(toParquetCs).$(']').$();
+                            statusReporter.report(phase, CopyExportRequestTask.Status.PENDING, task, toParquetCs, 0);
+
+                            createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+                            PartitionEncoder.encodeWithOptions(
+                                    partitionDescriptor,
+                                    toParquet,
+                                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                                    statisticsEnabled,
+                                    rawArrayEncoding,
+                                    rowGroupSize,
+                                    dataPageSize,
+                                    parquetVersion
+                            );
+
+                            long parquetFileSize = ff.length(toParquet.$());
+                            LOG.info().$("converted partition to parquet [table=").$(tableToken)
+                                    .$(", partition=").$(partitionName)
+                                    .$(", size=").$(parquetFileSize).$(']')
+                                    .$();
                         }
-                        final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-
-                        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-                            // todo: copy the file directly
-                            continue;
-                        }
-
-                        reader.openPartition(partitionIndex);
-                        PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
-
-                        // prepare output file path
-                        toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
-                        PartitionBy.getPartitionDirFormatMethod(partitionBy)
-                                .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
-                        toParquet.put(".parquet");
-                        toParquetCs = toParquet.asAsciiCharSequence();
-                        lastSlash = Chars.lastIndexOf(toParquetCs, 0, toParquetCs.length() - 1, '/');
-                        CharSequence partitionName = toParquetCs.subSequence(lastSlash + 1, toParquetCs.length() - 8);
-
-                        // log start
-                        LOG.info().$("converting partition to parquet [table=").$(tableToken)
-                                .$(", partition=").$(partitionName)
-                                .$(", path=").$(toParquetCs).$(']').$();
-                        statusReporter.report(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.PENDING, toParquetCs, Long.MIN_VALUE);
-
-
-                        createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
-                        PartitionEncoder.encodeWithOptions(
-                                partitionDescriptor,
-                                toParquet,
-                                ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                                statisticsEnabled,
-                                rawArrayEncoding,
-                                rowGroupSize,
-                                dataPageSize,
-                                parquetVersion
-                        );
-
-                        long parquetFileSize = ff.length(toParquet.$());
-                        LOG.info().$("converted partition to parquet [table=").$(tableToken)
-                                .$(", partition=").$(partitionName)
-                                .$(", size=").$(parquetFileSize).$(']')
-                                .$();
+                    } catch (CairoException e) {
+                        LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
+                        throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                     }
-                } catch (CairoException e) {
-                    LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                 }
             }
+
+            phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
+            LOG.info().$("finished parquet conversion [table=").$(tableToken).$(']').$();
+            statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, 0);
+        } catch (CopyExportException e) {
+            LOG.errorW().$("parquet export failed [msg=").$(e.getFlyweightMessage()).$(']').$();
+            throw e;
+        } catch (SqlException e) {
+            LOG.errorW().$("parquet export failed [msg=").$(e.getFlyweightMessage()).$(']').$();
+            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrorCode());
+        } catch (CairoException e) {
+            LOG.errorW().$("parquet export failed [msg=").$(e.getFlyweightMessage()).$(']').$();
+            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrno());
+        } catch (Throwable e) {
+            LOG.errorW().$("parquet export failed [msg=").$(e.getMessage()).$(']').$();
+            throw CopyExportException.instance(phase, e.getMessage(), -1);
         }
-        LOG.info().$("finished parquet conversion [table=").$(tableToken).$(']').$();
-        statusReporter.report(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Long.MIN_VALUE);
     }
 
     @FunctionalInterface
     public interface PhaseStatusReporter {
-        void report(CopyExportRequestTask.Phase phase, CopyExportRequestTask.Status status, @Nullable final CharSequence msg, long errors);
+        void report(CopyExportRequestTask.Phase phase, CopyExportRequestTask.Status status, CopyExportRequestTask task, @Nullable final CharSequence msg, long errors);
     }
 
 }

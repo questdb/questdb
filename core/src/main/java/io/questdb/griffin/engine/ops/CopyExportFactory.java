@@ -167,8 +167,21 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         suspendEvent,
                         rawArrayEncoding
                 );
+                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.PENDING, task, "queued", 0);
                 cursor.toTop();
                 return cursor;
+            } catch (SqlException ex) {
+                copyContext.clear();
+                exportIdSink.clear();
+                Numbers.appendHex(exportIdSink, copyID, true);
+                LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getFlyweightMessage()).I$();
+                throw ex;
+            } catch (CairoException ex) {
+                copyContext.clear();
+                exportIdSink.clear();
+                Numbers.appendHex(exportIdSink, copyID, true);
+                LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getFlyweightMessage()).I$();
+                throw ex;
             } catch (Throwable ex) {
                 copyContext.clear();
                 exportIdSink.clear();

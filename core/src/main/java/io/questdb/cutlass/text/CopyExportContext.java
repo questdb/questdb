@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -39,6 +40,7 @@ public class CopyExportContext implements Mutable {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     private final LongSupplier copyIDSupplier;
     private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private SerialParquetExporter.PhaseStatusReporter reporter;
 
     public CopyExportContext(CairoConfiguration configuration) {
         this.copyIDSupplier = configuration.getCopyIDSupplier();
@@ -69,6 +71,14 @@ public class CopyExportContext implements Mutable {
 
     public SecurityContext getExportOriginatorSecurityContext() {
         return exportOriginatorSecurityContext;
+    }
+
+    public SerialParquetExporter.PhaseStatusReporter getReporter() {
+        return reporter;
+    }
+
+    public void setReporter(SerialParquetExporter.PhaseStatusReporter reporter) {
+        this.reporter = reporter;
     }
 }
 

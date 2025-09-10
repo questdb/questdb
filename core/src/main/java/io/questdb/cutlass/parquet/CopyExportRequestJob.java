@@ -57,7 +57,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private Path path;
     private SerialParquetExporter serialExporter;
-    private SqlExecutionContextImpl sqlExecutionContext;
     private CopyExportRequestTask task;
     private TableWriter writer;
 
@@ -71,11 +70,11 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
 
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
             int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                 SqlCompiler compiler = engine.getSqlCompiler()) {
+                sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
                 this.statusTableToken = compiler.query()
                         .$("CREATE TABLE IF NOT EXISTS \"")
                         .$(statusTableName)
@@ -96,6 +95,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
 
             this.writer = engine.getWriter(statusTableToken, "QuestDB system");
             this.copyContext = engine.getCopyExportContext();
+            this.copyContext.setReporter(this::updateStatus);
             this.engine = engine;
         } catch (Throwable t) {
             close();
@@ -107,15 +107,13 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     public void close() {
         this.serialExporter = Misc.free(serialExporter);
         this.writer = Misc.free(this.writer);
-        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.path = Misc.free(path);
     }
 
-    // todo: improve outputs so that they make more sense for parquet export
-    // i.e presenting the query text instead of a useless copy.id table name
-    private void updateStatus(
+    public void updateStatus(
             CopyExportRequestTask.Phase phase,
             CopyExportRequestTask.Status status,
+            CopyExportRequestTask task,
             @Nullable final CharSequence msg,
             long errors
     ) {
@@ -167,7 +165,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     @Override
     protected boolean runSerially() {
         long cursor = requestSubSeq.next();
-
         if (cursor > -1) {
             task = requestQueue.get(cursor);
             try {
@@ -178,30 +175,32 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 );
                 serialExporter.process(task.getSecurityContext());
                 if (task.getCreateOp() != null) {
-                    updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.STARTED, task.getTableName(), Long.MIN_VALUE);
+                    updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.STARTED, task, task.getTableName(), Long.MIN_VALUE);
                     try {
                         engine.execute("DROP TABLE IF EXISTS '" + task.getTableName() + "';"); // todo: allocation
                     } catch (SqlException e) {
-                        updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.FAILED, e.getMessage(), Long.MIN_VALUE);
+                        updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.FAILED, task, e.getMessage(), Long.MIN_VALUE);
                     }
-                    updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.FINISHED, task.getTableName(), Long.MIN_VALUE);
+                    updateStatus(CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE, CopyExportRequestTask.Status.FINISHED, task, task.getTableName(), Long.MIN_VALUE);
                 }
                 if (task.getSuspendEvent() != null) {
-                    updateStatus(CopyExportRequestTask.Phase.SIGNALLING_EXP, CopyExportRequestTask.Status.STARTED,
+                    updateStatus(CopyExportRequestTask.Phase.SIGNALLING_EXP, CopyExportRequestTask.Status.STARTED, task,
                             "sending signal to waiting thread [fd=" + task.getSuspendEvent().getFd() + ']', Long.MIN_VALUE);
                     task.getSuspendEvent().trigger();
-                    updateStatus(CopyExportRequestTask.Phase.SIGNALLING_EXP, CopyExportRequestTask.Status.FINISHED,
+                    updateStatus(CopyExportRequestTask.Phase.SIGNALLING_EXP, CopyExportRequestTask.Status.FINISHED, task,
                             "signal sent", Long.MIN_VALUE);
                 }
-                updateStatus(CopyExportRequestTask.Phase.NONE, CopyExportRequestTask.Status.FINISHED, null, Long.MIN_VALUE);
+                updateStatus(CopyExportRequestTask.Phase.NONE, CopyExportRequestTask.Status.FINISHED, task, null, Long.MIN_VALUE);
             } catch (CopyExportException e) {
                 updateStatus(
-                        CopyExportRequestTask.Phase.NONE,
-                        e.isCancelled() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                        e.getMessage(),
-                        0
+                        e.getPhase(),
+                        copyContext.getCircuitBreaker().checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        task,
+                        e.getFlyweightMessage(),
+                        e.getErrno()
                 );
             } finally {
+                task.clear();
                 requestSubSeq.done(cursor);
                 copyContext.clear();
             }
