@@ -42,12 +42,12 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     public void assignType(int type) throws SqlException {
         assert ColumnType.isArray(type);
         if (view == null) {
-            super.type = type;
+            this.type = type;
             return;
         }
         int viewType = view.getType();
         if (ColumnType.isUndefined(viewType)) {
-            super.type = type;
+            this.type = type;
         }
 
         if (view.getType() != type) {
@@ -58,7 +58,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     @Override
     public void clear() {
         view = null;
-        super.type = ColumnType.UNDEFINED;
+        type = ColumnType.UNDEFINED;
     }
 
     @Override
@@ -71,6 +71,14 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
     public void parseArray(CharSequence value) {
         view = SqlUtil.implicitCastStringAsDoubleArray(value, doubleArrayParser, type);
+        if (ColumnType.isUndefined(type)) {
+            type = view.getType();
+        } else {
+            if (type != view.getType()) {
+                throw CairoException.nonCritical().put("array type mismatch [expected=").put(ColumnType.nameOf(type))
+                        .put(", actual=").put(ColumnType.nameOf(view.getType())).put(']');
+            }
+        }
     }
 
     public void setView(ArrayView view) {
@@ -81,13 +89,15 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
         int elementType = ColumnType.decodeArrayElementType(view.getType());
         if (elementType != ColumnType.LONG && elementType != ColumnType.DOUBLE) {
-            throw CairoException.nonCritical().put("unsupported array type, only DOUBLE is currently supported [type=").put(ColumnType.nameOf(elementType)).put(']');
+            throw CairoException.nonCritical().put("unsupported array type, only DOUBLE is currently supported [type=")
+                    .put(ColumnType.nameOf(elementType)).put(']');
         }
         if (ColumnType.isUndefined(type)) {
             type = view.getType();
         } else {
             if (type != view.getType()) {
-                throw CairoException.nonCritical().put("array type mismatch [expected=").put(ColumnType.nameOf(type)).put(", actual=").put(ColumnType.nameOf(view.getType())).put(']');
+                throw CairoException.nonCritical().put("array type mismatch [expected=").put(ColumnType.nameOf(type))
+                        .put(", actual=").put(ColumnType.nameOf(view.getType())).put(']');
             }
         }
         this.view = view;

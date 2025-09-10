@@ -790,9 +790,7 @@ public class SqlUtil {
     public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
         try {
             int dims = ColumnType.decodeArrayDimensionality(expectedType);
-            if (dims == -1) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
-            }
+            // the parser will handle the weak dimensionality case (-1)
             parser.of(value, dims);
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
@@ -857,9 +855,7 @@ public class SqlUtil {
     public static ArrayView implicitCastVarcharAsDoubleArray(Utf8Sequence value, DoubleArrayParser parser, int expectedType) {
         try {
             int dims = ColumnType.decodeArrayDimensionality(expectedType);
-            if (dims == -1) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
-            }
+            // the parser will handle the weak dimensionality case (-1)
             parser.of(value.asAsciiCharSequence(), dims);
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
