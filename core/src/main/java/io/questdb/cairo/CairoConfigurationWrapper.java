@@ -237,6 +237,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable String getDbLogName() {
+        return getDelegate().getDbLogName();
+    }
+
+    @Override
     public @NotNull String getDbRoot() {
         return getDelegate().getDbRoot();
     }
@@ -282,13 +287,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return getDelegate().getFileOperationRetryCount();
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return getDelegate().getFileDescriptorCacheEnabled();
+    public int getFileOperationRetryCount() {
+        return getDelegate().getFileOperationRetryCount();
     }
 
     @Override

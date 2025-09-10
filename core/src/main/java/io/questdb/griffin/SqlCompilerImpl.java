@@ -2125,7 +2125,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
+            LOG.info().$("could not alter table [table=").$(tableToken)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();

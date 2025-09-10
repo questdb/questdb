@@ -458,7 +458,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // there is no reliable way to wait until the server listener is re-registered
                 serverMain.getEngine().getConfigReloader().reload();
 
-                // while configuration was reloaded, metrics must not be reset
+                // while the configuration was reloaded, metrics must not be reset
                 TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.pgWireMetrics().listenerStateChangeCounter().getValue()));
 
                 // we should be able to open two connections eventually

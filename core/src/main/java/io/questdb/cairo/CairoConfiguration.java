@@ -179,6 +179,9 @@ public interface CairoConfiguration {
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
+    @Nullable
+    String getDbLogName();
+
     boolean getDebugWalApplyBlockFailureNoRetry();
 
     @NotNull
