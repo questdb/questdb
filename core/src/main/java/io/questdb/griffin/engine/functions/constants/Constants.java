@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -75,6 +76,15 @@ public final class Constants {
                 }
                 return new NullArrayConstant(columnType);
             }
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                int precision = ColumnType.getDecimalPrecision(columnType);
+                int scale = ColumnType.getDecimalPrecision(columnType);
+                return DecimalUtil.createNullDecimalConstant(precision, scale);
             default:
                 return nullConstants.getQuick(typeTag);
         }
