@@ -102,7 +102,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     // DECIMAL128 unscaled (uses CastDecimal128UnscaledFunc)
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
-                                    "  functions: [value::DECIMAL128u]\n" +
+                                    "  functions: [value::DECIMAL(19,0)]\n" +
                                     "    VirtualRecord\n" +
                                     "      functions: [9223372036854775807L]\n" +
                                     "        long_sequence count: 1\n",
@@ -111,7 +111,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     // DECIMAL256 unscaled (uses CastDecimal256UnscaledFunc)
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
-                                    "  functions: [value::DECIMAL256u]\n" +
+                                    "  functions: [value::DECIMAL(40,0)]\n" +
                                     "    VirtualRecord\n" +
                                     "      functions: [9223372036854775807L]\n" +
                                     "        long_sequence count: 1\n",

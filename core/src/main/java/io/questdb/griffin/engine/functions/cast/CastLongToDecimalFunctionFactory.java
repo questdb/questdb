@@ -164,7 +164,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val("::DECIMAL128u");
+            sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
     }
 
@@ -220,7 +220,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val("::DECIMAL256u");
+            sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
     }
 
@@ -285,7 +285,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val("::").val(ColumnType.nameOf(type)).val("u");
+            sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
 
         private void overflowCheck(long value) {
