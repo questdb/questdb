@@ -1301,14 +1301,8 @@ public class Decimal256 implements Sinkable {
      */
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        if (isNull()) {
-            sink.put("null");
-            return;
-        }
-
-        if (isNegative()) {
-            sink.put('-');
-        }
+        BigDecimal bd = toBigDecimal();
+        sink.put(bd.toPlainString());
     }
 
     /**
