@@ -59,6 +59,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     boolean ignoreIfExists();
 
+    boolean needRegister();
+
     void updateFromLikeTableMetadata(TableMetadata likeTableMetadata);
 
     void updateOperationFutureAffectedRowsCount(long insertCount);

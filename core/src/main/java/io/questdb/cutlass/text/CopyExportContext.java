@@ -27,7 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -36,10 +36,9 @@ import java.util.function.LongSupplier;
 public class CopyExportContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
     private final AtomicLong activeExportID = new AtomicLong(INACTIVE_COPY_ID);
-    private final AtomicCountedCircuitBreaker circuitBreaker = new AtomicCountedCircuitBreaker();
+    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     private final LongSupplier copyIDSupplier;
     private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
-
 
     public CopyExportContext(CairoConfiguration configuration) {
         this.copyIDSupplier = configuration.getCopyIDSupplier();
@@ -64,7 +63,7 @@ public class CopyExportContext implements Mutable {
         return activeExportID.get();
     }
 
-    public AtomicCountedCircuitBreaker getCircuitBreaker() {
+    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 

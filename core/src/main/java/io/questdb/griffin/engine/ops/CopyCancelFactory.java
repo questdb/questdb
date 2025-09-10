@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -53,7 +52,6 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final long cancelCopyID;
     private final String cancelCopyIDStr;
-    private final CairoConfiguration configuration;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
     private final RecordCursorFactory exportBaseFactory;
@@ -78,7 +76,6 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
         this.cancelCopyIDStr = cancelCopyIDStr;
         this.importBaseFactory = importBaseFactory;
         this.exportBaseFactory = exportBaseFactory;
-        this.configuration = configuration;
     }
 
     @Override
@@ -96,7 +93,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             // be updated.
             status = "cancelled";
         } else if (activeExportCopyID == cancelCopyID && cancelCopyID != CopyExportContext.INACTIVE_COPY_ID) {
-            final AtomicCountedCircuitBreaker circuitBreaker = copyExportContext.getCircuitBreaker();
+            final AtomicBooleanCircuitBreaker circuitBreaker = copyExportContext.getCircuitBreaker();
             copyExportContext.getExportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
             circuitBreaker.cancel();
             // Cancelled active import, probably :)

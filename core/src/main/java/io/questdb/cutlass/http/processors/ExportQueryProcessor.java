@@ -634,7 +634,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CopyModel model = new CopyModel();
             model.clear();
             model.setParquetDefaults(engine.getConfiguration());
-            model.setSelectText(state.query.toString());
+            model.setSelectText(state.query.toString(), 0);
             model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
             model.setPartitionBy(PartitionBy.NONE);
 

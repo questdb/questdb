@@ -78,6 +78,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     // position of the "like" table name in the SQL text, for error reporting
     private int likeTableNamePosition;
     private int maxUncommittedRows;
+    private boolean needRegister = true;
     private long o3MaxLag;
     private int partitionBy;
     private int partitionByPosition;
@@ -100,13 +101,15 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                                        int partitionBy,
                                        boolean walEnabled,
                                        int defaultSymbolCapacity,
-                                       String sqlText) {
+                                       String sqlText,
+                                       boolean needRegister) {
         this.selectText = selectText;
         this.tableName = tableName;
         this.partitionBy = partitionBy;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.walEnabled = walEnabled;
         this.sqlText = sqlText;
+        this.needRegister = needRegister;
     }
 
     public CreateTableOperationImpl(
@@ -273,140 +276,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // - (symbol) column index data, e.g. index flag and index capacity
         // - (symbol) column cache flag
         initColumnMetadata(createColumnModelMap);
-    }
-
-    public static void validateAndUpdateMetadataFromSelect(CreateTableOperationImpl impl, RecordMetadata metadata) throws SqlException {
-        // This method must only be called in case of "create-as-select".
-        // Here we remap data keyed on column names (from cast maps) to
-        // data keyed on column index. We assume that "columnBits" are free to use
-        // in case of "create-as-select" because they don't capture any useful data
-        // at SQL parse time.
-        assert impl.selectText != null;
-        impl.columnBits.clear();
-        if (impl.timestampColumnName == null) {
-            impl.timestampIndex = metadata.getTimestampIndex();
-        } else {
-            impl.timestampIndex = metadata.getColumnIndexQuiet(impl.timestampColumnName);
-            if (impl.timestampIndex == -1) {
-                throw SqlException.position(impl.timestampColumnNamePosition)
-                        .put("designated timestamp column doesn't exist [name=").put(impl.timestampColumnName).put(']');
-            }
-            int timestampColType = metadata.getColumnType(impl.timestampIndex);
-            if (timestampColType != ColumnType.TIMESTAMP) {
-                throw SqlException.position(impl.timestampColumnNamePosition)
-                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
-            }
-        }
-        if (impl.timestampIndex == -1 && impl.partitionBy != PartitionBy.NONE) {
-            throw SqlException.position(impl.partitionByPosition)
-                    .put("partitioning is possible only on tables with designated timestamps");
-        }
-
-        ObjList<CharSequence> castColNames = impl.colNameToCastClausePos.keys();
-        for (int i = 0, n = castColNames.size(); i < n; i++) {
-            CharSequence castColName = castColNames.get(i);
-            if (metadata.getColumnIndexQuiet(castColName) < 0) {
-                throw SqlException.position(impl.colNameToCastClausePos.get(castColName))
-                        .put("CAST column doesn't exist [column=").put(castColName).put(']');
-            }
-        }
-        ObjList<CharSequence> indexColNames = impl.colNameToIndexClausePos.keys();
-        for (int i = 0, n = indexColNames.size(); i < n; i++) {
-            CharSequence indexedColName = indexColNames.get(i);
-            if (metadata.getColumnIndexQuiet(indexedColName) < 0) {
-                throw SqlException.position(impl.colNameToIndexClausePos.get(indexedColName))
-                        .put("INDEX column doesn't exist [column=").put(indexedColName).put(']');
-            }
-        }
-        ObjList<CharSequence> dedupColNames = impl.colNameToDedupClausePos.keys();
-        for (int i = 0, n = dedupColNames.size(); i < n; i++) {
-            CharSequence dedupColName = dedupColNames.get(i);
-            if (metadata.getColumnIndexQuiet(dedupColName) < 0) {
-                throw SqlException.position(impl.colNameToDedupClausePos.get(dedupColName))
-                        .put("DEDUP column doesn't exist [column=").put(dedupColName).put(']');
-            }
-        }
-
-        impl.columnNames.clear();
-        boolean hasDedup = false;
-        boolean isTimestampDeduped = false;
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final String columnName = metadata.getColumnName(i);
-            final TableColumnMetadata augMeta = impl.augmentedColumnMetadata.get(columnName);
-            if (!TableUtils.isValidColumnName(columnName, 255)) {
-                throw SqlException.position(impl.tableNamePosition)
-                        .put("invalid column name [name=")
-                        .put(columnName)
-                        .put(", position=")
-                        .put(i)
-                        .put(']');
-            }
-
-            int columnType;
-            int symbolCapacity;
-            boolean symbolCacheFlag;
-            boolean symbolIndexed;
-            boolean isDedupKey;
-            int indexBlockCapacity;
-            if (augMeta != null) {
-                final int fromType = metadata.getColumnType(i);
-                columnType = augMeta.getColumnType();
-                if (columnType == ColumnType.UNDEFINED) {
-                    columnType = fromType;
-                }
-                if (!isCompatibleCast(fromType, columnType)) {
-                    throw SqlException.unsupportedCast(impl.colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
-                }
-                symbolCapacity = augMeta.getSymbolCapacity();
-                symbolCacheFlag = augMeta.isSymbolCacheFlag();
-                symbolIndexed = augMeta.isSymbolIndexFlag();
-                isDedupKey = augMeta.isDedupKeyFlag();
-                indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
-            } else {
-                columnType = metadata.getColumnType(i);
-                if (ColumnType.isNull(columnType)) {
-                    throw SqlException
-                            .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
-                            .put(columnName).put("::").put("type");
-                }
-                symbolCapacity = impl.defaultSymbolCapacity;
-                symbolCacheFlag = true;
-                symbolIndexed = false;
-                isDedupKey = false;
-                indexBlockCapacity = 0;
-            }
-
-            if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
-                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
-            }
-            if (isDedupKey) {
-                hasDedup = true;
-                if (i == impl.timestampIndex) {
-                    isTimestampDeduped = true;
-                }
-            }
-            impl.columnNames.add(columnName);
-            impl.addColumnBits(
-                    columnType,
-                    symbolCacheFlag,
-                    symbolCapacity,
-                    symbolIndexed,
-                    indexBlockCapacity,
-                    isDedupKey
-            );
-        }
-        if (hasDedup && !isTimestampDeduped) {
-            // Report the error's position in SQL as the position of the first column in the DEDUP list
-            int firstDedupColumnPos = Integer.MAX_VALUE;
-            for (int i = 0, n = dedupColNames.size(); i < n; i++) {
-                int dedupColPos = impl.colNameToDedupClausePos.get(dedupColNames.get(i));
-                if (firstDedupColumnPos > dedupColPos) {
-                    firstDedupColumnPos = dedupColPos;
-                }
-            }
-            throw SqlException.position(firstDedupColumnPos)
-                    .put("deduplicate key list must include dedicated timestamp column");
-        }
     }
 
     @Override
@@ -614,6 +483,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return walEnabled;
     }
 
+    @Override
+    public boolean needRegister() {
+        return needRegister;
+    }
+
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
     }
@@ -686,7 +560,132 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // data keyed on column index. We assume that "columnBits" are free to use
         // in case of "create-as-select" because they don't capture any useful data
         // at SQL parse time.
-        validateAndUpdateMetadataFromSelect(this, metadata);
+        assert this.selectText != null;
+        this.columnBits.clear();
+        if (this.timestampColumnName == null) {
+            this.timestampIndex = metadata.getTimestampIndex();
+        } else {
+            this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
+            if (this.timestampIndex == -1) {
+                throw SqlException.position(this.timestampColumnNamePosition)
+                        .put("designated timestamp column doesn't exist [name=").put(this.timestampColumnName).put(']');
+            }
+            int timestampColType = metadata.getColumnType(this.timestampIndex);
+            if (timestampColType != ColumnType.TIMESTAMP) {
+                throw SqlException.position(this.timestampColumnNamePosition)
+                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+            }
+        }
+        if (this.timestampIndex == -1 && this.partitionBy != PartitionBy.NONE) {
+            throw SqlException.position(this.partitionByPosition)
+                    .put("partitioning is possible only on tables with designated timestamps");
+        }
+
+        ObjList<CharSequence> castColNames = this.colNameToCastClausePos.keys();
+        for (int i = 0, n = castColNames.size(); i < n; i++) {
+            CharSequence castColName = castColNames.get(i);
+            if (metadata.getColumnIndexQuiet(castColName) < 0) {
+                throw SqlException.position(this.colNameToCastClausePos.get(castColName))
+                        .put("CAST column doesn't exist [column=").put(castColName).put(']');
+            }
+        }
+        ObjList<CharSequence> indexColNames = this.colNameToIndexClausePos.keys();
+        for (int i = 0, n = indexColNames.size(); i < n; i++) {
+            CharSequence indexedColName = indexColNames.get(i);
+            if (metadata.getColumnIndexQuiet(indexedColName) < 0) {
+                throw SqlException.position(this.colNameToIndexClausePos.get(indexedColName))
+                        .put("INDEX column doesn't exist [column=").put(indexedColName).put(']');
+            }
+        }
+        ObjList<CharSequence> dedupColNames = this.colNameToDedupClausePos.keys();
+        for (int i = 0, n = dedupColNames.size(); i < n; i++) {
+            CharSequence dedupColName = dedupColNames.get(i);
+            if (metadata.getColumnIndexQuiet(dedupColName) < 0) {
+                throw SqlException.position(this.colNameToDedupClausePos.get(dedupColName))
+                        .put("DEDUP column doesn't exist [column=").put(dedupColName).put(']');
+            }
+        }
+
+        this.columnNames.clear();
+        boolean hasDedup = false;
+        boolean isTimestampDeduped = false;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final String columnName = metadata.getColumnName(i);
+            final TableColumnMetadata augMeta = this.augmentedColumnMetadata.get(columnName);
+            if (!TableUtils.isValidColumnName(columnName, 255)) {
+                throw SqlException.position(this.tableNamePosition)
+                        .put("invalid column name [name=")
+                        .put(columnName)
+                        .put(", position=")
+                        .put(i)
+                        .put(']');
+            }
+
+            int columnType;
+            int symbolCapacity;
+            boolean symbolCacheFlag;
+            boolean symbolIndexed;
+            boolean isDedupKey;
+            int indexBlockCapacity;
+            if (augMeta != null) {
+                final int fromType = metadata.getColumnType(i);
+                columnType = augMeta.getColumnType();
+                if (columnType == ColumnType.UNDEFINED) {
+                    columnType = fromType;
+                }
+                if (!isCompatibleCast(fromType, columnType)) {
+                    throw SqlException.unsupportedCast(this.colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
+                }
+                symbolCapacity = augMeta.getSymbolCapacity();
+                symbolCacheFlag = augMeta.isSymbolCacheFlag();
+                symbolIndexed = augMeta.isSymbolIndexFlag();
+                isDedupKey = augMeta.isDedupKeyFlag();
+                indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
+            } else {
+                columnType = metadata.getColumnType(i);
+                if (ColumnType.isNull(columnType)) {
+                    throw SqlException
+                            .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
+                            .put(columnName).put("::").put("type");
+                }
+                symbolCapacity = this.defaultSymbolCapacity;
+                symbolCacheFlag = true;
+                symbolIndexed = false;
+                isDedupKey = false;
+                indexBlockCapacity = 0;
+            }
+
+            if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
+            }
+            if (isDedupKey) {
+                hasDedup = true;
+                if (i == this.timestampIndex) {
+                    isTimestampDeduped = true;
+                }
+            }
+            this.columnNames.add(columnName);
+            this.addColumnBits(
+                    columnType,
+                    symbolCacheFlag,
+                    symbolCapacity,
+                    symbolIndexed,
+                    indexBlockCapacity,
+                    isDedupKey
+            );
+        }
+        if (hasDedup && !isTimestampDeduped) {
+            // Report the error's position in SQL as the position of the first column in the DEDUP list
+            int firstDedupColumnPos = Integer.MAX_VALUE;
+            for (int i = 0, n = dedupColNames.size(); i < n; i++) {
+                int dedupColPos = this.colNameToDedupClausePos.get(dedupColNames.get(i));
+                if (firstDedupColumnPos > dedupColPos) {
+                    firstDedupColumnPos = dedupColPos;
+                }
+            }
+            throw SqlException.position(firstDedupColumnPos)
+                    .put("deduplicate key list must include dedicated timestamp column");
+        }
     }
 
     private void addColumnBits(

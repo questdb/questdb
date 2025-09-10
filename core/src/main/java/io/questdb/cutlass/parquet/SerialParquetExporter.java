@@ -57,12 +57,12 @@ public class SerialParquetExporter implements Closeable {
     private final CairoConfiguration configuration;
     private final CharSequence copyExportRoot;
     private final FilesFacade ff;
-    ExecutionCircuitBreaker circuitBreaker;
     StringSink msgSink;
     PhaseStatusReporter statusReporter;
     TableToken tableToken;
     CopyExportRequestTask task;
     Path toParquet;
+    private ExecutionCircuitBreaker circuitBreaker;
 
     public SerialParquetExporter(CairoEngine engine, Path path) {
         this.cairoEngine = engine;

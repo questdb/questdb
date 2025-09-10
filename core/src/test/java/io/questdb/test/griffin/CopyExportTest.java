@@ -131,7 +131,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     "TTL 3 DAYS WAL;"
             );
             drainWalQueue();
-            Thread starter = new Thread(() -> {
+            CopyExportRunnable stmt = () -> {
                 try {
                     runAndFetchCopyExportID("copy (generate_series(0, '9999-01-01', '1U')) TO 'very_large_table' WITH FORMAT PARQUET;", sqlExecutionContext);
                 } catch (SqlException e) {
@@ -139,13 +139,13 @@ public class CopyExportTest extends AbstractCairoTest {
                 } finally {
                     Path.clearThreadLocals();
                 }
-            });
-            Thread finisher = new Thread(() -> {
+            };
+            CopyExportRunnable test = () -> {
                 try {
                     long copyID;
                     do {
                         copyID = engine.getCopyExportContext().getActiveExportID();
-                    } while (copyID == Long.MIN_VALUE);
+                    } while (copyID == -1);
 
                     StringSink sink = new StringSink();
                     Numbers.appendHex(sink, copyID, true);
@@ -158,15 +158,15 @@ public class CopyExportTest extends AbstractCairoTest {
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }
+                    // wait cancel finish
+                    do {
+                        copyID = engine.getCopyExportContext().getActiveExportID();
+                    } while (copyID != -1);
                 } finally {
                     Path.clearThreadLocals();
                 }
-            });
-            starter.start();
-            Thread.sleep(500);
-            finisher.start();
-            starter.join(30_000);
-            finisher.join(30_000);
+            };
+            testCopyExport(stmt, test, false);
         });
     }
 
@@ -265,10 +265,29 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetFailsWithIllegalSql() throws Exception {
+        assertException(
+                "copy (select x from non_existing_table) to 'tmp' with format parquet",
+                20,
+                "table does not exist [table=non_existing_table]"
+        );
+        assertException(
+                "copy (select a+1 from1 v) to 'tmp' with format parquet",
+                23,
+                "found [tok='v', len=1] ',', 'from' or 'over' expected"
+        );
+        assertException(
+                "copy (select 1) to 'tmp' with format csv",
+                37,
+                "unsupported format, only 'parquet' is supported"
+        );
+    }
+
+    @Test
     public void testCopyParquetFailsWithNonExistentTable() throws Exception {
         assertException(
                 "copy test_table to 'blah blah blah' with format parquet",
-                0,
+                5,
                 "table does not exist [table=test_table]"
         );
     }
@@ -370,7 +389,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'output' with format invalid",
                 40,
-                "unexpected token [invalid]"
+                "unsupported format, only 'parquet' is supported"
         );
     }
 
@@ -432,7 +451,7 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyParquetTableDoesNotExist() throws Exception {
         assertException(
                 "copy nonexistent_table to 'output' with format parquet",
-                0,
+                5,
                 "table does not exist [table=nonexistent_table]"
         );
     }
@@ -729,7 +748,6 @@ public class CopyExportTest extends AbstractCairoTest {
                             "2\t200\tworld\n",
                     "select * from read_parquet('" + exportRoot + "/output1/default.parquet') order by x");
         });
-
         testCopyExport(statement, test);
     }
 
@@ -1029,19 +1047,29 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     protected synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
+        testCopyExport(statement, test, true);
+    }
+
+    protected synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked) throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
-
             execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
             try (CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine)) {
                 Thread processingThread = createJobThread(copyRequestJob, processed);
                 processingThread.start();
                 statement.run();
-                processed.await();
+                if (blocked) {
+                    processed.await();
+                }
                 drainWalQueue(engine);
                 copyRequestJob.drain(0);
-                processingThread.join();
-                test.run();
+                if (blocked) {
+                    processingThread.join();
+                    test.run();
+                } else {
+                    test.run();
+                    processingThread.join();
+                }
             }
         });
     }

@@ -3481,12 +3481,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
-        final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
-        long beginNanos = configuration.getMicrosecondClock().getTicks();
-        QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
-        try {
+        boolean needRegister = createTableOp.needRegister();
+        long sqlId = 0;
+        long beginNanos = 0;
+        if (needRegister) {
+            sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
+            beginNanos = configuration.getMicrosecondClock().getTicks();
+            QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
             executionContext.setUseSimpleCircuitBreaker(true);
+        }
 
+        try {
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
@@ -3643,16 +3648,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            if (needRegister) {
+                QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            }
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
-            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            if (needRegister) {
+                QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            }
             throw e;
         } finally {
-            executionContext.setUseSimpleCircuitBreaker(false);
-            queryRegistry.unregister(sqlId, executionContext);
+            if (needRegister) {
+                executionContext.setUseSimpleCircuitBreaker(false);
+                queryRegistry.unregister(sqlId, executionContext);
+            }
         }
     }
 

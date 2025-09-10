@@ -27,11 +27,12 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.AtomicCountedCircuitBreaker;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -89,6 +90,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private boolean statisticsEnabled;
     private @Nullable SuspendEvent suspendEvent = null;
     private @Nullable String tableName = null;
+    private int tableOrSelectTextPos = 0;
 
     public CopyExportFactory(
             MessageBus messageBus,
@@ -116,35 +118,35 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final AtomicCountedCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
         long copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
         if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
             final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
             final SPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
             long processingCursor = copyRequestPubSeq.next();
+            final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
+            circuitBreaker.reset();
             try {
                 assert processingCursor > -1;
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 CreateTableOperationImpl createOp = null;
                 SqlExecutionContextImpl queryExecutionContext = null;
                 if (this.selectText != null) {
-                    // need to create a temp table which we will use for the export
+                    // prepare to create a temp table
                     exportIdSink.clear();
                     exportIdSink.put("copy.");
                     Numbers.appendHex(exportIdSink, copyID, true);
                     this.tableName = exportIdSink.toString();
                     createOp = validAndCreateTableOp(executionContext);
-                    // we need a new execution context that uses our circuit breaker, so copy cancel will apply
-                    // to the query
                     queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
                     assert securityContext != null;
-                    circuitBreaker.inc();
                     queryExecutionContext.with(securityContext, null, null, -1, circuitBreaker);
+                } else {
+                    if (executionContext.getTableTokenIfExists(tableName) == null) {
+                        throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
+                    }
                 }
                 assert tableName != null;
-                if (executionContext.getTableToken(tableName) == null) {
-                    throw SqlException.tableDoesNotExist(0, tableName);
-                }
+
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 record.setValue(exportIdSink);
@@ -183,7 +185,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             Numbers.appendHex(exportIdSink, activeCopyID, true);
             throw SqlException.$(0, "unable to process the export request - another export may be in progress")
                     .put(" [activeExportId=")
-                    .put(copyContext.getActiveExportID())
+                    .put(exportIdSink)
                     .put(']');
         }
     }
@@ -208,9 +210,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
         if (model.getTableName() != null) {
             this.tableName = unquote(model.getTableName()).toString();
-
+            this.tableOrSelectTextPos = model.getTableNameExpr().position;
         } else {
             assert model.getSelectText() != null;
+            this.tableOrSelectTextPos = model.getSelectTextStartPos();
         }
 
         final ExpressionNode fileNameExpr = model.getFileName();
@@ -242,12 +245,21 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         partitionBy,
                         false,
                         executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity(),
-                        sqlText.toString());
+                        sqlText.toString(),
+                        false);
                 createOp.validateAndUpdateMetadataFromSelect(metadata);
-            } catch (Throwable ex) {
-                Misc.free(createOp);
-                throw ex;
             }
+        } catch (SqlException e) {
+            e.setPosition(e.getPosition() + tableOrSelectTextPos);
+            Misc.free(createOp);
+            throw e;
+        } catch (CairoException e) {
+            e.position(tableOrSelectTextPos + e.getPosition());
+            Misc.free(createOp);
+            throw e;
+        } catch (Throwable ex) {
+            Misc.free(createOp);
+            throw ex;
         }
 
         return createOp;

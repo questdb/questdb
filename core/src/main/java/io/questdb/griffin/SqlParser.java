@@ -806,7 +806,7 @@ public class SqlParser {
                 }
 
                 model.setTarget(target);
-                model.setSelectText(selectText);
+                model.setSelectText(selectText, startOfSelect);
                 model.setFileName(fileName);
             }
 
@@ -894,18 +894,16 @@ public class SqlParser {
                 if (tok != null && isWithKeyword(tok)) {
                     tok = tok(lexer, "copy option");
                     while (tok != null && !isSemicolon(tok)) {
-                        // todo: refactor into a hashmap lookup plus switch?
                         final int optionCode = CopyModel.getExportOption(tok);
                         switch (optionCode) {
                             case CopyModel.COPY_OPTION_FORMAT:
-                                tok = tok(lexer, "'csv' or 'parquet'");
+                                // only support parquet for now
+                                tok = tok(lexer, "'parquet'");
                                 if (isParquetKeyword(tok)) {
                                     model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
                                     model.setParquetDefaults(configuration);
-                                } else if (isCsvKeyword(tok)) {
-                                    model.setFormat(CopyModel.COPY_FORMAT_CSV);
                                 } else {
-                                    throw errUnexpected(lexer, tok);
+                                    throw SqlException.$(lexer.lastTokenPosition(), "unsupported format, only 'parquet' is supported");
                                 }
                                 break;
                             case CopyModel.COPY_OPTION_PARTITION_BY:
@@ -2815,7 +2813,7 @@ public class SqlParser {
             if (tok != null && SqlKeywords.isOnKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'ON' clause must precede 'TOLERANCE' clause. " +
                         "Hint: put the ON condition right after the JOIN, then add TOLERANCE, " +
-                        "e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h");
+                        "e.g. ... ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h");
             }
             lexer.unparseLast();
         }

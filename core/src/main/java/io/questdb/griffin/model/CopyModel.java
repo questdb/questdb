@@ -26,7 +26,6 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
@@ -55,15 +54,12 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final int COPY_TYPE_UNKNOWN = 0;
     public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
     private static final LowerCaseCharSequenceIntHashMap copyOptionsNameToEnumMap = new LowerCaseCharSequenceIntHashMap();
-    public static String[] copyFormatMap = {"unknown", "csv", "parquet"};
-    public static String[] copyTypeMap = {"unknown", "from", "to"};
     private int atomicity;
     private boolean cancel;
     private int compressionCodec;
     private int compressionLevel;
     private int dataPageSize;
     private byte delimiter;
-    private SuspendEvent event;
     private ExpressionNode fileName;
     private int format;
     private boolean header;
@@ -71,6 +67,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int partitionBy;
     private boolean rawArrayEncoding;
     private int rowGroupSize;
+    private int selectStartPos;
     @Nullable
     private String selectText;
     private int sizeLimit;
@@ -79,7 +76,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private CharSequence timestampColumnName;
     private CharSequence timestampFormat;
     private int type;
-
 
     public CopyModel() {
     }
@@ -160,6 +156,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     @Override
     public @Nullable String getSelectText() {
         return selectText;
+    }
+
+    public int getSelectTextStartPos() {
+        return selectStartPos;
     }
 
     public int getSizeLimit() {
@@ -267,8 +267,9 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.rowGroupSize = rowGroupSize;
     }
 
-    public void setSelectText(@Nullable String selectText) {
+    public void setSelectText(@Nullable String selectText, int startPos) {
         this.selectText = selectText;
+        this.selectStartPos = startPos;
     }
 
     public void setSizeLimit(int sizeLimit) {
