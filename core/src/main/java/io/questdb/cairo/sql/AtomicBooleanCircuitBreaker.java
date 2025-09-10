@@ -44,6 +44,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         cancelledFlag = new AtomicBoolean(false);
     }
 
+
     public AtomicBooleanCircuitBreaker(int throttle) {
         this.throttle = throttle;
     }
@@ -69,6 +70,12 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public void clear() {
         fd = -1;
         testCount = 0;
+    }
+
+    @Override
+    public int finish() {
+        setCancelledFlag(null);
+        return -1;
     }
 
     @Override

@@ -48,13 +48,13 @@ public class CopyNoMangleTest extends AbstractCairoTest {
         String inputWorkRootTmp = inputWorkRoot;
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID(
+        CopyImportTest.CopyRunnable stmt = () -> CopyImportTest.runAndFetchCopyID(
                 "copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ",
                 sqlExecutionContext
         );
 
-        CopyTest.CopyRunnable test = () -> assertQueryNoLeakCheck(
+        CopyImportTest.CopyRunnable test = () -> assertQueryNoLeakCheck(
                 "message\ncould not remove import work directory because it points to one of main directories\n",
                 "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
@@ -62,7 +62,7 @@ public class CopyNoMangleTest extends AbstractCairoTest {
                 true
         );
 
-        CopyTest.testCopy(stmt, test);
+        CopyImportTest.testCopy(stmt, test);
 
         inputWorkRoot = inputWorkRootTmp;
     }

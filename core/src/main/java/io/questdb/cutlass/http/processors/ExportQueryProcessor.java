@@ -33,9 +33,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
@@ -46,18 +49,25 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.ops.CopyExportFactory;
+import io.questdb.griffin.model.CopyModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.SuspendEventFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
 import io.questdb.std.MemoryTag;
@@ -67,6 +77,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -74,14 +85,13 @@ import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 
-public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
-
-    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
+public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
+    private static final Log LOG = LogFactory.getLog(ExportQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
-    private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<ExportQueryProcessorState> LV = new LocalValue<>();
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
@@ -91,7 +101,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    public TextQueryProcessor(
+    public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int sharedQueryWorkerCount
@@ -113,7 +123,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
     public void execute(
             HttpConnectionContext context,
-            TextQueryProcessorState state
+            ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
@@ -167,6 +177,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
+
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -202,9 +213,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     public void onRequestComplete(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-        TextQueryProcessorState state = LV.get(context);
+        ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new TextQueryProcessorState(context));
+            LV.set(context, state = new ExportQueryProcessorState(context));
         }
         // new request clears random
         state.rnd = null;
@@ -219,7 +230,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
     @Override
     public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
-        TextQueryProcessorState state = LV.get(context);
+        ExportQueryProcessorState state = LV.get(context);
         if (state != null) {
             state.pausedQuery = pausedQuery;
             state.rnd = sqlExecutionContext.getRandom();
@@ -235,7 +246,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         } catch (CairoError | CairoException e) {
             // this is something we didn't expect
             // log the exception and disconnect
-            TextQueryProcessorState state = LV.get(context);
+            ExportQueryProcessorState state = LV.get(context);
             if (state != null) {
                 logInternalError(e, state);
             }
@@ -310,14 +321,159 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private LogRecord critical(TextQueryProcessorState state) {
+    private CopyExportRequestTask.Status checkForParquetExportCompletion(String copyID) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            String statusSQL = "SELECT phase, status FROM 'sys.copy_export_log' WHERE id = '" + copyID + "' ORDER BY ts DESC LIMIT 1";
+            final CompiledQuery cc = compiler.compile(statusSQL, sqlExecutionContext);
+
+            try (RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    CharSequence phase = cursor.getRecord().getSymA(0);
+                    CharSequence status = cursor.getRecord().getSymA(1);
+                    LOG.info().$("Parquet export status check [copyID=").$(copyID).$(", phase=").$(phase).$(", status=").$(status).$(']').I$();
+
+                    if (phase == null) {
+                        if (SqlKeywords.isFinishedKeyword(status)) {
+                            return CopyExportRequestTask.Status.FINISHED;
+                        } else if (SqlKeywords.isFailedKeyword(status)) {
+                            return CopyExportRequestTask.Status.FAILED;
+                        } else if (SqlKeywords.isCancelledKeyword(status)) {
+                            return CopyExportRequestTask.Status.CANCELLED;
+                        } else {
+                            return CopyExportRequestTask.Status.PENDING;
+                        }
+                    }
+                } else {
+                    LOG.info().$("No export status found for copyID: ").$(copyID).I$();
+                }
+            }
+        }
+        return CopyExportRequestTask.Status.PENDING;
+    }
+
+    private void cleanupParquetState(ExportQueryProcessorState state) {
+        if (state.parquetFileFd != -1) {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            ff.close(state.parquetFileFd);
+            state.parquetFileFd = -1;
+        }
+    }
+
+    private String createTempTableForQuery(CharSequence query, long copyID) throws SqlException {
+        String tempTableName = "copy." + Long.toHexString(copyID);
+        String createTableSQL = "CREATE TABLE '" + tempTableName + "' AS (" + query + ")";
+
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile(createTableSQL, sqlExecutionContext);
+        }
+
+        return tempTableName;
+    }
+
+    private LogRecord critical(ExportQueryProcessorState state) {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
+    }
+
+    private void doParquetExport(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+        ExportQueryProcessorState state = LV.get(context);
+        final HttpChunkedResponse response = context.getChunkedResponse();
+
+        OUT:
+        while (true) {
+            try {
+                switch (state.queryState) {
+                    case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
+                        // Initialize parquet export
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
+                        try {
+                            initParquetExport(context, state);
+                        } catch (SqlException e) {
+                            sendException(response, 0, e.getFlyweightMessage(), state);
+                            break OUT;
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT:
+                        CopyExportRequestTask.Status completion;
+                        try {
+                            completion = checkForParquetExportCompletion(state.copyID);
+                        } catch (SqlException e) {
+                            sendException(response, 0, e.getFlyweightMessage(), state);
+                            break OUT;
+                        }
+
+                        if (completion == CopyExportRequestTask.Status.PENDING) {
+                            throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker());
+                        }
+
+                        // Handle non-pending completion statuses
+                        switch (completion) {
+                            case FAILED:
+                                sendException(response, 0, "copy task failed [id=" + state.copyID + ']', state);
+                                break OUT;
+                            case CANCELLED:
+                                sendException(response, 0, "copy task was cancelled [id=" + state.copyID + ']', state);
+                                break OUT;
+                            case FINISHED:
+                                String exportPath = findParquetExportFile(state.copyID);
+                                if (exportPath == null) {
+                                    sendException(response, 0, "exported parquet files not found [id=" + state.copyID + ']', state);
+                                    break OUT;
+                                } else {
+                                    state.parquetFilePath = exportPath;
+                                    state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
+                                }
+                                break;
+                        }
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT:
+                        try {
+                            initParquetFileSending(context, state);
+                        } catch (Exception e) {
+                            // Clean up any open file descriptors on error
+                            cleanupParquetState(state);
+                            sendException(response, 0, e.getMessage(), state);
+                            break OUT;
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK;
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK:
+                        sendParquetFileChunk(response, state);
+
+                        if (state.parquetFileOffset >= state.parquetFileSize) {
+                            state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE;
+                        }
+                        break;
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE:
+                        response.sendChunk(true);
+                        break OUT;
+
+                    default:
+                        break OUT;
+                }
+            } catch (DataUnavailableException e) {
+                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+            } catch (NoSpaceLeftInResponseBufferException ignored) {
+                response.sendChunk(false);
+            }
+        }
+        // Clean up parquet state when done
+        cleanupParquetState(state);
+        readyForNextRequest(context);
     }
 
     private void doResumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
-        TextQueryProcessorState state = LV.get(context);
+        ExportQueryProcessorState state = LV.get(context);
+
         if (state == null) {
             return;
         }
@@ -333,6 +489,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
 
         final HttpChunkedResponse response = context.getChunkedResponse();
+
+        // Check if this is a parquet export request
+        if (SqlKeywords.isParquetKeyword(state.fmt)) {
+            doParquetExport(context);
+            return;
+        }
+
         final RecordMetadata metadata = state.recordCursorFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
 
@@ -439,19 +602,107 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         readyForNextRequest(context);
     }
 
-    private LogRecord error(TextQueryProcessorState state) {
+    private LogRecord error(ExportQueryProcessorState state) {
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
-    private LogRecord info(TextQueryProcessorState state) {
+    private String findParquetExportFile(String copyID) {
+        try (Path path = new Path()) {
+            String inputRoot = engine.getConfiguration().getSqlCopyExportRoot().toString();
+            path.of(inputRoot).concat("copy.").put(copyID);
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            path.concat("default.parquet");
+
+            if (ff.exists(path.$())) {
+                return path.asAsciiCharSequence().toString(); // todo: remove unnecessary string
+            } else {
+                return null;
+            }
+            // handle cleanup
+        }
+    }
+
+    private LogRecord info(ExportQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
+    }
+
+    private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
+        if (state.copyID == null) {
+            state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
+            CopyModel model = new CopyModel();
+            model.clear();
+            model.setParquetDefaults(engine.getConfiguration());
+            model.setSelectText(state.query.toString(), 0);
+            model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
+            model.setPartitionBy(PartitionBy.NONE);
+
+            CopyExportFactory factory = new CopyExportFactory(
+                    engine.getMessageBus(),
+                    engine.getCopyExportContext(),
+                    model,
+                    context.getSecurityContext(),
+                    state.suspendEvent,
+                    state.query
+            );
+
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    Record record = cursor.getRecord();
+                    CharSequence copyIdSequence = record.getStrA(0);
+                    if (copyIdSequence == null) {
+                        throw new RuntimeException("Copy export task did not return a valid copy ID");
+                    }
+                    state.copyID = copyIdSequence.toString();
+                } else {
+                    throw new RuntimeException("Copy export task did not return any results");
+                }
+            }
+            state.waitingForCopy = true;
+        }
+    }
+
+    private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        Path path = new Path(); // todo: allocation
+
+        try {
+            path.of(state.parquetFilePath);
+            state.parquetFileFd = ff.openRO(path.$());
+            if (state.parquetFileFd < 0) {
+                throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
+                        .put("could not find parquet file: [path=").put(state.parquetFilePath)
+                        .put(", copyId=").put(state.copyID).put(']');
+            }
+
+            state.parquetFileSize = ff.length(state.parquetFileFd);
+            state.parquetFileOffset = 0;
+            state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
+
+            // Send headers
+            HttpChunkedResponse response = context.getChunkedResponse();
+            response.status(200, CONTENT_TYPE_PARQUET);
+
+            String fileName = state.fileName != null ? state.fileName : "questdb-query-" + clock.getTicks();
+            if (!fileName.endsWith(".parquet")) {
+                fileName += ".parquet";
+            }
+
+            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(fileName).putAscii("\"").putEOL();
+            response.headers().putAscii("Content-Length: ").put(state.parquetFileSize).putEOL();
+            response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+            response.sendHeader();
+        } finally {
+            Misc.free(path);
+        }
     }
 
     private void internalError(
             HttpChunkedResponse response,
             long bytesSent,
             Throwable e,
-            TextQueryProcessorState state
+            ExportQueryProcessorState state
     ) throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state);
         if (bytesSent > 0) {
@@ -462,7 +713,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         sendException(response, 0, e.getMessage(), state);
     }
 
-    private void logInternalError(Throwable e, TextQueryProcessorState state) {
+    private void logInternalError(Throwable e, ExportQueryProcessorState state) {
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
@@ -493,10 +744,19 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
     }
 
+    private void onExportedParquetFileFound(long pUtf8NameZ, int type) {
+        // need to add the parquet file to the zip
+        FilesFacade ff = configuration.getFilesFacade();
+        Path tempPath = new Path(); //todo: fix allication
+
+        tempPath.trimTo(0).concat(pUtf8NameZ);
+        ff.openRO(tempPath.$());
+    }
+
     private boolean parseUrl(
             HttpChunkedResponse response,
             HttpRequestHeader request,
-            TextQueryProcessorState state
+            ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
@@ -557,6 +817,16 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             state.delimiter = (char) delimiter.byteAt(0);
         }
 
+        state.fmt = "csv"; // default to csv
+        DirectUtf8Sequence format = request.getUrlParam(URL_PARAM_FMT);
+        if (format != null && format.size() > 0) {
+            if (SqlKeywords.isParquetKeyword(format.asAsciiCharSequence()) || SqlKeywords.isCsvKeyword(format.asAsciiCharSequence())) {
+                state.fmt = format.toString();
+            } else {
+                sendException(response, 0, "unrecognised format [format=" + format + "]", state);
+            }
+        }
+
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
@@ -565,7 +835,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         return true;
     }
 
-    private void putArrayValue(HttpChunkedResponse response, TextQueryProcessorState state, Record record, int columnIdx, int columnType) {
+    private void putArrayValue(HttpChunkedResponse response, ExportQueryProcessorState state, Record record, int columnIdx, int columnType) {
         state.arrayState.of(response);
         var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
         try {
@@ -583,7 +853,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
     }
 
-    private void putValue(HttpChunkedResponse response, TextQueryProcessorState state) {
+    private void putValue(HttpChunkedResponse response, ExportQueryProcessorState state) {
         long l;
         final int columnType = state.metadata.getColumnType(state.columnIndex);
         final int columnIndex = state.columnIndex;
@@ -694,7 +964,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
     private void sendDone(
             HttpChunkedResponse response,
-            TextQueryProcessorState state
+            ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.count > -1) {
             state.count = -1;
@@ -708,15 +978,34 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             HttpChunkedResponse response,
             int position,
             CharSequence message,
-            TextQueryProcessorState state
+            ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         headerJsonError(response);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.query);
     }
 
+    private void sendParquetFileChunk(HttpChunkedResponse response, ExportQueryProcessorState state) {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+        if (state.parquetFileOffset >= state.parquetFileSize) {
+            return;
+        }
+
+        state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, (int) (state.parquetFileSize - state.parquetFileOffset));
+        response.bookmark();
+
+        // Close file descriptor when done
+        if (state.parquetFileOffset >= state.parquetFileSize) {
+            ff.close(state.parquetFileFd);
+            state.parquetFileFd = -1;
+        } else {
+            throw NoSpaceLeftInResponseBufferException.instance(state.parquetFileSize - state.parquetFileOffset);
+        }
+    }
+
     private void syntaxError(
             HttpChunkedResponse response,
-            TextQueryProcessorState state,
+            ExportQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state).$("syntax-error [q=`").$safe(state.query)
@@ -727,14 +1016,17 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
     protected void header(
             HttpChunkedResponse response,
-            TextQueryProcessorState state,
+            ExportQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(statusCode, CONTENT_TYPE_CSV);
+        String contentType = "parquet".equals(state.fmt) ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
+        String fileExtension = "parquet".equals(state.fmt) ? ".parquet" : ".csv";
+
+        response.status(statusCode, contentType);
         if (state.fileName != null && !state.fileName.isEmpty()) {
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(".csv\"").putEOL();
+            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(fileExtension).putAscii("\"").putEOL();
         } else {
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(".csv\"").putEOL();
+            response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();
         }
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();

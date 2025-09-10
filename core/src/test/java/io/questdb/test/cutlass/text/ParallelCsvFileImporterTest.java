@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.CopyJob;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.cutlass.text.TextImportException;
@@ -2570,7 +2570,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     try {
                         executeCopy(compiler, sqlExecutionContext);
-                        engine.getCopyContext().clear();
+                        engine.getCopyImportContext().clear();
                         executeCopy(compiler, sqlExecutionContext);
                         Assert.fail();
                     } catch (Exception e) {
@@ -3134,7 +3134,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             );
 
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, daysToKeep);
-            new CopyRequestJob(engine, 1).close();
+            new CopyImportRequestJob(engine, 1).close();
             assertQuery(
                     "count\n" + daysToKeep + "\n",
                     "select count() from " + backlogTableName,
@@ -3164,7 +3164,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                 try {
                     if (pool != null) {
-                        CopyJob.assignToPool(engine.getMessageBus(), pool);
+                        CopyImportJob.assignToPool(engine.getMessageBus(), pool);
                         pool.start(LOG);
                     }
 

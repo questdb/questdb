@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Closeable {
+public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> implements Closeable {
     private static final int INDEX_MERGE_LIST_CAPACITY = 64;
     private final long fileBufAddr;
     private long fileBufSize;
@@ -49,8 +49,8 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
     private DirectUtf16Sink utf16Sink;
     private DirectUtf8Sink utf8Sink;
 
-    public CopyJob(MessageBus messageBus) {
-        super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
+    public CopyImportJob(MessageBus messageBus) {
+        super(messageBus.getCopyImportQueue(), messageBus.getCopyImportSubSeq());
         try {
             this.tlw = new TextLexerWrapper(messageBus.getConfiguration().getTextConfiguration());
             this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
@@ -70,7 +70,7 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
 
     public static void assignToPool(MessageBus messageBus, WorkerPool sharedPoolWrite) {
         for (int i = 0, n = sharedPoolWrite.getWorkerCount(); i < n; i++) {
-            CopyJob job = new CopyJob(messageBus);
+            CopyImportJob job = new CopyImportJob(messageBus);
             sharedPoolWrite.assign(i, job);
             sharedPoolWrite.freeOnExit(job);
         }
@@ -93,7 +93,7 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
 
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final CopyTask task = queue.get(cursor);
+        final CopyImportTask task = queue.get(cursor);
         final boolean result = task.run(tlw, indexer, utf16Sink, utf8Sink, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
         subSeq.done(cursor);
         return result;

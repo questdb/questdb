@@ -153,6 +153,15 @@ public class AbstractTest {
         }
     }
 
+    protected static HttpQueryTestBuilder getExportTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withCopyExportRoot(root + "/export");
+    }
+
     protected static String[] getServerMainArgs() {
         return Bootstrap.getServerMainArgs(root);
     }

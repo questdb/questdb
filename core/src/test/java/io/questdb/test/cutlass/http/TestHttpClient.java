@@ -207,6 +207,45 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetParquet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql
+    ) {
+        assertGetParquet(url, expectedResponse, sql, null, null);
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        assertGetParquet(url, expectedResponse, sql, username, password, null);
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            // todo: allocation
+            CharSequenceObjHashMap<String> parquet = new CharSequenceObjHashMap();
+            parquet.put("fmt", "parquet");
+            toSink0(url, sql, sink, username, password, token, parquet, null);
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
     public void assertGetRegexp(
             CharSequence url,
             String expectedResponseRegexp,
