@@ -1767,9 +1767,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT dim_length(arr, 0) len FROM tango",
                     23, "array dimension out of bounds [dim=0]");
             assertExceptionNoLeakCheck("SELECT dim_length(arr, 3) len FROM tango",
-                    23, "array dimension out of bounds [dim=3, nDims=2]");
+                    23, "array dimension out of bounds [dim=3, dims=2]");
             assertExceptionNoLeakCheck("SELECT dim_length(arr, arr[2, 1]::int) len FROM tango",
-                    32, "array dimension out of bounds [dim=3, nDims=2]");
+                    32, "array dimension out of bounds [dim=3, dims=2]");
         });
     }
 

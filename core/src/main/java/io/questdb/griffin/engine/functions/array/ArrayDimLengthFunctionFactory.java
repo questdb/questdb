@@ -136,7 +136,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
                         .put(dim)
-                        .put(", nDims=")
+                        .put(", dims=")
                         .put(dims)
                         .put(']');
             }
