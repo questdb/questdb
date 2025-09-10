@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
 public class Decimal256Constant extends AbstractDecimalFunction implements ConstantFunction {
@@ -75,8 +76,7 @@ public class Decimal256Constant extends AbstractDecimalFunction implements Const
 
     @Override
     public boolean isNullConstant() {
-        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
-                lh == Decimals.DECIMAL256_LH_NULL && ll  == Decimals.DECIMAL256_LL_NULL;
+        return Decimal256.isNull(hh, hl, lh, ll);
     }
 
     @Override
