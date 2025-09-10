@@ -3580,6 +3580,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlJitMaxInListSizeThreshold() {
+            return sqlJitMaxInListSizeThreshold;
+        }
+
+        @Override
         public int getSqlJitMode() {
             return sqlJitMode;
         }
@@ -4092,11 +4097,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWriterMixedIOEnabled() {
             return writerMixedIOEnabled;
-        }
-
-        @Override
-        public int jitMaxInListSizeThreshold() {
-            return sqlJitMaxInListSizeThreshold;
         }
 
         @Override

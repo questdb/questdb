@@ -876,6 +876,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJitMaxInListSizeThreshold() {
+        return 10;
+    }
+
+    @Override
     public int getSqlJitMode() {
         return SqlJitMode.JIT_MODE_ENABLED;
     }
@@ -1382,11 +1387,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isWriterMixedIOEnabled() {
         return writerMixedIOEnabled;
-    }
-
-    @Override
-    public int jitMaxInListSizeThreshold() {
-        return 10;
     }
 
     @Override

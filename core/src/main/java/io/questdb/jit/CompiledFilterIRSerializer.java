@@ -23,7 +23,6 @@
  ******************************************************************************/
 package io.questdb.jit;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
@@ -119,7 +118,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final StringSink sink = new StringSink();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
-    private CairoConfiguration configuration;
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
@@ -177,7 +175,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         this.metadata = metadata;
         this.pageFrameCursor = pageFrameCursor;
         this.bindVarFunctions = bindVarFunctions;
-        this.configuration = executionContext.getCairoEngine().getConfiguration();
         return this;
     }
 
@@ -828,9 +825,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
 
-        if (args.size() > configuration.jitMaxInListSizeThreshold()) {
+        if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
             throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
-                    .put(configuration.jitMaxInListSizeThreshold()).put(", actual=").put(args.size()).put(']');
+                    .put(executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold())
+                    .put(", actual=").put(args.size()).put(']');
         }
 
         if (args.size() < 3) {

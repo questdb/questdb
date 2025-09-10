@@ -500,6 +500,8 @@ public interface CairoConfiguration {
 
     int getSqlJitIRMemoryPageSize();
 
+    int getSqlJitMaxInListSizeThreshold();
+
     int getSqlJitMode();
 
     int getSqlJitPageAddressCacheThreshold();
@@ -760,8 +762,6 @@ public interface CairoConfiguration {
     boolean isWalSupported();
 
     boolean isWriterMixedIOEnabled();
-
-    int jitMaxInListSizeThreshold();
 
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.

@@ -852,6 +852,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJitMaxInListSizeThreshold() {
+        return getDelegate().getSqlJitMaxInListSizeThreshold();
+    }
+
+    @Override
     public int getSqlJitMode() {
         return getDelegate().getSqlJitMode();
     }
@@ -1363,11 +1368,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWriterMixedIOEnabled() {
         return getDelegate().isWriterMixedIOEnabled();
-    }
-
-    @Override
-    public int jitMaxInListSizeThreshold() {
-        return getDelegate().jitMaxInListSizeThreshold();
     }
 
     @Override
