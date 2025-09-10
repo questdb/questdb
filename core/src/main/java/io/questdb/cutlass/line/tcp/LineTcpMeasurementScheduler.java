@@ -94,9 +94,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool networkSharedPool,
+            WorkerPool sharedPoolNetwork,
             IODispatcher<LineTcpConnectionContext> dispatcher,
-            WorkerPool writerWorkerPool
+            WorkerPool sharedPoolWrite
     ) {
         try {
             this.engine = engine;
@@ -106,28 +106,28 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.clock = cairoConfiguration.getMillisecondClock();
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-            final int networkSharedPoolSize = networkSharedPool.getWorkerCount();
+            final int networkSharedPoolSize = sharedPoolNetwork.getWorkerCount();
             this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
             this.tableNameSinks = new StringSink[networkSharedPoolSize];
             for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
                 netIoJobs[i] = netIoJob;
-                networkSharedPool.assign(i, netIoJob);
-                networkSharedPool.freeOnExit(netIoJob);
+                sharedPoolNetwork.assign(i, netIoJob);
+                sharedPoolNetwork.freeOnExit(netIoJob);
             }
 
             // Worker count is set to 1 because we do not use this execution context
             // in worker threads.
             tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
             idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-            loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
+            loadByWriterThread = new long[sharedPoolWrite.getWorkerCount()];
             autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
             autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
             int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
             int queueSize = lineConfiguration.getWriterQueueCapacity();
             long commitInterval = configuration.getCommitInterval();
-            int nWriterThreads = writerWorkerPool.getWorkerCount();
+            int nWriterThreads = sharedPoolWrite.getWorkerCount();
             pubSeq = new MPSequence[nWriterThreads];
             //noinspection unchecked
             queue = new RingQueue[nWriterThreads];
@@ -166,8 +166,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                writerWorkerPool.assign(i, lineTcpLegacyWriterJob);
-                writerWorkerPool.freeOnExit(lineTcpLegacyWriterJob);
+                sharedPoolWrite.assign(i, lineTcpLegacyWriterJob);
+                sharedPoolWrite.freeOnExit(lineTcpLegacyWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,

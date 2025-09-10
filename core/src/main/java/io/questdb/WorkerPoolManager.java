@@ -51,25 +51,25 @@ public abstract class WorkerPoolManager implements Target {
     private final AtomicBoolean running = new AtomicBoolean();
 
     public WorkerPoolManager(ServerConfiguration config) {
-        sharedPoolNetwork = new WorkerPool(config.getNetworkWorkerPoolConfiguration());
-        sharedPoolQuery = config.getQueryWorkerPoolConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getQueryWorkerPoolConfiguration()) : null;
-        sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
+        sharedPoolNetwork = new WorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
+        sharedPoolQuery = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getSharedWorkerPoolQueryConfiguration()) : null;
+        sharedPoolWrite = new WorkerPool(config.getSharedWorkerPoolWriteConfiguration());
 
         WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
         configureWorkerPools(queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getSharedNetworkPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         return getWorkerPool(config, requester, sharedPoolNetwork);
-    }
-
-    public WorkerPool getInstanceWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolWrite);
     }
 
     public WorkerPool getSharedPoolNetwork() {
         return sharedPoolNetwork;
+    }
+
+    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+        return getWorkerPool(config, requester, sharedPoolWrite);
     }
 
     public int getSharedQueryWorkerCount() {
