@@ -198,6 +198,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             case Os.FREEBSD:
             case Os.DARWIN:
                 expectedErrno = 61;
+                break;
             default:
                 throw new AssertionError("unsupported OS: " + Os.type);
         }
