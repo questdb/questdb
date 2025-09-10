@@ -940,14 +940,6 @@ public final class ColumnType {
         }
 
         // Stored decimals
-        for (int i = 8, type = DECIMAL8; type <= DECIMAL256; i <<= 1, type++) {
-            sink.clear();
-            sink.put("DECIMAL(").put(i).put(")");
-            String name = sink.toString();
-            typeNameMap.put(type, name);
-            nameTypeMap.put(name, type);
-        }
-
         for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
             for (int scale = 0; scale <= Decimals.MAX_SCALE; scale++) {
                 int type = getDecimalType(precision, scale);
