@@ -83,8 +83,8 @@ public final class Decimals {
         if (value == Decimals.DECIMAL64_NULL) {
             sink.put("null");
         } else {
-            Decimal64 d = Decimal64.fromLong(value, scale);
-            sink.put(d.toString());
+            long s = value < 0 ? -1 : 0;
+            Decimal256.toSink(sink, s, s, s, value, scale, precision);
         }
     }
 
@@ -98,8 +98,8 @@ public final class Decimals {
         if (Decimal128.isNull(hi, lo)) {
             sink.put("null");
         } else {
-            Decimal128 d = new Decimal128(hi, lo, scale);
-            sink.put(d.toString());
+            long s = hi < 0 ? -1 : 0;
+            Decimal256.toSink(sink, s, s, hi, lo, scale, precision);
         }
     }
 
@@ -113,8 +113,7 @@ public final class Decimals {
         if (Decimal256.isNull(hh, hl, lh, ll)) {
             sink.put("null");
         } else {
-            Decimal256 d = new Decimal256(hh, hl, lh, ll, scale);
-            sink.put(d.toString());
+            Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
         }
     }
 
