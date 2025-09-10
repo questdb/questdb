@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -72,9 +73,10 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         private final DirectArray arrayOut;
         private final Function leftArg;
         private final int leftArgPos;
-        private final DerivedArrayView leftDerived;
         private final Function rightArg;
-        private final DerivedArrayView rightDerived;
+        private final int rightArgPos;
+        private DerivedArrayView leftDerived;
+        private DerivedArrayView rightDerived;
 
         public Func(
                 CairoConfiguration configuration,
@@ -82,30 +84,13 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 Function rightArg,
                 int leftArgPos,
                 int rightArgPos
-        ) throws SqlException {
+        ) {
             try {
                 this.leftArg = leftArg;
                 this.rightArg = rightArg;
                 this.arrayOut = new DirectArray(configuration);
                 this.leftArgPos = leftArgPos;
-                int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-                int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-                DerivedArrayView leftDerived = null;
-                if (nDimsLeft == 1) {
-                    leftDerived = new DerivedArrayView();
-                } else if (nDimsLeft != 2) {
-                    throw SqlException.position(rightArgPos).put("left array is not one or two-dimensional");
-                }
-
-                DerivedArrayView rightDerived = null;
-                if (nDimsRight == 1) {
-                    rightDerived = new DerivedArrayView();
-                } else if (nDimsRight != 2) {
-                    throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
-                }
-
-                this.rightDerived = rightDerived;
-                this.leftDerived = leftDerived;
+                this.rightArgPos = rightArgPos;
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             } catch (Throwable th) {
                 close();
@@ -183,6 +168,35 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return rightArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            // left/right argument may be a bind var, i.e. have weak dimensionality,
+            // so that the number of dimensions is only available at init() time
+            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            if (dimsLeft == 1) {
+                if (leftDerived == null) {
+                    leftDerived = new DerivedArrayView();
+                }
+            } else if (dimsLeft == 2) {
+                leftDerived = null;
+            } else {
+                throw SqlException.position(rightArgPos).put("left array is not one or two-dimensional");
+            }
+
+            if (dimsRight == 1) {
+                if (rightDerived == null) {
+                    rightDerived = new DerivedArrayView();
+                }
+            } else if (dimsRight == 2) {
+                rightDerived = null;
+            } else {
+                throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
+            }
         }
 
         @Override

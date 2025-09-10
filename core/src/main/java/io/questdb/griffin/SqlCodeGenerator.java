@@ -472,7 +472,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return expected;
     }
 
-    public static int getUnionCastType(int typeA, int typeB) {
+    public static int getUnionCastType(int typeA, int typeB) throws SqlException {
         short tagA = ColumnType.tagOf(typeA);
         short tagB = ColumnType.tagOf(typeB);
 
@@ -483,10 +483,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (elementTypeA != decodeArrayElementType(typeB)) {
                 return VARCHAR;
             }
-            return ColumnType.encodeArrayType(elementTypeA, Math.max(decodeArrayDimensionality(typeA), decodeArrayDimensionality(typeB)));
+            int dimsA = ColumnType.decodeArrayDimensionality(typeA);
+            int dimsB = ColumnType.decodeArrayDimensionality(typeB);
+            if (dimsA == -1 || dimsB == -1) {
+                throw SqlException.$(0, "array bind variables are not supported in UNION queries");
+            }
+            return ColumnType.encodeArrayType(elementTypeA, Math.max(dimsA, dimsB));
         } else if (aIsArray) {
             if (tagB == DOUBLE) {
-                // if b is scalar then we coarse it to array of the same dimensionality as a is
+                // if B is scalar then we coarse it to array of the same dimensionality as A is
                 return typeA;
             }
             return (tagB == STRING) ? STRING : VARCHAR;
@@ -827,7 +832,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toleranceInterval;
     }
 
-    private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
+    private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) throws SqlException {
         int columnCount = typesA.getColumnCount();
         assert columnCount == typesB.getColumnCount();
 
@@ -2219,22 +2224,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ARRAY:
                                 assert ColumnType.decodeArrayElementType(fromType) == DOUBLE;
                                 assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
-                                int fromDims = ColumnType.decodeArrayDimensionality(fromType);
-                                int toDims = ColumnType.decodeArrayDimensionality(toType);
+                                final int fromDims = ColumnType.decodeArrayDimensionality(fromType);
+                                final int toDims = ColumnType.decodeArrayDimensionality(toType);
+                                if (toDims == -1) {
+                                    throw SqlException.$(modelPosition, "cast to array bind variable type is not supported [column=")
+                                            .put(castFromMetadata.getColumnName(i)).put(']');
+                                }
                                 if (fromDims == toDims) {
                                     castFunctions.add(ArrayColumn.newInstance(i, fromType));
                                 } else {
-                                    assert fromDims < toDims; // can cast to higher dimensionality only
-                                    castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
+                                    if (fromDims > toDims) {
+                                        throw SqlException.$(modelPosition, "array cast to lower dimensionality is not supported [column=")
+                                                .put(castFromMetadata.getColumnName(i)).put(']');
+                                    }
+                                    if (fromDims == -1) {
+                                        // must be a bind variable, i.e. weak dimensionality case
+                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.WeakDimsFunc(ArrayColumn.newInstance(i, fromType), modelPosition, toType));
+                                    } else {
+                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
+                                    }
                                 }
                                 break;
                             case DOUBLE:
                                 assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
+                                final int dims = ColumnType.decodeArrayDimensionality(toType);
+                                if (dims == -1) {
+                                    throw SqlException.$(modelPosition, "cast to array bind variable type is not supported [column=")
+                                            .put(castFromMetadata.getColumnName(i)).put(']');
+                                }
                                 castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType));
                                 break;
                             default:
                                 assert false;
-
                         }
                 }
             }

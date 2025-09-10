@@ -87,7 +87,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                 return false;
             case N_DIMS:
                 nDims = Unsafe.getUnsafe().getByte(addr);
-                if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
+                if (nDims < 0 || nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
                     throw ParseException.tooManyDims();
                 }
                 if (nDims == 0) {

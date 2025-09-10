@@ -545,7 +545,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         OperatorExpression op = OperatorExpression.getRegistry().getOperatorDefinition(node.token);
         if (op == null) {
-            // function, not an operator,  is  not found
+            // function, not an operator, is not found
             if (args != null) {
                 ex.put("there is no matching function `").put(node.token).put("` with the argument types: (");
                 for (int i = 0, n = args.size(); i < n; i++) {
@@ -564,7 +564,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (args != null && args.size() == 2) {
             // binary operator not found
-            // function, not an operator,  is  not found
+            // function, not an operator, is not found
             ex.put("there is no matching operator `").put(node.token).put("` with the argument types: ");
             putArgType(args, 0, ex);
             ex.put(' ');
@@ -575,11 +575,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return ex;
         }
 
-
         assert args != null;
 
         // Unary operator with the specific argument types not found.
-        // function, not an operator,  is  not found
+        // function, not an operator, is not found
         ex.put("there is no matching operator `").put(node.token).put("` with the argument type: ");
         putArgType(args, 0, ex);
         Misc.freeObjList(args);
@@ -898,7 +897,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     final boolean argIsStringArray = argTypeTag == ColumnType.ARRAY_STRING;
                     final boolean sigIsStringArray = sigArgTypeTag == ColumnType.ARRAY_STRING;
                     if (sigIsArray != argIsArray || sigIsStringArray != argIsStringArray) {
-
                         if (argType == ColumnType.UNDEFINED) {
                             match = MATCH_FUZZY_MATCH;
                         } else {
@@ -1055,7 +1053,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final short sigArgType = FunctionFactoryDescriptor.toTypeTag(t);
                 final int argType;
                 if (FunctionFactoryDescriptor.isArray(t)) {
-                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, 1);
+                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, true);
                 } else {
                     argType = sigArgType;
                 }

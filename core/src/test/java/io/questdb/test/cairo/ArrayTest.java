@@ -469,7 +469,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "40.0\n" +
                     "5.0\n", "SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
-                    24, "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
+                    24, "arrays have different number of dimensions [dimsLeft=1, dimsRight=2]");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
                     24, "arrays have different shapes [leftShape=[1], rightShape=[2]]");
         });

@@ -1288,7 +1288,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case X_PG_ARR_TIMESTAMP:
             case X_PG_ARR_TIMESTAMP_TZ:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.TIMESTAMP, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.TIMESTAMP, false), 0);
                 break;
             case X_PG_INT2:
                 bindVariableService.define(j, ColumnType.SHORT, 0);
@@ -1309,7 +1309,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.BOOLEAN, 0);
                 break;
             case X_PG_ARR_BOOL:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.BOOLEAN, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.BOOLEAN, false), 0);
                 break;
             case X_PG_BYTEA:
                 bindVariableService.define(j, ColumnType.BINARY, 0);
@@ -1318,32 +1318,32 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
             case X_PG_ARR_UUID:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.UUID, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.UUID, false), 0);
                 break;
             case X_PG_ARR_BYTEA:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.BYTE, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.BYTE, false), 0);
                 break;
             case X_PG_ARR_VARCHAR:
             case X_PG_ARR_TEXT:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.VARCHAR, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.VARCHAR, false), 0);
                 break;
             case X_PG_ARR_INT2:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.SHORT, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.SHORT, false), 0);
                 break;
             case X_PG_ARR_INT4:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.INT, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.INT, false), 0);
                 break;
             case X_PG_ARR_INT8:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.LONG, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.LONG, false), 0);
                 break;
             case X_PG_ARR_FLOAT4:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.FLOAT, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.FLOAT, false), 0);
                 break;
             case X_PG_ARR_FLOAT8:
-                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, 1), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
                 break;
             case X_PG_ARR_DATE:
-                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.DATE, 1, false), 0);
+                bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DATE, false), 0);
                 break;
             case PG_UNSPECIFIED:
                 // unknown types, we are not defining them for now - this gives

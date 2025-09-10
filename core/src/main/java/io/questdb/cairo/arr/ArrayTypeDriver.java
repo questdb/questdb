@@ -282,6 +282,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final int type = Unsafe.getUnsafe().getInt(addr);
         addr += Integer.BYTES;
         int nDims = ColumnType.decodeArrayDimensionality(type);
+        assert nDims > 0;
         int shapeLen = nDims * Integer.BYTES;
         int headerLen = Integer.BYTES + shapeLen;
         value.of(type, addr, addr + shapeLen, (int) (totalSize - headerLen));

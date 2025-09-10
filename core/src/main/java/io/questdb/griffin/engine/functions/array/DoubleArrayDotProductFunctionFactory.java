@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -72,12 +73,12 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
             this.leftArg = leftArg;
             this.rightArg = rightArg;
             this.leftArgPos = leftArgPos;
-            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (nDimsLeft != nDimsRight) {
+            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            if (dimsLeft > 0 && dimsRight > 0 && dimsLeft != dimsRight) {
                 throw SqlException.position(leftArgPos)
-                        .put("arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
-                        .put(", nDimsRight=").put(nDimsRight).put(']');
+                        .put("arrays have different number of dimensions [dimsLeft=").put(dimsLeft)
+                        .put(", dimsRight=").put(dimsRight).put(']');
             }
         }
 
@@ -123,6 +124,21 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return rightArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            // left/right argument may be a bind var, i.e. have weak dimensionality,
+            // so that the number of dimensions is only available at init() time
+            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            if (dimsLeft != dimsRight) {
+                throw SqlException.position(leftArgPos)
+                        .put("arrays have different number of dimensions [dimsLeft=").put(dimsLeft)
+                        .put(", dimsRight=").put(dimsRight).put(']');
+            }
         }
 
         @Override

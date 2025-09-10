@@ -98,10 +98,13 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
 
         final int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        if (nDims == -1) {
+            throw SqlException.position(argPositions.get(0)).put("array bind variable access is not supported");
+        }
         final int nArgs = argsCopy.size() - 1;
         if (nArgs > nDims) {
             throw SqlException
-                    .position(argPositionsCopy.get(nDims + 1))
+                    .position(argPositions.get(nDims + 1))
                     .put("too many array access arguments [nDims=").put(nDims)
                     .put(", nArgs=").put(nArgs)
                     .put(']');

@@ -166,11 +166,18 @@ public final class ColumnType {
                 : STRING;
     }
 
+    /**
+     * Returns the number of dimensions for the given array type or -1 in case of an array with weak dimensionality,
+     * e.g. array type of bind variable.
+     */
     public static int decodeArrayDimensionality(int encodedType) {
         if (ColumnType.isNull(encodedType)) {
             return 0;
         }
         assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
+        if ((encodedType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0) {
+            return -1;
+        }
         return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
     }
 
@@ -229,9 +236,12 @@ public final class ColumnType {
      * encoded but marked as tentative and can be updated based on actual data.
      * This is useful for PostgreSQL wire protocol where type information doesn't
      * include array dimensions.
+     * <p>
+     * The number of dimensions of this type is undefined, so attempts to decode it
+     * will fail.
      */
-    public static int encodeArrayTypeWithWeakDims(short elemType, int nDims) {
-        return encodeArrayType(elemType, nDims, true) | TYPE_FLAG_ARRAY_WEAK_DIMS;
+    public static int encodeArrayTypeWithWeakDims(short elemType, boolean checkSupportedElementTypes) {
+        return encodeArrayType(elemType, 1, checkSupportedElementTypes) | TYPE_FLAG_ARRAY_WEAK_DIMS;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -547,6 +557,7 @@ public final class ColumnType {
     private static boolean isArrayCast(int fromType, int toType) {
         return isArray(fromType) && isArray(toType)
                 && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
+                && !isArrayWithWeakDims(fromType) && !isArrayWithWeakDims(toType)
                 && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
     }
 

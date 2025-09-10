@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -57,21 +56,22 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function left = args.getQuick(0);
-        Function right = args.getQuick(1);
-        int leftNDims = ColumnType.decodeArrayDimensionality(left.getType());
-        int rightNDims = ColumnType.decodeArrayDimensionality(right.getType());
-        if (leftNDims == rightNDims) {
-            return new DoubleArrayEqualsFunction(left, right);
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        final int leftDims = ColumnType.decodeArrayDimensionality(left.getType());
+        final int rightDims = ColumnType.decodeArrayDimensionality(right.getType());
+        if (leftDims > 0 && rightDims > 0 && leftDims != rightDims) {
+            left.close();
+            right.close();
+            return BooleanConstant.FALSE;
         }
-        left.close();
-        right.close();
-        return BooleanConstant.FALSE;
+        // the function handles weak dimensions cases
+        return new Func(left, right);
     }
 
-    private static class DoubleArrayEqualsFunction extends AbstractEqBinaryFunction implements BinaryFunction {
+    private static class Func extends AbstractEqBinaryFunction {
 
-        public DoubleArrayEqualsFunction(Function left, Function right) {
+        public Func(Function left, Function right) {
             super(left, right);
         }
 
@@ -81,22 +81,12 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
         public final String getName() {
             if (negated) {
                 return "!=";
             } else {
                 return "=";
             }
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
         }
     }
 }

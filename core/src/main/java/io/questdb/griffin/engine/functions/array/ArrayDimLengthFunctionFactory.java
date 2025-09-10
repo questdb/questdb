@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -57,33 +58,29 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        Function dimArg = args.getQuick(1);
-        int dimArgPos = argPositions.getQuick(1);
+        final Function arrayArg = args.getQuick(0);
+        final Function dimArg = args.getQuick(1);
+        final int dimArgPos = argPositions.getQuick(1);
         if (dimArg.isConstant()) {
-            int dim = dimArg.getInt(null);
+            final int dim = dimArg.getInt(null);
             dimArg.close();
-            int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-            if (dim < 1 || dim > nDims) {
-                throw SqlException.position(dimArgPos)
-                        .put("array dimension out of bounds [dim=")
-                        .put(dim)
-                        .put(", nDims=")
-                        .put(nDims)
-                        .put(']');
+            if (dim < 1 || dim > ColumnType.ARRAY_NDIMS_LIMIT) {
+                throw SqlException.position(dimArgPos).put("array dimension out of bounds [dim=").put(dim).put(']');
             }
-            return new ArrayDimLengthConstFunction(arrayArg, dim);
+            return new ConstFunc(arrayArg, dim, dimArgPos);
         }
-        return new ArrayDimLengthFunction(arrayArg, dimArg, dimArgPos);
+        return new Func(arrayArg, dimArg, dimArgPos);
     }
 
-    static class ArrayDimLengthConstFunction extends IntFunction implements UnaryFunction {
+    private static class ConstFunc extends IntFunction implements UnaryFunction {
         private final Function arrayArg;
-        private final int dimConstArg;
+        private final int dim;
+        private final int dimArgPos;
 
-        ArrayDimLengthConstFunction(Function arrayArg, int dimConstArg) {
+        public ConstFunc(Function arrayArg, int dim, int dimArgPos) {
             this.arrayArg = arrayArg;
-            this.dimConstArg = dimConstArg;
+            this.dim = dim;
+            this.dimArgPos = dimArgPos;
         }
 
         @Override
@@ -94,25 +91,39 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
-            return array.getDimLen(dimConstArg - 1);
+            return array.getDimLen(dim - 1);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+
+            final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+            if (dim > dims) {
+                throw SqlException.position(dimArgPos)
+                        .put("array dimension out of bounds [dim=")
+                        .put(dim)
+                        .put(", dims=")
+                        .put(dims)
+                        .put(']');
+            }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(dimConstArg).val(')');
+            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(dim).val(')');
         }
     }
 
-    static class ArrayDimLengthFunction extends IntFunction implements BinaryFunction {
+    private static class Func extends IntFunction implements BinaryFunction {
         private final Function arrayArg;
         private final Function dimArg;
         private final int dimArgPos;
-        private final int nDims;
+        private int dims;
 
-        ArrayDimLengthFunction(Function arrayArg, Function dimArg, int dimArgPos) {
+        public Func(Function arrayArg, Function dimArg, int dimArgPos) {
             this.arrayArg = arrayArg;
             this.dimArg = dimArg;
-            this.nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
             this.dimArgPos = dimArgPos;
         }
 
@@ -120,13 +131,13 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
             int dim = dimArg.getInt(rec);
-            if (dim < 1 || dim > nDims) {
+            if (dim < 1 || dim > dims) {
                 throw CairoException.nonCritical()
                         .position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
                         .put(dim)
                         .put(", nDims=")
-                        .put(nDims)
+                        .put(dims)
                         .put(']');
             }
             return array.getDimLen(dim - 1);
@@ -140,6 +151,12 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return dimArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
         }
 
         @Override

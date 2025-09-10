@@ -69,9 +69,10 @@ public final class Constants {
                 }
                 return nullConstants.getQuick(typeTag);
             case ColumnType.ARRAY: {
-                int dim = ColumnType.decodeArrayDimensionality(columnType);
-                if (dim <= nullDoubleArrayConstants.size()) {
-                    return nullDoubleArrayConstants.getQuick(dim - 1);
+                int dims = ColumnType.decodeArrayDimensionality(columnType);
+                assert dims > 0;
+                if (dims <= nullDoubleArrayConstants.size()) {
+                    return nullDoubleArrayConstants.getQuick(dims - 1);
                 }
                 return new NullArrayConstant(columnType);
             }
@@ -82,17 +83,16 @@ public final class Constants {
 
     public static TypeConstant getTypeConstant(int columnType) {
         if (ColumnType.isArray(columnType)) {
-            switch (ColumnType.decodeArrayElementType(columnType)) {
-                case ColumnType.DOUBLE:
-                    // dimension is 1-based, list offset is 0-based
-                    int dim = ColumnType.decodeArrayDimensionality(columnType);
-                    if (dim <= doubleArrayTypeConstants.size()) {
-                        return doubleArrayTypeConstants.get(dim - 1);
-                    }
-                    return new ArrayTypeConstant(columnType);
-                default:
-                    throw new UnsupportedOperationException();
+            if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
+                // dimension is 1-based, list offset is 0-based
+                int dims = ColumnType.decodeArrayDimensionality(columnType);
+                assert dims > 0;
+                if (dims <= doubleArrayTypeConstants.size()) {
+                    return doubleArrayTypeConstants.get(dims - 1);
+                }
+                return new ArrayTypeConstant(columnType);
             }
+            throw new UnsupportedOperationException();
         }
         // GEOHASH takes a different path, no need to extract tag
         return typeConstants.getQuick(columnType);

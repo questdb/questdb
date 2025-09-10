@@ -24,6 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -5796,6 +5799,26 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testStrToDoubleArrayBindVar() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray array = new DirectArray()) {
+                bindVariableService.clear();
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                array.setDimLen(0, 2);
+                array.applyShape();
+                MemoryA mem = array.startMemoryA();
+                mem.putDouble(2);
+                mem.putDouble(3);
+                bindVariableService.setArray(1, array);
+                assertQueryNoLeakCheck(
+                        "",
+                        "select '[]', $1 from long_sequence(1);"
+                );
+            }
+        });
     }
 
     @Test

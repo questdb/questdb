@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -57,9 +58,9 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         try {
-            assert args.size() == 3 : "args.size() should be 3, but got " + args.size();
             for (int i = 1; i < 3; i++) {
-                if (ColumnType.decodeArrayDimensionality(args.getQuick(i).getType()) != 1) {
+                final int dims = ColumnType.decodeArrayDimensionality(args.getQuick(i).getType());
+                if (dims > 0 && dims != 1) {
                     throw SqlException.$(argPositions.getQuick(i), "not a one-dimensional array");
                 }
             }
@@ -67,7 +68,8 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
                     args.getQuick(0),
                     args.getQuick(1),
                     argPositions.getQuick(1),
-                    args.getQuick(2)
+                    args.getQuick(2),
+                    argPositions.getQuick(2)
             );
         } catch (Throwable e) {
             Misc.freeObjList(args);
@@ -77,15 +79,17 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
     private static class LevelTwoPriceArrayFunction extends DoubleFunction implements TernaryFunction {
         private final Function pricesArg;
+        private final int pricesArgPos;
         private final Function sizesArg;
         private final int sizesArgPos;
         private final Function targetArg;
 
-        public LevelTwoPriceArrayFunction(Function targetArg, Function sizesArg, int sizesArgPos, Function pricesArg) {
+        public LevelTwoPriceArrayFunction(Function targetArg, Function sizesArg, int sizesArgPos, Function pricesArg, int pricesArgPos) {
             this.targetArg = targetArg;
-            this.pricesArg = pricesArg;
             this.sizesArgPos = sizesArgPos;
             this.sizesArg = sizesArg;
+            this.pricesArg = pricesArg;
+            this.pricesArgPos = pricesArgPos;
         }
 
         @Override
@@ -145,6 +149,17 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return pricesArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            if (ColumnType.decodeArrayDimensionality(sizesArg.getType()) != 1) {
+                throw SqlException.$(sizesArgPos, "not a one-dimensional array");
+            }
+            if (ColumnType.decodeArrayDimensionality(pricesArg.getType()) != 1) {
+                throw SqlException.$(pricesArgPos, "not a one-dimensional array");
+            }
         }
 
         @Override

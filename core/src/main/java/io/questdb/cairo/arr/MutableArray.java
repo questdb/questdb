@@ -103,10 +103,11 @@ public class MutableArray extends ArrayView {
         shape.clear();
         strides.clear();
         flatViewLength = 0;
-        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
-        shape.checkCapacity(nDims);
-        strides.checkCapacity(nDims);
-        for (int i = 0; i < nDims; i++) {
+        int dims = ColumnType.decodeArrayDimensionality(encodedType);
+        assert dims > 0;
+        shape.checkCapacity(dims);
+        strides.checkCapacity(dims);
+        for (int i = 0; i < dims; i++) {
             shape.add(0);
         }
     }

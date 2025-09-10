@@ -55,8 +55,8 @@ public class BorrowedArray extends MutableArray implements Mutable {
         setType(columnType);
         short elemType = ColumnType.decodeArrayElementType(columnType);
         final int elemSize = ColumnType.sizeOf(elemType);
-        final int nDims = ColumnType.decodeArrayDimensionality(columnType);
-        assert nDims > 0 && nDims <= ColumnType.ARRAY_NDIMS_LIMIT;
+        final int dims = ColumnType.decodeArrayDimensionality(columnType);
+        assert dims > 0 && dims <= ColumnType.ARRAY_NDIMS_LIMIT;
 
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(rowNum);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
@@ -71,12 +71,12 @@ public class BorrowedArray extends MutableArray implements Mutable {
         final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;
         final long dataEntryPtr = dataAddr + offset;
 
-        loadShape(dataEntryPtr, nDims);
-        assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
+        loadShape(dataEntryPtr, dims);
+        assert (dataEntryPtr + dims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
         resetToDefaultStrides();
 
         // Get the values ptr / len from the data.
-        final long unalignedValuesOffset = offset + ((long) nDims * Integer.BYTES);
+        final long unalignedValuesOffset = offset + ((long) dims * Integer.BYTES);
         final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, elemSize);
         final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;
         assert valuesPtr + (long) flatViewLength * elemSize <= dataLim;
@@ -89,7 +89,9 @@ public class BorrowedArray extends MutableArray implements Mutable {
         assert ColumnType.isArray(columnType) : "columnType is not Array";
         short elemType = ColumnType.decodeArrayElementType(columnType);
         setType(columnType);
-        loadShape(shapeAddr, ColumnType.decodeArrayDimensionality(columnType));
+        int dims = ColumnType.decodeArrayDimensionality(columnType);
+        assert dims > 0;
+        loadShape(shapeAddr, dims);
         resetToDefaultStrides();
         assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
         if (!isEmpty()) {

@@ -32,13 +32,13 @@ public class ColumnTypeTest {
 
     @Test
     public void testArrayWithWeakDims() {
-        int arrayType = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, 3);
+        int arrayType = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
         Assert.assertTrue(ColumnType.isArray(arrayType));
         Assert.assertTrue(ColumnType.isArrayWithWeakDims(arrayType));
         // arrays with weak dimensions are considered undefined
         Assert.assertTrue(ColumnType.isUndefined(arrayType));
         Assert.assertEquals(ColumnType.DOUBLE, ColumnType.decodeArrayElementType(arrayType));
-        Assert.assertEquals(3, ColumnType.decodeArrayDimensionality(arrayType));
+        Assert.assertEquals(-1, ColumnType.decodeArrayDimensionality(arrayType));
 
         arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 5);
         Assert.assertTrue(ColumnType.isArray(arrayType));
@@ -46,5 +46,12 @@ public class ColumnTypeTest {
         Assert.assertFalse(ColumnType.isUndefined(arrayType));
         Assert.assertEquals(ColumnType.DOUBLE, ColumnType.decodeArrayElementType(arrayType));
         Assert.assertEquals(5, ColumnType.decodeArrayDimensionality(arrayType));
+
+        arrayType = ColumnType.encodeArrayType(ColumnType.LONG, 7, false);
+        Assert.assertTrue(ColumnType.isArray(arrayType));
+        Assert.assertFalse(ColumnType.isArrayWithWeakDims(arrayType));
+        Assert.assertFalse(ColumnType.isUndefined(arrayType));
+        Assert.assertEquals(ColumnType.LONG, ColumnType.decodeArrayElementType(arrayType));
+        Assert.assertEquals(7, ColumnType.decodeArrayDimensionality(arrayType));
     }
 }

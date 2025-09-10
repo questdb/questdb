@@ -105,15 +105,22 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         // non-array arguments aren't allowed, because they must all come together to form
         // a new array with one more dimension.
         commonElemType = ColumnType.decodeArrayElementType(type0);
-        final int nestedNDims = ColumnType.decodeArrayDimensionality(arg0.getType());
-        for (int n = args.size(), i = 1; i < n; i++) {
+        final int nestedDims = ColumnType.decodeArrayDimensionality(arg0.getType());
+        if (nestedDims == -1) {
+            throw SqlException.$(arg0Pos, "array bind variable argument is not supported");
+        }
+        for (int i = 1, n = args.size(); i < n; i++) {
             Function argI = args.getQuick(i);
             int typeI = argI.getType();
             int argPosI = argPositions.getQuick(i);
             if (!ColumnType.isArray(typeI)) {
                 throw SqlException.$(argPosI, "mixed array and non-array elements");
             }
-            if (ColumnType.decodeArrayDimensionality(typeI) != nestedNDims) {
+            int dims = ColumnType.decodeArrayDimensionality(typeI);
+            if (dims == -1) {
+                throw SqlException.$(argPosI, "array bind variable argument is not supported");
+            }
+            if (dims != nestedDims) {
                 throw SqlException.$(argPosI, "sub-arrays don't match in number of dimensions");
             }
             commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
@@ -135,9 +142,9 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "element counts in sub-arrays don't match");
                 }
             }
-            final FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
+            final FunctionArray array = new FunctionArray(commonElemType, nestedDims + 1);
             array.setDimLen(0, outerDimLen);
-            for (int i = 0; i < nestedNDims; i++) {
+            for (int i = 0; i < nestedDims; i++) {
                 array.setDimLen(i + 1, array0.getDimLen(i));
             }
             array.applyShape(configuration, arg0Pos);
@@ -157,7 +164,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 commonElemType,
-                nestedNDims
+                nestedDims
         );
     }
 
@@ -209,27 +216,27 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView array0 = args.getQuick(0).getArray(rec);
-            short type0 = array0.getElemType();
-            short outType = arrayOut.getElemType();
+            final ArrayView array0 = args.getQuick(0).getArray(rec);
+            final short type0 = array0.getElemType();
+            final short outType = arrayOut.getElemType();
             if (type0 != ColumnType.UNDEFINED && type0 != outType) {
                 throw CairoException.nonCritical().position(argPositions.getQuick(0))
                         .put("sub-array has different type [subArrayType=").put(type0)
                         .put(", thisArrayType=").put(outType);
             }
-            int nDims = array0.getDimCount();
+            final int dims = array0.getDimCount();
             arrayOut.clear();
             arrayOut.setDimLen(0, args.size());
-            for (int dim = 0; dim < nDims; dim++) {
+            for (int dim = 0; dim < dims; dim++) {
                 arrayOut.setDimLen(dim + 1, array0.getDimLen(dim));
             }
             arrayOut.applyShape(argPositions.getQuick(0));
-            MemoryA memA = arrayOut.startMemoryA();
+            final MemoryA memA = arrayOut.startMemoryA();
             array0.appendDataToMem(memA);
             for (int n = args.size(), i = 1; i < n; i++) {
-                ArrayView arrayI = args.getQuick(i).getArray(rec);
-                int argPosI = argPositions.getQuick(i);
-                for (int dim = 0; dim < nDims; dim++) {
+                final ArrayView arrayI = args.getQuick(i).getArray(rec);
+                final int argPosI = argPositions.getQuick(i);
+                for (int dim = 0; dim < dims; dim++) {
                     if (arrayI.getDimLen(dim) != arrayOut.getDimLen(dim + 1)) {
                         throw CairoException.nonCritical().position(argPosI)
                                 .put("array shapes don't match");
