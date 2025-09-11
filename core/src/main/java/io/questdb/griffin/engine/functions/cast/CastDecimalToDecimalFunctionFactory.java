@@ -41,6 +41,40 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
+    public static Function newInstance(
+            int position,
+            Function arg,
+            int targetType,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (arg.isConstant()) {
+            return newConstantInstance(sqlExecutionContext, position, targetType, arg);
+        }
+
+        final int fromType = arg.getType();
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        final int targetScale = ColumnType.getDecimalScale(targetType);
+        if (fromScale == targetScale) {
+            return newUnscaledInstance(position, fromType, targetType, arg);
+        }
+
+        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        switch (Decimals.getStorageSizePow2(fromPrecision)) {
+            case 0:
+                return new ScaledDecimal8Func(position, targetType, arg, fromScale);
+            case 1:
+                return new ScaledDecimal16Func(position, targetType, arg, fromScale);
+            case 2:
+                return new ScaledDecimal32Func(position, targetType, arg, fromScale);
+            case 3:
+                return new ScaledDecimal64Func(position, targetType, arg, fromScale);
+            case 4:
+                return new ScaledDecimal128Func(position, targetType, arg, fromScale);
+            default:
+                return new ScaledDecimal256Func(position, targetType, arg, fromScale);
+        }
+    }
+
     @Override
     public String getSignature() {
         return "cast(Ξξ)";
@@ -54,73 +88,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
         final int targetType = args.getQuick(1).getType();
-        if (arg.isConstant()) {
-            return newConstantInstance(sqlExecutionContext, argPositions.get(0), targetType, arg);
-        }
-
-        final int fromType = arg.getType();
-        final int fromScale = ColumnType.getDecimalScale(fromType);
-        final int targetScale = ColumnType.getDecimalScale(targetType);
-        if (fromScale == targetScale) {
-            return newUnscaledInstance(argPositions.get(0), fromType, targetType, arg);
-        }
-
-        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
-                return new ScaledDecimal8Func(argPositions.get(0), targetType, arg, fromScale);
-            case 1:
-                return new ScaledDecimal16Func(argPositions.get(0), targetType, arg, fromScale);
-            case 2:
-                return new ScaledDecimal32Func(argPositions.get(0), targetType, arg, fromScale);
-            case 3:
-                return new ScaledDecimal64Func(argPositions.get(0), targetType, arg, fromScale);
-            case 4:
-                return new ScaledDecimal128Func(argPositions.get(0), targetType, arg, fromScale);
-            default:
-                return new ScaledDecimal256Func(argPositions.get(0), targetType, arg, fromScale);
-        }
+        return newInstance(position, args.getQuick(0), targetType, sqlExecutionContext);
     }
 
-    private static Function newUnscaledInstance(int valuePosition, int fromType, int targetType, Function value) {
-        int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        if (targetPrecision >= fromPrecision) {
-            switch (Decimals.getStorageSizePow2(fromPrecision)) {
-                case 0:
-                    return new UnscaledWidenDecimal8UncheckedFunc(valuePosition, targetType, value);
-                case 1:
-                    return new UnscaledWidenDecimal16UncheckedFunc(valuePosition, targetType, value);
-                case 2:
-                    return new UnscaledWidenDecimal32UncheckedFunc(valuePosition, targetType, value);
-                case 3:
-                    return new UnscaledWidenDecimal64UncheckedFunc(valuePosition, targetType, value);
-                case 4:
-                    return new UnscaledWidenDecimal128UncheckedFunc(valuePosition, targetType, value);
-                default:
-                    return new UnscaledWidenDecimal256UncheckedFunc(valuePosition, targetType, value);
-            }
-        }
-
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
-                return new UnscaledNarrowDecimal8Func(valuePosition, targetType, value);
-            case 1:
-                return new UnscaledNarrowDecimal16Func(valuePosition, targetType, value);
-            case 2:
-                return new UnscaledNarrowDecimal32Func(valuePosition, targetType, value);
-            case 3:
-                return new UnscaledNarrowDecimal64Func(valuePosition, targetType, value);
-            case 4:
-                return new UnscaledNarrowDecimal128Func(valuePosition, targetType, value);
-            default:
-                return new UnscaledNarrowDecimal256Func(valuePosition, targetType, value);
-        }
-    }
-
-    private Function newConstantInstance(
+    private static Function newConstantInstance(
             SqlExecutionContext sqlExecutionContext,
             int valuePosition,
             int targetType,
@@ -160,6 +132,42 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         // We don't try to narrow the type on its actual precision so that the user may pre-widen the constant decimal
         // to avoid doing it at query execution.
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
+    }
+
+    private static Function newUnscaledInstance(int valuePosition, int fromType, int targetType, Function value) {
+        int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        int targetPrecision = ColumnType.getDecimalPrecision(targetType);
+        if (targetPrecision >= fromPrecision) {
+            switch (Decimals.getStorageSizePow2(fromPrecision)) {
+                case 0:
+                    return new UnscaledWidenDecimal8UncheckedFunc(valuePosition, targetType, value);
+                case 1:
+                    return new UnscaledWidenDecimal16UncheckedFunc(valuePosition, targetType, value);
+                case 2:
+                    return new UnscaledWidenDecimal32UncheckedFunc(valuePosition, targetType, value);
+                case 3:
+                    return new UnscaledWidenDecimal64UncheckedFunc(valuePosition, targetType, value);
+                case 4:
+                    return new UnscaledWidenDecimal128UncheckedFunc(valuePosition, targetType, value);
+                default:
+                    return new UnscaledWidenDecimal256UncheckedFunc(valuePosition, targetType, value);
+            }
+        }
+
+        switch (Decimals.getStorageSizePow2(fromPrecision)) {
+            case 0:
+                return new UnscaledNarrowDecimal8Func(valuePosition, targetType, value);
+            case 1:
+                return new UnscaledNarrowDecimal16Func(valuePosition, targetType, value);
+            case 2:
+                return new UnscaledNarrowDecimal32Func(valuePosition, targetType, value);
+            case 3:
+                return new UnscaledNarrowDecimal64Func(valuePosition, targetType, value);
+            case 4:
+                return new UnscaledNarrowDecimal128Func(valuePosition, targetType, value);
+            default:
+                return new UnscaledNarrowDecimal256Func(valuePosition, targetType, value);
+        }
     }
 
     private static class ScaledDecimal128Func extends ScaledDecimalFunction {

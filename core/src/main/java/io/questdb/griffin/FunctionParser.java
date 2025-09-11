@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
@@ -1211,6 +1212,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
                         return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
                     }
+                } else if (ColumnType.isDecimal(fromType) && ColumnType.isDecimal(toType)) {
+                    return CastDecimalToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
                 }
                 break;
         }
