@@ -511,7 +511,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
             assertExceptionNoLeakCheck(
-                    "create materialized view testView as (" + query + ") timestamp(k) partition by week",
+                    "create materialized view testView as (" + query + ") timestamp(ts) partition by week",
                     96,
                     "TIMESTAMP column expected [actual=SYMBOL]"
             );
@@ -1090,7 +1090,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewTsAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String query = "select ts, ts as ts1, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
@@ -2250,7 +2250,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "s SYMBOL CAPACITY 256 CACHE," +
                     "ts1 TIMESTAMP," +
                     "ts2 TIMESTAMP" +
-                    ") WAL");
+                    ") PARTITION BY DAY WAL");
 
             execute("CREATE MATERIALIZED VIEW y_view_no_base_ts AS " +
                     "SELECT ts1, sum(x1) as sum_x1 FROM y_no_ts TIMESTAMP(ts1) SAMPLE BY 2s");
