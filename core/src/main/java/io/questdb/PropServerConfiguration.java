@@ -894,6 +894,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else if (cpuAvailable > 8) {
             cpuMvRefreshWorkers = 3;
         }
+        // Apply same default worker logic for wal apply workers as for mv refresh workers
+        int cpuWalApplyWorkers = cpuMvRefreshWorkers;
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
@@ -1289,7 +1291,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
-            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0); // Use shared write pool by default;
+            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers); // Do not use shared write pool by default;
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerNapThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
