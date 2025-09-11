@@ -843,6 +843,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
 
+        if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
+            throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
+                    .put(executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold())
+                    .put(", actual=").put(args.size()).put(']');
+        }
+
         if (args.size() < 3) {
             inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
             inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);

@@ -877,6 +877,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJitMaxInListSizeThreshold() {
+        return 10;
+    }
+
+    @Override
     public int getSqlJitMode() {
         return SqlJitMode.JIT_MODE_ENABLED;
     }

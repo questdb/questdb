@@ -405,6 +405,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlJitDebugEnabled;
     private final int sqlJitIRMemoryMaxPages;
     private final int sqlJitIRMemoryPageSize;
+    private final int sqlJitMaxInListSizeThreshold;
     private final int sqlJitMode;
     private final int sqlJitPageAddressCacheThreshold;
     private final int sqlJoinContextPoolCapacity;
@@ -1409,6 +1410,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 8);
             this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD, 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
+            this.sqlJitMaxInListSizeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 10);
+
             this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
@@ -3572,6 +3575,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJitIRMemoryPageSize() {
             return sqlJitIRMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitMaxInListSizeThreshold() {
+            return sqlJitMaxInListSizeThreshold;
         }
 
         @Override
