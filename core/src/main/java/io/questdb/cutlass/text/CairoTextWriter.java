@@ -308,21 +308,21 @@ public class CairoTextWriter implements Closeable, Mutable {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
                         logTypeError(i);
-                        this.types.setQuick(i, BadDateAdapter.INSTANCE);
+                        types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
                         if (detectedAdapter instanceof TimestampCompatibleAdapter) {
-                            this.types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
+                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
                         } else {
                             logTypeError(i);
-                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
                         }
                         break;
                     case ColumnType.BINARY:
                         writer.close();
                         throw CairoException.nonCritical().put("cannot import text into BINARY column [index=").put(i).put(']');
                     default:
-                        this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
                 }
             }
