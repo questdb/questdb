@@ -1668,6 +1668,49 @@ public class SqlParser {
         return null;
     }
 
+    /**
+     * Parses a DECIMAL[(precision[, scale])] type from the lexer.
+     * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
+     * precision of 18 and a scale of 3 (or 0 if precision < 8) so that the underlying type will be a DECIMAL64.
+     *
+     * @return the concrete DECIMAL type with proper precision/scale set.
+     */
+    private int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
+        previousToken = GenericLexer.immutableOf(previousToken);
+        int previousTokenPosition = lexer.lastTokenPosition();
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) != '(') {
+            lexer.backTo(previousTokenPosition, previousToken);
+            return ColumnType.getDecimalType(18, 3);
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) == ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
+        }
+        int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
+        int scale = precision < 8 ? 0 : 3;
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // The user may provide a scale value
+        if (tok != null && tok.charAt(0) == ',') {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) == ')') {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
+            }
+            scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok == null || tok.charAt(0) != ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+        }
+
+        return ColumnType.getDecimalType(precision, scale);
+    }
+
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
@@ -3934,48 +3977,6 @@ public class SqlParser {
             return parseDecimalColumnType(lexer, tok);
         }
         return typeTag;
-    }
-
-    /**
-     * Parses a DECIMAL[(precision[, scale])] type from the lexer.
-     * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
-     * precision of 18 and a scale of 3 (or 0 if precision < 8) so that the underlying type will be a DECIMAL64.
-     * @return the concrete DECIMAL type with proper precision/scale set.
-     */
-    private int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
-        previousToken = GenericLexer.immutableOf(previousToken);
-        int previousTokenPosition = lexer.lastTokenPosition();
-
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || tok.charAt(0) != '(') {
-            lexer.backTo(previousTokenPosition, previousToken);
-            return ColumnType.getDecimalType(18, 3);
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || tok.charAt(0) == ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
-        }
-        int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
-        int scale = precision < 8 ? 0 : 3;
-
-        tok = SqlUtil.fetchNext(lexer);
-
-        // The user may provide a scale value
-        if (tok != null && tok.charAt(0) == ',') {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || tok.charAt(0) == ')') {
-                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
-            }
-            scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
-            tok = SqlUtil.fetchNext(lexer);
-        }
-
-        if (tok == null || tok.charAt(0) != ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
-        }
-
-        return ColumnType.getDecimalType(precision, scale);
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
