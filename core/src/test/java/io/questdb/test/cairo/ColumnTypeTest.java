@@ -55,18 +55,18 @@ public class ColumnTypeTest {
         // Combinations of precision, scale -> expected type
         int[][] combinations = {
                 {1, 0, 0x00000100 | (int) ColumnType.DECIMAL8},
-                {1, 1, 0x00010100 | (int) ColumnType.DECIMAL8},
-                {3, 2, 0x00020300 | (int) ColumnType.DECIMAL16},
+                {1, 1, 0x00040100 | (int) ColumnType.DECIMAL8},
+                {3, 2, 0x00080300 | (int) ColumnType.DECIMAL16},
                 {6, 0, 0x00000600 | (int) ColumnType.DECIMAL32},
-                {7, 4, 0x00040700 | (int) ColumnType.DECIMAL32},
-                {12, 12, 0x000C0C00 | (int) ColumnType.DECIMAL64},
+                {7, 4, 0x00100700 | (int) ColumnType.DECIMAL32},
+                {12, 12, 0x00300C00 | (int) ColumnType.DECIMAL64},
                 {18, 0, 0x00001200 | (int) ColumnType.DECIMAL64},
-                {18, 18, 0x00121200 | (int) ColumnType.DECIMAL64},
-                {30, 4, 0x00041E00 | (int) ColumnType.DECIMAL128},
-                {30, 30, 0x001E1E00 | (int) ColumnType.DECIMAL128},
-                {42, 4, 0x00042A00 | (int) ColumnType.DECIMAL256},
-                {55, 45, 0x002D3700 | (int) ColumnType.DECIMAL256},
-                {76, 10, 0x000A4C00 | (int) ColumnType.DECIMAL256},
+                {18, 18, 0x00481200 | (int) ColumnType.DECIMAL64},
+                {30, 4, 0x00101E00 | (int) ColumnType.DECIMAL128},
+                {30, 30, 0x00781E00 | (int) ColumnType.DECIMAL128},
+                {42, 4, 0x00102A00 | (int) ColumnType.DECIMAL256},
+                {55, 45, 0x00B43700 | (int) ColumnType.DECIMAL256},
+                {76, 10, 0x00284C00 | (int) ColumnType.DECIMAL256},
         };
 
         for (int[] combination : combinations) {
