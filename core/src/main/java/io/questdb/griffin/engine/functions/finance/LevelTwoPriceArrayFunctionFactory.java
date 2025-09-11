@@ -164,7 +164,7 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("l2price(").val(targetArg).val(", ").val(pricesArg).val(", ").val(sizesArg).val(')');
+            sink.val("l2price(").val(targetArg).val(", ").val(sizesArg).val(", ").val(pricesArg).val(')');
         }
     }
 }
