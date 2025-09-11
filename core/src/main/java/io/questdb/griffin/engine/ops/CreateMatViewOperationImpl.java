@@ -464,7 +464,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
                 final String finalTimestamp = createTableOperation.getTimestampColumnName();
                 if (finalTimestamp != null) {
-                    if (!Chars.equals(finalTimestamp, baseTableTimestampColumn)) {
+                    if (!Chars.equalsIgnoreCase(finalTimestamp, baseTableTimestampColumn)) {
                         throw SqlException.position(timestampPos != 0 ? timestampPos : selectTextPosition)
                                 .put("materialized view query timestamp must match base table designated timestamp [")
                                 .put("base table timestamp=").put(baseTableTimestampColumn)
@@ -474,7 +474,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 } else {
                     final ExpressionNode queryTimestamp = queryModel.getTimestamp();
                     if (queryTimestamp != null && queryTimestamp.type == ExpressionNode.LITERAL) {
-                        if (!Chars.equals(queryTimestamp.token, baseTableTimestampColumn)) {
+                        if (!Chars.equalsIgnoreCase(queryTimestamp.token, baseTableTimestampColumn)) {
                             throw SqlException.position(queryTimestamp.position)
                                     .put("materialized view query timestamp must match base table designated timestamp [")
                                     .put("base table timestamp=").put(baseTableTimestampColumn)
