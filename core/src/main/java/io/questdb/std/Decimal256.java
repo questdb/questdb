@@ -2561,10 +2561,10 @@ public class Decimal256 implements Sinkable {
 
     /**
      * Check if addition resulted in a carry
-     * When adding two unsigned numbers a + b = sum, carry occurs iff sum < a (or sum < b)
+     * When adding two unsigned numbers a + b = sum, carry occurs iff sum &lt; a (or sum &lt; b)
      * This works because:
-     * - No carry: sum = a + b, so sum >= a and sum >= b
-     * - Carry: sum = a + b - 2^64, so sum < a and sum < b
+     * - No carry: sum = a + b, so sum &gt;= a and sum &gt;= b
+     * - Carry: sum = a + b - 2^64, so sum &lt; a and sum &lt; b
      */
     public static boolean hasCarry(long a, long sum) {
         // We can check against either a or b - both work
