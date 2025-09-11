@@ -185,7 +185,7 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
             } else if (dimsLeft == 2) {
                 leftDerived = null;
             } else {
-                throw SqlException.position(rightArgPos).put("left array is not one or two-dimensional");
+                throw SqlException.position(leftArgPos).put("left array is not one or two-dimensional");
             }
 
             if (dimsRight == 1) {
