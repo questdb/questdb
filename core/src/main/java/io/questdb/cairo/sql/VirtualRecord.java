@@ -100,6 +100,56 @@ public class VirtualRecord implements ColumnTypes, Record, QuietCloseable {
     }
 
     @Override
+    public long getDecimal128Hi(int col) {
+        return getFunction(col).getDecimal128Hi(base);
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        return getFunction(col).getDecimal128Lo(base);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return getFunction(col).getDecimal16(base);
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        return getFunction(col).getDecimal256HH(base);
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        return getFunction(col).getDecimal256HL(base);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        return getFunction(col).getDecimal256LH(base);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        return getFunction(col).getDecimal256LL(base);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return getFunction(col).getDecimal32(base);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return getFunction(col).getDecimal64(base);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return getFunction(col).getDecimal8(base);
+    }
+
+    @Override
     public double getDouble(int col) {
         return getFunction(col).getDouble(base);
     }

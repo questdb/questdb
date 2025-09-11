@@ -185,6 +185,10 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
     }
 
+    protected void assertCreate(String expected, String query) throws SqlException {
+        assertModel(expected, query, ExecutionModel.CREATE_TABLE);
+    }
+
     protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
