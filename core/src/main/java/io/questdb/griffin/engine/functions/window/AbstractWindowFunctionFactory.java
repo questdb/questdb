@@ -175,7 +175,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     }
 
     static class LongNullFunction extends BaseNullFunction implements WindowLongFunction {
-        private final Long zeroValue;
+        private final long zeroValue;
 
         LongNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
             super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
@@ -184,6 +184,25 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
+            return zeroValue;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+        }
+    }
+
+    static class TimestampNullFunction extends BaseNullFunction implements WindowTimestampFunction {
+        private final long zeroValue;
+
+        TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.zeroValue = zeroValue;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
             return zeroValue;
         }
 

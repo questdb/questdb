@@ -290,6 +290,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(frameSequence);
-        Misc.freeObjList(groupByFunctions);
+        Misc.freeObjListAndClear(groupByFunctions);
     }
 }
