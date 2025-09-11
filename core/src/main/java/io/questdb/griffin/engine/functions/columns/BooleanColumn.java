@@ -24,15 +24,13 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class BooleanColumn extends BooleanFunction implements Function {
+public class BooleanColumn extends BooleanFunction implements ColumnFunction {
     private static final ObjList<BooleanColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -53,13 +51,13 @@ public class BooleanColumn extends BooleanFunction implements Function {
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return true;
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
+    public boolean isThreadSafe() {
+        return true;
     }
 
     static {
@@ -68,5 +66,4 @@ public class BooleanColumn extends BooleanFunction implements Function {
             COLUMNS.setQuick(i, new BooleanColumn(i));
         }
     }
-
 }
