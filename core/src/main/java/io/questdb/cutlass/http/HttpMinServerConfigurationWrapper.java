@@ -71,6 +71,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public int getDisconnectQueueCapacity() {
+        return getDelegate().getDisconnectQueueCapacity();
+    }
+
+    @Override
     public String getDispatcherLogName() {
         return getDelegate().getDispatcherLogName();
     }

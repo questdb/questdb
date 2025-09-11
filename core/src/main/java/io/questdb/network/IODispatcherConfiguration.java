@@ -45,6 +45,10 @@ public interface IODispatcherConfiguration {
 
     LongGauge getConnectionCountGauge();
 
+    default int getDisconnectQueueCapacity() {
+        return Numbers.ceilPow2(getLimit());
+    }
+
     default String getDispatcherLogName() {
         return "IODispatcher";
     }
@@ -62,7 +66,8 @@ public interface IODispatcherConfiguration {
     }
 
     default int getIOQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        // reserve spare capacity for extra events such as heartbeats
+        return Numbers.ceilPow2(2 * getLimit());
     }
 
     default int getInitialBias() {
