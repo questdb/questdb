@@ -31,6 +31,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -87,12 +89,12 @@ public class CreateTableTestUtils {
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID)
                     .col("n", ColumnType.VARCHAR)
-                    .col("o", ColumnType.DECIMAL8)
-                    .col("p", ColumnType.DECIMAL16)
-                    .col("q", ColumnType.DECIMAL32)
-                    .col("r", ColumnType.DECIMAL64)
-                    .col("s", ColumnType.DECIMAL128)
-                    .col("t", ColumnType.DECIMAL256);
+                    .col("o", ColumnType.getDecimalType(2, 0)) // DECIMAL8
+                    .col("p", ColumnType.getDecimalType(4, 0)) // DECIMAL16
+                    .col("q", ColumnType.getDecimalType(9, 0)) // DECIMAL32
+                    .col("r", ColumnType.getDecimalType(18, 0)) // DECIMAL64
+                    .col("s", ColumnType.getDecimalType(38, 0)) // DECIMAL128
+                    .col("t", ColumnType.getDecimalType(76, 0)); // DECIMAL256
             TestUtils.createTable(engine, model);
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
@@ -192,35 +194,35 @@ public class CreateTableTestUtils {
                 if (rnd.nextInt() % 4 == 0) {
                     row.putByte(14, Decimals.DECIMAL8_NULL);
                 } else {
-                    row.putByte(14, rnd.nextByte());
+                    row.putByte(14, rnd.nextByte((byte) 100));
                 }
 
                 // DECIMAL16
                 if (rnd.nextInt() % 4 == 0) {
                     row.putShort(15, Decimals.DECIMAL16_NULL);
                 } else {
-                    row.putShort(15, rnd.nextShort());
+                    row.putShort(15, rnd.nextShort((short) 10000));
                 }
 
                 // DECIMAL32
                 if (rnd.nextInt() % 4 == 0) {
                     row.putInt(16, Decimals.DECIMAL32_NULL);
                 } else {
-                    row.putInt(16, rnd.nextInt());
+                    row.putInt(16, rnd.nextInt(1000000000));
                 }
 
-                // DECIMAL128
+                // DECIMAL64
                 if (rnd.nextInt() % 4 == 0) {
                     row.putLong(17, Decimals.DECIMAL64_NULL);
                 } else {
-                    row.putLong(17, rnd.nextLong());
+                    row.putLong(17, rnd.nextLong(1000000000000000000L));
                 }
 
                 // DECIMAL128
                 if (rnd.nextInt() % 4 == 0) {
                     row.putDecimal128(18, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
                 } else {
-                    row.putDecimal128(18, rnd.nextLong(), rnd.nextLong());
+                    row.putDecimal128(18, rnd.nextLong(Decimal128.MAX_VALUE.getHigh()), rnd.nextLong());
                 }
 
                 // DECIMAL256
@@ -228,7 +230,7 @@ public class CreateTableTestUtils {
                     row.putDecimal256(19, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
                             Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
                 } else {
-                    row.putDecimal256(19, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                    row.putDecimal256(19, rnd.nextLong(Decimal256.MAX_VALUE.getHh()), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 }
 
                 row.append();
