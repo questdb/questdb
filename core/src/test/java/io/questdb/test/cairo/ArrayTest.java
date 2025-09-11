@@ -1844,7 +1844,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT matmul(left1d, right1d) FROM tango",
                     14, "left array row length doesn't match right array column length [leftRowLen=1, rightColLen=2]");
             assertExceptionNoLeakCheck("SELECT matmul(left3d, right1d) FROM tango",
-                    22, "left array is not one or two-dimensional");
+                    14, "left array is not one or two-dimensional");
             assertExceptionNoLeakCheck("SELECT matmul(left1d, right3d) FROM tango",
                     22, "right array is not one or two-dimensional");
         });
