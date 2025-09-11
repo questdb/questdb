@@ -358,17 +358,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
-    private String createTempTableForQuery(CharSequence query, long copyID) throws SqlException {
-        String tempTableName = "copy." + Long.toHexString(copyID);
-        String createTableSQL = "CREATE TABLE '" + tempTableName + "' AS (" + query + ")";
-
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile(createTableSQL, sqlExecutionContext);
-        }
-
-        return tempTableName;
-    }
-
     private LogRecord critical(ExportQueryProcessorState state) {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
