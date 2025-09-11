@@ -946,7 +946,7 @@ public class SqlParser {
                                 if (parquetVersion != CopyModel.PARQUET_VERSION_V1 && parquetVersion != CopyModel.PARQUET_VERSION_V2) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
                                 }
-                                model.setParquetVersion(expectInt(lexer));
+                                model.setParquetVersion(parquetVersion);
                                 break;
                             case CopyModel.COPY_OPTION_UNKNOWN:
                                 throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")

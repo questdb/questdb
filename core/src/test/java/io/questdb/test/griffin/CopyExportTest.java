@@ -455,9 +455,9 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetSyntaxErrorMissingOptionValue() throws Exception {
         assertException(
-                "copy test_table to 'output' with format parquet compression_codec",
-                65,
-                "invalid compression codec, expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
+                "copy test_table to 'output' with format parquet compression_codec unknown",
+                66,
+                "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
         );
     }
 
