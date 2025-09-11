@@ -643,8 +643,8 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 PartitionDecoder parquetDecoder = frame.getParquetDecoder();
                 Assert.assertNotNull(parquetDecoder);
                 PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-                for (int i = 0, n = parquetMetadata.rowGroupCount(); i < n; i++) {
-                    int size = parquetMetadata.rowGroupSize(i);
+                for (int i = 0, n = parquetMetadata.getRowGroupCount(); i < n; i++) {
+                    int size = parquetMetadata.getRowGroupSize(i);
                     parquetDecoder.decodeRowGroup(parquetBuffers, parquetColumns, i, 0, size);
                     long addr = parquetBuffers.getChunkDataPtr(0);
                     for (long r = frame.getRowHi() - 1; r > frame.getRowLo() - 1; r--) {
