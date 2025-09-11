@@ -352,7 +352,7 @@ public class MemoryCARWImplTest {
 
             long o = 0;
             for (int i = n; i > 0; i--) {
-                mem.putDecimal256(i, -i, i + 1, -i - 1);
+                mem.putDecimal256(o, i, -i, i + 1, -i - 1);
                 o += Long.BYTES << 2;
             }
 
