@@ -2659,7 +2659,6 @@ public class SqlOptimiser implements Mutable {
     private boolean isModelEligibleForASOFJoinOptimisation(QueryModel targetModel,
                                                            QueryModel parent, QueryModel sourceModel) throws SqlException {
         boolean isOrderByPresent = false;
-        QueryModel virtualModel = null;
         slaveTableColumnFinder.resetValues();
         if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
                 targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
@@ -2667,14 +2666,6 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
                 isOrderByPresent = true;
                 ExpressionNode investigatedNode = targetModel.getOrderBy().get(i);
-                if (Chars.equals(targetModel.getOrderBy().get(i).token, "column")) {
-                    QueryModel temp = sourceModel;
-                    while (temp.getNestedModel().getNestedModel() != targetModel) {
-                        temp = temp.getNestedModel();
-                    }
-                    virtualModel = temp;
-                    investigatedNode = temp.getAliasToColumnMap().get("column").getAst();
-                }
                 boolean found = findIfnodeExpressionContainsSlaveTableRef(investigatedNode, targetModel);
                 if (found)
                     return false;
@@ -2685,16 +2676,12 @@ public class SqlOptimiser implements Mutable {
                 if (found)
                     return false;
             }
-            boolean isLimitPresent = (virtualModel != null && virtualModel.getLimitLo() != null) ||
-                    parent.getLimitLo() != null && parent.getSelectModelType() != SELECT_MODEL_GROUP_BY;
+            boolean isLimitPresent = parent.getLimitLo() != null && parent.getSelectModelType() != SELECT_MODEL_GROUP_BY;
 
             /*
               Queries having order by expression as order by col1+43 will be handled
               in a normal way for now, optimisation to be added later.
              */
-            if (virtualModel != null)
-                return false;
-
             return isOrderByPresent && isLimitPresent;
         }
         return false;
