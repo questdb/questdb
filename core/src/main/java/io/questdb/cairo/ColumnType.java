@@ -237,8 +237,8 @@ public final class ColumnType {
      * This is useful for PostgreSQL wire protocol where type information doesn't
      * include array dimensions.
      * <p>
-     * The number of dimensions of this type is undefined, so attempts to decode it
-     * will fail.
+     * The number of dimensions of this type is undefined, so the decoded number on
+     * dimensions for the returned column type will be -1.
      */
     public static int encodeArrayTypeWithWeakDims(short elemType, boolean checkSupportedElementTypes) {
         return encodeArrayType(elemType, 1, checkSupportedElementTypes) | TYPE_FLAG_ARRAY_WEAK_DIMS;
