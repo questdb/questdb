@@ -44,10 +44,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DoubleArrayDivFunctionFactory implements FunctionFactory {
+    private static final String OPERATOR_NAME = "/";
 
     @Override
     public String getSignature() {
-        return "/(D[]D[])";
+        return OPERATOR_NAME + "(D[]D[])";
     }
 
     @Override
@@ -142,7 +143,7 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "/";
+            return OPERATOR_NAME;
         }
 
         @Override

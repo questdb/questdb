@@ -790,52 +790,50 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 SqlKeywords.isCastKeyword(node.token)
                         && argCount == 2
                         && args.getQuick(1).isConstant()
-        )
-            skipAssigningType:
-                    {
-                        // If this the cast into same type, return the first argument
-                        if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
-                            return args.getQuick(0);
-                        }
+        ) skipAssigningType:{
+            // If this the cast into same type, return the first argument
+            if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
+                return args.getQuick(0);
+            }
 
-                        // If a bind variable of unknown type appears inside a cast expression, we should
-                        // assign a default type to it. Otherwise, since casting is a heavily overloaded
-                        // operation (can cast lots of things to a string/number), we'll end up picking
-                        // whatever happens to be the first cast function in the traversal order, and force
-                        // the bind variable to that type. This will then fail when an actual value is bound
-                        // to the variable, and it's most likely not that arbitrary type.
-                        Function arg0 = args.getQuick(0);
-                        if (ColumnType.isUndefined(arg0.getType())) {
-                            final int castToType = args.getQuick(1).getType();
-                            short castToTypeTag = ColumnType.tagOf(castToType);
-                            final int assignType;
-                            switch (castToTypeTag) {
-                                case ColumnType.VARCHAR:
-                                case ColumnType.STRING:
-                                case ColumnType.CHAR:
-                                    assignType = ColumnType.STRING;
-                                    break;
-                                case ColumnType.BYTE:
-                                case ColumnType.SHORT:
-                                case ColumnType.INT:
-                                case ColumnType.LONG:
-                                case ColumnType.FLOAT:
-                                case ColumnType.DOUBLE:
-                                    assignType = ColumnType.DOUBLE;
-                                    break;
-                                case ColumnType.ARRAY:
-                                    assignType = castToType;
-                                    break;
-                                default:
-                                    break skipAssigningType;
-                            }
-                            arg0.assignType(assignType, sqlExecutionContext.getBindVariableService());
-                            if (assignType == castToType) {
-                                // Now that that type is assigned, we can return the first argument, no additional cast needed
-                                return arg0;
-                            }
-                        }
-                    }
+            // If a bind variable of unknown type appears inside a cast expression, we should
+            // assign a default type to it. Otherwise, since casting is a heavily overloaded
+            // operation (can cast lots of things to a string/number), we'll end up picking
+            // whatever happens to be the first cast function in the traversal order, and force
+            // the bind variable to that type. This will then fail when an actual value is bound
+            // to the variable, and it's most likely not that arbitrary type.
+            Function arg0 = args.getQuick(0);
+            if (ColumnType.isUndefined(arg0.getType())) {
+                final int castToType = args.getQuick(1).getType();
+                short castToTypeTag = ColumnType.tagOf(castToType);
+                final int assignType;
+                switch (castToTypeTag) {
+                    case ColumnType.VARCHAR:
+                    case ColumnType.STRING:
+                    case ColumnType.CHAR:
+                        assignType = ColumnType.STRING;
+                        break;
+                    case ColumnType.BYTE:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DOUBLE:
+                        assignType = ColumnType.DOUBLE;
+                        break;
+                    case ColumnType.ARRAY:
+                        assignType = castToType;
+                        break;
+                    default:
+                        break skipAssigningType;
+                }
+                arg0.assignType(assignType, sqlExecutionContext.getBindVariableService());
+                if (assignType == castToType) {
+                    // Now that that type is assigned, we can return the first argument, no additional cast needed
+                    return arg0;
+                }
+            }
+        }
 
         undefinedVariables.clear();
         // find all undefined args for the purpose of setting
@@ -897,9 +895,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     final boolean argIsStringArray = argTypeTag == ColumnType.ARRAY_STRING;
                     final boolean sigIsStringArray = sigArgTypeTag == ColumnType.ARRAY_STRING;
                     if (sigIsArray != argIsArray || sigIsStringArray != argIsStringArray) {
-                        if (argType == ColumnType.UNDEFINED) {
-                            match = MATCH_FUZZY_MATCH;
-                        } else {
+                        if (argType != ColumnType.UNDEFINED) {
                             match = MATCH_NO_MATCH;
                             break;
                         }

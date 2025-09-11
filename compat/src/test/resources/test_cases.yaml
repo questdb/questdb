@@ -80,7 +80,6 @@ tests:
 
   - name: Test Array Operators
     description: Test operators for arrays, including bind variable arguments.
-    exclude: [ 'asyncpg' ]
     prepare:
       - action: execute
         query: "CREATE TABLE array_op_table (arr double[]);"
@@ -100,7 +99,7 @@ tests:
                 result:
                   - [ 1 ]
       - action: query
-        query: "SELECT arr * $[1] arr1, arr / $[2] arr2, arr + $[3] arr3, arr - $[4] arr4 FROM array_op_table"
+        query: "SELECT arr * $[1], arr / $[2], arr + $[3], arr - $[4] FROM array_op_table WHERE arr = $[5]"
         parameters:
           - value: "{3, 3, 3}"
             type: "ARRAY_FLOAT8"
@@ -109,6 +108,8 @@ tests:
           - value: "{3, 2, 1}"
             type: "ARRAY_FLOAT8"
           - value: "{1, 1, 1}"
+            type: "ARRAY_FLOAT8"
+          - value: "{1, 2, 3}"
             type: "ARRAY_FLOAT8"
         expect:
           result_contains:
