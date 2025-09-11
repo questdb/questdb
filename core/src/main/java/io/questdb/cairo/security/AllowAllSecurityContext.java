@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -162,7 +161,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
+    public void authorizeDatabaseBackup() {
     }
 
     @Override
