@@ -882,8 +882,9 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
 
-            //if key values contain bind variable then we can't merge it with any other set and have to push this list to filter
-            if (!allKeyValuesAreKnown) {
+            // if key values contain bind variable then we can't merge it with any other set and have to push this list to filter,
+            // we can only create a new list of keys (=newColumn)
+            if (!allKeyValuesAreKnown & !newColumn) {
                 return false;
             }
 
@@ -924,7 +925,7 @@ public final class WhereClauseParser implements Mutable {
                 for (i--; i > -1; i--) {
                     ExpressionNode c = node.args.getQuick(i);
                     if ((c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.BIND_VARIABLE && c.type != ExpressionNode.FUNCTION) ||
-                            (c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                            (!newColumn && c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
                         return false;
                     }
 
