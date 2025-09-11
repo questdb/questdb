@@ -56,6 +56,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private final TableToken statusTableToken;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private SerialParquetExporter serialExporter;
+    private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
 
     public CopyExportRequestJob(final CairoEngine engine) throws SqlException {
@@ -69,8 +70,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
 
             final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
             int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-            try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-                 SqlCompiler compiler = engine.getSqlCompiler()) {
+            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
                 this.statusTableToken = compiler.query()
                         .$("CREATE TABLE IF NOT EXISTS \"")
@@ -163,6 +164,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         long cursor = requestSubSeq.next();
         if (cursor > -1) {
             CopyExportRequestTask task = requestQueue.get(cursor);
+            sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, copyContext.getCircuitBreaker());
             serialExporter.of(
                     task,
                     copyContext.getCircuitBreaker(),
@@ -171,7 +173,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
 
             CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
             try {
-                phase = serialExporter.process(task.getSecurityContext()); // throws CopyExportException
+                phase = serialExporter.process(sqlExecutionContext); // throws CopyExportException
 
                 if (task.getSuspendEvent() != null) {
                     phase = CopyExportRequestTask.Phase.SIGNALLING_EXP;

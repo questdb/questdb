@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -55,6 +56,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -77,6 +79,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -95,6 +98,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final StringSink errSink = new StringSink();
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
@@ -216,8 +220,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state == null) {
             LV.set(context, state = new ExportQueryProcessorState(context));
         }
-        // new request clears random
-        state.rnd = null;
 
         HttpChunkedResponse response = context.getChunkedResponse();
         if (parseUrl(response, context.getRequestHeader(), state)) {
@@ -320,7 +322,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private CopyExportRequestTask.Status checkForParquetExportCompletion(String copyID) throws SqlException {
+    private CopyExportRequestTask.Status checkForParquetExportCompletion(CharSequence copyID) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             String statusSQL = "SELECT phase, status FROM 'sys.copy_export_log' WHERE id = '" + copyID + "' ORDER BY ts DESC LIMIT 1";
             final CompiledQuery cc = compiler.compile(statusSQL, sqlExecutionContext);
@@ -358,6 +360,128 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
+    private boolean configureParquetOptions(
+            HttpRequestHeader request,
+            HttpChunkedResponse response,
+            ExportQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        CopyModel copyModel = state.getCopyModel();
+        copyModel.clear();
+        copyModel.setParquetDefaults(engine.getConfiguration());
+        copyModel.setFormat(CopyModel.COPY_FORMAT_PARQUET);
+
+        // Handle partition_by option
+        DirectUtf8Sequence partitionBy = request.getUrlParam(EXPORT_PARQUET_OPTION_PARTITION_BY);
+        if (partitionBy != null && partitionBy.size() > 0) {
+            int partitionByValue = PartitionBy.fromString(partitionBy.asAsciiCharSequence());
+            if (partitionByValue < 0) {
+                errSink.clear();
+                errSink.put("invalid partition_by value:").put(partitionBy);
+                sendException(response, 0, errSink, state);
+                return false;
+            }
+            copyModel.setPartitionBy(partitionByValue, 0);
+        }
+
+        // Handle compression_codec option
+        DirectUtf8Sequence compressionCodec = request.getUrlParam(EXPORT_PARQUET_OPTION_COMPRESSION_CODEC);
+        if (compressionCodec != null && compressionCodec.size() > 0) {
+            int codec = ParquetCompression.getCompressionCodec(compressionCodec.asAsciiCharSequence());
+            if (codec < 0) {
+                SqlException e = SqlException.$(0, "invalid compression codec[").put(compressionCodec).put("], expected one of: ");
+                ParquetCompression.addCodecNamesToException(e);
+                sendException(response, 0, e.getFlyweightMessage(), state);
+                return false;
+            }
+            copyModel.setCompressionCodec(codec);
+        }
+
+        // Handle compression_level option
+        DirectUtf8Sequence compressionLevel = request.getUrlParam(EXPORT_PARQUET_OPTION_COMPRESSION_LEVEL);
+        if (compressionLevel != null && compressionLevel.size() > 0) {
+            try {
+                int level = Numbers.parseInt(compressionLevel);
+                copyModel.setCompressionLevel(level, 0);
+                copyModel.validCompressOptions();
+            } catch (NumericException e) {
+                errSink.clear();
+                errSink.put("invalid compression level:").put(compressionLevel);
+                sendException(response, 0, errSink, state);
+                return false;
+            } catch (SqlException e) {
+                sendException(response, 0, e.getFlyweightMessage(), state);
+                return false;
+            }
+        }
+
+        // Handle row_group_size option
+        DirectUtf8Sequence rowGroupSize = request.getUrlParam(EXPORT_PARQUET_OPTION_ROW_GROUP_SIZE);
+        if (rowGroupSize != null && rowGroupSize.size() > 0) {
+            try {
+                int size = Numbers.parseInt(rowGroupSize);
+                copyModel.setRowGroupSize(size);
+            } catch (NumericException e) {
+                errSink.clear();
+                errSink.put("invalid row group size:").put(rowGroupSize);
+                sendException(response, 0, errSink, state);
+                return false;
+            }
+        }
+
+        // Handle data_page_size option
+        DirectUtf8Sequence dataPageSize = request.getUrlParam(EXPORT_PARQUET_OPTION_DATA_PAGE_SIZE);
+        if (dataPageSize != null && dataPageSize.size() > 0) {
+            try {
+                int size = Numbers.parseInt(dataPageSize);
+                copyModel.setDataPageSize(size);
+            } catch (NumericException e) {
+                errSink.clear();
+                errSink.put("invalid data page size:").put(dataPageSize);
+                sendException(response, 0, errSink, state);
+                return false;
+            }
+        }
+
+        // Handle statistics_enabled option
+        DirectUtf8Sequence statisticsEnabled = request.getUrlParam(EXPORT_PARQUET_OPTION_STATISTICS_ENABLED);
+        if (statisticsEnabled != null && statisticsEnabled.size() > 0) {
+            boolean enabled = HttpKeywords.isTrue(statisticsEnabled);
+            copyModel.setStatisticsEnabled(enabled);
+        }
+
+        // Handle parquet_version option
+        DirectUtf8Sequence parquetVersion = request.getUrlParam(EXPORT_PARQUET_OPTION_PARQUET_VERSION);
+        if (parquetVersion != null && parquetVersion.size() > 0) {
+            try {
+                int version = Numbers.parseInt(parquetVersion);
+                if (version != CopyModel.PARQUET_VERSION_V1 && version != CopyModel.PARQUET_VERSION_V2) {
+                    errSink.clear();
+                    errSink.put("invalid parquet version: ").put(parquetVersion)
+                            .put(", supported versions: ")
+                            .put(CopyModel.PARQUET_VERSION_V1).put(", ")
+                            .put(CopyModel.PARQUET_VERSION_V2);
+                    sendException(response, 0, errSink, state);
+                    return false;
+                }
+                copyModel.setParquetVersion(version);
+            } catch (NumericException e) {
+                errSink.clear();
+                errSink.put("invalid parquet version:").put(parquetVersion);
+                sendException(response, 0, errSink, state);
+                return false;
+            }
+        }
+
+        // Handle raw_array_encoding option
+        DirectUtf8Sequence rawArrayEncoding = request.getUrlParam(EXPORT_PARQUET_OPTION_RAW_ARRAY_ENCODING);
+        if (rawArrayEncoding != null && rawArrayEncoding.size() > 0) {
+            boolean enabled = HttpKeywords.isTrue(rawArrayEncoding);
+            copyModel.setRawArrayEncoding(enabled);
+        }
+
+        return true;
+    }
+
     private LogRecord critical(ExportQueryProcessorState state) {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
@@ -373,14 +497,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             try {
                 switch (state.queryState) {
                     case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
-                        // Initialize parquet export
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
-                        // fall through
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
                         try {
                             initParquetExport(context, state);
                         } catch (SqlException e) {
-                            sendException(response, 0, e.getFlyweightMessage(), state);
+                            sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
                         }
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
@@ -422,10 +544,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT:
                         try {
                             initParquetFileSending(context, state);
-                        } catch (Exception e) {
-                            // Clean up any open file descriptors on error
+                        } catch (CairoException e) {
                             cleanupParquetState(state);
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, e.getFlyweightMessage(), state);
                             break OUT;
                         }
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK;
@@ -452,6 +573,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 response.sendChunk(false);
             }
         }
+        
         // Clean up parquet state when done
         cleanupParquetState(state);
         readyForNextRequest(context);
@@ -461,7 +583,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
-
         if (state == null) {
             return;
         }
@@ -594,10 +715,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
-    private String findParquetExportFile(String copyID) {
+    private String findParquetExportFile(CharSequence copyID) {
         try (Path path = new Path()) {
-            String inputRoot = engine.getConfiguration().getSqlCopyExportRoot().toString();
-            path.of(inputRoot).concat("copy.").put(copyID);
+            path.of(engine.getConfiguration().getSqlCopyExportRoot()).concat("copy.").put(copyID);
 
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
 
@@ -619,16 +739,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
         if (state.copyID == null) {
             state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
-            CopyModel model = new CopyModel();
-            model.clear();
-            model.setParquetDefaults(engine.getConfiguration());
-            model.setSelectText(state.query.toString(), 0);
-            model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
-
             CopyExportFactory factory = new CopyExportFactory(
                     engine.getMessageBus(),
                     engine.getCopyExportContext(),
-                    model,
+                    state.getCopyModel(),
                     context.getSecurityContext(),
                     state.suspendEvent,
                     state.query
@@ -811,6 +925,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 state.fmt = format.toString();
             } else {
                 sendException(response, 0, "unrecognised format [format=" + format + "]", state);
+            }
+        }
+
+        if (SqlKeywords.isParquetKeyword(state.fmt)) {
+            if (!configureParquetOptions(request, response, state)) {
+                return false;
             }
         }
 

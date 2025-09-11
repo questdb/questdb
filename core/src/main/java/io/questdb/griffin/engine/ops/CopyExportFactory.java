@@ -44,7 +44,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -130,7 +129,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 assert processingCursor > -1;
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 CreateTableOperationImpl createOp = null;
-                SqlExecutionContextImpl createSelectContext = null;
                 if (this.selectText != null) {
                     // prepare to create a temp table
                     exportIdSink.clear();
@@ -138,8 +136,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     Numbers.appendHex(exportIdSink, copyID, true);
                     this.tableName = exportIdSink.toString();
                     createOp = validAndCreateTableOp(executionContext);
-                    createSelectContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
-                    createSelectContext.with(securityContext, null, null, -1, circuitBreaker);
                 } else {
                     if (executionContext.getTableTokenIfExists(tableName) == null) {
                         throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
@@ -153,7 +149,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 record.setValue(exportIdSink);
                 task.of(
                         securityContext,
-                        createSelectContext,
                         copyID,
                         createOp,
                         tableName,

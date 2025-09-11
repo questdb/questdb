@@ -36,6 +36,14 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_VALUE_SEPARATOR = '=';
+    public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_CODEC = new Utf8String("compression_codec");
+    public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_LEVEL = new Utf8String("compression_level");
+    public static final Utf8String EXPORT_PARQUET_OPTION_DATA_PAGE_SIZE = new Utf8String("data_page_size");
+    public static final Utf8String EXPORT_PARQUET_OPTION_PARQUET_VERSION = new Utf8String("parquet_version");
+    public static final Utf8String EXPORT_PARQUET_OPTION_PARTITION_BY = new Utf8String("partition_by");
+    public static final Utf8String EXPORT_PARQUET_OPTION_RAW_ARRAY_ENCODING = new Utf8String("raw_array_encoding");
+    public static final Utf8String EXPORT_PARQUET_OPTION_ROW_GROUP_SIZE = new Utf8String("row_group_size");
+    public static final Utf8String EXPORT_PARQUET_OPTION_STATISTICS_ENABLED = new Utf8String("statistics_enabled");
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");

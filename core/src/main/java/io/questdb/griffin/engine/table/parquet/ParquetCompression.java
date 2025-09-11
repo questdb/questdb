@@ -33,6 +33,8 @@ public class ParquetCompression {
     private static final StringSink CODEC_NAMES = new StringSink(64);
     private static final IntObjHashMap<CharSequence> codecToNameMap = new IntObjHashMap<>(16);
     private static final LowerCaseCharSequenceIntHashMap nameToCodecMap = new LowerCaseCharSequenceIntHashMap(32);
+    public static int BROTLI_MAX_COMPRESSION_LEVEL = 11;
+    public static int BROTLI_MIN_COMPRESSION_LEVEL = 0;
     public static int COMPRESSION_UNCOMPRESSED = 0; // 0
     public static int COMPRESSION_SNAPPY = COMPRESSION_UNCOMPRESSED + 1; // 1
     public static int COMPRESSION_GZIP = COMPRESSION_SNAPPY + 1; // 2
@@ -43,6 +45,10 @@ public class ParquetCompression {
     public static int COMPRESSION_LZ4_RAW = COMPRESSION_ZSTD + 1; // 7
     public static int COMPRESSION_DEFAULT = COMPRESSION_LZ4_RAW;
     static int MAX_ENUM_INT = COMPRESSION_LZ4_RAW + 1;
+    public static int GZIP_MAX_COMPRESSION_LEVEL = 10;
+    public static int GZIP_MIN_COMPRESSION_LEVEL = 0;
+    public static int ZSTD_MAX_COMPRESSION_LEVEL = 22;
+    public static int ZSTD_MIN_COMPRESSION_LEVEL = 1;
 
     public static void addCodecNamesToException(SqlException e) {
         e.put(CODEC_NAMES);

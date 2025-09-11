@@ -2310,7 +2310,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         assert model.getFormat() == COPY_FORMAT_PARQUET;
-
+        model.validCompressOptions();
         return new CopyExportFactory(
                 messageBus,
                 engine.getCopyExportContext(),

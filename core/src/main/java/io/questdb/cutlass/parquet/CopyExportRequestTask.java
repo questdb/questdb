@@ -26,7 +26,6 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
@@ -39,7 +38,6 @@ public class CopyExportRequestTask implements Mutable {
     private long copyID;
     private CreateTableOperation createOp;
     private int dataPageSize;
-    private SqlExecutionContext executionContext;
     private String fileName;
     private int parquetVersion;
     private boolean rawArrayEncoding;
@@ -66,7 +64,6 @@ public class CopyExportRequestTask implements Mutable {
         this.statisticsEnabled = true;
         this.suspendEvent = null;
         this.createOp = Misc.free(createOp);
-        this.executionContext = null;
         userSpecifiedExportOptions = false;
     }
 
@@ -88,10 +85,6 @@ public class CopyExportRequestTask implements Mutable {
 
     public int getDataPageSize() {
         return dataPageSize;
-    }
-
-    public SqlExecutionContext getExecutionContext() {
-        return executionContext;
     }
 
     public String getFileName() {
@@ -136,7 +129,6 @@ public class CopyExportRequestTask implements Mutable {
 
     public void of(
             SecurityContext securityContext,
-            SqlExecutionContext sqlExecutionContext,
             long copyID,
             CreateTableOperation createOp,
             String tableName,
@@ -153,7 +145,6 @@ public class CopyExportRequestTask implements Mutable {
             boolean userSpecifiedExportOptions
     ) {
         this.clear();
-        this.executionContext = sqlExecutionContext;
         this.securityContext = securityContext;
         this.copyID = copyID;
         this.tableName = tableName;

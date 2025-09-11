@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
+import io.questdb.griffin.model.CopyModel;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -41,13 +42,14 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
-    static long PARQUET_BUFFER_SIZE = 8192;
+    private static final long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
+    private final CopyModel copyModel = new CopyModel();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
     boolean columnValueFullySent = true;
-    String copyID;
+    CharSequence copyID;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
@@ -123,6 +125,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             // Close any open file descriptor
             parquetFileFd = -1;
         }
+        copyModel.clear();
     }
 
     @Override
@@ -134,6 +137,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
         }
+    }
+
+    public CopyModel getCopyModel() {
+        return copyModel;
     }
 
     public long getFd() {

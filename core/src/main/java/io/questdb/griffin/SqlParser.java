@@ -909,24 +909,26 @@ public class SqlParser {
                             case CopyModel.COPY_OPTION_PARTITION_BY:
                                 final ExpressionNode partitionByExpr = expectLiteral(lexer);
                                 final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
+                                if (partitionBy < 0) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid partition by option: ").put(partitionByExpr.token);
+                                }
                                 model.setPartitionBy(partitionBy, partitionByExpr.position);
                                 break;
                             case CopyModel.COPY_OPTION_SIZE_LIMIT:
                                 // todo: add this when table writer has appropriate support for it
                                 throw SqlException.$(lexer.lastTokenPosition(), "size limit is not yet supported");
                             case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
-                                try {
-                                    ExpressionNode codecExpr = expectLiteral(lexer);
-                                    int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
-                                    model.setCompressionCodec(codec);
-                                } catch (SqlException e) {
-                                    SqlException _e = SqlException.$(e.getPosition(), "invalid compression codec, expected one of: ");
-                                    ParquetCompression.addCodecNamesToException(_e);
-                                    throw _e;
+                                ExpressionNode codecExpr = expectLiteral(lexer);
+                                int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
+                                if (codec < 0) {
+                                    SqlException e = SqlException.$(codecExpr.position, "invalid compression codec[").put(codecExpr.token).put("], expected one of: ");
+                                    ParquetCompression.addCodecNamesToException(e);
+                                    throw e;
                                 }
+                                model.setCompressionCodec(codec);
                                 break;
                             case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
-                                model.setCompressionLevel(expectInt(lexer));
+                                model.setCompressionLevel(expectInt(lexer), lexer.lastTokenPosition());
                                 break;
                             case CopyModel.COPY_OPTION_ROW_GROUP_SIZE:
                                 model.setRowGroupSize(expectInt(lexer));
@@ -940,6 +942,10 @@ public class SqlParser {
                                 model.setStatisticsEnabled(expectBoolean(lexer));
                                 break;
                             case CopyModel.COPY_OPTION_PARQUET_VERSION:
+                                int parquetVersion = expectInt(lexer);
+                                if (parquetVersion != CopyModel.PARQUET_VERSION_V1 && parquetVersion != CopyModel.PARQUET_VERSION_V2) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
+                                }
                                 model.setParquetVersion(expectInt(lexer));
                                 break;
                             case CopyModel.COPY_OPTION_UNKNOWN:

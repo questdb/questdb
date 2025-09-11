@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -87,7 +87,7 @@ public class SerialParquetExporter implements Closeable {
         this.statusReporter = statusReporter;
     }
 
-    public CopyExportRequestTask.Phase process(SecurityContext securityContext) {
+    public CopyExportRequestTask.Phase process(SqlExecutionContext sqlExecutionContext) {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         TableToken tableToken = null;
         try {
@@ -95,7 +95,7 @@ public class SerialParquetExporter implements Closeable {
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
                 statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, 0);
                 LOG.infoW().$("starting to create temporary table and populate with data [table=").$(task.getTableName()).$(']').$();
-                task.getCreateOp().execute(task.getExecutionContext(), null);
+                task.getCreateOp().execute(sqlExecutionContext, null);
                 LOG.infoW().$("completed creating temporary table and populating with data [table=").$(task.getTableName()).$(']').$();
                 statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, 0);
             }
@@ -111,7 +111,7 @@ public class SerialParquetExporter implements Closeable {
                 throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
             }
             if (task.getCreateOp() == null) {
-                securityContext.authorizeSelectOnAnyColumn(tableToken);
+                sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
 
             final int compressionCodec = task.getCompressionCodec();
