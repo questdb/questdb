@@ -49,6 +49,7 @@ public class CopyExportRequestTask implements Mutable {
     private boolean statisticsEnabled;
     private @Nullable SuspendEvent suspendEvent;
     private String tableName;
+    private boolean userSpecifyedExportOptions;
 
     @Override
     public void clear() {
@@ -66,6 +67,7 @@ public class CopyExportRequestTask implements Mutable {
         this.suspendEvent = null;
         this.createOp = Misc.free(createOp);
         this.executionContext = null;
+        userSpecifyedExportOptions = false;
     }
 
     public int getCompressionCodec() {
@@ -128,6 +130,10 @@ public class CopyExportRequestTask implements Mutable {
         return statisticsEnabled;
     }
 
+    public boolean isUserSpecifyedExportOptions() {
+        return userSpecifyedExportOptions;
+    }
+
     public void of(
             SecurityContext securityContext,
             SqlExecutionContext sqlExecutionContext,
@@ -143,7 +149,8 @@ public class CopyExportRequestTask implements Mutable {
             boolean statisticsEnabled,
             int parquetVersion,
             @Nullable SuspendEvent suspendEvent,
-            boolean rawArrayEncoding
+            boolean rawArrayEncoding,
+            boolean userSpecifyedExportOptions
     ) {
         this.clear();
         this.executionContext = sqlExecutionContext;
@@ -161,6 +168,7 @@ public class CopyExportRequestTask implements Mutable {
         this.rawArrayEncoding = rawArrayEncoding;
         this.suspendEvent = suspendEvent;
         this.createOp = createOp;
+        this.userSpecifyedExportOptions = userSpecifyedExportOptions;
     }
 
     public enum Phase {

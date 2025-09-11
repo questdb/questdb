@@ -120,6 +120,7 @@ public class SerialParquetExporter implements Closeable {
             final boolean statisticsEnabled = task.isStatisticsEnabled();
             final int parquetVersion = task.getParquetVersion();
             final boolean rawArrayEncoding = task.isRawArrayEncoding();
+            final boolean userSpecifyedExportOptions = task.isUserSpecifyedExportOptions();
 
             if (circuitBreaker.checkIfTripped()) {
                 LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
@@ -141,11 +142,43 @@ public class SerialParquetExporter implements Closeable {
                             }
                             final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
+                            // skip parquet conversion if the partition is already in parquet format and user did not specify any export options
                             if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-                                // todo: copy the file directly
+                                if (userSpecifyedExportOptions) {
+                                    LOG.infoW().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [table=").$(tableToken)
+                                            .$(", partition=").$(partitionTimestamp)
+                                            .$(", note=using direct file copy instead]").$();
+                                }
+                                try (Path sourcePath = new Path()) {
+                                    sourcePath.concat(configuration.getDbDirectory()).concat(tableToken.getDirName());
+                                    PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                            .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, sourcePath.slash());
+                                    sourcePath.concat("data.parquet");
+
+                                    toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
+                                    PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                            .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
+                                    toParquet.put(".parquet");
+                                    createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+
+                                    // copy file directly
+                                    int copyResult = ff.copy(sourcePath.$(), toParquet.$());
+                                    if (copyResult != 0) {
+                                        throw CopyExportException.instance(phase, copyResult)
+                                                .put("failed to copy parquet file [from=").put(sourcePath)
+                                                .put(", to=").put(toParquet).put(']');
+                                    }
+
+                                    long parquetFileSize = ff.length(toParquet.$());
+                                    LOG.info().$("copied parquet partition directly [table=").$(tableToken)
+                                            .$(", partition=").$(partitionTimestamp)
+                                            .$(", size=").$(parquetFileSize).$(']').$();
+                                }
+
                                 continue;
                             }
 
+                            // native partition - convert to parquet
                             reader.openPartition(partitionIndex);
                             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
 

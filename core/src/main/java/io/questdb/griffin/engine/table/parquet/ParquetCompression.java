@@ -27,10 +27,12 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.str.StringSink;
 
 public class ParquetCompression {
-    private static final IntObjHashMap<CharSequence> codecToNameMap = new IntObjHashMap<>();
-    private static final LowerCaseCharSequenceIntHashMap nameToCodecMap = new LowerCaseCharSequenceIntHashMap();
+    private static final StringSink CODEC_NAMES = new StringSink(64);
+    private static final IntObjHashMap<CharSequence> codecToNameMap = new IntObjHashMap<>(16);
+    private static final LowerCaseCharSequenceIntHashMap nameToCodecMap = new LowerCaseCharSequenceIntHashMap(32);
     public static int COMPRESSION_UNCOMPRESSED = 0; // 0
     public static int COMPRESSION_SNAPPY = COMPRESSION_UNCOMPRESSED + 1; // 1
     public static int COMPRESSION_GZIP = COMPRESSION_SNAPPY + 1; // 2
@@ -43,12 +45,7 @@ public class ParquetCompression {
     static int MAX_ENUM_INT = COMPRESSION_LZ4_RAW + 1;
 
     public static void addCodecNamesToException(SqlException e) {
-        for (int i = 0, n = MAX_ENUM_INT; i < n; i++) {
-            e.put(codecToNameMap.get(i));
-            if (i + 1 != n) {
-                e.put(", ");
-            }
-        }
+        e.put(CODEC_NAMES);
     }
 
     public static int getCompressionCodec(CharSequence name) {
@@ -78,5 +75,12 @@ public class ParquetCompression {
         codecToNameMap.put(COMPRESSION_LZO, "lzo");
         codecToNameMap.put(COMPRESSION_SNAPPY, "snappy");
         codecToNameMap.put(COMPRESSION_BROTLI, "brotli");
+
+        for (int i = 0, n = MAX_ENUM_INT; i < n; i++) {
+            CODEC_NAMES.put(codecToNameMap.get(i));
+            if (i + 1 != n) {
+                CODEC_NAMES.put(", ");
+            }
+        }
     }
 }
