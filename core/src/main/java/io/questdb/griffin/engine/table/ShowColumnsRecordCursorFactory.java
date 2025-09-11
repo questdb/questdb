@@ -133,25 +133,15 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (
-                    MetadataCacheReader metadataRO = engine.getMetadataCache().readLock();
-                    TableReader tableReader = engine.getReader(tableToken);
-            ) {
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 final CairoTable cairoTable = metadataRO.getTable(tableToken);
-                if (cairoTable != null && tableReader != null) {
-                    return of(cairoTable, tableReader);
+                if (cairoTable != null) {
+                    try (TableReader tableReader = engine.getReader(tableToken)) {
+                        return of(cairoTable, tableReader);
+                    }
                 }
             }
             throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
-        }
-
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) throws CairoException {
-            final CairoEngine engine = executionContext.getCairoEngine();
-            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
-            if (tableToken == null) {
-                throw CairoException.tableDoesNotExist(tableName);
-            }
-            return of(executionContext, tableToken, -1);
         }
 
         @Override

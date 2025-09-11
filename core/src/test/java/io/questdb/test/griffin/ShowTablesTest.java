@@ -93,11 +93,15 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table balances(cust_id int, ccy symbol, balance double)");
+            execute("create table balances (cust_id int, ccy symbol, balance double)");
+            execute("insert into balances values (0, null, 0)");
+            execute("insert into balances values (1, 'a', 1)");
+            execute("insert into balances values (2, 'b', 2)");
+            execute("insert into balances values (3, 'c', 3)");
             assertQueryNoLeakCheck(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\n" +
                             "balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                     "select * from table_columns('balances')",
                     null,
