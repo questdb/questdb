@@ -136,6 +136,54 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindVarEdgeCases() throws Exception {
+        skipOnWalRun();
+        // we want bind vars, hence extended mode
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT array[?, array[42.0]] arr;",
+                    "array bind variable argument is not supported"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT array[array[42.0], ?] arr;",
+                    "array bind variable argument is not supported"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT dim_length(?, 3) arr;",
+                    "array dimension out of bounds"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT (array[42.0] + ?)[1];",
+                    "array bind variable access is not supported"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT dot_product(array[42.0], ?);",
+                    "arrays have different number of dimensions"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT insertion_point(?, 2.0);",
+                    "array is not one-dimensional"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT insertion_point(?, 2.0, true);",
+                    "array is not one-dimensional"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT array_position(?, 2);",
+                    "array is not one-dimensional"
+            );
+        });
+    }
+
+    @Test
     public void testArrayBindWithNull() throws Exception {
         skipOnWalRun();
 
@@ -781,6 +829,17 @@ public class PGArraysTest extends BasePGTest {
                     "arr[ARRAY]\n" +
                             "{{1.0},{2.0}}\n");
         });
+    }
+
+    private void assertArrayBindVarQueryFails(Connection connection, String query, String expectedError) {
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            Array arr = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}});
+            stmt.setArray(1, arr);
+            stmt.executeQuery();
+            Assert.fail();
+        } catch (SQLException ex) {
+            TestUtils.assertContains(ex.getMessage(), expectedError);
+        }
     }
 
     private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {
