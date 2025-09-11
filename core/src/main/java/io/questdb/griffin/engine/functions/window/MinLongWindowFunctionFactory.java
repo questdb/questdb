@@ -310,18 +310,25 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     return new MaxLongWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getCARWInstance(
-                            configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(),
-                            MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
+                    MemoryARW mem = null;
                     MemoryARW dequeMem = null;
-                    if (rowsLo != Long.MIN_VALUE) {
-                        dequeMem = Vm.getCARWInstance(
+                    try {
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
+                        if (rowsLo != Long.MIN_VALUE) {
+                            dequeMem = Vm.getCARWInstance(
+                                    configuration.getSqlWindowStorePageSize(),
+                                    configuration.getSqlWindowStoreMaxPages(),
+                                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+                            );
+                        }
+                    } catch (Throwable e) {
+                        Misc.free(mem);
+                        Misc.free(dequeMem);
+                        throw e;
                     }
                     return new MaxLongWindowFunctionFactory.MaxMinOverRowsFrameFunction(
                             args.get(0),
