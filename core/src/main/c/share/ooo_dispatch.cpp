@@ -121,7 +121,7 @@ inline void set_var_refs(int64_t *addr, const int64_t offset, const int64_t coun
     }
 }
 
-// 19-23
+// 19-23, 33-34
 template<typename T, typename TVec>
 inline void set_memory_vanilla(T *addr, const T value, const int64_t count) {
 
@@ -650,3 +650,12 @@ void MULTI_VERSION_NAME (shift_copy_array_aux)(int64_t shift, const int64_t *src
     }
 }
 
+// 33
+void MULTI_VERSION_NAME (set_memory_vanilla_int128)(long_128bit *data, const long_128bit value, const int64_t count) {
+    set_memory_vanilla<long_128bit, Vec8q>(data, value, count);
+}
+
+// 34
+void MULTI_VERSION_NAME (set_memory_vanilla_int256)(long_256bit *data, const long_256bit value, const int64_t count) {
+    set_memory_vanilla<long_256bit, Vec8q>(data, value, count);
+}

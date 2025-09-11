@@ -346,3 +346,12 @@ void shift_copy_array_aux(int64_t shift, const int64_t *src, int64_t src_lo, int
     }
 }
 
+// 33
+void set_memory_int128(long_128bit *data, const long_128bit value, const int64_t count) {
+    set_memory_vanilla<long_128bit>(data, value, count);
+}
+
+// 34
+void set_memory_int256(long_256bit *data, const long_256bit value, const int64_t count) {
+    set_memory_vanilla<long_256bit>(data, value, count);
+}
