@@ -109,13 +109,13 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     @Override
     default long getDecimal128Hi(long offset) {
-        final long addr = addressOf(offset + 2 * Long.BYTES);
-        return Unsafe.getUnsafe().getLong(addr - 2 * Long.BYTES);
+        final long addr = addressOf(offset + (Long.BYTES << 1));
+        return Unsafe.getUnsafe().getLong(addr - (Long.BYTES << 1));
     }
 
     @Override
     default long getDecimal128Lo(long offset) {
-        final long addr = addressOf(offset + 2 * Long.BYTES);
+        final long addr = addressOf(offset + (Long.BYTES << 1));
         return Unsafe.getUnsafe().getLong(addr - Long.BYTES);
     }
 
