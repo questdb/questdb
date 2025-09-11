@@ -185,11 +185,11 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
-    @NotNull
-    String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
-
     @Nullable
     String getDbLogName();
+
+    @NotNull
+    String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     boolean getDebugWalApplyBlockFailureNoRetry();
 
@@ -499,6 +499,8 @@ public interface CairoConfiguration {
     int getSqlJitIRMemoryMaxPages();
 
     int getSqlJitIRMemoryPageSize();
+
+    int getSqlJitMaxInListSizeThreshold();
 
     int getSqlJitMode();
 
