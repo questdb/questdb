@@ -130,7 +130,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, ll);
     }
 
-
     @Override
     default void putDecimal128(long offset, long high, long low) {
         final long addr = appendAddressFor(offset, 16);

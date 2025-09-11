@@ -60,6 +60,10 @@ public interface MemoryA extends Closeable {
 
     void putChar(char value);
 
+    void putDecimal128(long hi, long lo);
+
+    void putDecimal256(long hh, long hl, long lh, long ll);
+
     void putDouble(double value);
 
     void putFloat(float value);
@@ -80,10 +84,6 @@ public interface MemoryA extends Closeable {
     void putLong256(@NotNull CharSequence hexString, int start, int end);
 
     void putLong256Utf8(@Nullable Utf8Sequence hexString);
-
-    void putDecimal128(long hi, long lo);
-
-    void putDecimal256(long hh, long hl, long lh, long ll);
 
     long putNullBin();
 
