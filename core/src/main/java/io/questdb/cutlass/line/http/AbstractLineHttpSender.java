@@ -257,42 +257,63 @@ public abstract class AbstractLineHttpSender implements Sender {
                 @Nullable HttpClient.ResponseHeaders response;
                 @Nullable DirectUtf8Sequence statusCode;
 
-                for (int i = 0, n = hosts.size(); i < n; i++) {
-                    final String host = hosts.getQuick(i);
-                    final int port = ports.getQuick(i);
-                    req = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath());
-                    try {
-                        response = sendWithRetries(cli, req, rnd, maxRetriesNanos);
-                    } catch (HttpClientException e) {
-                        // try another one
-                        continue;
+                long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
+                int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+                long hostBlacklistBitmap = 0; // allows blacklisting up to 64 hosts - we blacklist upon receiving a non-retryable error
+                for (int i = 0; ; i++) {
+                    currentAddressIndex = i % hosts.size();
+                    if (currentAddressIndex < 64) {
+                        // this address is blacklisted, skip
+                        if ((hostBlacklistBitmap & (1L << currentAddressIndex)) != 0) {
+                            continue;
+                        }
+                        // if all address indexes are blacklisted, we can't retry
+                        if (hostBlacklistBitmap == (1L << hosts.size()) - 1) {
+                            break;
+                        }
                     }
-                    response.await();
-                    statusCode = response.getStatusCode();
 
-                    if (Utf8s.equalsNcAscii("200", statusCode)) {
-                        try (JsonSettingsParser parser = new JsonSettingsParser()) {
-                            parser.parse(response.getResponse());
-                            protocolVersion = parser.getDefaultProtocolVersion();
-                            if (parser.getMaxNameLen() != 0) {
-                                maxNameLength = parser.getMaxNameLen();
+                    final String host = hosts.getQuick(currentAddressIndex);
+                    final int port = ports.getQuick(currentAddressIndex);
+                    try {
+                        req = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath());
+                        response = req.send();
+                        response.await();
+                        statusCode = response.getStatusCode();
+                        if (isSuccessResponse(statusCode)) {
+                            try (JsonSettingsParser parser = new JsonSettingsParser()) {
+                                parser.parse(response.getResponse());
+                                protocolVersion = parser.getDefaultProtocolVersion();
+                                if (parser.getMaxNameLen() != 0) {
+                                    maxNameLength = parser.getMaxNameLen();
+                                }
+                                if (parser.isAcceptingWrites()) {
+                                    break;
+                                }
                             }
-                            if (parser.isAcceptingWrites()) {
-                                break;
+                        } else if (Utf8s.equalsNcAscii("404", statusCode)) {
+                            // The client is unable to differentiate between a server shutdown and connecting to an older version.
+                            // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
+                            protocolVersion = PROTOCOL_VERSION_V1;
+                            break;
+                        }
+                        if (!isRetryableHttpStatus(statusCode)) {
+                            if (currentAddressIndex < 64) {
+                                hostBlacklistBitmap |= (1L << currentAddressIndex);
                             }
                         }
-                    } else if (Utf8s.equalsNcAscii("404", statusCode)) {
-                        // The client is unable to differentiate between a server shutdown and connecting to an older version.
-                        // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
-                        protocolVersion = PROTOCOL_VERSION_V1;
-                    } else {
-                        StringSink sink = new StringSink();
-                        chunkedResponseToSink(response, sink);
-                        throw new LineSenderException(
-                                "Failed to detect server line protocol version [http-status=").put(statusCode)
-                                .put(", http-message=").put(sink)
-                                .put(']');
+                    } catch (HttpClientException e) {
+                        // ignore, we will retry
                     }
+                    long nowNanos = System.nanoTime();
+                    retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
+                            ? nowNanos + maxRetriesNanos
+                            : retryingDeadlineNanos;
+                    if (nowNanos >= retryingDeadlineNanos) {
+                        break;
+                    }
+                    cli.disconnect(); // forces reconnect
+                    retryBackoff = backoff(rnd, retryBackoff);
                 }
             } catch (LineSenderException e) {
                 Misc.free(cli);
@@ -582,45 +603,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
         return HttpKeywords.isClose(connectionHeader);
-    }
-
-    private static HttpClient.ResponseHeaders sendWithRetries(HttpClient client, HttpClient.Request req, Rnd rnd, long maxRetriesNanos) {
-        long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
-        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
-        for (; ; ) {
-            try {
-                HttpClient.ResponseHeaders response = req.send();
-                response.await();
-                DirectUtf8Sequence statusCode = response.getStatusCode();
-                if (isSuccessResponse(statusCode)) {
-                    return response;
-                }
-                if (!isRetryableHttpStatus(statusCode)) {
-                    // no point in retrying if the status code is not retryable
-                    return response;
-                }
-
-                long nowNanos = System.nanoTime();
-                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
-                        ? nowNanos + maxRetriesNanos
-                        : retryingDeadlineNanos;
-                if (nowNanos >= retryingDeadlineNanos) {
-                    return response;
-                }
-            } catch (HttpClientException e) {
-                // network I/O error -> we retry
-                long nowNanos = System.nanoTime();
-                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
-                        ? nowNanos + maxRetriesNanos
-                        : retryingDeadlineNanos;
-                if (nowNanos >= retryingDeadlineNanos) {
-                    throw e;
-                }
-            }
-            // ok, retrying
-            client.disconnect(); // forces reconnect
-            retryBackoff = backoff(rnd, retryBackoff);
-        }
     }
 
     private void consumeChunkedResponse(HttpClient.ResponseHeaders response) {

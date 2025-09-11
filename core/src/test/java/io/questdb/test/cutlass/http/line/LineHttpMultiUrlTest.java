@@ -187,28 +187,13 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testServersAllDown() throws Exception {
-        int expectedErrno;
-        switch (Os.type) {
-            case Os.WINDOWS:
-                expectedErrno = 10049;
-                break;
-            case Os.LINUX:
-                expectedErrno = 111;
-                break;
-            case Os.FREEBSD:
-            case Os.DARWIN:
-                expectedErrno = 61;
-                break;
-            default:
-                throw new AssertionError("unsupported OS: " + Os.type);
-        }
         TestUtils.assertMemoryLeak(() -> {
             try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
                 sender.table("line").longColumn("foo", 123).atNow();
                 sender.flush();
                 Assert.fail();
             } catch (LineSenderException e) {
-                Assert.assertEquals(expectedErrno, e.getErrno());
+                TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
             }
         });
     }
