@@ -26,8 +26,8 @@ public class Decimal128 implements Sinkable {
      * Maximum allowed scale (number of decimal places)
      */
     public static final int MAX_SCALE = 38;
-    public static final Decimal128 MAX_VALUE = new Decimal128(5421010862427522170L, 687399551400673279L, 0);
-    public static final Decimal128 MIN_VALUE = new Decimal128(-5421010862427522171L, -687399551400673279L, 0);
+    public static final Decimal128 MAX_VALUE = new Decimal128(5421010862427522170L, 687399551400673279L);
+    public static final Decimal128 MIN_VALUE = new Decimal128(-5421010862427522171L, -687399551400673279L);
     static final long LONG_MASK = 0xffffffffL;
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
@@ -171,6 +171,12 @@ public class Decimal128 implements Sinkable {
         this.scale = 0;
     }
 
+    public Decimal128(long high, long low) {
+        this.high = high;
+        this.low = low;
+        this.scale = 0;
+    }
+
     /**
      * Constructor with initial values.
      *
@@ -184,6 +190,9 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
+        if (hasUnsignOverflowed()) {
+            throw NumericException.instance().put("Overflow in multiplication: result exceeds maximum precision");
+        }
     }
 
     /**
@@ -337,6 +346,13 @@ public class Decimal128 implements Sinkable {
         add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
     }
 
+    public int compareTo(long otherHi, long otherLo) {
+        if (this.high != otherHi) {
+            return Long.compare(this.high, otherHi);
+        }
+        return Long.compareUnsigned(this.low, otherLo);
+    }
+
     /**
      * Compare this to another Decimal128 (handles different scales).
      *
@@ -359,7 +375,7 @@ public class Decimal128 implements Sinkable {
             if (this.high != other.high) {
                 return Long.compare(this.high, other.high);
             }
-            return Long.compareUnsigned(this.low, other.low) * diffQ;
+            return Long.compareUnsigned(this.low, other.low);
         }
 
         // We need to make both operands positive to detect overflows when scaling them
@@ -814,6 +830,9 @@ public class Decimal128 implements Sinkable {
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 128-bit capacity");
         }
+        if (result.hasOverflowed()) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
+        }
     }
 
     /**
@@ -862,6 +881,15 @@ public class Decimal128 implements Sinkable {
         }
     }
 
+    private boolean hasOverflowed() {
+        return compareTo(MAX_VALUE.high, MAX_VALUE.low) > 0 ||
+                compareTo(MIN_VALUE.high, MIN_VALUE.low) < 0;
+    }
+
+    private boolean hasUnsignOverflowed() {
+        return compareTo(MAX_VALUE.high, MAX_VALUE.low) > 0;
+    }
+
     /**
      * Multiply this Decimal128 by another (in-place)
      *
@@ -897,6 +925,10 @@ public class Decimal128 implements Sinkable {
             }
         } else {
             multiplyBy128Bit(bH, bL);
+        }
+
+        if (hasUnsignOverflowed()) {
+            throw NumericException.instance().put("Overflow in multiplication: result exceeds maximum precision");
         }
 
         // Handle sign - use the saved original signs
