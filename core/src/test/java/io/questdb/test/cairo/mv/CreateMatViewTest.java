@@ -1090,7 +1090,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewTsAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String query = "select ts, ts as ts1, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
