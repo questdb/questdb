@@ -253,33 +253,32 @@ public abstract class AbstractLineHttpSender implements Sender {
                             "addresses have been improperly configured [hostCount=").put(hosts.size())
                             .put(", portCount=").put(ports.size()).put(']');
                 }
-                HttpClient.Request req;
-                @Nullable HttpClient.ResponseHeaders response;
-                @Nullable DirectUtf8Sequence statusCode;
-
                 long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
                 int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
-                long hostBlacklistBitmap = 0; // allows blacklisting up to 64 hosts - we blacklist upon receiving a non-retryable error
+                long hostBlacklistBitmap = 0; // allows blacklisting up to 64 hosts; we blacklist a host upon receiving a non-retryable error
                 for (int i = 0; ; i++) {
                     currentAddressIndex = i % hosts.size();
                     if (currentAddressIndex < 64) {
-                        // this address is blacklisted, skip
-                        if ((hostBlacklistBitmap & (1L << currentAddressIndex)) != 0) {
-                            continue;
-                        }
-                        // if all address indexes are blacklisted, we can't retry
+                        // we can blacklist only the first 64 hosts, that's fine, we don't expect more hosts anyway
+                        // and if there ever are more hosts then the side-effect is that we will retry on the same host
+                        // even after it returned a non-retryable error
                         if (hostBlacklistBitmap == (1L << hosts.size()) - 1) {
+                            // if all hosts are blacklisted, we can't retry
                             break;
+                        }
+                        if ((hostBlacklistBitmap & (1L << currentAddressIndex)) != 0) {
+                            // this host is blacklisted, skip
+                            continue;
                         }
                     }
 
                     final String host = hosts.getQuick(currentAddressIndex);
                     final int port = ports.getQuick(currentAddressIndex);
                     try {
-                        req = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath());
-                        response = req.send();
+                        HttpClient.Request req = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath());
+                        HttpClient.ResponseHeaders response = req.send();
                         response.await();
-                        statusCode = response.getStatusCode();
+                        DirectUtf8Sequence statusCode = response.getStatusCode();
                         if (isSuccessResponse(statusCode)) {
                             try (JsonSettingsParser parser = new JsonSettingsParser()) {
                                 parser.parse(response.getResponse());
