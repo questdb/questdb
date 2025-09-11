@@ -779,7 +779,7 @@ public final class TableUtils {
                     return Decimals.DECIMAL128_HI_NULL;
                 }
                 return Decimals.DECIMAL128_LO_NULL;
-            case  ColumnType.DECIMAL256:
+            case ColumnType.DECIMAL256:
                 switch (longIndex) {
                     case 0:
                         return Decimals.DECIMAL256_HH_NULL;
