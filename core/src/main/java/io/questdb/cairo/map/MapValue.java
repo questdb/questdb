@@ -93,6 +93,10 @@ public interface MapValue extends Record {
 
     void putDate(int index, long value);
 
+    void putDecimal128(int index, long hi, long lo);
+
+    void putDecimal256(int index, long hh, long hl, long lh, long ll);
+
     void putDouble(int index, double value);
 
     void putFloat(int index, float value);
