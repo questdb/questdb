@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
@@ -85,7 +86,13 @@ public class CreateTableTestUtils {
                     .col("k", ColumnType.BOOLEAN)
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID)
-                    .col("n", ColumnType.VARCHAR);
+                    .col("n", ColumnType.VARCHAR)
+                    .col("o", ColumnType.DECIMAL8)
+                    .col("p", ColumnType.DECIMAL16)
+                    .col("q", ColumnType.DECIMAL32)
+                    .col("r", ColumnType.DECIMAL64)
+                    .col("s", ColumnType.DECIMAL128)
+                    .col("t", ColumnType.DECIMAL256);
             TestUtils.createTable(engine, model);
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
@@ -179,6 +186,49 @@ public class CreateTableTestUtils {
                         rnd.nextUtf8Str(5, utf8Sink);
                         row.putVarchar(13, utf8Sink);
                     }
+                }
+
+                // DECIMAL8
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putByte(14, Decimals.DECIMAL8_NULL);
+                } else {
+                    row.putByte(14, rnd.nextByte());
+                }
+
+                // DECIMAL16
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putShort(15, Decimals.DECIMAL16_NULL);
+                } else {
+                    row.putShort(15, rnd.nextShort());
+                }
+
+                // DECIMAL32
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putInt(16, Decimals.DECIMAL32_NULL);
+                } else {
+                    row.putInt(16, rnd.nextInt());
+                }
+
+                // DECIMAL128
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(17, Decimals.DECIMAL64_NULL);
+                } else {
+                    row.putLong(17, rnd.nextLong());
+                }
+
+                // DECIMAL128
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putDecimal128(18, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+                } else {
+                    row.putDecimal128(18, rnd.nextLong(), rnd.nextLong());
+                }
+
+                // DECIMAL256
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putDecimal256(19, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                            Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+                } else {
+                    row.putDecimal256(19, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 }
 
                 row.append();
