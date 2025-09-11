@@ -91,7 +91,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private @Nullable SuspendEvent suspendEvent = null;
     private @Nullable String tableName = null;
     private int tableOrSelectTextPos = 0;
-    private boolean userSpecifyedExportOptions;
+    private boolean userSpecifiedExportOptions;
 
     public CopyExportFactory(
             MessageBus messageBus,
@@ -167,7 +167,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         parquetVersion,
                         suspendEvent,
                         rawArrayEncoding,
-                        userSpecifyedExportOptions
+                        userSpecifiedExportOptions
                 );
                 copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.PENDING, task, "queued", 0);
                 cursor.toTop();
@@ -244,7 +244,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.statisticsEnabled = model.isStatisticsEnabled();
         this.parquetVersion = model.getParquetVersion();
         this.rawArrayEncoding = model.isRawArrayEncoding();
-        this.userSpecifyedExportOptions = model.isUserSpecifyedExportOptions();
+        this.userSpecifiedExportOptions = model.isUserSpecifiedExportOptions();
         this.sqlText = sqlText;
     }
 

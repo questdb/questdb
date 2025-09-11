@@ -44,7 +44,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -59,25 +58,25 @@ public class SerialParquetExporter implements Closeable {
     private final CairoConfiguration configuration;
     private final CharSequence copyExportRoot;
     private final FilesFacade ff;
-    StringSink msgSink;
-    PhaseStatusReporter statusReporter;
-    TableToken tableToken;
-    CopyExportRequestTask task;
-    Path toParquet;
+    private final Path fromParquet;
+    private final Path toParquet;
     private ExecutionCircuitBreaker circuitBreaker;
+    private PhaseStatusReporter statusReporter;
+    private CopyExportRequestTask task;
 
-    public SerialParquetExporter(CairoEngine engine, Path path) {
+    public SerialParquetExporter(CairoEngine engine) {
         this.cairoEngine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = this.configuration.getFilesFacade();
         this.copyExportRoot = this.configuration.getSqlCopyExportRoot();
-        this.toParquet = path;
-        this.msgSink = new StringSink();
+        this.toParquet = new Path();
+        this.fromParquet = new Path();
     }
 
     @Override
     public void close() throws IOException {
         Misc.free(toParquet);
+        Misc.free(fromParquet);
     }
 
     public void of(CopyExportRequestTask task,
@@ -88,15 +87,17 @@ public class SerialParquetExporter implements Closeable {
         this.statusReporter = statusReporter;
     }
 
-    public void process(SecurityContext securityContext) {
+    public CopyExportRequestTask.Phase process(SecurityContext securityContext) {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
+        TableToken tableToken = null;
         try {
             if (task.getCreateOp() != null) {
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
-                statusReporter.report(phase, CopyExportRequestTask.Status.PENDING, task, null, 0);
-                LOG.info().$("starting to create temporary table and populate with data [table=").$(task.getTableName()).$(']').$();
+                statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, 0);
+                LOG.infoW().$("starting to create temporary table and populate with data [table=").$(task.getTableName()).$(']').$();
                 task.getCreateOp().execute(task.getExecutionContext(), null);
-                LOG.info().$("completed creating temporary table and populating with data [table=").$(task.getTableName()).$(']').$();
+                LOG.infoW().$("completed creating temporary table and populating with data [table=").$(task.getTableName()).$(']').$();
+                statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, 0);
             }
 
             phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
@@ -120,7 +121,7 @@ public class SerialParquetExporter implements Closeable {
             final boolean statisticsEnabled = task.isStatisticsEnabled();
             final int parquetVersion = task.getParquetVersion();
             final boolean rawArrayEncoding = task.isRawArrayEncoding();
-            final boolean userSpecifyedExportOptions = task.isUserSpecifyedExportOptions();
+            final boolean userSpecifiedExportOptions = task.isUserSpecifiedExportOptions();
 
             if (circuitBreaker.checkIfTripped()) {
                 LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
@@ -134,6 +135,9 @@ public class SerialParquetExporter implements Closeable {
                 if (partitionCount == 0) {
                     throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
                 } else {
+                    int fromParquetBaseLen = 0;
+                    final int toParquetBaseLen = toParquet.trimTo(0).concat(copyExportRoot).concat(fileName).size();
+
                     try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                             if (circuitBreaker.checkIfTripped()) {
@@ -142,38 +146,40 @@ public class SerialParquetExporter implements Closeable {
                             }
                             final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
-                            // skip parquet conversion if the partition is already in parquet format and user did not specify any export options
+                            // skip parquet conversion if the partition is already in parquet format
                             if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-                                if (userSpecifyedExportOptions) {
+                                if (userSpecifiedExportOptions) {
                                     LOG.infoW().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [table=").$(tableToken)
                                             .$(", partition=").$(partitionTimestamp)
-                                            .$(", note=using direct file copy instead]").$();
+                                            .$(", using direct file copy instead]").$();
                                 }
-                                try (Path sourcePath = new Path()) {
-                                    sourcePath.concat(configuration.getDbDirectory()).concat(tableToken.getDirName());
-                                    PartitionBy.getPartitionDirFormatMethod(partitionBy)
-                                            .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, sourcePath.slash());
-                                    sourcePath.concat("data.parquet");
-
-                                    toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
-                                    PartitionBy.getPartitionDirFormatMethod(partitionBy)
-                                            .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
-                                    toParquet.put(".parquet");
-                                    createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
-
-                                    // copy file directly
-                                    int copyResult = ff.copy(sourcePath.$(), toParquet.$());
-                                    if (copyResult != 0) {
-                                        throw CopyExportException.instance(phase, copyResult)
-                                                .put("failed to copy parquet file [from=").put(sourcePath)
-                                                .put(", to=").put(toParquet).put(']');
-                                    }
-
-                                    long parquetFileSize = ff.length(toParquet.$());
-                                    LOG.info().$("copied parquet partition directly [table=").$(tableToken)
-                                            .$(", partition=").$(partitionTimestamp)
-                                            .$(", size=").$(parquetFileSize).$(']').$();
+                                if (fromParquetBaseLen == 0) {
+                                    fromParquetBaseLen = fromParquet.trimTo(0).concat(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
+                                } else {
+                                    fromParquet.trimTo(fromParquetBaseLen);
                                 }
+                                PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                        .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, fromParquet.slash());
+                                fromParquet.concat("data.parquet");
+
+                                toParquet.trimTo(toParquetBaseLen);
+                                PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                        .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
+                                toParquet.put(".parquet");
+                                createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+
+                                // copy file directly
+                                int copyResult = ff.copy(fromParquet.$(), toParquet.$());
+                                if (copyResult != 0) {
+                                    throw CopyExportException.instance(phase, copyResult)
+                                            .put("failed to copy parquet file [from=").put(fromParquet)
+                                            .put(", to=").put(toParquet).put(']');
+                                }
+
+                                long parquetFileSize = ff.length(toParquet.$());
+                                LOG.info().$("copied parquet partition directly [table=").$(tableToken)
+                                        .$(", partition=").$(partitionTimestamp)
+                                        .$(", size=").$(parquetFileSize).$(']').$();
 
                                 continue;
                             }
@@ -181,9 +187,7 @@ public class SerialParquetExporter implements Closeable {
                             // native partition - convert to parquet
                             reader.openPartition(partitionIndex);
                             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
-
-                            // prepare output file path
-                            toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
+                            toParquet.trimTo(toParquetBaseLen);
                             PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                     .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
                             toParquet.put(".parquet");
@@ -222,7 +226,6 @@ public class SerialParquetExporter implements Closeable {
                 }
             }
 
-            phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
             LOG.info().$("finished parquet conversion [table=").$(tableToken).$(']').$();
             statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, 0);
         } catch (CopyExportException e) {
@@ -237,7 +240,22 @@ public class SerialParquetExporter implements Closeable {
         } catch (Throwable e) {
             LOG.errorW().$("parquet export failed [msg=").$(e.getMessage()).$(']').$();
             throw CopyExportException.instance(phase, e.getMessage(), -1);
+        } finally {
+            if (tableToken != null && task.getCreateOp() != null) {
+                phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
+                statusReporter.report(phase, CopyExportRequestTask.Status.PENDING, task, null, 0);
+                try {
+                    fromParquet.trimTo(0);
+                    cairoEngine.dropTableOrMatView(fromParquet, tableToken);
+                    statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, 0);
+                } catch (CairoException e) {
+                    // drop failure doesn't affect task continuation - log and proceed
+                    LOG.errorW().$("fail to drop temporary table [table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+                    statusReporter.report(phase, CopyExportRequestTask.Status.FAILED, task, null, 0);
+                }
+            }
         }
+        return phase;
     }
 
     @FunctionalInterface

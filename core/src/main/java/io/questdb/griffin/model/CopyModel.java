@@ -77,7 +77,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private CharSequence timestampColumnName;
     private CharSequence timestampFormat;
     private int type;
-    private boolean userSpecifyedExportOptions;
+    private boolean userSpecifiedExportOptions;
 
     public CopyModel() {
     }
@@ -110,7 +110,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = true;
         sizeLimit = -1;
         rawArrayEncoding = false;
-        userSpecifyedExportOptions = false;
+        userSpecifiedExportOptions = false;
     }
 
     public int getAtomicity() {
@@ -213,8 +213,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return statisticsEnabled;
     }
 
-    public boolean isUserSpecifyedExportOptions() {
-        return userSpecifyedExportOptions;
+    public boolean isUserSpecifiedExportOptions() {
+        return userSpecifiedExportOptions;
     }
 
     public void setAtomicity(int atomicity) {
@@ -227,17 +227,17 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setCompressionCodec(int compressionCodec) {
         this.compressionCodec = compressionCodec;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setCompressionLevel(int compressionLevel) {
         this.compressionLevel = compressionLevel;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setDataPageSize(int dataPageSize) {
         this.dataPageSize = dataPageSize;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setDelimiter(byte delimiter) {
@@ -269,25 +269,25 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setParquetVersion(int parquetVersion) {
         this.parquetVersion = parquetVersion;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setPartitionBy(int partitionBy, int pos) {
         this.partitionBy = partitionBy;
         this.partitionByPos = pos;
         if (partitionBy != -1) {
-            this.userSpecifyedExportOptions = true;
+            this.userSpecifiedExportOptions = true;
         }
     }
 
     public void setRawArrayEncoding(boolean rawArrayEncoding) {
         this.rawArrayEncoding = rawArrayEncoding;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setRowGroupSize(int rowGroupSize) {
         this.rowGroupSize = rowGroupSize;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setSelectText(@Nullable String selectText, int startPos) {
@@ -301,7 +301,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setStatisticsEnabled(boolean statisticsEnabled) {
         this.statisticsEnabled = statisticsEnabled;
-        this.userSpecifyedExportOptions = true;
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setTarget(ExpressionNode tableName) {

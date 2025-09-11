@@ -49,7 +49,7 @@ public class CopyExportRequestTask implements Mutable {
     private boolean statisticsEnabled;
     private @Nullable SuspendEvent suspendEvent;
     private String tableName;
-    private boolean userSpecifyedExportOptions;
+    private boolean userSpecifiedExportOptions;
 
     @Override
     public void clear() {
@@ -67,7 +67,7 @@ public class CopyExportRequestTask implements Mutable {
         this.suspendEvent = null;
         this.createOp = Misc.free(createOp);
         this.executionContext = null;
-        userSpecifyedExportOptions = false;
+        userSpecifiedExportOptions = false;
     }
 
     public int getCompressionCodec() {
@@ -130,8 +130,8 @@ public class CopyExportRequestTask implements Mutable {
         return statisticsEnabled;
     }
 
-    public boolean isUserSpecifyedExportOptions() {
-        return userSpecifyedExportOptions;
+    public boolean isUserSpecifiedExportOptions() {
+        return userSpecifiedExportOptions;
     }
 
     public void of(
@@ -150,7 +150,7 @@ public class CopyExportRequestTask implements Mutable {
             int parquetVersion,
             @Nullable SuspendEvent suspendEvent,
             boolean rawArrayEncoding,
-            boolean userSpecifyedExportOptions
+            boolean userSpecifiedExportOptions
     ) {
         this.clear();
         this.executionContext = sqlExecutionContext;
@@ -168,7 +168,7 @@ public class CopyExportRequestTask implements Mutable {
         this.rawArrayEncoding = rawArrayEncoding;
         this.suspendEvent = suspendEvent;
         this.createOp = createOp;
-        this.userSpecifyedExportOptions = userSpecifyedExportOptions;
+        this.userSpecifiedExportOptions = userSpecifiedExportOptions;
     }
 
     public enum Phase {
@@ -177,7 +177,8 @@ public class CopyExportRequestTask implements Mutable {
         POPULATING_TEMP_TABLE("populating_data_to_temp_table"),
         CONVERTING_PARTITIONS("converting_partitions"),
         DROPPING_TEMP_TABLE("dropping_temp_table"),
-        SIGNALLING_EXP("signalling_exp");
+        SIGNALLING_EXP("signalling_exp"),
+        SUCCESS("success");
 
         private final String name;
 
