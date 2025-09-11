@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,7 +59,20 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         final Function fromFunc = args.getQuick(0);
         final int fromType = fromFunc.getType();
         final int toType = args.getQuick(1).getType();
-        final int dimsToAdd = ColumnType.decodeArrayDimensionality(toType) - ColumnType.decodeArrayDimensionality(fromType);
+
+        assert ColumnType.isArray(fromType);
+        assert ColumnType.isArray(toType);
+        assert ColumnType.decodeArrayElementType(fromType) == ColumnType.decodeArrayElementType(toType);
+
+        final int dimsTo = ColumnType.decodeArrayDimensionality(toType);
+        final int dimsFrom = ColumnType.decodeArrayDimensionality(fromType);
+        if (dimsTo == -1) {
+            throw SqlException.$(position, "cannot cast array to array with unknown number of dimensions");
+        }
+        if (dimsFrom == -1) {
+            return new WeakDimsFunc(fromFunc, argPositions.getQuick(0), toType);
+        }
+        final int dimsToAdd = dimsTo - dimsFrom;
         if (dimsToAdd < 0) {
             throw SqlException.$(position, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(fromType))
                     .put(" (").put(ColumnType.decodeArrayDimensionality(fromType)).put("D)")
@@ -70,7 +84,6 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             // nothing to do
             return fromFunc;
         }
-
         return new Func(fromFunc, toType, dimsToAdd);
     }
 
@@ -80,12 +93,8 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         private final int dimsToAdd;
 
         public Func(Function arg, int toType, int dimsToAdd) {
-            super.type = toType;
-            final int fromType = arg.getType();
-            assert ColumnType.isArray(fromType);
-            assert ColumnType.isArray(toType);
-            assert ColumnType.decodeArrayElementType(fromType) == ColumnType.decodeArrayElementType(toType);
             assert dimsToAdd > 0;
+            this.type = toType;
             this.arg = arg;
             this.dimsToAdd = dimsToAdd;
         }
@@ -107,6 +116,58 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             derivedArray.of(array);
             derivedArray.prependDimensions(dimsToAdd);
             return derivedArray;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    public static final class WeakDimsFunc extends ArrayFunction implements UnaryFunction {
+        private final Function arg;
+        private final int argPos;
+        private final DerivedArrayView derivedArray = new DerivedArrayView();
+        private int dimsToAdd;
+
+        public WeakDimsFunc(Function arg, int argPos, int toType) {
+            this.type = toType;
+            this.arg = arg;
+            this.argPos = argPos;
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+            Misc.free(derivedArray);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            final ArrayView array = arg.getArray(rec);
+            derivedArray.of(array);
+            derivedArray.prependDimensions(dimsToAdd);
+            return derivedArray;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            final int dimsFrom = ColumnType.decodeArrayElementType(arg.getType());
+            final int dimsTo = ColumnType.decodeArrayElementType(type);
+            dimsToAdd = dimsTo - dimsFrom;
+            if (dimsToAdd < 0) {
+                throw SqlException.$(argPos, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(arg.getType()))
+                        .put(" (").put(ColumnType.decodeArrayDimensionality(arg.getType())).put("D)")
+                        .put(", to=").put(ColumnType.nameOf(type))
+                        .put(" (").put(ColumnType.decodeArrayDimensionality(type)).put("D)")
+                        .put("]. Use array flattening operation (e.g. 'flatten(arr)') instead");
+            }
         }
 
         @Override

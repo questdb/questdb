@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -47,20 +48,29 @@ public class DoubleArrayInsertionPointAfterEqualFunctionFactory implements Funct
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arrayArg = args.getQuick(0);
+        final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        if (dims > 0 && dims != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
-        return new Func(arrayArg, args.get(1));
+        return new Func(arrayArg, argPositions.getQuick(0), args.get(1));
     }
 
-    static class Func extends IntFunction implements BinaryFunction {
+    private static class Func extends IntFunction implements BinaryFunction {
         private final Function arrayArg;
+        private final int arrayArgPos;
         private final Function valueArg;
 
-        Func(Function arrayArg, Function valueArg) {
+        public Func(Function arrayArg, int arrayArgPos, Function valueArg) {
             this.arrayArg = arrayArg;
+            this.arrayArgPos = arrayArgPos;
             this.valueArg = valueArg;
         }
 
@@ -87,6 +97,14 @@ public class DoubleArrayInsertionPointAfterEqualFunctionFactory implements Funct
         @Override
         public Function getRight() {
             return valueArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+                throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
+            }
         }
     }
 }

@@ -49,16 +49,21 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
     private static class Func extends ArrayFunction implements BinaryFunction {
-
-        private final Function arrayArg;
-        private final Function scalarArg;
         private final DirectArray array;
+        private final Function arrayArg;
         private final String name;
+        private final Function scalarArg;
 
         public Func(Function scalarArg, Function arrayArg, CairoConfiguration configuration) {
             this.name = OPERATOR_NAME;

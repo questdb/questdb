@@ -137,7 +137,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         public RndDoubleArrayFixDimLenFunction(
-                CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition
+                CairoConfiguration configuration,
+                int nDims,
+                int nanRate,
+                IntList dimLens,
+                int functionPosition
         ) {
             try {
                 this.nanRate = nanRate;
