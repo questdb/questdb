@@ -282,7 +282,8 @@ public class PGOids {
         PG_TYPE_PROC_OIDS.add(2961);
         PG_TYPE_PROC_OIDS.add(0); // INTERNAL
         PG_TYPE_PROC_OIDS.add(2418); // OID
-        PG_TYPE_PROC_OIDS.add(2400); // // ARRAY
+        PG_TYPE_PROC_OIDS.add(2400); // ARRAY
+        PG_TYPE_PROC_OIDS.add(3823); // NUMERIC
 
         // Fixed-size types only since variable size types have size -1 in PostgreSQL and -1 this happens
         // to be a marker for 'no value' in this map.
