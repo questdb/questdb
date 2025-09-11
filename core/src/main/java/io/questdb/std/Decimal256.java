@@ -1483,11 +1483,8 @@ public class Decimal256 implements Sinkable {
         result.hl = r;
 
         t = aHH + carry;
-        if (((aHH ^ t) & (carry ^ t)) < 0L) {
-            throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
-        }
         r = t + bHH;
-        if (((bHH ^ r) & (t ^ r)) < 0L) {
+        if (((bHH ^ r) & (t ^ r)) < 0L || ((aHH ^ t) & (carry ^ t)) < 0L) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
         }
         result.hh = r;

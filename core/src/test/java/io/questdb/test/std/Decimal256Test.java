@@ -102,6 +102,12 @@ public class Decimal256Test {
         Decimal256.fromBigDecimal(bd);
     }
 
+    @Test(expected = NumericException.class)
+    public void testBigDecimalOverflowLimit() {
+        BigDecimal bd = new BigDecimal("1e76");
+        Decimal256.fromBigDecimal(bd);
+    }
+
     @Test
     public void testComparePrecisionBasic() {
         Decimal256 ten = Decimal256.fromLong(10, 0);
@@ -158,6 +164,11 @@ public class Decimal256Test {
                 Assert.assertEquals(String.format("Test failed with decimal %s (p: %d) when compared against %d", decimal, actualPrecision, i), actualPrecision <= i, decimal.comparePrecision(i));
             }
         }
+    }
+
+    @Test
+    public void testComparePrecisionNull() {
+        Assert.assertTrue(Decimal256.NULL_VALUE.comparePrecision(1));
     }
 
     @Test
