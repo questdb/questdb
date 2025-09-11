@@ -303,6 +303,11 @@ public abstract class AbstractLineHttpSender implements Sender {
             }
         }
 
+        if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
+            Misc.free(cli);
+            throw new LineSenderException("Failed to detect server line protocol version");
+        }
+
         if (protocolVersion == PROTOCOL_VERSION_V1) {
             return new LineHttpSenderV1(
                     hosts,
