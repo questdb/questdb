@@ -36,7 +36,7 @@ inline void set_var_refs(int64_t *addr, const int64_t offset, const int64_t coun
     }
 }
 
-// 19-23
+// 19-23, 33-34
 template<typename T>
 inline void set_memory_vanilla(T *addr, const T value, const int64_t count) {
     for (int64_t i = 0; i < count; i++) {

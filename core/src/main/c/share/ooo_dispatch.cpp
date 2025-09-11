@@ -121,7 +121,7 @@ inline void set_var_refs(int64_t *addr, const int64_t offset, const int64_t coun
     }
 }
 
-// 19-23, 33-34
+// 19-23
 template<typename T, typename TVec>
 inline void set_memory_vanilla(T *addr, const T value, const int64_t count) {
 
@@ -130,6 +130,21 @@ inline void set_memory_vanilla(T *addr, const T value, const int64_t count) {
     };
 
     const TVec vec(value);
+    const auto l_bulk = [&vec, addr](const int64_t i) {
+        vec.store_nt(addr + i);
+    };
+
+    run_vec_bulk<T, TVec>(addr, count, l_iteration, l_bulk);
+}
+
+// 33-34
+template<typename T, typename TVec>
+inline void set_memory_vanilla_vec(T *addr, const T value, const TVec vec, const int64_t count) {
+
+    const auto l_iteration = [addr, value](int64_t i) {
+        addr[i] = value;
+    };
+
     const auto l_bulk = [&vec, addr](const int64_t i) {
         vec.store_nt(addr + i);
     };
@@ -652,10 +667,14 @@ void MULTI_VERSION_NAME (shift_copy_array_aux)(int64_t shift, const int64_t *src
 
 // 33
 void MULTI_VERSION_NAME (set_memory_vanilla_int128)(long_128bit *data, const long_128bit value, const int64_t count) {
-    set_memory_vanilla<long_128bit, Vec8q>(data, value, count);
+    Vec4uq vec4(value.long0, value.long1, value.long0, value.long1);
+    Vec8uq vec(vec4, vec4);
+    set_memory_vanilla_vec<long_128bit, Vec8uq>(data, value, vec, count);
 }
 
 // 34
 void MULTI_VERSION_NAME (set_memory_vanilla_int256)(long_256bit *data, const long_256bit value, const int64_t count) {
-    set_memory_vanilla<long_256bit, Vec8q>(data, value, count);
+    Vec4uq vec4(value.long0, value.long1, value.long2, value.long3);
+    Vec8uq vec(vec4, vec4);
+    set_memory_vanilla_vec<long_256bit, Vec8uq>(data, value, vec, count);
 }
