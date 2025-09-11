@@ -2566,7 +2566,7 @@ public class Decimal256 implements Sinkable {
      * - No carry: sum = a + b, so sum >= a and sum >= b
      * - Carry: sum = a + b - 2^64, so sum < a and sum < b
      */
-    static boolean hasCarry(long a, long sum) {
+    public static boolean hasCarry(long a, long sum) {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
         return Long.compareUnsigned(sum, a) < 0;
