@@ -371,7 +371,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(arg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles count(arg) over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
     public static class CountOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;

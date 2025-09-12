@@ -460,7 +460,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
     }
 
-    // Handles max() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles max() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When the lower bound is unbounded, we only need to keep one maximum value in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
