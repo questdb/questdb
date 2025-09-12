@@ -1394,7 +1394,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts_event) PARTITION BY HOUR WAL " +
                             "DEDUP UPSERT KEYS(ts_event,sequence);"
             );
-            final String viewSql = "SELECT ts_event AS time, " +
+            final String viewSql = "SELECT ts_event, " +
                     "  first(price) AS open, " +
                     "  max(price)   AS high, " +
                     "  min(price)   AS low, " +
@@ -1418,7 +1418,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "mv_es_ohlcv_1s\timmediate\tglbxmdp3_mbp1_es\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tSELECT ts_event AS time,   first(price) AS open,   max(price)   AS high,   min(price)   AS low,   last(price)  AS close,   sum(size)    AS volume FROM glbxmdp3_mbp1_es WHERE action = 'T' SAMPLE BY 1s ALIGN TO CALENDAR\tvalid\t1\t1\n",
+                            "mv_es_ohlcv_1s\timmediate\tglbxmdp3_mbp1_es\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tSELECT ts_event,   first(price) AS open,   max(price)   AS high,   min(price)   AS low,   last(price)  AS close,   sum(size)    AS volume FROM glbxmdp3_mbp1_es WHERE action = 'T' SAMPLE BY 1s ALIGN TO CALENDAR\tvalid\t1\t1\n",
                     "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                             "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
@@ -3439,8 +3439,8 @@ public class MatViewTest extends AbstractCairoTest {
             execute(
                     "CREATE MATERIALIZED VIEW Samples_latest AS" +
                             "  SELECT" +
-                            "    Time as UnixEpoch," +
-                            "    last(Time) AS Time," +
+                            "    Time," +
+                            "    last(Time) AS lastTime," +
                             "    DeviceId," +
                             "    Register," +
                             "    last(Value) AS Value" +
@@ -3453,10 +3453,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "UnixEpoch\tTime\tDeviceId\tRegister\tValue\n" +
+                    "Time\tlastTime\tDeviceId\tRegister\tValue\n" +
                             "2024-01-01T00:00:00.000000Z\t2025-08-08T12:57:07.388314Z\t1\thello\t123.0\n",
                     "Samples_latest",
-                    "UnixEpoch",
+                    "Time",
                     true,
                     true
             );
