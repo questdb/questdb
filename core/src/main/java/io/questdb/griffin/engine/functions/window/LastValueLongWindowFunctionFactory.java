@@ -218,7 +218,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new LastNotNullValueOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -289,7 +289,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new LastNotNullOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new LastNotNullValueOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

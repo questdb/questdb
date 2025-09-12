@@ -235,7 +235,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -316,7 +316,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -456,7 +456,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -536,7 +536,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {

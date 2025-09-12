@@ -205,7 +205,7 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             NAME
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new MaxLongWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -324,7 +324,7 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new MaxLongWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

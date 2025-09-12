@@ -184,7 +184,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -271,7 +271,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new AvgOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

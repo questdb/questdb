@@ -173,7 +173,7 @@ public class CountFunctionFactoryHelper {
                             isRecordNotNull
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountOverCurrentRowFunction(args.get(0), isRecordNotNull);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -254,7 +254,7 @@ public class CountFunctionFactoryHelper {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new CountOverUnboundedRowsFrameFunction(args.get(0), isRecordNotNull);
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountOverCurrentRowFunction(args.get(0), isRecordNotNull);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
