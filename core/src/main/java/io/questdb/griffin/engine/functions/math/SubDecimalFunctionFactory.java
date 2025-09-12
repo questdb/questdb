@@ -1,0 +1,93 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.math;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+
+public class SubDecimalFunctionFactory implements FunctionFactory {
+
+    @Override
+    public String getSignature() {
+        return "-(ΞΞ)";
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        final int leftType = left.getType();
+        final int rightType = right.getType();
+        final int precision = Math.min(Math.max(ColumnType.getDecimalPrecision(leftType), ColumnType.getDecimalPrecision(rightType)) + 1, Decimals.MAX_PRECISION);
+        final int scale = Math.max(ColumnType.getDecimalScale(leftType), ColumnType.getDecimalScale(rightType));
+        return new Func(left, right, ColumnType.getDecimalType(precision, scale));
+    }
+
+    private static class Func extends ArithmeticDecimalFunction {
+
+        public Func(Function left, Function right, int targetType) {
+            super(left, right, targetType);
+        }
+
+        @Override
+        public String getName() {
+            return "-";
+        }
+
+        @Override
+        protected boolean calc(Record rec) {
+            DecimalUtil.load(leftDecimal, left, rec);
+            if (leftDecimal.isNull()) {
+                return false;
+            }
+            DecimalUtil.load(rightDecimal, right, rec);
+            if (rightDecimal.isNull()) {
+                return false;
+            }
+            try {
+                leftDecimal.subtract(rightDecimal);
+            } catch (NumericException ignore) {
+                return false;
+            }
+            return true;
+        }
+    }
+}

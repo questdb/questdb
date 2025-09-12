@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimals;
 
-public class DecimalTypeConstant extends AbstractDecimalFunction implements TypeConstant {
+public class DecimalTypeConstant extends DecimalFunction implements TypeConstant {
     public DecimalTypeConstant(int precision, int scale) {
         super(ColumnType.getDecimalType(precision, scale));
     }

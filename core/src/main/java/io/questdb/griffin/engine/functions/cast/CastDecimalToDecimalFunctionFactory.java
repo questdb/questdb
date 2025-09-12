@@ -41,6 +41,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
+
     public static Function newInstance(
             int position,
             Function arg,
@@ -265,7 +266,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private abstract static class ScaledDecimalFunction extends AbstractCastToDecimalFunction {
+    private abstract static class ScaledDecimalFunction extends CastToDecimalFunction {
         protected final int fromScale;
 
         public ScaledDecimalFunction(Function arg, int targetType, int position, int fromScale) {
@@ -297,7 +298,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         protected abstract boolean load(Record rec);
     }
 
-    private static class UnscaledNarrowDecimal128Func extends AbstractCastToDecimalFunction {
+    private static class UnscaledNarrowDecimal128Func extends CastToDecimalFunction {
         public UnscaledNarrowDecimal128Func(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -317,7 +318,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal16Func extends AbstractCastToDecimalFunction {
+    private static class UnscaledNarrowDecimal16Func extends CastToDecimalFunction {
         final short maxValue;
         final short minValue;
 
@@ -340,7 +341,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal256Func extends AbstractCastToDecimalFunction {
+    private static class UnscaledNarrowDecimal256Func extends CastToDecimalFunction {
         public UnscaledNarrowDecimal256Func(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -361,7 +362,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal32Func extends AbstractCastToDecimalFunction {
+    private static class UnscaledNarrowDecimal32Func extends CastToDecimalFunction {
         final int maxValue;
         final int minValue;
 
@@ -384,7 +385,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal64Func extends AbstractCastToDecimalFunction {
+    private static class UnscaledNarrowDecimal64Func extends CastToDecimalFunction {
         final long maxValue;
         final long minValue;
 
@@ -407,7 +408,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal8Func extends AbstractCastToDecimalFunction {
+    private static class UnscaledNarrowDecimal8Func extends CastToDecimalFunction {
         final byte maxValue;
         final byte minValue;
 
@@ -430,7 +431,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal128UncheckedFunc extends AbstractCastToDecimalFunction {
+    private static class UnscaledWidenDecimal128UncheckedFunc extends CastToDecimalFunction {
         public UnscaledWidenDecimal128UncheckedFunc(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -447,7 +448,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal16UncheckedFunc extends AbstractCastToDecimalFunction {
+    private static class UnscaledWidenDecimal16UncheckedFunc extends CastToDecimalFunction {
         public UnscaledWidenDecimal16UncheckedFunc(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -462,7 +463,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal256UncheckedFunc extends AbstractCastToDecimalFunction {
+    private static class UnscaledWidenDecimal256UncheckedFunc extends CastToDecimalFunction {
         public UnscaledWidenDecimal256UncheckedFunc(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -480,7 +481,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal32UncheckedFunc extends AbstractCastToDecimalFunction {
+    private static class UnscaledWidenDecimal32UncheckedFunc extends CastToDecimalFunction {
         public UnscaledWidenDecimal32UncheckedFunc(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -495,7 +496,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal64UncheckedFunc extends AbstractCastToDecimalFunction {
+    private static class UnscaledWidenDecimal64UncheckedFunc extends CastToDecimalFunction {
         public UnscaledWidenDecimal64UncheckedFunc(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
@@ -510,7 +511,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal8UncheckedFunc extends AbstractCastToDecimalFunction {
+    private static class UnscaledWidenDecimal8UncheckedFunc extends CastToDecimalFunction {
         public UnscaledWidenDecimal8UncheckedFunc(int position, int targetType, Function value) {
             super(value, targetType, position);
         }

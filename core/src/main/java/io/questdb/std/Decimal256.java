@@ -11,7 +11,8 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal256 - A mutable decimal number implementation.
+ * Decimal256 - a mutable decimal number implementation. The value is a signed number with
+ * two's complement representation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
  * using 256-bit integer arithmetic for precise calculations. All operations are
@@ -444,6 +445,19 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Check if addition resulted in a carry
+     * When adding two unsigned numbers a + b = sum, carry occurs iff sum &lt; a (or sum &lt; b)
+     * This works because:
+     * - No carry: sum = a + b, so sum &gt;= a and sum &gt;= b
+     * - Carry: sum = a + b - 2^64, so sum &lt; a and sum &lt; b
+     */
+    public static boolean hasCarry(long a, long sum) {
+        // We can check against either a or b - both work
+        // Using a for consistency, b parameter kept for clarity
+        return Long.compareUnsigned(sum, a) < 0;
+    }
+
+    /**
      * Returns whether the Decimal256 is null or not.
      *
      * @param hh the highest 64 bits (bits 192-255)
@@ -453,8 +467,8 @@ public class Decimal256 implements Sinkable {
      * @return true if null, false otherwise
      */
     public static boolean isNull(long hh, long hl, long lh, long ll) {
-        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
-                lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
+        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL
+                && lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
     }
 
     /**
@@ -1448,7 +1462,7 @@ public class Decimal256 implements Sinkable {
                             long bHH, long bHL, long bLH, long bLL, int bScale) {
         result.scale = aScale;
         if (aScale < bScale) {
-            // We need to rescale a to the same scale as b
+            // We need to rescale A to the same scale as B
             result.of(aHH, aHL, aLH, aLL, aScale);
             result.rescale0(bScale);
             aHH = result.hh;
@@ -1456,7 +1470,7 @@ public class Decimal256 implements Sinkable {
             aLH = result.lh;
             aLL = result.ll;
         } else if (aScale > bScale) {
-            // We need to rescale b to the same scale as a
+            // We need to rescale B to the same scale as A
             result.of(bHH, bHL, bLH, bLL, bScale);
             result.rescale0(aScale);
             bHH = result.hh;
@@ -2554,19 +2568,6 @@ public class Decimal256 implements Sinkable {
         if (hasUnsignOverflowed()) {
             throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
         }
-    }
-
-    /**
-     * Check if addition resulted in a carry
-     * When adding two unsigned numbers a + b = sum, carry occurs iff sum &lt; a (or sum &lt; b)
-     * This works because:
-     * - No carry: sum = a + b, so sum &gt;= a and sum &gt;= b
-     * - Carry: sum = a + b - 2^64, so sum &lt; a and sum &lt; b
-     */
-    public static boolean hasCarry(long a, long sum) {
-        // We can check against either a or b - both work
-        // Using a for consistency, b parameter kept for clarity
-        return Long.compareUnsigned(sum, a) < 0;
     }
 
     static {

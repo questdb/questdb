@@ -26,10 +26,10 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.jetbrains.annotations.TestOnly;
 
-public class DecimalColumn extends AbstractDecimalFunction {
+public class DecimalColumn extends DecimalFunction {
     private final int columnIndex;
 
     public DecimalColumn(int columnIndex, int columnType) {

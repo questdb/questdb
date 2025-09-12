@@ -22,134 +22,149 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
-public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunction implements UnaryFunction {
-    protected final Function arg;
-    protected final Decimal256 decimal;
-    protected final int position;
+public abstract class ArithmeticDecimalFunction extends DecimalFunction implements BinaryFunction {
+    protected final Function left;
+    protected final Decimal256 leftDecimal = new Decimal256();
     protected final int precision;
+    protected final Function right;
+    protected final Decimal256 rightDecimal = new Decimal256();
     protected final int scale;
-    private boolean is_null;
+    private boolean isNull;
 
-    public AbstractCastToDecimalFunction(Function arg, int targetType, int position) {
+    public ArithmeticDecimalFunction(Function left, Function right, int targetType) {
         super(targetType);
-        this.decimal = new Decimal256();
-        this.is_null = false;
-        this.arg = arg;
-        this.position = position;
+        this.left = left;
+        this.right = right;
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
     }
 
     @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
     public long getDecimal128Hi(Record rec) {
-        if (!cast(rec)) {
-            is_null = true;
+        if (!calc(rec)) {
+            isNull = true;
             return Decimals.DECIMAL128_HI_NULL;
         }
-        is_null = false;
-        return decimal.getLh();
+        isNull = false;
+        return leftDecimal.getLh();
     }
 
     @Override
     public long getDecimal128Lo(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL128_LO_NULL;
         }
-        return decimal.getLl();
+        return leftDecimal.getLl();
     }
 
     @Override
     public short getDecimal16(Record rec) {
-        if (!cast(rec)) {
+        if (!calc(rec)) {
             return Decimals.DECIMAL16_NULL;
         }
-        return (short) decimal.getLl();
+        return (short) leftDecimal.getLl();
     }
 
     @Override
     public long getDecimal256HH(Record rec) {
-        if (!cast(rec)) {
-            is_null = true;
+        if (!calc(rec)) {
+            isNull = true;
             return Decimals.DECIMAL256_HH_NULL;
         }
-        is_null = false;
-        return decimal.getHh();
+        isNull = false;
+        return leftDecimal.getHh();
     }
 
     @Override
     public long getDecimal256HL(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL256_HL_NULL;
         }
-        return decimal.getHl();
+        return leftDecimal.getHl();
     }
 
     @Override
     public long getDecimal256LH(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL256_LH_NULL;
         }
-        return decimal.getLh();
+        return leftDecimal.getLh();
     }
 
     @Override
     public long getDecimal256LL(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL256_LL_NULL;
         }
-        return decimal.getLl();
+        return leftDecimal.getLl();
     }
 
     @Override
     public int getDecimal32(Record rec) {
-        if (!cast(rec)) {
+        if (!calc(rec)) {
             return Decimals.DECIMAL32_NULL;
         }
-        return (int) decimal.getLl();
+        return (int) leftDecimal.getLl();
     }
 
     @Override
     public long getDecimal64(Record rec) {
-        if (!cast(rec)) {
+        if (!calc(rec)) {
             return Decimals.DECIMAL64_NULL;
         }
-        return decimal.getLl();
+        return leftDecimal.getLl();
     }
 
     @Override
     public byte getDecimal8(Record rec) {
-        if (!cast(rec)) {
+        if (!calc(rec)) {
             return Decimals.DECIMAL8_NULL;
         }
-        return (byte) decimal.getLl();
+        return (byte) leftDecimal.getLl();
+    }
+
+    @Override
+    public Function getLeft() {
+        return left;
+    }
+
+    @Override
+    public Function getRight() {
+        return right;
+    }
+
+    @Override
+    public boolean isOperator() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return false;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(arg).val("::").val(ColumnType.nameOf(type));
+        sink.val(left).val(getName()).val(right);
     }
 
     /**
-     * The implementation must fill the decimal with the cast value following the target scale and precision.
-     * If the value to cast is null, it must return false without doing additional work.
+     * The implementation must fill the leftDecimal with the arithmetic operation value following
+     * the target scale and precision. If the value to cast is null, it must return false
+     * without doing additional work.
      *
      * @return whether the result is not null.
      */
-    protected abstract boolean cast(Record rec);
+    protected abstract boolean calc(Record rec);
 }

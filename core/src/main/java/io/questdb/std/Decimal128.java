@@ -9,7 +9,8 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal128 - A mutable decimal number implementation.
+ * Decimal128 - a mutable decimal number implementation. The value is a signed number with
+ * two's complement representation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
  * using 128-bit integer arithmetic for precise calculations. All operations are
@@ -624,6 +625,15 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Set this Decimal128 to the null value.
+     */
+    public void ofNull() {
+        high = Decimals.DECIMAL128_HI_NULL;
+        low = Decimals.DECIMAL128_LO_NULL;
+        scale = 0;
+    }
+
+    /**
      * Rescale this Decimal128 in place
      *
      * @param newScale The new scale (must be >= current scale)
@@ -663,7 +673,6 @@ public class Decimal128 implements Sinkable {
             this.scale = targetScale;
             return;
         }
-
 
         if (this.scale < targetScale) {
             boolean isNegative = isNegative();
@@ -802,14 +811,14 @@ public class Decimal128 implements Sinkable {
     private static void add(Decimal128 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
         result.scale = aScale;
         if (aScale < bScale) {
-            // We need to rescale a to the same scale as b
+            // We need to rescale A to the same scale as B
             result.high = aH;
             result.low = aL;
             result.rescale0(bScale);
             aH = result.high;
             aL = result.low;
         } else if (aScale > bScale) {
-            // We need to rescale b to the same scale as a
+            // We need to rescale B to the same scale as A
             result.high = bH;
             result.low = bL;
             result.scale = bScale;

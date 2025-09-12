@@ -9,7 +9,8 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal64 - A mutable decimal number implementation using 64-bit arithmetic.
+ * Decimal64 - a mutable decimal number implementation using 64-bit arithmetic.
+ * The value is a signed number with two's complement representation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
  * using 64-bit integer arithmetic for precise calculations. All operations are

@@ -25,16 +25,14 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
-import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Mutable;
 
-class DecimalBindVariable extends AbstractDecimalFunction implements Mutable {
+class DecimalBindVariable extends DecimalFunction implements Mutable {
     final Decimal256 value = new Decimal256();
 
     public DecimalBindVariable() {
@@ -47,26 +45,6 @@ class DecimalBindVariable extends AbstractDecimalFunction implements Mutable {
     }
 
     @Override
-    public byte getDecimal8(Record rec) {
-        return value.isNull() ? Decimals.DECIMAL8_NULL : (byte) value.getLl();
-    }
-
-    @Override
-    public short getDecimal16(Record rec) {
-        return value.isNull() ? Decimals.DECIMAL16_NULL : (short) value.getLl();
-    }
-
-    @Override
-    public int getDecimal32(Record rec) {
-        return value.isNull() ? Decimals.DECIMAL32_NULL : (int) value.getLl();
-    }
-
-    @Override
-    public long getDecimal64(Record rec) {
-        return value.isNull() ? Decimals.DECIMAL64_NULL : value.getLl();
-    }
-
-    @Override
     public long getDecimal128Hi(Record rec) {
         return value.isNull() ? Decimals.DECIMAL128_HI_NULL : value.getLh();
     }
@@ -74,6 +52,11 @@ class DecimalBindVariable extends AbstractDecimalFunction implements Mutable {
     @Override
     public long getDecimal128Lo(Record rec) {
         return value.isNull() ? Decimals.DECIMAL128_LO_NULL : value.getLl();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return value.isNull() ? Decimals.DECIMAL16_NULL : (short) value.getLl();
     }
 
     @Override
@@ -94,6 +77,21 @@ class DecimalBindVariable extends AbstractDecimalFunction implements Mutable {
     @Override
     public long getDecimal256LL(Record rec) {
         return value.getLl();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return value.isNull() ? Decimals.DECIMAL32_NULL : (int) value.getLl();
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return value.isNull() ? Decimals.DECIMAL64_NULL : value.getLl();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return value.isNull() ? Decimals.DECIMAL8_NULL : (byte) value.getLl();
     }
 
     @Override
