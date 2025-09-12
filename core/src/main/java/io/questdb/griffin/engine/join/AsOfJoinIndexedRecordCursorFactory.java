@@ -156,25 +156,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             int partitionIndex = timeFrame.getFrameIndex();
 
-            // Use TimeFrameRecordCursor bitmap index methods for efficient symbol lookup
-
-            // Check if the symbol column has a bitmap index
-            if (!slaveTimeFrameCursor.isColumnIndexed(slaveSymbolColumnIndex)) {
-                AbstractKeyedAsOfJoinRecordCursor.findMatchingRowLinear(
-                        slaveTimeFrameCursor,
-                        slaveRecB,
-                        masterTimestamp,
-                        toleranceInterval,
-                        slaveTimestampIndex,
-                        masterSinkTarget,
-                        slaveSinkTarget,
-                        slaveKeySink,
-                        record,
-                        circuitBreaker
-                );
-                return;
-            }
-
             // 1. Get the symbol value from the master record
             CharSequence masterSymbolValue = masterRecord.getSymA(slaveSymbolColumnIndex);
 
@@ -188,57 +169,78 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             }
 
             try {
-                // 3. Access bitmap index for this partition and symbol column
-                BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
-                        slaveSymbolColumnIndex,
-                        BitmapIndexReader.DIR_BACKWARD
-                );
-                if (indexReader == null) {
-                    AbstractKeyedAsOfJoinRecordCursor.findMatchingRowLinear(
-                            slaveTimeFrameCursor,
-                            slaveRecB,
-                            masterTimestamp,
-                            toleranceInterval,
-                            slaveTimestampIndex,
-                            masterSinkTarget,
-                            slaveSinkTarget,
-                            slaveKeySink,
-                            record,
-                            circuitBreaker
-                    );
-                    return;
+                // Search through frames backwards until we find a match or exhaust search space
+                int cursorFrameIndex = timeFrame.getFrameIndex();
+                long currentSlaveRow = slaveFrameRow;
+
+                // slaveFrameRow may be either at the last row that is <= masterTimestamp, or one past that.
+                // This is because in nextSlave(), linearScan() finds the first row with timestamp > masterTimestamp.
+                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, currentSlaveRow));
+                if (slaveRecB.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                    currentSlaveRow--;
                 }
 
-                // 4. Get cursor for rows matching this symbol in the current time frame
-                timeFrame = slaveTimeFrameCursor.getTimeFrame();
-                long rowLo = timeFrame.getRowLo();
-                // TODO set rowHi to what nextSlave() found
-                long rowHi = timeFrame.getRowHi();
-                RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi - 1);
+                for (; ; ) {
+                    // 3. Access bitmap index for this partition and symbol column
+                    BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
+                            slaveSymbolColumnIndex,
+                            BitmapIndexReader.DIR_BACKWARD
+                    );
 
-                // 5. Find the row with timestamp <= masterTimestamp (most recent)
-                long bestRowId = -1;
-                long bestTimestamp = Long.MIN_VALUE;
-                while (rowCursor.hasNext()) {
-                    long rowId = rowCursor.next();
-                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowId));
-                    long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    // 4. Get cursor for rows matching this symbol in the current time frame
+                    timeFrame = slaveTimeFrameCursor.getTimeFrame();
+                    int currentPartitionIndex = timeFrame.getFrameIndex();
+                    long rowToCheck = currentPartitionIndex == cursorFrameIndex ?
+                            currentSlaveRow :
+                            timeFrame.getRowHi() - 1; // Last row in other frames
 
-                    // Only consider timestamps that are <= masterTimestamp
-                    if (slaveTimestamp <= masterTimestamp && slaveTimestamp > bestTimestamp) {
-                        // Check tolerance if specified
-                        if (toleranceInterval == Numbers.LONG_NULL ||
-                                slaveTimestamp >= masterTimestamp - toleranceInterval) {
-                            bestTimestamp = slaveTimestamp;
-                            bestRowId = rowId;
+                    if (rowToCheck < timeFrame.getRowLo()) {
+                        // No valid row in this frame, try previous frame
+                        if (!slaveTimeFrameCursor.prev()) {
+                            record.hasSlave(false);
+                            slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
+                            slaveTimeFrameCursor.open();
+                            return;
+                        }
+                        slaveTimeFrameCursor.open();
+                        continue;
+                    }
+
+                    RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowToCheck, rowToCheck);
+
+                    // 5. Check the single row for a match
+                    if (rowCursor.hasNext()) {
+                        long rowId = rowCursor.next();
+                        slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(currentPartitionIndex, rowId));
+                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        if (slaveTimestamp <= masterTimestamp) {
+                            // Check tolerance if specified
+                            if (toleranceInterval == Numbers.LONG_NULL ||
+                                    slaveTimestamp >= masterTimestamp - toleranceInterval
+                            ) {
+                                // Found our match
+                                record.hasSlave(true);
+                                slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
+                                slaveTimeFrameCursor.open();
+                                return;
+                            } else {
+                                // Past tolerance interval, no point continuing
+                                record.hasSlave(false);
+                                slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
+                                slaveTimeFrameCursor.open();
+                                return;
+                            }
                         }
                     }
-                }
-                if (bestRowId != -1) {
-                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, bestRowId));
-                    record.hasSlave(true);
-                } else {
-                    record.hasSlave(false);
+
+                    // No match in this frame, try previous frame
+                    if (!slaveTimeFrameCursor.prev()) {
+                        record.hasSlave(false);
+                        slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
+                        slaveTimeFrameCursor.open();
+                        return;
+                    }
+                    slaveTimeFrameCursor.open();
                 }
             } catch (Exception e) {
                 // Fallback to linear search if bitmap index access fails
