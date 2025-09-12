@@ -171,11 +171,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     }
 
     /**
-     * Returns true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp.
-     * This means we do not have to scan the slave cursor further, e.g. by binary search.
+     * Returns true if the slave cursor has been advanced to a row with a timestamp greater than the master timestamp.
+     * This means we do not have to scan the slave cursor further, e.g., by binary search.
      *
      * @param masterTimestamp master timestamp
-     * @return true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp, false otherwise
+     * @return true if the slave cursor has been advanced to a row with a timestamp greater than the master timestamp, false otherwise
      */
     private boolean linearScan(long masterTimestamp) {
         final long scanHi = Math.min(slaveFrameRow + lookahead, slaveTimeFrame.getRowHi());

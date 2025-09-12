@@ -186,6 +186,7 @@ import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
@@ -2663,22 +2664,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         boolean created = false;
                                         if (!asOfAvoidBinarySearch) {
                                             if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
-                                                // support for short-circuiting when joining on a single symbol column and the slave table does not have a matching key
-                                                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
-
-                                                master = new AsOfJoinFastRecordCursorFactory(
-                                                        configuration,
-                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                        master,
-                                                        masterSink,
-                                                        slave,
-                                                        slaveSink,
-                                                        masterMetadata.getColumnCount(),
-                                                        symbolShortCircuit,
-                                                        slaveModel.getContext(),
-                                                        asOfToleranceInterval
-                                                );
-                                                created = true;
+                                                if (isSingleSymbolJoinWithIndex(slaveMetadata)) {
+                                                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                    master = new AsOfJoinIndexedRecordCursorFactory(
+                                                            configuration,
+                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            master,
+                                                            masterSink,
+                                                            slave,
+                                                            slaveSink,
+                                                            masterMetadata.getColumnCount(),
+                                                            slaveSymbolColumnIndex,
+                                                            slaveModel.getContext(),
+                                                            asOfToleranceInterval
+                                                    );
+                                                    created = true;
+                                                } else {
+                                                    // Fallback to original fast join with symbol short-circuit
+                                                    SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
+                                                    master = new AsOfJoinFastRecordCursorFactory(
+                                                            configuration,
+                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            master,
+                                                            masterSink,
+                                                            slave,
+                                                            slaveSink,
+                                                            masterMetadata.getColumnCount(),
+                                                            symbolShortCircuit,
+                                                            slaveModel.getContext(),
+                                                            asOfToleranceInterval
+                                                    );
+                                                    created = true;
+                                                }
                                             }
 
                                             if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
@@ -6488,6 +6505,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
+    /**
+     * Checks if the ASOF JOIN is on a single symbol column that has a bitmap index.
+     * This enables using the indexed ASOF JOIN implementation.
+     */
+    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
+        // Must be joining on exactly one column (besides timestamps)
+        if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
+            return false;
+        }
+        int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
+        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isColumnIndexed(slaveIndex);
+    }
+
     // skips skipped models until finding a WHERE clause
     private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
         QueryModel curr = model;
@@ -6708,7 +6738,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         return limitFunc;
     }
-
 
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
