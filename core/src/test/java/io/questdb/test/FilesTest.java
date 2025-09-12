@@ -49,6 +49,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.AssumptionViolatedException;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -104,6 +105,7 @@ public class FilesTest {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
+        assumeIsNotTmpFs(tmpFolder);
         AtomicInteger errors = new AtomicInteger();
 
         for (int i = 0; i < 10; i++) {
@@ -1515,6 +1517,15 @@ public class FilesTest {
         } finally {
             Files.close(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assumeIsNotTmpFs(String path) {
+        if (!Os.isLinux()) {
+            return;
+        }
+        if (Files.getFileSystemStatus(Path.getThreadLocal(path).$()) == Files.TMPFS_MAGIC) {
+            throw new AssumptionViolatedException("Path is on tmpfs: " + path);
         }
     }
 
