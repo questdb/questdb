@@ -158,41 +158,25 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testRetryingWhenGettingProtocolVersion() throws Exception {
-        // inject a bunch of failures on the server side recv
-        // this closes a connection while a client is trying to read protocol version (/settings)
-
-        // let's test the client retries reading the protocol version by default
-        REMAINING_SERVER_RECV_FAILURES.set(5);
+    public void testBufferIsNotResetAfterRetriableError() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .replyWithStatus(204);
+
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
-                    .stringColumn("str", "foo")
+                    .doubleColumn("x", 1.0)
                     .atNow();
-            sender.flush();
-        }, NO_PROTOCOL_VERSION_SET_FACTORY); // important - we dot set protocol version explicitly so this forces the client to fetch it from the server
-
-
-        // now let's test the same with retrying disabled - fetching the protocol version must fail
-        REMAINING_SERVER_RECV_FAILURES.set(5);
-        try {
-            mockHttpProcessor = new MockHttpProcessor()
-                    .withExpectedContent("test,sym=bol str=\"foo\"\n")
-                    .replyWithStatus(204);
-            testWithMock(mockHttpProcessor, sender -> {
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .stringColumn("str", "foo")
-                        .atNow();
+            try {
                 sender.flush();
                 Assert.fail("Exception expected");
-            }, NO_PROTOCOL_VERSION_SET_FACTORY.andThen(b -> b.retryTimeoutMillis(0))); // disable retries
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
-        }
+            } catch (LineSenderException e) {
+                sender.flush();
+            }
+        }, DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(0)));
     }
 
     @Test
@@ -449,6 +433,44 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
                 DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(0))
         );
+    }
+
+    @Test
+    public void testRetryingWhenGettingProtocolVersion() throws Exception {
+        // inject a bunch of failures on the server side recv
+        // this closes a connection while a client is trying to read protocol version (/settings)
+
+        // let's test the client retries reading the protocol version by default
+        REMAINING_SERVER_RECV_FAILURES.set(5);
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .stringColumn("str", "foo")
+                    .atNow();
+            sender.flush();
+        }, NO_PROTOCOL_VERSION_SET_FACTORY); // important - we dot set protocol version explicitly so this forces the client to fetch it from the server
+
+
+        // now let's test the same with retrying disabled - fetching the protocol version must fail
+        REMAINING_SERVER_RECV_FAILURES.set(5);
+        try {
+            mockHttpProcessor = new MockHttpProcessor()
+                    .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                    .replyWithStatus(204);
+            testWithMock(mockHttpProcessor, sender -> {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .stringColumn("str", "foo")
+                        .atNow();
+                sender.flush();
+                Assert.fail("Exception expected");
+            }, NO_PROTOCOL_VERSION_SET_FACTORY.andThen(b -> b.retryTimeoutMillis(0))); // disable retries
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
+        }
     }
 
     @Test
