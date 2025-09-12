@@ -184,7 +184,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -271,7 +271,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new AvgOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -402,7 +402,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
     }
 
-    // Handles avg() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles avg() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.

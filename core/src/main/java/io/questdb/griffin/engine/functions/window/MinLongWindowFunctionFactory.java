@@ -3,7 +3,7 @@
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
+ *    \___/\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
  *  Copyright (c) 2019-2024 QuestDB
@@ -43,16 +43,37 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Numbers.compare(a, b) < 0;
+public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory {
+    public static final MaxLongWindowFunctionFactory.LongComparator LESS_THAN = (a, b) -> a < b;
     public static final String NAME = "min";
-    private static final String SIGNATURE = NAME + "(D)";
+    private static final String SIGNATURE = NAME + "(L)";
 
+    /**
+     * Returns the textual signature that identifies this window function.
+     *
+     * @return the function signature, "min(L)"
+     */
     @Override
     public String getSignature() {
         return SIGNATURE;
     }
 
+    /**
+     * Create a window function instance that computes the minimum of long values for the configured window.
+     * <p>
+     * This method selects and wires one of several specialized implementations based on
+     * window framing (ROWS or RANGE), presence of PARTITION BY, ordering/timestamp usage,
+     * and the rowsLo/rowsHi bounds. It also allocates and attaches any required map or
+     * circular buffer memory resources; allocated resources are freed on error.
+     *
+     * @param position     position of the function in the SQL statement (used for error reporting)
+     * @param args         the function argument list (first argument is the value to aggregate)
+     * @param argPositions source positions for each argument (passed through to validation)
+     * @return a Function instance that computes the min(L) for the specified window
+     * @throws SqlException if the window parameters are not supported (for example, RANGE used
+     *                      with a non-designated timestamp ordering) or if the combination of framing/partitioning
+     *                      is not implemented
+     */
     @Override
     public Function newInstance(
             int position,
@@ -70,12 +91,13 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
-            return new DoubleNullFunction(args.get(0),
+            return new LongNullFunction(args.get(0),
                     NAME,
                     rowsLo,
                     rowsHi,
                     framingMode == WindowColumn.FRAMING_RANGE,
-                    partitionByRecord);
+                    partitionByRecord,
+                    Numbers.LONG_NULL);
         }
 
         if (partitionByRecord != null) {
@@ -85,10 +107,10 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
+                            MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionFunction(
+                    return new MaxLongWindowFunctionFactory.MaxMinOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
@@ -101,10 +123,10 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
+                            MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
@@ -127,8 +149,8 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES :
-                                        MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
+                                rowsLo == Long.MIN_VALUE ? MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES :
+                                        MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -144,7 +166,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
 
                         // moving min over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
+                        return new MaxLongWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -171,10 +193,10 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
+                            MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
@@ -184,16 +206,16 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
+                    return new MaxLongWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
+                            MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionFunction(
+                    return new MaxLongWindowFunctionFactory.MaxMinOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
@@ -211,8 +233,8 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES :
-                                        MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
+                                rowsLo == Long.MIN_VALUE ? MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES :
+                                        MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -228,7 +250,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
 
                         // moving min over preceding N rows
-                        return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRowsFrameFunction(
+                        return new MaxLongWindowFunctionFactory.MaxMinOverPartitionRowsFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -252,11 +274,11 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxLongWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -280,7 +302,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             );
                         }
                         // moving min over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction(
+                        return new MaxLongWindowFunctionFactory.MaxMinOverRangeFrameFunction(
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
@@ -300,29 +322,36 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
+                    return new MaxLongWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxLongWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    MemoryARW mem = Vm.getCARWInstance(
-                            configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(),
-                            MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
+                    MemoryARW mem = null;
                     MemoryARW dequeMem = null;
-                    if (rowsLo != Long.MIN_VALUE) {
-                        dequeMem = Vm.getCARWInstance(
+                    try {
+                        mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
+                        if (rowsLo != Long.MIN_VALUE) {
+                            dequeMem = Vm.getCARWInstance(
+                                    configuration.getSqlWindowStorePageSize(),
+                                    configuration.getSqlWindowStoreMaxPages(),
+                                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+                            );
+                        }
+                    } catch (Throwable e) {
+                        Misc.free(mem);
+                        Misc.free(dequeMem);
+                        throw e;
                     }
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverRowsFrameFunction(
+                    return new MaxLongWindowFunctionFactory.MaxMinOverRowsFrameFunction(
                             args.get(0),
                             rowsLo,
                             rowsHi,

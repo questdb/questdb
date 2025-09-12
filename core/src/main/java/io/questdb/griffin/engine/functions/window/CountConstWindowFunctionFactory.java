@@ -167,7 +167,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             isRecordNotNull
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountFunctionFactoryHelper.CountOverCurrentRowFunction(null, isRecordNotNull);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -240,7 +240,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new CountFunctionFactoryHelper.CountOverUnboundedRowsFrameFunction(null, isRecordNotNull);
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountFunctionFactoryHelper.CountOverCurrentRowFunction(null, isRecordNotNull);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
