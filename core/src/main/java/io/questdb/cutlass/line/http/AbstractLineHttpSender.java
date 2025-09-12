@@ -92,6 +92,7 @@ public abstract class AbstractLineHttpSender implements Sender {
     private int currentAddressIndex;
     private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
+    private boolean lastFlushFailed;
     private long pendingRows;
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
@@ -446,10 +447,16 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     public boolean isMisdirectedRequest(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3) {
+            return false;
+        }
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
     }
 
     public boolean isNotFound(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3) {
+            return false;
+        }
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
     }
 
@@ -646,7 +653,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     "Cannot flush buffer while row is in progress. " +
                             "Use sender.at() or sender.atNow() to finish the current row first.");
         }
-        if (pendingRows == 0) {
+        if (pendingRows == 0 || lastFlushFailed) {
             return;
         }
 
@@ -680,11 +687,13 @@ public abstract class AbstractLineHttpSender implements Sender {
                         // Server has HTTP keep-alive disabled and it's closing this TCP connection.
                         client.disconnect();
                     }
+                    lastFlushFailed = false;
                     break;
                 }
                 assert response.isChunked();
+                lastFlushFailed = true;
                 if (isRetryableHttpStatus(statusCode) || isMisdirectedRequest(statusCode)) {
-                    if (isMisdirectedRequest(statusCode) || isNotFound(statusCode)) {
+                    if (isMisdirectedRequest(statusCode)) {
                         rotateAddress();
                     }
 
@@ -694,16 +703,19 @@ public abstract class AbstractLineHttpSender implements Sender {
                                     ? nowNanos + maxRetriesNanos
                                     : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
+                        // throw, but do not reset - a caller can try to flush later
                         throwOnHttpErrorResponse(statusCode, response);
                     }
                     client.disconnect(); // forces reconnect, just in case
                     retryBackoff = backoff(rnd, retryBackoff);
                     continue;
                 }
-
+                // not a retryable request -> reset(!) and throw
+                reset();
                 throwOnHttpErrorResponse(statusCode, response);
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
+                lastFlushFailed = true;
                 client.disconnect(); // forces reconnect
                 long nowNanos = System.nanoTime();
                 retryingDeadlineNanos =
@@ -711,7 +723,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                                 ? nowNanos + maxRetriesNanos
                                 : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
-                    // we did our best, give up
+                    // we did our best, give up, but do not reset the sender
+                    // a caller can try to flush later
                     throw new LineSenderException("Could not flush buffer: ").put(url)
                             .put(" Connection Failed").put(": ").put(e.getMessage()).errno(e.getErrno());
                 }
@@ -757,11 +770,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
-        // be ready for next request
-        flushAfterNanos = Long.MAX_VALUE;
-        pendingRows = 0;
-        request = newRequest();
-
         CharSequence statusAscii = statusCode.asAsciiCharSequence();
         if (Chars.equals("405", statusAscii)) {
             consumeChunkedResponse(response);
