@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @SuppressWarnings("FieldCanBeLocal")
 public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public static final Log LOG = LogFactory.getLog(LineHttpMultiUrlTest.class);
-    private static final String HOST = "0.0.0.0";
+    private static final String HOST = "127.0.0.1";
     private static final int PORT1 = 9070;
     private static final int PORT2 = 9080;
     private static Rnd rnd;
@@ -326,20 +326,18 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             while (elapsedMillis < timeoutMillis) {
                 long startMillis = System.currentTimeMillis();
 
-                if (serverMain.hasStarted()) {
-                    // close it
-                    serverMain.close();
-                    Os.sleep(500);
-                }
 
-                if (serverMain.hasBeenClosed()) {
-                    serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
-                    Os.sleep(50);
-                    serverMain.start();
-                    Os.sleep(50);
-                }
-
+                serverMain.close();
+                assert serverMain.hasBeenClosed();
                 int jitter = rnd.nextIntSync(jitterMillis);
+                jitter = (jitter >> 1) ^ (-(jitter & 1)); // zigzag conversion
+                Os.sleep(1_500 + jitter);
+
+                serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
+                serverMain.start();
+                assert serverMain.hasStarted();
+
+                jitter = rnd.nextIntSync(jitterMillis);
                 jitter = (jitter >> 1) ^ (-(jitter & 1)); // zigzag conversion
 
                 Os.sleep(delayMillis + jitter);
@@ -362,9 +360,11 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 }
                 Os.sleep(10);
             }
-            assertThatWalIsDrained(serverMain.getEngine(), tt);
-            try (TxReader txReader = new TxReader(serverMain.getEngine().getConfiguration().getFilesFacade())) {
-                count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), txReader));
+            if (tt != null) {
+                assertThatWalIsDrained(serverMain.getEngine(), tt);
+                try (TxReader txReader = new TxReader(serverMain.getEngine().getConfiguration().getFilesFacade())) {
+                    count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), txReader));
+                }
             }
             System.out.println(Thread.currentThread() + " is closing the server " + serverMain);
             Misc.free(serverMain);
@@ -385,8 +385,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     private void sendToTwoPossibleServers(String host1, int port1, String host2, int port2, int timeoutMillis, int delayMillis, int jitterMillis, AtomicLong count) {
         long elapsedMillis = 0;
-        long nextFlushAt = delayMillis;
-
         int localCount = 0;
         assert delayMillis > jitterMillis;
 
@@ -398,23 +396,13 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 localCount++;
                 Os.sleep(10);
 
-                if (elapsedMillis > nextFlushAt) {
-                    sender.flush();
-                    count.set(count.get() + localCount);
-
-                    localCount = 0;
-                    int jitter = rnd.nextIntSync(jitterMillis);
-                    jitter = (jitter >> 1) ^ (-(jitter & 1)); // zigzag conversion
-
-                    nextFlushAt = elapsedMillis + jitter + delayMillis;
-                }
+                sender.flush();
+                count.set(count.get() + localCount);
+                localCount = 0;
 
                 long endMillis = System.currentTimeMillis();
                 elapsedMillis += (endMillis - startMillis);
             }
-
-            sender.flush();
-            count.set(count.get() + localCount);
         }
         Path.clearThreadLocals();
     }
