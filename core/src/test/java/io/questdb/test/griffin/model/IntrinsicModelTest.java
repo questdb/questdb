@@ -35,6 +35,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -313,6 +314,12 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testParseShortInterval10() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.NANO);
+        assertShortInterval("[{lo=2016-03-21T10:30:40.123456780Z, hi=2016-03-21T10:30:40.123456789Z}]", "2016-03-21T10:30:40.12345678");
+    }
+
+    @Test
     public void testParseShortInterval2() throws Exception {
         assertShortInterval("[{lo=2016-03-01T00:00:00.000000Z, hi=2016-03-31T23:59:59.999999Z}]", "2016-03");
     }
@@ -345,6 +352,18 @@ public class IntrinsicModelTest {
     @Test
     public void testParseShortInterval7() throws Exception {
         assertShortInterval("[{lo=2016-03-21T10:30:40.100000Z, hi=2016-03-21T10:30:40.100000Z}]", "2016-03-21T10:30:40.100Z");
+    }
+
+    @Test
+    public void testParseShortInterval8() throws Exception {
+        assertShortInterval("[{lo=2016-03-21T10:30:40.100000Z, hi=2016-03-21T10:30:40.100999Z}]", "2016-03-21T10:30:40.100");
+        assertShortInterval("[{lo=2016-03-21T10:30:40.280000Z, hi=2016-03-21T10:30:40.289999Z}]", "2016-03-21T10:30:40.28");
+    }
+
+    @Test
+    public void testParseShortInterval9() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertShortInterval("[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:40.123456Z}]", "2016-03-21T10:30:40.12345678");
     }
 
     @Test
@@ -439,7 +458,7 @@ public class IntrinsicModelTest {
         IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00000Z", "00000000Z").replaceAll("999999Z", "999999999Z")
+                        ? expected.replaceAll("0Z", "0000Z").replaceAll("9Z", "9999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
         );

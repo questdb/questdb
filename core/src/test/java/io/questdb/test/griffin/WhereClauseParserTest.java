@@ -2340,6 +2340,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalInWithFractions() throws SqlException {
+        runWhereIntervalTest0(
+                "timestamp in ('2014-01-01T12:30:00.1')",
+                "[{lo=2014-01-01T12:30:00.100000Z, hi=2014-01-01T12:30:00.199999Z}]"
+        );
+    }
+
+    @Test
     public void testIntervalLessNoTimestamp() throws Exception {
         IntrinsicModel m = noTimestampModelOf("timestamp < '2014-01-01T15:30:00.000Z'");
         Assert.assertFalse(m.hasIntervalFilters());

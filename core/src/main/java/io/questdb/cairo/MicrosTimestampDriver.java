@@ -1143,9 +1143,46 @@ public class MicrosTimestampDriver implements TimestampDriver {
                             CommonUtils.checkChar(input, p++, lim, ':');
                             int sec = Numbers.parseInt(input, p, p += 2);
                             CommonUtils.checkRange(sec, 0, 59);
-                            if (p < lim) {
-                                throw NumericException.instance();
-                            } else {
+                            if (p < lim && input.charAt(p) == '.') {
+                                p++;
+                                // varlen milli and micros
+                                int micrLim = p + 6;
+                                int mlim = Math.min(lim, micrLim);
+                                int micr = 0;
+                                for (; p < mlim; p++) {
+                                    char c = input.charAt(p);
+                                    if (c < '0' || c > '9') {
+                                        throw NumericException.instance();
+                                    }
+                                    micr *= 10;
+                                    micr += c - '0';
+                                }
+                                int remainingDigits = micrLim - p;
+                                micr *= CommonUtils.tenPow(remainingDigits);
+
+                                if (p + 3 < lim) {
+                                    throw NumericException.instance();
+                                }
+                                // ignore nanos for MicroTimestamp
+                                for (; p < lim; p++) {
+                                    char c = input.charAt(p);
+                                    if (c < '0' || c > '9') {
+                                        throw NumericException.instance();
+                                    }
+                                }
+
+                                long baseTime = Micros.yearMicros(year, l)
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + min * Micros.MINUTE_MICROS
+                                        + sec * Micros.SECOND_MICROS;
+                                int rangeMicros = CommonUtils.tenPow(remainingDigits) - 1;
+                                IntervalUtils.encodeInterval(baseTime + micr,
+                                        baseTime + micr + rangeMicros,
+                                        operation,
+                                        out);
+                            } else if (p == lim) {
                                 // seconds
                                 IntervalUtils.encodeInterval(Micros.yearMicros(year, l)
                                                 + Micros.monthOfYearMicros(month, l)
@@ -1162,6 +1199,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                                 + 999999,
                                         operation,
                                         out);
+                            } else {
+                                throw NumericException.instance();
                             }
                         } else {
                             // minute

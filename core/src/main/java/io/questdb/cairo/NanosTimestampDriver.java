@@ -1140,9 +1140,37 @@ public class NanosTimestampDriver implements TimestampDriver {
                             CommonUtils.checkChar(input, p++, lim, ':');
                             int sec = Numbers.parseInt(input, p, p += 2);
                             CommonUtils.checkRange(sec, 0, 59);
-                            if (p < lim) {
-                                throw NumericException.instance();
-                            } else {
+                            if (p < lim && input.charAt(p) == '.') {
+                                p++;
+                                // varlen milli, micros and nanos
+                                int nanoLim = p + 9;
+                                if (nanoLim < lim) {
+                                    throw NumericException.instance();
+                                }
+
+                                int nanos = 0;
+                                for (; p < lim; p++) {
+                                    char c = input.charAt(p);
+                                    if (c < '0' || c > '9') {
+                                        throw NumericException.instance();
+                                    }
+                                    nanos *= 10;
+                                    nanos += c - '0';
+                                }
+                                int remainingDigits = nanoLim - p;
+                                nanos *= CommonUtils.tenPow(remainingDigits);
+                                long baseTime = Nanos.yearNanos(year, l)
+                                        + Nanos.monthOfYearNanos(month, l)
+                                        + (day - 1) * Nanos.DAY_NANOS
+                                        + hour * Nanos.HOUR_NANOS
+                                        + min * Nanos.MINUTE_NANOS
+                                        + sec * Nanos.SECOND_NANOS;
+                                int rangeNanos = CommonUtils.tenPow(remainingDigits) - 1;
+                                IntervalUtils.encodeInterval(baseTime + nanos,
+                                        baseTime + nanos + rangeNanos,
+                                        operation,
+                                        out);
+                            } else if (p == lim) {
                                 // seconds
                                 IntervalUtils.encodeInterval(Nanos.yearNanos(year, l)
                                                 + Nanos.monthOfYearNanos(month, l)
@@ -1159,6 +1187,8 @@ public class NanosTimestampDriver implements TimestampDriver {
                                                 + 999999999,
                                         operation,
                                         out);
+                            } else {
+                                throw NumericException.instance();
                             }
                         } else {
                             // minute
