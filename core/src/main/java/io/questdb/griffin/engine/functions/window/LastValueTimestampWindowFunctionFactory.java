@@ -2716,7 +2716,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between ");
-            if (rowLo == Long.MAX_VALUE) {
+            if (rowLo == Long.MIN_VALUE) {
                 sink.val("unbounded");
             } else {
                 sink.val(Math.abs(rowLo));
@@ -3165,11 +3165,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             sink.val(" over (");
             sink.val(" rows between ");
             if (rowsLo == Long.MIN_VALUE) {
-                sink.val(" unbounded preceding and ");
+                sink.val("unbounded");
             } else {
                 sink.val(Math.abs(rowsLo));
-                sink.val(" preceding between and ");
             }
+            sink.val(" preceding and ");
             sink.val(bufferSize).val(" preceding");
             sink.val(')');
         }

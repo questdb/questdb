@@ -317,7 +317,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new FirstValueTimestampWindowFunctionFactory.FirstValueOverCurrentRowFunction(args.get(0), true);
+                    return new FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
                     MemoryARW mem = Vm.getCARWInstance(
