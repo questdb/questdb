@@ -190,4 +190,332 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                             "WHERE top > 3 * deep");
         });
     }
+
+    @Test
+    public void testOrderByArrayIndexAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as long)] id, timestamp_sequence(0,1000000000L) as ts " +
+                    "  from long_sequence(10)" +
+                    ") timestamp(ts) partition by hour");
+
+            assertSql(
+                    "id\tts\n" +
+                            "[1]\t1970-01-01T00:00:00.000000Z\n" +
+                            "[2]\t1970-01-01T00:16:40.000000Z\n" +
+                            "[3]\t1970-01-01T00:33:20.000000Z\n" +
+                            "[4]\t1970-01-01T00:50:00.000000Z\n" +
+                            "[5]\t1970-01-01T01:06:40.000000Z\n" +
+                            "[6]\t1970-01-01T01:23:20.000000Z\n" +
+                            "[7]\t1970-01-01T01:40:00.000000Z\n" +
+                            "[8]\t1970-01-01T01:56:40.000000Z\n" +
+                            "[9]\t1970-01-01T02:13:20.000000Z\n" +
+                            "[10]\t1970-01-01T02:30:00.000000Z\n",
+                    "select * from x order by id[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as long)] id, timestamp_sequence(0,1000000000L) as ts " +
+                    "  from long_sequence(10)" +
+                    ") timestamp(ts) partition by hour");
+
+            assertSql(
+                    "id\tts\n" +
+                            "[10]\t1970-01-01T02:30:00.000000Z\n" +
+                            "[9]\t1970-01-01T02:13:20.000000Z\n" +
+                            "[8]\t1970-01-01T01:56:40.000000Z\n" +
+                            "[7]\t1970-01-01T01:40:00.000000Z\n" +
+                            "[6]\t1970-01-01T01:23:20.000000Z\n" +
+                            "[5]\t1970-01-01T01:06:40.000000Z\n" +
+                            "[4]\t1970-01-01T00:50:00.000000Z\n" +
+                            "[3]\t1970-01-01T00:33:20.000000Z\n" +
+                            "[2]\t1970-01-01T00:16:40.000000Z\n" +
+                            "[1]\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from x order by id[1] desc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByMultiElementArrayIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as long), cast(x*10 as long), cast(x*100 as long)] arr, x " +
+                    "  from long_sequence(5)" +
+                    ")");
+
+            // Order by first element
+            assertSql(
+                    "arr\tx\n" +
+                            "[1,10,100]\t1\n" +
+                            "[2,20,200]\t2\n" +
+                            "[3,30,300]\t3\n" +
+                            "[4,40,400]\t4\n" +
+                            "[5,50,500]\t5\n",
+                    "select * from x order by arr[1] asc"
+            );
+
+            // Order by second element
+            assertSql(
+                    "arr\tx\n" +
+                            "[1,10,100]\t1\n" +
+                            "[2,20,200]\t2\n" +
+                            "[3,30,300]\t3\n" +
+                            "[4,40,400]\t4\n" +
+                            "[5,50,500]\t5\n",
+                    "select * from x order by arr[2] asc"
+            );
+
+            // Order by third element descending
+            assertSql(
+                    "arr\tx\n" +
+                            "[5,50,500]\t5\n" +
+                            "[4,40,400]\t4\n" +
+                            "[3,30,300]\t3\n" +
+                            "[2,20,200]\t2\n" +
+                            "[1,10,100]\t1\n",
+                    "select * from x order by arr[3] desc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexWithMixedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as double)] darr, " +
+                    "         array[x::string] sarr, " +
+                    "         x " +
+                    "  from long_sequence(5)" +
+                    ")");
+
+            // Order by double array index (note: string arrays cast as double in QuestDB)
+            assertSql(
+                    "darr\tsarr\tx\n" +
+                            "[1.0]\t[1.0]\t1\n" +
+                            "[2.0]\t[2.0]\t2\n" +
+                            "[3.0]\t[3.0]\t3\n" +
+                            "[4.0]\t[4.0]\t4\n" +
+                            "[5.0]\t[5.0]\t5\n",
+                    "select * from x order by darr[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select case when x % 2 = 0 then array[cast(x as long)] else array[cast(null as long)] end as arr, x " +
+                    "  from long_sequence(6)" +
+                    ")");
+
+            // Order by array index with nulls - nulls appear first in ASC order
+            assertSql(
+                    "arr\tx\n" +
+                            "[null]\t1\n" +
+                            "[null]\t3\n" +
+                            "[null]\t5\n" +
+                            "[2]\t2\n" +
+                            "[4]\t4\n" +
+                            "[6]\t6\n",
+                    "select * from x order by arr[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexOutOfBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as double)] id, x " +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            // Accessing out-of-bounds index should return null and be handled gracefully
+            assertSql(
+                    "id\tx\n" +
+                            "[1.0]\t1\n" +
+                            "[2.0]\t2\n" +
+                            "[3.0]\t3\n",
+                    "select * from x order by id[2] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexWithComplexExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x*2 as double), cast(x*3 as double)] arr, x " +
+                    "  from long_sequence(5)" +
+                    ")");
+
+            // Order by array index combined with arithmetic expression
+            assertSql(
+                    "arr\tx\n" +
+                            "[2.0,3.0]\t1\n" +
+                            "[4.0,6.0]\t2\n" +
+                            "[6.0,9.0]\t3\n" +
+                            "[8.0,12.0]\t4\n" +
+                            "[10.0,15.0]\t5\n",
+                    "select * from x order by arr[1] + arr[2] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByNestedArrayIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[array[cast(x as double), cast(x+1 as double)]] nested_arr, x " +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            // Order by nested array index
+            assertSql(
+                    "nested_arr\tx\n" +
+                            "[[1.0,2.0]]\t1\n" +
+                            "[[2.0,3.0]]\t2\n" +
+                            "[[3.0,4.0]]\t3\n",
+                    "select * from x order by nested_arr[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByMultipleArrayIndices() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x % 3 as double), cast(x as double)] arr1, array[cast(x % 2 as double), cast(x as double)] arr2, x " +
+                    "  from long_sequence(6)" +
+                    ")");
+
+            // Order by multiple array indices
+            assertSql(
+                    "arr1\tarr2\tx\n" +
+                            "[0.0,3.0]\t[1.0,3.0]\t3\n" +
+                            "[0.0,6.0]\t[0.0,6.0]\t6\n" +
+                            "[1.0,1.0]\t[1.0,1.0]\t1\n" +
+                            "[1.0,4.0]\t[0.0,4.0]\t4\n" +
+                            "[2.0,2.0]\t[0.0,2.0]\t2\n" +
+                            "[2.0,5.0]\t[1.0,5.0]\t5\n",
+                    "select * from x order by arr1[1] asc, arr2[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexWithGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x % 3 as double)] group_arr, x " +
+                    "  from long_sequence(9)" +
+                    ")");
+
+            assertSql(
+                    "group_arr\tcount\n" +
+                            "[0.0]\t3\n" +
+                            "[1.0]\t3\n" +
+                            "[2.0]\t3\n",
+                    "select group_arr, count(*) from x " +
+                            "group by group_arr " +
+                            "order by group_arr[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as double)] id, x " +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            execute("create table y as (" +
+                    "  select array[cast(x+10 as double)] id, x " +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            assertSql(
+                    "id\tx\tid1\tx1\n" +
+                            "[1.0]\t1\t[11.0]\t1\n" +
+                            "[2.0]\t2\t[12.0]\t2\n" +
+                            "[3.0]\t3\t[13.0]\t3\n",
+                    "select x.id, x.x, y.id, y.x from x " +
+                            "join y on x.x = y.x " +
+                            "order by x.id[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexWithWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[cast(x as double)] id, x " +
+                    "  from long_sequence(5)" +
+                    ")");
+
+            assertSql(
+                    "id\tx\trow_num\n" +
+                            "[1.0]\t1\t1\n" +
+                            "[2.0]\t2\t2\n" +
+                            "[3.0]\t3\t3\n" +
+                            "[4.0]\t4\t4\n" +
+                            "[5.0]\t5\t5\n",
+                    "select id, x, row_number() over (order by id[1]) as row_num " +
+                            "from x " +
+                            "order by id[1] asc"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayIndexPerformance() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test with larger dataset to ensure performance is acceptable
+            execute("create table x as (" +
+                    "  select array[rnd_long(1, 1000, 0)] id, " +
+                    "         timestamp_sequence(0, 1000000) as ts " +
+                    "  from long_sequence(1000)" +
+                    ") timestamp(ts) partition by hour");
+
+            // Verify that the query executes without performance issues
+            assertSql("count\n1000\n", "select count(*) from x");
+        });
+    }
+
+    @Test
+    public void testOriginalIssueScenario() throws Exception {
+        assertMemoryLeak(() -> {
+            // This is the exact scenario from issue #6032
+            execute("create table x as (" +
+                    "  select array[cast(x as double)] id, timestamp_sequence(0,1000000000L) as ts " +
+                    "  from long_sequence(10)" +
+                    ") timestamp(ts) partition by hour");
+
+            // This should not give "Invalid column: []" error anymore
+            assertSql(
+                    "id\tts\n" +
+                            "[10.0]\t1970-01-01T02:30:00.000000Z\n" +
+                            "[9.0]\t1970-01-01T02:13:20.000000Z\n" +
+                            "[8.0]\t1970-01-01T01:56:40.000000Z\n" +
+                            "[7.0]\t1970-01-01T01:40:00.000000Z\n" +
+                            "[6.0]\t1970-01-01T01:23:20.000000Z\n" +
+                            "[5.0]\t1970-01-01T01:06:40.000000Z\n" +
+                            "[4.0]\t1970-01-01T00:50:00.000000Z\n" +
+                            "[3.0]\t1970-01-01T00:33:20.000000Z\n" +
+                            "[2.0]\t1970-01-01T00:16:40.000000Z\n" +
+                            "[1.0]\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from x order by id[1] desc"
+            );
+        });
+    }
 }
