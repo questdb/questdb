@@ -79,16 +79,16 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     /**
      * Create a MAX timestamp window function instance appropriate for the current
      * window context.
-     *
+     * <p>
      * The factory inspects the SqlExecutionContext's WindowContext (framing mode,
      * partitioning, ordering, and frame bounds) and returns a concrete Function
      * implementation optimized for that scenario (e.g. whole-result-set, partitioned
      * two-pass, unbounded/rows/range frames, or memory-backed ring-buffer variants).
      *
-     * @param position parsing position used to report errors
-     * @param args function arguments (first argument is the timestamp expression)
-     * @param argPositions argument positions in the SQL text
-     * @param configuration runtime configuration (used for memory/page sizing) — omitted from @param per project conventions
+     * @param position            parsing position used to report errors
+     * @param args                function arguments (first argument is the timestamp expression)
+     * @param argPositions        argument positions in the SQL text
+     * @param configuration       runtime configuration (used for memory/page sizing) — omitted from @param per project conventions
      * @param sqlExecutionContext execution context providing WindowContext and other runtime services — omitted from @param per project conventions
      * @return a Function that computes the MAX over the requested window
      * @throws SqlException if window validation fails, if RANGE is requested for queries not ordered by the designated timestamp,
@@ -382,13 +382,13 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     @FunctionalInterface
     public interface TimestampComparator {
         /**
- * Compare two timestamp values.
- *
- * @param a first timestamp value
- * @param b second timestamp value
- * @return true if `a` is considered greater than `b`, false otherwise
- */
-boolean compare(long a, long b);
+         * Compare two timestamp values.
+         *
+         * @param a first timestamp value
+         * @param b second timestamp value
+         * @return true if `a` is considered greater than `b`, false otherwise
+         */
+        boolean compare(long a, long b);
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
@@ -419,17 +419,6 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Return the last-computed timestamp value for the current row.
-         *
-         * @param rec ignored; this implementation does not read from the provided record
-         * @return the stored timestamp value produced by the most recent computeNext call
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return value;
-        }
-
-        /**
          * Returns the window function's name.
          *
          * @return the name used to identify this function instance
@@ -450,13 +439,24 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Compute the next value for the current input record and write it to the window output slot.
+         * Return the last-computed timestamp value for the current row.
          *
+         * @param rec ignored; this implementation does not read from the provided record
+         * @return the stored timestamp value produced by the most recent computeNext call
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        /**
+         * Compute the next value for the current input record and write it to the window output slot.
+         * <p>
          * This evaluates the function for the given input Record, then stores the resulting timestamp
          * (primitive long) into the output memory location identified by recordOffset and the
          * function's configured output column.
          *
-         * @param record the input record to evaluate
+         * @param record       the input record to evaluate
          * @param recordOffset the row-address/offset where the result should be written
          */
         @Override
@@ -479,9 +479,9 @@ boolean compare(long a, long b);
          * <p>Constructs a function which uses the provided map to store per-partition state and
          * the provided comparator to decide the aggregate (e.g., max vs min) when processing rows.
          *
-         * @param map a mutable Map used to store and retrieve per-partition aggregation state
+         * @param map        a mutable Map used to store and retrieve per-partition aggregation state
          * @param comparator comparator used to compare two timestamp values to determine the current aggregate (returns true when the first argument should replace the second)
-         * @param name human-readable name for this function variant (used for planning/diagnostics)
+         * @param name       human-readable name for this function variant (used for planning/diagnostics)
          */
         public MaxMinOverPartitionFunction(Map map,
                                            VirtualRecord partitionByRecord,
@@ -516,7 +516,7 @@ boolean compare(long a, long b);
 
         /**
          * First-pass accumulator that updates the per-partition maximum timestamp.
-         *
+         * <p>
          * For the given input record, reads the timestamp from the argument function and, if not null,
          * looks up the partition key in the map and updates the stored timestamp to the greater value
          * according to the provided comparator. New partition entries are initialized with the record's
@@ -546,12 +546,12 @@ boolean compare(long a, long b);
 
         /**
          * Second pass: materializes the precomputed per-partition maximum timestamp into the result.
-         *
+         * <p>
          * Looks up the partition key for the current input record, reads the stored max timestamp
          * from the map (or uses SQL NULL when absent), and writes that long value to the output
          * address obtained from the WindowSPI.
          *
-         * @param record current input record used to derive the partition key
+         * @param record       current input record used to derive the partition key
          * @param recordOffset offset passed to WindowSPI to obtain the output address where the timestamp is written
          */
         @Override
@@ -597,7 +597,7 @@ boolean compare(long a, long b);
 
         /**
          * Builds a window function that computes the maximum timestamp over a RANGE frame scoped per partition.
-         *
+         * <p>
          * This constructor configures whether the lower bound is bounded, whether the frame includes the current row,
          * and stores the memory buffers and comparator used to maintain a per-partition ring buffer and optional deque
          * of candidate maxima.
@@ -646,7 +646,7 @@ boolean compare(long a, long b);
 
         /**
          * Release resources used by this window function instance.
-         *
+         * <p>
          * Closes underlying memory buffers and the optional deque memory, clears internal free lists,
          * and invokes {@code super.close()} to perform superclass cleanup.
          */
@@ -667,21 +667,21 @@ boolean compare(long a, long b);
          *
          * <p>This method:
          * - Advances or initializes the ring-buffer frame and optional monotonic deque for the
-         *   partition identified by the record's partition key.
+         * partition identified by the record's partition key.
          * - Appends the incoming (timestamp, value) pair when the value is not null.
          * - Evicts elements that fall outside the configured range/rows frame.
          * - Maintains and expands underlying MemoryARW buffers when capacity is exceeded.
          * - Updates the partition map value with the new frame metadata (frameSize, buffer offsets,
-         *   sizes, indices) and, when the lower bound is unbounded, stores the current max directly
-         *   in the map value.
-         *
+         * sizes, indices) and, when the lower bound is unbounded, stores the current max directly
+         * in the map value.
+         * <p>
          * The behavior differs based on whether the partition entry is new and whether the frame's
          * lower bound is bounded:
          * - New partition: allocates initial buffers, writes the first element if present and
-         *   initializes deque or max accordingly.
+         * initializes deque or max accordingly.
          * - Existing partition: trims old elements outside the lower bound, appends the new element,
-         *   updates the deque (for bounded lower bound) or recomputes the max by scanning the frame
-         *   (for unbounded lower bound).
+         * updates the deque (for bounded lower bound) or recomputes the max by scanning the frame
+         * (for unbounded lower bound).
          *
          * @param record the input record whose partition key, ordering timestamp, and value are used
          *               to update per-partition window state
@@ -866,20 +866,6 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Returns the current computed maximum timestamp for this window function.
-         *
-         * The provided Record argument is not used by this implementation; the result is taken
-         * from the function's internal state.
-         *
-         * @param rec ignored
-         * @return the current max timestamp stored in this function's state
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return maxMin;
-        }
-
-        /**
          * Returns the window function's name.
          *
          * @return the name used to identify this function instance
@@ -900,6 +886,20 @@ boolean compare(long a, long b);
         }
 
         /**
+         * Returns the current computed maximum timestamp for this window function.
+         * <p>
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return maxMin;
+        }
+
+        /**
          * Not applicable for this implementation; calling it always fails.
          *
          * @throws UnsupportedOperationException always thrown because this window function does not use a separate pass1 phase
@@ -911,7 +911,7 @@ boolean compare(long a, long b);
 
         /**
          * Reinitializes the function for a new execution cycle.
-         *
+         * <p>
          * Calls the superclass reopen logic and resets the internal max/min accumulator
          * to a NULL sentinel so that any backing memory is allocated lazily on first use.
          */
@@ -924,7 +924,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function's internal state and release associated native resources.
-         *
+         * <p>
          * Clears in-memory ring-buffer/free-list state so the function can be reused,
          * closes the primary memory region, clears internal free lists used for
          * element management, and closes the optional deque memory if present.
@@ -942,7 +942,7 @@ boolean compare(long a, long b);
 
         /**
          * Append this window function's SQL-like plan representation to the given PlanSink.
-         *
+         * <p>
          * The produced text follows the pattern:
          * "{name}({arg}) over (partition by {partition functions} range between {lower bound or 'unbounded'} preceding and {current row or '<minDiff> preceding'})".
          */
@@ -970,7 +970,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset this function's internal state to the start of iteration.
-         *
+         * <p>
          * Truncates the primary frame memory and optional deque memory, and clears
          * internal free lists so the function is ready to be reused from the top.
          */
@@ -1008,23 +1008,23 @@ boolean compare(long a, long b);
         /**
          * Constructs a partitioned rows-frame max/min function and configures its internal ring buffer
          * and optional monotonic deque parameters according to the supplied row-frame bounds.
-         *
+         * <p>
          * The constructor computes:
          * - frameSize: number of slots used to retain values inside the frame
          * - bufferSize: number of extra slots required to accommodate negative row offsets
          * - frameLoBounded: true when the frame lower bound is finite (requires a deque)
          * - dequeBufferSize: size of the deque buffer when the lower bound is bounded
          * - frameIncludesCurrentValue: true when the upper bound includes the current row (rowsHi == 0)
-         *
+         * <p>
          * It then stores provided memory buffers, comparator and name for use during runtime.
          *
-         * @param rowsLo lower row bound for the frame (may be Long.MIN_VALUE to denote unbounded preceding)
-         * @param rowsHi upper row bound for the frame (relative to the current row)
-         * @param arg value-producing function for each row (timestamp source)
-         * @param memory ring-buffer memory used to store per-partition frame entries
+         * @param rowsLo      lower row bound for the frame (may be Long.MIN_VALUE to denote unbounded preceding)
+         * @param rowsHi      upper row bound for the frame (relative to the current row)
+         * @param arg         value-producing function for each row (timestamp source)
+         * @param memory      ring-buffer memory used to store per-partition frame entries
          * @param dequeMemory optional memory for the monotonic deque (may be null when lower bound is unbounded)
-         * @param comparator comparator used to decide max/min between two timestamps
-         * @param name function instance name used for plan/output identification
+         * @param comparator  comparator used to decide max/min between two timestamps
+         * @param name        function instance name used for plan/output identification
          */
         public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
@@ -1061,7 +1061,7 @@ boolean compare(long a, long b);
 
         /**
          * Releases resources held by this window function.
-         *
+         * <p>
          * Calls the superclass close implementation and closes the associated MemoryARW used for frame storage.
          */
         @Override
@@ -1075,15 +1075,15 @@ boolean compare(long a, long b);
          *
          * <p>This updates per-partition storage in the factory's backing map and memory buffers:
          * - When encountering a new partition key, it initializes the ring buffer and optional deque and sets the initial
-         *   max according to whether the frame includes the current value.
+         * max according to whether the frame includes the current value.
          * - For existing partitions it pushes the new timestamp into the ring buffer, updates or maintains the monotonic
-         *   deque when the lower bound is bounded, evicts the oldest value from the deque when necessary, and updates
-         *   the stored per-partition max for unbounded-lower-bound frames.
+         * deque when the lower bound is bounded, evicts the oldest value from the deque when necessary, and updates
+         * the stored per-partition max for unbounded-lower-bound frames.
          *
          * <p>Behavior notes:
          * - Null timestamps (Numbers.LONG_NULL) are kept in the ring buffer but ignored for max computation.
          * - The method mutates: the partition map value, off-heap memory for the ring buffer (memory), optional dequeMemory,
-         *   and the instance field {@code this.maxMin} which receives the computed max for the current record.
+         * and the instance field {@code this.maxMin} which receives the computed max for the current record.
          *
          * @param record the input record whose timestamp is pushed into the window and used to update per-partition state
          */
@@ -1188,20 +1188,6 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Returns the current computed maximum timestamp for this window function.
-         *
-         * The provided Record argument is not used by this implementation; the result is taken
-         * from the function's internal state.
-         *
-         * @param rec ignored
-         * @return the current max timestamp stored in this function's state
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return maxMin;
-        }
-
-        /**
          * Returns the window function's name.
          *
          * @return the name used to identify this function instance
@@ -1222,12 +1208,26 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Compute the aggregate for the current input row and write the result to the output column.
+         * Returns the current computed maximum timestamp for this window function.
+         * <p>
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
          *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return maxMin;
+        }
+
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         * <p>
          * Calls computeNext(record) to update the internal max/min state, then writes that
          * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
          *
-         * @param record current input record to process
+         * @param record       current input record to process
          * @param recordOffset byte offset identifying the output row frame where the result should be written
          */
         @Override
@@ -1238,7 +1238,7 @@ boolean compare(long a, long b);
 
         /**
          * Reopens and reinitializes this window function for a new execution.
-         *
+         * <p>
          * Delegates to the superclass implementation to reset any internal state.
          */
         @Override
@@ -1248,7 +1248,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function state and release any allocated off-heap resources.
-         *
+         * <p>
          * Calls the superclass reset behavior, closes the primary frame memory, and closes
          * the optional deque memory if it was allocated.
          */
@@ -1263,9 +1263,9 @@ boolean compare(long a, long b);
 
         /**
          * Appends a SQL-style plan fragment describing this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced fragment has the form:
-         *   "<name>(<arg>) over (partition by <partitionFunctions> rows between <lower> preceding and <upper>)"
+         * "<name>(<arg>) over (partition by <partitionFunctions> rows between <lower> preceding and <upper>)"
          * where <lower> is either a numeric buffer size or "unbounded", and <upper> is either "current row"
          * or a numeric "N preceding" computed as `bufferSize - frameSize`.
          */
@@ -1294,7 +1294,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset this function to its initial state for reuse.
-         *
+         * <p>
          * Performs superclass reset behavior and releases any accumulated frame and deque
          * storage by truncating the associated MemoryARW buffers.
          */
@@ -1343,16 +1343,16 @@ boolean compare(long a, long b);
         /**
          * Constructs a range-frame max window function that maintains a sliding frame of timestamped
          * records in off-heap memory and an optional monotonic deque for efficient max computation.
-         *
+         * <p>
          * The instance retains references to the provided memory regions and computes initial
          * buffer capacities from the SQL window store page size. If the lower range bound is
          * finite (`rangeLo != Long.MIN_VALUE`), a deque buffer is allocated using `dequeMemory`.
          * In that case `maxDiff` is set to `abs(rangeLo)` and must only be used when
          * `frameLoBounded` is true; otherwise `maxDiff` is Long.MAX_VALUE.
-         *
+         * <p>
          * Parameters:
          * - rangeLo, rangeHi: inclusive offsets (relative to the row timestamp) that define the
-         *   window frame. `rangeLo == Long.MIN_VALUE` indicates an unbounded preceding lower bound.
+         * window frame. `rangeLo == Long.MIN_VALUE` indicates an unbounded preceding lower bound.
          * - arg: the argument function that produces timestamps for each input row.
          * - configuration: provides SQL runtime configuration (used to derive the initial buffer size).
          * - memory: primary ring-buffer memory region for storing timestamp/value records.
@@ -1397,7 +1397,7 @@ boolean compare(long a, long b);
 
         /**
          * Releases resources held by this function, including backing memory buffers.
-         *
+         * <p>
          * Performs superclass cleanup, closes the primary frame memory, and closes
          * the optional deque memory if present.
          */
@@ -1419,15 +1419,15 @@ boolean compare(long a, long b);
          *
          * <p>Behavior summary:
          * - If the frame has a bounded lower bound, evict elements that fall outside the lower
-         *   bound, append the current element (if not null), and extend the top of the frame by
-         *   scanning forward, pushing qualifying values into the monotonic deque. The deque holds
-         *   candidate maxima; the current max is the deque head or `Numbers.LONG_NULL` when empty.
+         * bound, append the current element (if not null), and extend the top of the frame by
+         * scanning forward, pushing qualifying values into the monotonic deque. The deque holds
+         * candidate maxima; the current max is the deque head or `Numbers.LONG_NULL` when empty.
          * - If the frame lower bound is unbounded, append the current element (if not null) and
-         *   recompute the max by scanning buffered elements that meet the top bound criteria.</p>
+         * recompute the max by scanning buffered elements that meet the top bound criteria.</p>
          *
          * <p>Side effects:
          * - Mutates internal buffer state: startOffset, capacity, firstIdx, size, frameSize
-         *   and may grow `memory` and `dequeMemory` (reallocating and copying existing contents).
+         * and may grow `memory` and `dequeMemory` (reallocating and copying existing contents).
          * - Mutates deque indices (dequeStartIndex, dequeEndIndex) and writes deque entries.
          * - Updates `maxMin` to the current maximum or `Numbers.LONG_NULL` if no candidates exist.</p>
          *
@@ -1563,20 +1563,6 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Returns the current computed maximum timestamp for this window function.
-         *
-         * The provided Record argument is not used by this implementation; the result is taken
-         * from the function's internal state.
-         *
-         * @param rec ignored
-         * @return the current max timestamp stored in this function's state
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return maxMin;
-        }
-
-        /**
          * Returns the window function's name.
          *
          * @return the name used to identify this function instance
@@ -1597,6 +1583,20 @@ boolean compare(long a, long b);
         }
 
         /**
+         * Returns the current computed maximum timestamp for this window function.
+         * <p>
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return maxMin;
+        }
+
+        /**
          * Not applicable for this implementation; calling it always fails.
          *
          * @throws UnsupportedOperationException always thrown because this window function does not use a separate pass1 phase
@@ -1608,7 +1608,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset and initialize internal buffers and indices for a new execution/reopen.
-         *
+         * <p>
          * Reinitializes the running maximum to null, resets ring buffer and deque sizes and indices,
          * and (re)allocates contiguous memory regions for the frame and optional deque using the
          * configured initial capacities. If `dequeMemory` is null, deque-related fields are left unset.
@@ -1631,7 +1631,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function state and release any allocated off-heap resources.
-         *
+         * <p>
          * Calls the superclass reset behavior, closes the primary frame memory, and closes
          * the optional deque memory if it was allocated.
          */
@@ -1646,7 +1646,7 @@ boolean compare(long a, long b);
 
         /**
          * Writes the SQL plan fragment for this window function into the supplied PlanSink.
-         *
+         * <p>
          * The emitted fragment has the form:
          * "<name>(<arg>) over (range between <lower> preceding and <upper>)", where
          * "<lower>" is either the numeric lower bound or "unbounded" when the lower
@@ -1730,22 +1730,22 @@ boolean compare(long a, long b);
          * <p>The constructor configures internal sizes and backing memory:
          * - Asserts that the frame is not the unbounded-previous-to-current special case (Long.MIN_VALUE, 0).
          * - If the lower bound is bounded (rowsLo > Long.MIN_VALUE) the instance keeps a bounded
-         *   sliding window: frameSize = rowsHi - rowsLo (+1 when rowsHi < 0) and bufferSize = |rowsLo|.
+         * sliding window: frameSize = rowsHi - rowsLo (+1 when rowsHi < 0) and bufferSize = |rowsLo|.
          * - If the lower bound is unbounded, frameSize = |rowsHi| and bufferSize = frameSize.
          * - frameIncludesCurrentValue is set when rowsHi == 0.
          * - The provided MemoryARW `memory` is used as the ring buffer; when the lower bound is bounded
-         *   the provided `dequeMemory` is used for the monotonic deque and dequeBufferSize is computed.
-         *
+         * the provided `dequeMemory` is used for the monotonic deque and dequeBufferSize is computed.
+         * <p>
          * The constructor initializes the buffers via initBuffer(); if buffer initialization throws,
          * resources are closed and the throwable is rethrown.
          *
-         * @param arg          function producing the timestamp values to aggregate
-         * @param rowsLo       lower bound of the rows frame (may be Long.MIN_VALUE for unbounded)
-         * @param rowsHi       upper bound of the rows frame (relative to current row)
-         * @param memory       pre-allocated memory to use for the ring buffer
-         * @param dequeMemory  pre-allocated memory to use for the deque; only used when lower bound is bounded
-         * @param comparator   comparator used to decide the max between two timestamps
-         * @param name         name used for function identification (e.g., "max")
+         * @param arg         function producing the timestamp values to aggregate
+         * @param rowsLo      lower bound of the rows frame (may be Long.MIN_VALUE for unbounded)
+         * @param rowsHi      upper bound of the rows frame (relative to current row)
+         * @param memory      pre-allocated memory to use for the ring buffer
+         * @param dequeMemory pre-allocated memory to use for the deque; only used when lower bound is bounded
+         * @param comparator  comparator used to decide the max between two timestamps
+         * @param name        name used for function identification (e.g., "max")
          */
         public MaxMinOverRowsFrameFunction(Function arg,
                                            long rowsLo,
@@ -1786,7 +1786,7 @@ boolean compare(long a, long b);
 
         /**
          * Releases resources held by this function.
-         *
+         * <p>
          * Closes the underlying buffer and, if present, the deque memory, and then invokes
          * superclass cleanup. Safe to call multiple times; null deque memory is ignored.
          */
@@ -1864,20 +1864,6 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Returns the current computed maximum timestamp for this window function.
-         *
-         * The provided Record argument is not used by this implementation; the result is taken
-         * from the function's internal state.
-         *
-         * @param rec ignored
-         * @return the current max timestamp stored in this function's state
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return maxMin;
-        }
-
-        /**
          * Returns the window function's name.
          *
          * @return the name used to identify this function instance
@@ -1898,12 +1884,26 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Compute the aggregate for the current input row and write the result to the output column.
+         * Returns the current computed maximum timestamp for this window function.
+         * <p>
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
          *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return maxMin;
+        }
+
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         * <p>
          * Calls computeNext(record) to update the internal max/min state, then writes that
          * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
          *
-         * @param record current input record to process
+         * @param record       current input record to process
          * @param recordOffset byte offset identifying the output row frame where the result should be written
          */
         @Override
@@ -1914,7 +1914,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function's internal state for a new execution pass.
-         *
+         * <p>
          * Clears the current max/min accumulator, resets the frame start index, reinitializes the ring
          * buffer, and, if a deque buffer is present, resets deque start/end indices.
          */
@@ -1950,7 +1950,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends a human-readable plan fragment for this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced fragment has the form: `max(arg) over ( rows between <lower> preceding and <upper> )`,
          * where `<lower>` is either the numeric lower bound or "unbounded", and `<upper>` is either "current row"
          * or a numeric preceding offset computed from the buffer size and frame size.
@@ -1977,7 +1977,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function to its initial state before scanning from the start.
-         *
+         * <p>
          * Calls the superclass reset, clears the current max/min sentinel, resets the frame index
          * and deque indices, and reinitializes the internal buffer(s) so the function can be reused
          * for a fresh pass over data.
@@ -1996,7 +1996,7 @@ boolean compare(long a, long b);
 
         /**
          * Initialize the ring buffer by setting each slot to the sentinel null timestamp.
-         *
+         * <p>
          * Writes Numbers.LONG_NULL at consecutive long-sized offsets for bufferSize entries
          * starting at offset 0.
          */
@@ -2041,7 +2041,7 @@ boolean compare(long a, long b);
 
         /**
          * Process the given record and update the per-partition maximum timestamp.
-         *
+         * <p>
          * Advances the partition key using the supplied record, reads the timestamp from
          * the argument function, and updates the partition's stored maximum if the
          * value is non-null and compares greater according to {@code comparator}.
@@ -2079,20 +2079,6 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Returns the current computed maximum timestamp for this window function.
-         *
-         * The provided Record argument is not used by this implementation; the result is taken
-         * from the function's internal state.
-         *
-         * @param rec ignored
-         * @return the current max timestamp stored in this function's state
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return maxMin;
-        }
-
-        /**
          * Returns the window function's name.
          *
          * @return the name used to identify this function instance
@@ -2113,12 +2099,26 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Compute the aggregate for the current input row and write the result to the output column.
+         * Returns the current computed maximum timestamp for this window function.
+         * <p>
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
          *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return maxMin;
+        }
+
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         * <p>
          * Calls computeNext(record) to update the internal max/min state, then writes that
          * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
          *
-         * @param record current input record to process
+         * @param record       current input record to process
          * @param recordOffset byte offset identifying the output row frame where the result should be written
          */
         @Override
@@ -2129,7 +2129,7 @@ boolean compare(long a, long b);
 
         /**
          * Append a SQL-style plan representation of this window function to the provided sink.
-         *
+         * <p>
          * The emitted text has the form:
          * `name(arg) over (partition by <partition expressions> rows between unbounded preceding and current row)`
          * and reflects that this function is applied with a partition clause and an unbounded-preceding-to-current-row rows frame.
@@ -2154,15 +2154,15 @@ boolean compare(long a, long b);
 
         /**
          * Create a MAX-over-unbounded-rows window function instance.
-         *
+         * <p>
          * This constructor builds a function that maintains the maximum timestamp seen so far
          * across all rows (no partitioning, unbounded preceding). The provided `arg` supplies
          * the timestamp value for each row; `comparator` is used to compare timestamps; `name`
          * is the function name returned by getName().
          *
-         * @param arg the input function that produces a timestamp value for each row
+         * @param arg        the input function that produces a timestamp value for each row
          * @param comparator comparator used to decide which timestamp is greater
-         * @param name the reported function name (e.g., "max")
+         * @param name       the reported function name (e.g., "max")
          */
         public MaxMinOverUnboundedRowsFrameFunction(Function arg, TimestampComparator comparator, String name) {
             super(arg);
@@ -2172,7 +2172,7 @@ boolean compare(long a, long b);
 
         /**
          * Consume the next input record and update the running maximum timestamp.
-         *
+         * <p>
          * Reads the timestamp from {@code arg} for the given {@code record}; if the value is not null
          * and is greater (per {@code comparator}) than the current stored value, replaces the stored
          * maximum with that timestamp.
@@ -2185,20 +2185,6 @@ boolean compare(long a, long b);
             if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
                 maxMin = l;
             }
-        }
-
-        /**
-         * Returns the current computed maximum timestamp for this window function.
-         *
-         * The provided Record argument is not used by this implementation; the result is taken
-         * from the function's internal state.
-         *
-         * @param rec ignored
-         * @return the current max timestamp stored in this function's state
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return maxMin;
         }
 
         /**
@@ -2222,12 +2208,26 @@ boolean compare(long a, long b);
         }
 
         /**
-         * Compute the aggregate for the current input row and write the result to the output column.
+         * Returns the current computed maximum timestamp for this window function.
+         * <p>
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
          *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return maxMin;
+        }
+
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         * <p>
          * Calls computeNext(record) to update the internal max/min state, then writes that
          * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
          *
-         * @param record current input record to process
+         * @param record       current input record to process
          * @param recordOffset byte offset identifying the output row frame where the result should be written
          */
         @Override
@@ -2238,7 +2238,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function's execution state for a new evaluation.
-         *
+         * <p>
          * Clears the accumulated maximum timestamp by setting {@code maxMin} to the null timestamp marker
          * so subsequent processing starts with an empty accumulator.
          */
@@ -2250,7 +2250,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends this function's textual plan representation to the provided PlanSink.
-         *
+         * <p>
          * The produced plan has the form: "<functionName>(<arg>) over (rows between unbounded preceding and current row)".
          */
         @Override
@@ -2262,7 +2262,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function to its initial state for reuse.
-         *
+         * <p>
          * Clears any accumulated maximum timestamp by setting {@code maxMin} to {@code Numbers.LONG_NULL}
          * and delegates common reset logic to the superclass via {@code super.toTop()}.
          */
@@ -2283,9 +2283,9 @@ boolean compare(long a, long b);
         /**
          * Constructs a window function that computes the maximum timestamp across the entire result set.
          *
-         * @param arg the input timestamp-producing function
+         * @param arg        the input timestamp-producing function
          * @param comparator comparator used to determine which timestamp is greater
-         * @param name the function name used for labeling/plan output
+         * @param name       the function name used for labeling/plan output
          */
         public MaxMinOverWholeResultSetFunction(Function arg, TimestampComparator comparator, String name) {
             super(arg);
@@ -2318,8 +2318,8 @@ boolean compare(long a, long b);
          * function and updates the running maximum (`maxMin`) if the timestamp is non-null and
          * greater according to the provided comparator.
          *
-         * @param record        the input record to read the timestamp from
-         * @param recordOffset  offset associated with the record (not used by this implementation)
+         * @param record       the input record to read the timestamp from
+         * @param recordOffset offset associated with the record (not used by this implementation)
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -2332,7 +2332,7 @@ boolean compare(long a, long b);
         /**
          * Writes the computed maximum timestamp for the current partition into the output column for the specified row.
          *
-         * @param record unused input record for this pass
+         * @param record       unused input record for this pass
          * @param recordOffset row identifier used by WindowSPI to locate the output slot
          */
         @Override
@@ -2342,7 +2342,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function's execution state for a new evaluation.
-         *
+         * <p>
          * Clears the accumulated maximum timestamp by setting {@code maxMin} to the null timestamp marker
          * so subsequent processing starts with an empty accumulator.
          */
@@ -2354,7 +2354,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function to its initial state for reuse.
-         *
+         * <p>
          * Clears any accumulated maximum timestamp by setting {@code maxMin} to {@code Numbers.LONG_NULL}
          * and delegates common reset logic to the superclass via {@code super.toTop()}.
          */

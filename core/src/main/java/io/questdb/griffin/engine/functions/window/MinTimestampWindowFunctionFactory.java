@@ -60,14 +60,14 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
 
     /**
      * Creates a window-function instance that computes the minimum timestamp for the current window context.
-     *
+     * <p>
      * The concrete implementation is chosen based on the WindowContext (partitioning, framing mode — RANGE or ROWS,
      * ordering, and row bounds). The method may allocate native resources (maps and circular buffers) for stateful
      * implementations and ensures those resources are freed on allocation failure. If the window bounds specify an
      * empty frame (rowsHi < rowsLo) a TimestampNullFunction is returned.
      *
      * @param position parser position of the function call used for error reporting
-     * @param args the function arguments (first argument is the timestamp expression)
+     * @param args     the function arguments (first argument is the timestamp expression)
      * @return a Function that computes the minimum timestamp for the configured window
      * @throws SqlException if the WindowContext is invalid or the requested combination of framing/ordering/partitioning
      *                      is not supported
@@ -102,36 +102,48 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving min over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
-                    );
+                    Map map = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
+                        );
 
-                    return new MaxTimestampWindowFunctionFactory.MaxMinOverPartitionFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                        return new MaxTimestampWindowFunctionFactory.MaxMinOverPartitionFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                LESS_THAN,
+                                NAME
+                        );
+                    } catch (Throwable e) {
+                        Misc.free(map);
+                        throw e;
+                    }
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
-                    );
+                    Map map = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
+                        );
 
-                    return new MaxTimestampWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                        return new MaxTimestampWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                LESS_THAN,
+                                NAME
+                        );
+                    } catch (Throwable e) {
+                        Misc.free(map);
+                        throw e;
+                    }
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -188,20 +200,26 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
-                    );
+                    Map map = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
+                        );
 
-                    return new MaxTimestampWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                        return new MaxTimestampWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                args.get(0),
+                                LESS_THAN,
+                                NAME
+                        );
+                    } catch (Throwable e) {
+                        Misc.free(map);
+                        throw e;
+                    }
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
                     return new MaxTimestampWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
@@ -344,20 +362,20 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                     MemoryTag.NATIVE_CIRCULAR_BUFFER
                             );
                         }
+                        return new MaxTimestampWindowFunctionFactory.MaxMinOverRowsFrameFunction(
+                                args.get(0),
+                                rowsLo,
+                                rowsHi,
+                                mem,
+                                dequeMem,
+                                LESS_THAN,
+                                NAME
+                        );
                     } catch (Throwable e) {
                         Misc.free(mem);
                         Misc.free(dequeMem);
                         throw e;
                     }
-                    return new MaxTimestampWindowFunctionFactory.MaxMinOverRowsFrameFunction(
-                            args.get(0),
-                            rowsLo,
-                            rowsHi,
-                            mem,
-                            dequeMem,
-                            LESS_THAN,
-                            NAME
-                    );
                 }
             }
         }

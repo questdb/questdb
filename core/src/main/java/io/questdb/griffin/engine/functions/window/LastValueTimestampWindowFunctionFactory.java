@@ -81,18 +81,18 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
      * <p>This method validates the WindowContext for the given position and either:
      * - returns a TimestampNullFunction when the configured frame is empty (rowsHi &lt; rowsLo),
      * - or delegates to a specialized implementation that either ignores nulls or respects
-     *   nulls depending on WindowContext.isIgnoreNulls().</p>
+     * nulls depending on WindowContext.isIgnoreNulls().</p>
      *
      * <p>The chosen implementation is selected based on framing mode (ROWS vs RANGE),
      * partitioning and frame bounds inside the WindowContext.</p>
      *
-     * @param position invocation position in the SQL expression
-     * @param args function arguments (the first argument is the timestamp expression)
-     * @param argPositions source positions for arguments
-     * @param configuration Cairo configuration
+     * @param position            invocation position in the SQL expression
+     * @param args                function arguments (the first argument is the timestamp expression)
+     * @param argPositions        source positions for arguments
+     * @param configuration       Cairo configuration
      * @param sqlExecutionContext execution context carrying the WindowContext
      * @return a Function implementing the configured last_value window behavior (may be a
-     *         TimestampNullFunction when the frame is empty)
+     * TimestampNullFunction when the frame is empty)
      * @throws SqlException if window validation or function generation fails
      */
     @Override
@@ -126,15 +126,15 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
      * Create a specialized last_value(TIMESTAMP) window function implementation that
      * ignores NULLs, selecting the concrete strategy based on the window context
      * (partitioning, framing mode ROWS vs RANGE, frame bounds, and ordering).
-     *
+     * <p>
      * The returned Function handles all supported combinations for "ignore nulls"
      * semantics by instantiating optimized implementations (partitioned vs global,
      * rows-frame vs range-frame, unbounded/current/whole frames) and allocating any
      * required per-partition maps or circular buffers.
      *
-     * @param position  parser/token position used to report errors when the given window configuration is unsupported
-     * @param args      argument list for the function (expects the timestamp argument at index 0)
-     * @param windowContext  describes framing mode, bounds, partitioning and ordering used to choose the implementation
+     * @param position      parser/token position used to report errors when the given window configuration is unsupported
+     * @param args          argument list for the function (expects the timestamp argument at index 0)
+     * @param windowContext describes framing mode, bounds, partitioning and ordering used to choose the implementation
      * @return a Function that computes last_value(...) with NULLs ignored for the specified window configuration
      * @throws SqlException if the window configuration is not supported (for example, RANGE with non-designated timestamp ordering)
      */
@@ -326,13 +326,13 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     /**
      * Creates a concrete window-function implementation for `last_value` (respecting NULLs)
      * based on the provided window context, framing (ROWS/RANGE), partitioning and frame bounds.
-     *
+     * <p>
      * The factory selects and constructs one of several specialized Function implementations:
      * - partitioned vs non-partitioned variants,
      * - RANGE vs ROWS framing,
      * - unbounded/current/preceding frame bounds,
      * - range implementations that require ordering by the designated timestamp.
-     *
+     * <p>
      * The produced Function computes `last_value` while preserving NULL semantics (NULLs are not ignored).
      *
      * @param position parser/statement position used for SqlException diagnostics
@@ -541,7 +541,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Process a single input record and update the stored last timestamp.
-         *
+         * <p>
          * If the function argument's timestamp for the given record is not NULL,
          * updates the internal lastValue to that timestamp. NULL timestamps are ignored.
          *
@@ -553,20 +553,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             if (d != Numbers.LONG_NULL) {
                 lastValue = d;
             }
-        }
-
-        /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
         }
 
         /**
@@ -590,6 +576,20 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
+         *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
          * Indicates that this window function ignores NULL input values.
          *
          * @return true when NULLs are ignored by the function's computation
@@ -601,7 +601,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Computes the next last_value for the current input record and writes it into the output column.
-         *
+         * <p>
          * The method updates internal state by calling {@code computeNext(record)} and then writes the
          * current {@code lastValue} (stored as a long timestamp) into the memory address for the row
          * determined by {@code recordOffset} and {@code columnIndex} via the provided {@code WindowSPI}.
@@ -618,7 +618,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset the function state to its initial condition.
-         *
+         * <p>
          * Calls the superclass reset then clears the cached last timestamp by setting
          * {@code lastValue} to {@link Numbers#LONG_NULL}.
          */
@@ -630,7 +630,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends a textual execution-plan fragment describing this function.
-         *
+         * <p>
          * The produced fragment has the form:
          * `last_value(arg) ignore nulls over (rows between unbounded preceding and current row)`.
          */
@@ -643,7 +643,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset function state for top-of-window processing.
-         *
+         * <p>
          * Clears any previously stored last value and delegates common reset work to the superclass.
          */
         @Override
@@ -660,7 +660,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Creates a window function that returns the last non-null timestamp value for the current row frame.
-         *
+         * <p>
          * This implementation ignores NULLs and yields the argument's timestamp for the current row (used for
          * frames equivalent to `CURRENT ROW`).
          *
@@ -678,19 +678,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void computeNext(Record record) {
             value = arg.getTimestamp(record);
-        }
-
-        /**
-         * Returns the last tracked timestamp value.
-         *
-         * The supplied record is ignored; this function returns the internally stored timestamp.
-         *
-         * @param rec ignored record parameter
-         * @return the stored timestamp value (milliseconds since epoch)
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return value;
         }
 
         /**
@@ -714,6 +701,19 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the last tracked timestamp value.
+         * <p>
+         * The supplied record is ignored; this function returns the internally stored timestamp.
+         *
+         * @param rec ignored record parameter
+         * @return the stored timestamp value (milliseconds since epoch)
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        /**
          * Indicates that this window function ignores NULL input values.
          *
          * @return true when NULLs are ignored by the function's computation
@@ -726,11 +726,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Advance the function's state for the given input record and write the resulting timestamp
          * to the output column at the provided record offset.
-         *
+         * <p>
          * This computes the next value for the window function (updating internal state) and stores
          * the computed timestamp into the output column slot identified by recordOffset.
          *
-         * @param record the input record used to compute the next value
+         * @param record       the input record used to compute the next value
          * @param recordOffset byte offset of the output row where the result should be written
          */
         @Override
@@ -795,12 +795,12 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * First-pass handler that records the last non-null timestamp for the current partition if not already present.
-         *
+         * <p>
          * For the given input record this method:
          * - materializes the partition key from `record`,
          * - looks up the partition in `map`,
          * - if the partition has no stored value and the argument timestamp is not null, stores that timestamp as the partition's last value.
-         *
+         * <p>
          * This method does not overwrite an existing per-partition value and ignores null timestamps.
          */
         @Override
@@ -819,18 +819,18 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Second-pass writer for a partitioned last_value aggregation.
-         *
+         * <p>
          * Looks up the current partition's stored timestamp in the per-partition map and writes it
          * into the output column at the provided recordOffset. If the partition has no stored value,
          * writes Numbers.LONG_NULL.
-         *
+         * <p>
          * The method updates the partitionByRecord from the supplied record, derives the map key via
          * partitionBySink, and writes the resulting long timestamp directly to the output memory
          * location returned by {@code spi.getAddress(recordOffset, columnIndex)}.
          *
-         * @param record the current input record used to resolve the partition key
+         * @param record       the current input record used to resolve the partition key
          * @param recordOffset byte offset in the output block where the result should be written
-         * @param spi runtime window SPI used to obtain the output memory address
+         * @param spi          runtime window SPI used to obtain the output memory address
          */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
@@ -851,7 +851,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Create a partitioned RANGE-frame implementation of LAST_VALUE that ignores NULLs.
-         *
+         * <p>
          * This constructor initializes per-partition state using the provided Map and memory ring
          * buffer and configures the frame bounds for [rangeLo, rangeHi]. If {@code rangeHi} is
          * zero the frame is considered to include the current row (sets {@code frameIncludesCurrentValue}
@@ -888,12 +888,12 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          *
          * <p>This method advances window state for the partition corresponding to the supplied record:
          * - looks up or creates the partition map entry containing ring-buffer metadata (start offset,
-         *   size, capacity, first index);
+         * size, capacity, first index);
          * - prunes entries outside the frame range based on configured maxDiff/minDiff bounds;
          * - appends the current record (timestamp and value) into the ring buffer when the argument value
-         *   is not NULL, expanding the buffer if needed;
+         * is not NULL, expanding the buffer if needed;
          * - adjusts the buffer's first index to locate the element that represents the last_value for the
-         *   current frame and updates the instance field {@code lastValue} accordingly;
+         * current frame and updates the instance field {@code lastValue} accordingly;
          * - writes updated ring-buffer metadata back into the map value.
          *
          * <p>State is stored in off-heap memory referenced by the map value. The memory layout for each
@@ -1078,7 +1078,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          * - loads or initializes partition state (buffer start offset, lo index, and last seen value);
          * - reads the current row timestamp from the argument function and updates the in-memory ring buffer;
          * - computes the last non-null timestamp visible in the current frame according to
-         *   {@code frameIncludesCurrentValue} and {@code frameLoBounded} and stores it into the map;
+         * {@code frameIncludesCurrentValue} and {@code frameLoBounded} and stores it into the map;
          * - advances the partition's lo index (oldest element pointer) and persists state back to the map.</p>
          *
          * <p>Side effects: updates the provided partition {@code MapValue} (timestamp, lo index, start offset)
@@ -1149,20 +1149,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
-        }
-
-        /**
          * Returns the SQL name of this window function.
          *
          * @return the function name (constant {@link #NAME})
@@ -1183,6 +1169,20 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
+         *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
          * Indicates that this window function ignores NULL input values.
          *
          * @return true when NULLs are ignored by the function's computation
@@ -1194,7 +1194,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Computes the next last_value for the current input record and writes it into the output column.
-         *
+         * <p>
          * The method updates internal state by calling {@code computeNext(record)} and then writes the
          * current {@code lastValue} (stored as a long timestamp) into the memory address for the row
          * determined by {@code recordOffset} and {@code columnIndex} via the provided {@code WindowSPI}.
@@ -1211,7 +1211,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reopens the function, resetting any transient state from a previous lifecycle.
-         *
+         * <p>
          * This implementation delegates to the superclass and leaves memory allocation
          * deferred until first use (lazy allocation).
          */
@@ -1223,7 +1223,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset function state and release owned memory.
-         *
+         * <p>
          * Invokes the superclass reset logic and closes the associated MemoryARW instance
          * to free native resources used by this window function.
          */
@@ -1235,12 +1235,12 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends a human-readable plan entry for this window function to the given PlanSink.
-         *
+         * <p>
          * The produced text has the form:
          * "<name>(<arg>) ignore nulls over (partition by <partition-expr> rows between <bufferSize> preceding and <bound>)"
          * where <bound> is "current row" when the frame includes the current row, or
          * "<bufferSize + 1 - frameSize> preceding" otherwise.
-         *
+         * <p>
          * This is used to describe the function, its argument, the ignore-null behavior,
          * the partitioning expression, and the ROWS frame bounds in execution plans.
          */
@@ -1264,7 +1264,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset internal state when evaluation moves to the top of the partition/result set.
-         *
+         * <p>
          * Calls the superclass reset, truncates the backing memory buffer, and clears the
          * cached last timestamp value so the function starts fresh for the next evaluation.
          */
@@ -1282,11 +1282,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Creates a last_value window function that ignores NULLs for a RANGE frame.
          *
-         * @param rangeLo     lower bound of the RANGE frame (in ordering units, may be Long.MIN_VALUE for UNBOUNDED PRECEDING)
-         * @param rangeHi     upper bound of the RANGE frame (in ordering units, may be Long.MAX_VALUE for UNBOUNDED FOLLOWING)
-         * @param arg         function producing the timestamp value to evaluate
+         * @param rangeLo       lower bound of the RANGE frame (in ordering units, may be Long.MIN_VALUE for UNBOUNDED PRECEDING)
+         * @param rangeHi       upper bound of the RANGE frame (in ordering units, may be Long.MAX_VALUE for UNBOUNDED FOLLOWING)
+         * @param arg           function producing the timestamp value to evaluate
          * @param configuration Cairo configuration used for memory sizing and limits
-         * @param timestampIdx index of the ordering timestamp within the input record (used to compare range bounds)
+         * @param timestampIdx  index of the ordering timestamp within the input record (used to compare range bounds)
          */
         public LastNotNullValueOverRangeFrameFunction(
                 long rangeLo,
@@ -1418,18 +1418,18 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Creates a rows-framed, ignore-null last_value implementation that keeps a sliding
          * ring buffer of recent timestamp values.
-         *
+         * <p>
          * The constructor computes internal buffer and frame sizes from the ROWS frame bounds:
          * - If rowsLo is finite (not Long.MIN_VALUE), the frame is a bounded window of
-         *   size (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0)) and bufferSize is |rowsLo|.
+         * size (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0)) and bufferSize is |rowsLo|.
          * * Otherwise the frame is an unbounded-rows preceding frame with frameSize = |rowsHi|
-         *   and bufferSize = frameSize.
+         * and bufferSize = frameSize.
          * It also records whether the frame includes the current row (rowsHi == 0) and
          * initializes the provided MemoryARW as the underlying ring buffer.
-         *
+         * <p>
          * Precondition: not both rowsLo == Long.MIN_VALUE and rowsHi == 0 (asserted).
          *
-         * @param arg the input function that produces timestamp values for each row
+         * @param arg    the input function that produces timestamp values for each row
          * @param rowsLo lower bound of the ROWS frame (can be Long.MIN_VALUE for UNBOUNDED PRECEDING)
          * @param rowsHi upper bound of the ROWS frame (0 when the frame includes current row)
          * @param memory preallocated MemoryARW used as the ring buffer storage for timestamps
@@ -1454,7 +1454,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Releases resources held by this function instance.
-         *
+         * <p>
          * Calls the superclass {@code close()} and closes the internal {@code buffer}.
          */
         @Override
@@ -1473,14 +1473,14 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          *
          * <p>Behavior summary:
          * - If the current row's timestamp is non-null and {@code frameIncludesCurrentValue} is true,
-         *   the current timestamp becomes the new {@code lastValue}.
+         * the current timestamp becomes the new {@code lastValue}.
          * - Otherwise, when the frame has a lower bound ({@code frameLoBounded}):
-         *   - Prefer the newest element in the frame (at index {@code loIdx + frameSize - 1}) if non-null.
-         *   - If that slot is null and {@code lastValue} is null, scan backwards within the frame
-         *     to find the most recent non-null timestamp and use it as {@code lastValue}.
-         *   - If a non-null {@code lastValue} already exists, keep it.
+         * - Prefer the newest element in the frame (at index {@code loIdx + frameSize - 1}) if non-null.
+         * - If that slot is null and {@code lastValue} is null, scan backwards within the frame
+         * to find the most recent non-null timestamp and use it as {@code lastValue}.
+         * - If a non-null {@code lastValue} already exists, keep it.
          * - If the frame has no lower bound, prefer the element at {@code loIdx}; if that is null,
-         *   fall back to {@code cacheValue}.
+         * fall back to {@code cacheValue}.
          *
          * <p>After computing {@code lastValue}, the method updates {@code cacheValue} to the computed
          * value, unless that value is the element being evicted from the buffer (in which case
@@ -1528,20 +1528,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
-        }
-
-        /**
          * Returns the SQL name of this window function.
          *
          * @return the function name (constant {@link #NAME})
@@ -1562,6 +1548,20 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
+         *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
          * Indicates that this window function ignores NULL input values.
          *
          * @return true when NULLs are ignored by the function's computation
@@ -1573,7 +1573,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Computes the next last_value for the current input record and writes it into the output column.
-         *
+         * <p>
          * The method updates internal state by calling {@code computeNext(record)} and then writes the
          * current {@code lastValue} (stored as a long timestamp) into the memory address for the row
          * determined by {@code recordOffset} and {@code columnIndex} via the provided {@code WindowSPI}.
@@ -1590,7 +1590,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reopens the function instance by resetting internal state for a new scan.
-         *
+         * <p>
          * Sets the cached last timestamp to NULL, resets the lowest buffer index and
          * reinitializes the internal ring buffer so the function can be reused safely.
          */
@@ -1603,7 +1603,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset the function to its initial state for reuse.
-         *
+         * <p>
          * Calls the superclass reset, closes the internal ring buffer, clears cached and last
          * timestamp values (setting them to NULL), and resets the low index pointer.
          */
@@ -1618,7 +1618,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends this function's execution-plan fragment to the given PlanSink.
-         *
+         * <p>
          * The generated fragment has the form:
          * `last_value(<arg>) ignore nulls over ( rows between <bufferSize> preceding and <N> preceding )`
          * or when the frame includes the current row:
@@ -1661,7 +1661,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Initialize the internal ring buffer by setting each slot to the sentinel `Numbers.LONG_NULL`.
-         *
+         * <p>
          * Marks `bufferSize` consecutive long slots (at offsets 0, 8, 16, ...) as empty/unset.
          */
         private void initBuffer() {
@@ -1682,10 +1682,10 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          * Construct a partitioned, ROWS-framed `last_value` implementation that ignores NULLs
          * for windows defined as "UNBOUNDED PRECEDING ... CURRENT ROW".
          *
-         * @param map per-partition state map used to track the last non-null value for each partition
+         * @param map               per-partition state map used to track the last non-null value for each partition
          * @param partitionByRecord record providing the partition key for the current row
-         * @param partitionBySink sink used to write the partition key into the map key
-         * @param arg function that produces the timestamp value evaluated by this window function
+         * @param partitionBySink   sink used to write the partition key into the map key
+         * @param arg               function that produces the timestamp value evaluated by this window function
          */
         public LastNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1693,16 +1693,16 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Compute and store the last non-null timestamp for the partition of the supplied record.
-         *
+         * <p>
          * Looks up (or creates) the partition entry in the map using partitionByRecord and partitionBySink,
          * then reads the argument timestamp for the current record:
          * - If this is a newly created partition entry, the timestamp value (including LONG_NULL) is stored
-         *   into the map and assigned to the instance field `value`.
+         * into the map and assigned to the instance field `value`.
          * - If the partition entry already exists and the argument timestamp is not LONG_NULL, the map is
-         *   updated with the new timestamp and `value` is set to it.
+         * updated with the new timestamp and `value` is set to it.
          * - If the partition entry exists and the argument timestamp is LONG_NULL, the previously stored
-         *   timestamp from the map is assigned to `value` (no map update).
-         *
+         * timestamp from the map is assigned to `value` (no map update).
+         * <p>
          * Side effects: mutates partitionByRecord, the map (inserting/updating the MapValue), and the
          * instance field `value`.
          */
@@ -1727,19 +1727,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Returns the last tracked timestamp value.
-         *
-         * The supplied record is ignored; this function returns the internally stored timestamp.
-         *
-         * @param rec ignored record parameter
-         * @return the stored timestamp value (milliseconds since epoch)
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return value;
-        }
-
-        /**
          * Returns the SQL name of this window function.
          *
          * @return the function name (constant {@link #NAME})
@@ -1760,6 +1747,19 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the last tracked timestamp value.
+         * <p>
+         * The supplied record is ignored; this function returns the internally stored timestamp.
+         *
+         * @param rec ignored record parameter
+         * @return the stored timestamp value (milliseconds since epoch)
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        /**
          * Indicates that this window function ignores NULL input values.
          *
          * @return true when NULLs are ignored by the function's computation
@@ -1772,11 +1772,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Advance the function's state for the given input record and write the resulting timestamp
          * to the output column at the provided record offset.
-         *
+         * <p>
          * This computes the next value for the window function (updating internal state) and stores
          * the computed timestamp into the output column slot identified by recordOffset.
          *
-         * @param record the input record used to compute the next value
+         * @param record       the input record used to compute the next value
          * @param recordOffset byte offset of the output row where the result should be written
          */
         @Override
@@ -1787,7 +1787,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Append a human-readable execution plan fragment for this function to the given sink.
-         *
+         * <p>
          * The plan produced has the form:
          * `last_value(<arg>) ignore nulls over (partition by <partitionByFunctions> rows between unbounded preceding and current row)`.
          *
@@ -1861,12 +1861,12 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * First pass handler that captures the first non-null timestamp from the input stream.
-         *
+         * <p>
          * When invoked, if no value has been found yet, reads the timestamp from {@code arg} for
          * the given {@code record}. If the timestamp is not SQL NULL, stores it as the function's
          * value and marks it as found.
          *
-         * @param record the current row record
+         * @param record       the current row record
          * @param recordOffset byte offset of the record in the current data page (unused by this implementation)
          */
         @Override
@@ -1882,11 +1882,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Writes the function's current timestamp value into the output column for the given row.
-         *
+         * <p>
          * This method computes the destination address for the output column using the provided
          * WindowSPI and recordOffset, then stores the long timestamp value directly into memory.
          *
-         * @param record the current input record (unused by this implementation but provided by the SPI)
+         * @param record       the current input record (unused by this implementation but provided by the SPI)
          * @param recordOffset offset of the target output row within the window's memory region
          */
         @Override
@@ -1896,7 +1896,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset this function's internal state to its initial (pre-computation) values.
-         *
+         * <p>
          * Calls super.reset() and clears the stored timestamp and found flag so the
          * function behaves as if no rows have been processed.
          */
@@ -1909,7 +1909,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset this function to the top-of-window state.
-         *
+         * <p>
          * Calls the superclass implementation and clears the cached last-value state:
          * sets the stored timestamp to `LONG_NULL` and clears the `found` flag so
          * subsequent processing starts fresh for a new window/top context.
@@ -1932,9 +1932,9 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Creates a LastValueIncludeCurrentFrameFunction.
          *
-         * @param rowsLo number of rows (or range lower bound) to look back from the current row; 0 for current-row-only
+         * @param rowsLo  number of rows (or range lower bound) to look back from the current row; 0 for current-row-only
          * @param isRange true when the frame is a RANGE frame, false when it is a ROWS frame
-         * @param arg the argument function that provides the timestamp values this window function evaluates
+         * @param arg     the argument function that provides the timestamp values this window function evaluates
          */
         public LastValueIncludeCurrentFrameFunction(long rowsLo, boolean isRange, Function arg) {
             super(arg);
@@ -1950,19 +1950,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void computeNext(Record record) {
             value = arg.getTimestamp(record);
-        }
-
-        /**
-         * Returns the last tracked timestamp value.
-         *
-         * The supplied record is ignored; this function returns the internally stored timestamp.
-         *
-         * @param rec ignored record parameter
-         * @return the stored timestamp value (milliseconds since epoch)
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return value;
         }
 
         /**
@@ -1986,13 +1973,26 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the last tracked timestamp value.
+         * <p>
+         * The supplied record is ignored; this function returns the internally stored timestamp.
+         *
+         * @param rec ignored record parameter
+         * @return the stored timestamp value (milliseconds since epoch)
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        /**
          * Advance the function's state for the given input record and write the resulting timestamp
          * to the output column at the provided record offset.
-         *
+         * <p>
          * This computes the next value for the window function (updating internal state) and stores
          * the computed timestamp into the output column slot identified by recordOffset.
          *
-         * @param record the input record used to compute the next value
+         * @param record       the input record used to compute the next value
          * @param recordOffset byte offset of the output row where the result should be written
          */
         @Override
@@ -2003,7 +2003,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset the function's internal state to its initial condition.
-         *
+         * <p>
          * This clears any stored last-timestamp value and delegates common reset work
          * to the superclass.
          */
@@ -2015,7 +2015,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends a concise execution-plan fragment for this window function to the given PlanSink.
-         *
+         * <p>
          * The emitted fragment contains the function name and argument, an optional
          * "ignore nulls" marker, and the window frame clause (either "range between" or
          * "rows between") with the lower bound (numeric or "unbounded") followed by
@@ -2044,7 +2044,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset state for a new top-level pass.
-         *
+         * <p>
          * Delegates general reset logic to the superclass and clears the stored timestamp value
          * by setting {@code value} to {@link io.questdb.std.Numbers#LONG_NULL}.
          */
@@ -2066,17 +2066,17 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Creates a partitioned last_value implementation for frames that always include the current row.
-         *
+         * <p>
          * This constructor builds a per-partition function that evaluates `last_value()` where the frame
          * includes the current row (e.g., `... BETWEEN ... AND CURRENT ROW`). It supports both ROWS and
          * RANGE modes.
          *
-         * @param rowsLo number of rows (if ROWS) or range lower bound (if RANGE) relative to the current row;
-         *               represents the frame's lower bound (preceding offset)
-         * @param isRange true when the frame is a RANGE frame, false when it is a ROWS frame
+         * @param rowsLo            number of rows (if ROWS) or range lower bound (if RANGE) relative to the current row;
+         *                          represents the frame's lower bound (preceding offset)
+         * @param isRange           true when the frame is a RANGE frame, false when it is a ROWS frame
          * @param partitionByRecord record describing the partition key for per-partition state
-         * @param partitionBySink sink used to serialize partition key values
-         * @param arg the argument function producing the timestamp values evaluated by last_value
+         * @param partitionBySink   sink used to serialize partition key values
+         * @param arg               the argument function producing the timestamp values evaluated by last_value
          */
         public LastValueIncludeCurrentPartitionRowsFrameFunction(long rowsLo, boolean isRange, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(null, partitionByRecord, partitionBySink, arg);
@@ -2092,19 +2092,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public void computeNext(Record record) {
             value = arg.getTimestamp(record);
-        }
-
-        /**
-         * Returns the last tracked timestamp value.
-         *
-         * The supplied record is ignored; this function returns the internally stored timestamp.
-         *
-         * @param rec ignored record parameter
-         * @return the stored timestamp value (milliseconds since epoch)
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return value;
         }
 
         /**
@@ -2128,13 +2115,26 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
+         * Returns the last tracked timestamp value.
+         * <p>
+         * The supplied record is ignored; this function returns the internally stored timestamp.
+         *
+         * @param rec ignored record parameter
+         * @return the stored timestamp value (milliseconds since epoch)
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        /**
          * Advance the function's state for the given input record and write the resulting timestamp
          * to the output column at the provided record offset.
-         *
+         * <p>
          * This computes the next value for the window function (updating internal state) and stores
          * the computed timestamp into the output column slot identified by recordOffset.
          *
-         * @param record the input record used to compute the next value
+         * @param record       the input record used to compute the next value
          * @param recordOffset byte offset of the output row where the result should be written
          */
         @Override
@@ -2145,7 +2145,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends a textual execution-plan representation of this function to the given PlanSink.
-         *
+         * <p>
          * The emitted plan has the form:
          * `name(arg) [ignore nulls] over (partition by <partitionFuncs> [range|rows] between <n|unbounded> preceding and current row)`.
          * If {@code rowsLo == Long.MIN_VALUE} the method prints "unbounded" for the lower bound; otherwise it prints the absolute value of {@code rowsLo}.
@@ -2213,14 +2213,14 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Process a single input record for the first pass: update per-partition last-non-null timestamp
          * and write the current partition's last timestamp to the output column.
-         *
+         * <p>
          * For the record's partition key this method either creates a new map entry with the current
          * argument timestamp (if none existed) or reads the existing stored timestamp. The chosen
          * timestamp is then written to the output address computed from recordOffset and columnIndex.
          *
-         * @param record the input record being processed
+         * @param record       the input record being processed
          * @param recordOffset output memory offset for the current record where the result timestamp is written
-         * @param spi window service provider used to resolve the output address
+         * @param spi          window service provider used to resolve the output address
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -2259,17 +2259,17 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Constructs a partitioned RANGE-frame implementation of `last_value` for TIMESTAMP values.
-         *
+         * <p>
          * This constructor initializes frame bounds and ring-buffer configuration for a per-partition
          * range-based window. It computes internal flags and thresholds from the provided
          * rangeLo/rangeHi bounds and stores references to the partition map, argument function, and
          * backing memory for the ring buffer.
          *
-         * @param rangeLo inclusive lower bound of the RANGE frame relative to the current row's ordering value;
-         *                use Long.MIN_VALUE to indicate unbounded preceding
-         * @param rangeHi inclusive upper bound of the RANGE frame relative to the current row's ordering value
+         * @param rangeLo           inclusive lower bound of the RANGE frame relative to the current row's ordering value;
+         *                          use Long.MIN_VALUE to indicate unbounded preceding
+         * @param rangeHi           inclusive upper bound of the RANGE frame relative to the current row's ordering value
          * @param initialBufferSize initial capacity for the per-partition ring buffer (number of entries)
-         * @param timestampIdx index of the ordering timestamp column within the function's record layout
+         * @param timestampIdx      index of the ordering timestamp column within the function's record layout
          */
         public LastValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -2293,7 +2293,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Releases resources held by this function instance.
-         *
+         * <p>
          * Calls the superclass close, closes the associated MemoryARW buffer, and clears the internal free list.
          * Safe to call multiple times (idempotent) provided the underlying resources support repeated close.
          */
@@ -2307,15 +2307,15 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Advances per-partition ring buffer state for the incoming record and appends the record's
          * timestamp/value pair, maintaining frame bounds and updating the partition's last non-null value.
-         *
+         * <p>
          * This method:
          * - Loads the partition key from the supplied record and obtains or creates the partition map entry.
          * - Prunes buffered elements that fall outside the RANGE frame defined by minDiff/maxDiff.
          * - Ensures the per-partition ring buffer has capacity (growing it if needed) and appends the
-         *   current record's `[timestamp, value]` pair.
+         * current record's `[timestamp, value]` pair.
          * - Updates the stored buffer metadata (start offset, size, capacity, first index) in the map
-         *   and updates the function's lastValue to the newest in-frame non-null value.
-         *
+         * and updates the function's lastValue to the newest in-frame non-null value.
+         * <p>
          * Side effects: modifies off-heap ring-buffer memory, may expand that memory, and updates the
          * partition map entry used to persist buffer state across records.
          *
@@ -2418,20 +2418,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
-        }
-
-        /**
          * Returns the SQL name of this window function.
          *
          * @return the function name (constant {@link #NAME})
@@ -2452,12 +2438,26 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Unsupported first-pass operation for this function variant.
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
          *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
+         * Unsupported first-pass operation for this function variant.
+         * <p>
          * This implementation does not perform a pass1 aggregation. Calling it will always
          * throw an UnsupportedOperationException.
          *
-         * @param record the current record (unused)
+         * @param record       the current record (unused)
          * @param recordOffset the memory offset of the record (unused)
          * @throws UnsupportedOperationException always thrown when invoked
          */
@@ -2468,7 +2468,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reopens the function for a new processing pass and resets internal state.
-         *
+         * <p>
          * Calls the superclass reopen() and clears the stored last timestamp (sets it to LONG_NULL)
          * so the function starts with no remembered value.
          */
@@ -2480,7 +2480,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset the function's internal state to its initial condition.
-         *
+         * <p>
          * Calls super.reset(), closes the associated memory buffer, and clears the free-list used for buffer reuse.
          */
         @Override
@@ -2492,7 +2492,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends this function's plan representation to the given PlanSink.
-         *
+         * <p>
          * The fragment includes the function name and argument, an optional
          * "ignore nulls" marker, the PARTITION BY expression, and the RANGE frame
          * bounds (emits "unbounded" when the lower bound is unbounded).
@@ -2549,13 +2549,13 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Constructs a partitioned ROWS-frame last_value function that uses a per-partition ring buffer.
-         *
+         * <p>
          * The ring buffer capacity is initialized from the absolute value of the frame's high bound (rowsHi).
          *
-         * @param rowsLo  the lower bound of the ROWS frame (relative to the current row)
-         * @param rowsHi  the upper bound of the ROWS frame (relative to the current row); its absolute value
-         *                determines the initial ring buffer size
-         * @param memory  pre-allocated MemoryARW used to back the per-partition ring buffers
+         * @param rowsLo the lower bound of the ROWS frame (relative to the current row)
+         * @param rowsHi the upper bound of the ROWS frame (relative to the current row); its absolute value
+         *               determines the initial ring buffer size
+         * @param memory pre-allocated MemoryARW used to back the per-partition ring buffers
          */
         public LastValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -2620,20 +2620,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
-        }
-
-        /**
          * Returns the SQL name of this window function.
          *
          * @return the function name (constant {@link #NAME})
@@ -2654,8 +2640,22 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Computes the next last_value for the current input record and writes it into the output column.
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
          *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
+         * Computes the next last_value for the current input record and writes it into the output column.
+         * <p>
          * The method updates internal state by calling {@code computeNext(record)} and then writes the
          * current {@code lastValue} (stored as a long timestamp) into the memory address for the row
          * determined by {@code recordOffset} and {@code columnIndex} via the provided {@code WindowSPI}.
@@ -2672,7 +2672,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Prepare the function for reuse by reopening its state.
-         *
+         * <p>
          * Calls {@code super.reopen()} and resets the cached last timestamp to {@code Numbers.LONG_NULL}
          * so any per-call memory is allocated lazily on first use.
          */
@@ -2685,7 +2685,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset function state and release owned memory.
-         *
+         * <p>
          * Invokes the superclass reset logic and closes the associated MemoryARW instance
          * to free native resources used by this window function.
          */
@@ -2697,7 +2697,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends a textual plan representation of this window function to the provided PlanSink.
-         *
+         * <p>
          * The output includes the function name and argument, an optional "ignore nulls" marker,
          * the PARTITION BY expression(s), and the ROWS frame bounds. If the lower bound equals
          * Long.MAX_VALUE it is rendered as "unbounded"; the upper bound is rendered as the
@@ -2728,7 +2728,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset internal state when evaluation moves to the top of the partition/result set.
-         *
+         * <p>
          * Calls the superclass reset, truncates the backing memory buffer, and clears the
          * cached last timestamp value so the function starts fresh for the next evaluation.
          */
@@ -2760,15 +2760,15 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Construct a range-framed last_value window function for TIMESTAMP values.
-         *
+         * <p>
          * Initializes frame bounds, computes min/max time diffs used to evict out-of-frame entries,
          * and allocates a circular native memory ring buffer sized from the Cairo configuration.
          *
-         * @param rangeLo      lower RANGE bound relative to current row (use Long.MIN_VALUE for unbounded)
-         * @param rangeHi      upper RANGE bound relative to current row
-         * @param arg          argument function that produces the timestamp values
+         * @param rangeLo       lower RANGE bound relative to current row (use Long.MIN_VALUE for unbounded)
+         * @param rangeHi       upper RANGE bound relative to current row
+         * @param arg           argument function that produces the timestamp values
          * @param configuration Cairo configuration used to determine page size and max pages for the buffer
-         * @param timestampIdx index of the timestamp column within stored records (used by range logic)
+         * @param timestampIdx  index of the timestamp column within stored records (used by range logic)
          */
         public LastValueOverRangeFrameFunction(
                 long rangeLo,
@@ -2791,7 +2791,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Releases resources held by this function and its memory buffer.
-         *
+         * <p>
          * Calls the superclass close logic and then closes the associated MemoryARW to free native memory.
          */
         @Override
@@ -2815,7 +2815,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          *       then appends the current [timestamp, value] pair into the buffer and updates {@code size},
          *       {@code firstIdx}, {@code capacity}, and {@code startOffset} as needed.</li>
          * </ul>
-         *
+         * <p>
          * The method mutates internal state fields including the ring buffer memory, {@code firstIdx},
          * {@code size}, {@code capacity}, {@code startOffset}, and {@code lastValue}.
          *
@@ -2892,20 +2892,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
-        }
-
-        /**
          * Returns the SQL name of this window function.
          *
          * @return the function name (constant {@link #NAME})
@@ -2926,12 +2912,26 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Unsupported first-pass operation for this function variant.
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
          *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
+         * Unsupported first-pass operation for this function variant.
+         * <p>
          * This implementation does not perform a pass1 aggregation. Calling it will always
          * throw an UnsupportedOperationException.
          *
-         * @param record the current record (unused)
+         * @param record       the current record (unused)
          * @param recordOffset the memory offset of the record (unused)
          * @throws UnsupportedOperationException always thrown when invoked
          */
@@ -2958,7 +2958,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset function state and release owned memory.
-         *
+         * <p>
          * Invokes the superclass reset logic and closes the associated MemoryARW instance
          * to free native resources used by this window function.
          */
@@ -2970,10 +2970,10 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends this function's execution-plan fragment to the given PlanSink.
-         *
+         * <p>
          * The produced text looks like:
          * `last_value(<arg>) [ignore nulls] over (range between <maxDiff|unbounded> preceding and <minDiff> preceding)`
-         *
+         * <p>
          * This describes a RANGE frame with the function argument, optional "ignore nulls" flag,
          * and the lower/upper range bounds (either a numeric maxDiff or "unbounded" for the lower bound,
          * and minDiff for the upper bound).
@@ -2999,7 +2999,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset the function's transient state to the top of processing.
-         *
+         * <p>
          * Clears the tracked last value, resets buffer capacity and indices, truncates
          * the backing memory buffer and prepares start offsets so the ring buffer is
          * empty and ready to be reused from the beginning.
@@ -3028,7 +3028,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         /**
          * Constructs a ROWS-frame LastValue function that uses a ring buffer backed by the provided memory.
          *
-         * @param arg the input function that produces timestamp values for each row
+         * @param arg    the input function that produces timestamp values for each row
          * @param rowsLo lower bound of the ROWS frame (relative to the current row)
          * @param rowsHi upper bound of the ROWS frame (relative to the current row); its absolute value is used to set the buffer capacity
          * @param memory writable memory region used as the ring buffer storage
@@ -3043,7 +3043,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Releases resources held by this function instance.
-         *
+         * <p>
          * Calls the superclass {@code close()} and closes the internal {@code buffer}.
          */
         @Override
@@ -3054,7 +3054,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Advance the rows-based ring buffer for the current row.
-         *
+         * <p>
          * Reads the timestamp currently at the buffer position indicated by {@code loIdx}
          * into the field {@code lastValue}, overwrites that slot with the timestamp
          * produced by {@code arg.getTimestamp(record)}, and advances {@code loIdx}
@@ -3067,20 +3067,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             lastValue = buffer.getLong((long) loIdx * Long.BYTES);
             buffer.putLong((long) loIdx * Long.BYTES, arg.getTimestamp(record));
             loIdx = (loIdx + 1) % bufferSize;
-        }
-
-        /**
-         * Returns the current last_value timestamp computed for the window.
-         *
-         * The provided record is ignored; this method returns the internally tracked
-         * last timestamp value for the current frame/partition.
-         *
-         * @param rec the record passed by the caller (ignored)
-         * @return the last seen timestamp value for the current window
-         */
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastValue;
         }
 
         /**
@@ -3104,8 +3090,22 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         /**
-         * Computes the next last_value for the current input record and writes it into the output column.
+         * Returns the current last_value timestamp computed for the window.
+         * <p>
+         * The provided record is ignored; this method returns the internally tracked
+         * last timestamp value for the current frame/partition.
          *
+         * @param rec the record passed by the caller (ignored)
+         * @return the last seen timestamp value for the current window
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return lastValue;
+        }
+
+        /**
+         * Computes the next last_value for the current input record and writes it into the output column.
+         * <p>
          * The method updates internal state by calling {@code computeNext(record)} and then writes the
          * current {@code lastValue} (stored as a long timestamp) into the memory address for the row
          * determined by {@code recordOffset} and {@code columnIndex} via the provided {@code WindowSPI}.
@@ -3122,7 +3122,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reopens the function instance by resetting internal state for a new scan.
-         *
+         * <p>
          * Sets the cached last timestamp to NULL, resets the lowest buffer index and
          * reinitializes the internal ring buffer so the function can be reused safely.
          */
@@ -3135,7 +3135,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Resets the function's internal state to its initial condition.
-         *
+         * <p>
          * Calls the superclass reset, closes and releases the ring buffer, clears the cached
          * last value (sets it to SQL NULL), and resets the low index pointer to 0.
          */
@@ -3149,7 +3149,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Appends a textual execution-plan fragment for this window function to the given sink.
-         *
+         * <p>
          * The fragment includes the function name and its argument, an optional
          * "ignore nulls" clause, and a ROWS frame description of the form
          * "rows between <lo> preceding and <bufferSize> preceding". If `rowsLo`
@@ -3176,7 +3176,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset internal state to the top of processing so the function can start fresh.
-         *
+         * <p>
          * Clears the stored last timestamp, resets the low index used by the ring buffer,
          * reinitializes the buffer storage, and delegates common reset work to the superclass.
          */
@@ -3190,7 +3190,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Initialize the internal ring buffer by setting each slot to the sentinel `Numbers.LONG_NULL`.
-         *
+         * <p>
          * Marks `bufferSize` consecutive long slots (at offsets 0, 8, 16, ...) as empty/unset.
          */
         private void initBuffer() {
@@ -3240,7 +3240,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          * timestamp from {@code arg} and stores it; on every call it writes the stored timestamp to
          * the SPI-backed output slot.
          *
-         * @param record source record to evaluate
+         * @param record       source record to evaluate
          * @param recordOffset memory offset (as provided by the WindowSPI) where the result must be written
          */
         @Override
@@ -3254,7 +3254,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset this function's internal state to its initial (pre-computation) values.
-         *
+         * <p>
          * Calls super.reset() and clears the stored timestamp and found flag so the
          * function behaves as if no rows have been processed.
          */
@@ -3267,7 +3267,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
         /**
          * Reset this function to the top-of-window state.
-         *
+         * <p>
          * Calls the superclass implementation and clears the cached last-value state:
          * sets the stored timestamp to `LONG_NULL` and clears the `found` flag so
          * subsequent processing starts fresh for a new window/top context.

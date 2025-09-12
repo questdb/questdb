@@ -86,10 +86,10 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
      * whole-result-set two-pass, memory-backed ring buffers with optional deque for sliding frames,
      * or a LongNullFunction for invalid bounds).</p>
      *
-     * @param position      parser/position index used to report errors
-     * @param args          function argument list (expected to contain the long-valued expression)
-     * @param argPositions  positions of the arguments (used for diagnostics)
-     * @param configuration execution configuration (used for allocating buffers) — not documented as a parameter per project convention
+     * @param position            parser/position index used to report errors
+     * @param args                function argument list (expected to contain the long-valued expression)
+     * @param argPositions        positions of the arguments (used for diagnostics)
+     * @param configuration       execution configuration (used for allocating buffers) — not documented as a parameter per project convention
      * @param sqlExecutionContext execution context containing the WindowContext and runtime state — not documented as a parameter per project convention
      * @return a Function specialized for computing the MAX(long) over the configured window
      * @throws SqlException if the requested RANGE frame is used without ordering by the designated timestamp
@@ -383,13 +383,13 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     @FunctionalInterface
     public interface LongComparator {
         /**
- * Compare two primitive long values.
- *
- * @param a first value
- * @param b second value
- * @return {@code true} if {@code a} is greater than {@code b}; {@code false} otherwise
- */
-boolean compare(long a, long b);
+         * Compare two primitive long values.
+         *
+         * @param a first value
+         * @param b second value
+         * @return {@code true} if {@code a} is greater than {@code b}; {@code false} otherwise
+         */
+        boolean compare(long a, long b);
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
@@ -400,7 +400,7 @@ boolean compare(long a, long b);
 
         /**
          * Creates a window function that returns the argument's value from the current row.
-         *
+         * <p>
          * This implementation does not perform any windowing beyond reading the current record's value.
          *
          * @param arg  the input value expression whose current-row value will be returned
@@ -423,7 +423,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed value for the current row.
-         *
+         * <p>
          * The provided Record is ignored; this method returns the value stored by the function
          * (e.g., set during the preceding evaluation pass).
          *
@@ -458,7 +458,7 @@ boolean compare(long a, long b);
         /**
          * Computes the next value for the current input record and writes it as a long
          * into the function's output column for that row.
-         *
+         * <p>
          * The method updates internal computation state by calling computeNext(record)
          * and then stores the resulting long value at the output address obtained from
          * the provided WindowSPI for the given record offset and this function's
@@ -480,7 +480,7 @@ boolean compare(long a, long b);
 
         /**
          * Constructs a partition-based max/min window function.
-         *
+         * <p>
          * This instance evaluates the aggregate (max or min) over each partition using the
          * provided comparator to determine the ordering and the supplied name for identification.
          *
@@ -510,7 +510,7 @@ boolean compare(long a, long b);
 
         /**
          * Indicates the function requires two processing passes.
-         *
+         * <p>
          * The first pass aggregates values (e.g., computes a partition or global maximum)
          * and the second pass emits results for each row.
          *
@@ -523,15 +523,15 @@ boolean compare(long a, long b);
 
         /**
          * First pass: updates the per-partition maximum with the value from the current record.
-         *
+         * <p>
          * If the argument value is not NULL, this method obtains the partition key for the record,
          * looks up or creates the per-partition MapValue and stores the larger of the existing
          * stored value and the current value using the configured comparator.
-         *
+         * <p>
          * Side effects:
          * - Mutates the partition map backing store (inserting a new entry when needed or updating
-         *   an existing entry's stored maximum).
-         *
+         * an existing entry's stored maximum).
+         * <p>
          * Nulls are ignored (no map access or modification when the argument is `Numbers.LONG_NULL`).
          */
         @Override
@@ -555,12 +555,12 @@ boolean compare(long a, long b);
 
         /**
          * Writes the precomputed maximum value for the current partition to the output column for the given record.
-         *
+         * <p>
          * Looks up the partition key derived from {@code record} in the per-partition map; if a value is present,
          * its stored long is written to the output address obtained from {@code spi} and {@code recordOffset},
          * otherwise {@link Numbers#LONG_NULL} is written.
          *
-         * @param record the input record used to derive the partition key
+         * @param record       the input record used to derive the partition key
          * @param recordOffset the offset passed to WindowSPI used to obtain the output write address
          */
         @Override
@@ -607,19 +607,19 @@ boolean compare(long a, long b);
         /**
          * Constructs a partitioned RANGE-frame window function instance that computes the maximum
          * over a timestamp-based frame for each partition.
-         *
+         * <p>
          * The constructor initializes internal memory buffers, deque storage (optional), frame
          * boundary flags and comparison behavior used by the implementation.
          *
-         * @param rangeLo lower bound of the RANGE frame in timestamp units; Long.MIN_VALUE indicates unbounded preceding
-         * @param rangeHi upper bound of the RANGE frame in timestamp units; zero means the frame includes the current row's timestamp
-         * @param arg function that provides the value to be aggregated (input column)
-         * @param memory primary ring buffer storage for timestamp/value pairs for each partition
-         * @param dequeMemory optional deque storage used to maintain candidate maxima within the frame; may be null when not needed
+         * @param rangeLo           lower bound of the RANGE frame in timestamp units; Long.MIN_VALUE indicates unbounded preceding
+         * @param rangeHi           upper bound of the RANGE frame in timestamp units; zero means the frame includes the current row's timestamp
+         * @param arg               function that provides the value to be aggregated (input column)
+         * @param memory            primary ring buffer storage for timestamp/value pairs for each partition
+         * @param dequeMemory       optional deque storage used to maintain candidate maxima within the frame; may be null when not needed
          * @param initialBufferSize initial capacity (in rows) for the ring buffer(s)
-         * @param timestampIdx index of the designated timestamp column within the stored records
-         * @param comparator comparator used to determine the current maximum between two long values
-         * @param name human-readable name for the window function instance (used in planning/output)
+         * @param timestampIdx      index of the designated timestamp column within the stored records
+         * @param comparator        comparator used to determine the current maximum between two long values
+         * @param name              human-readable name for the window function instance (used in planning/output)
          */
         public MaxMinOverPartitionRangeFrameFunction(
                 Map map,
@@ -652,7 +652,7 @@ boolean compare(long a, long b);
 
         /**
          * Releases native resources and clears internal buffers used by the window function.
-         *
+         * <p>
          * Closes the primary memory region, clears internal free-list trackers, and closes
          * the optional deque memory if it was allocated. Also invokes the superclass {@code close()}
          * to perform any additional cleanup.
@@ -860,7 +860,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed max value for the current row.
-         *
+         * <p>
          * The provided Record parameter is ignored; this function returns the value
          * cached in the instance (set during pass1).
          *
@@ -904,7 +904,7 @@ boolean compare(long a, long b);
 
         /**
          * Reopens the function instance for reuse.
-         *
+         * <p>
          * Resets the cached maximum value to `LONG_NULL` and defers any memory
          * allocation until the value is first needed.
          */
@@ -935,7 +935,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends a textual plan fragment describing this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced fragment has the form:
          * `max(<arg>) over (partition by <partitionFunctions> range between <lower> preceding and <upper>)`
          * where `<lower>` is either the numeric `maxDiff` when the lower bound is bounded or `unbounded` otherwise,
@@ -965,7 +965,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset this function instance to its initial, empty state for reuse.
-         *
+         * <p>
          * Clears internal buffers and free lists and truncates associated off-heap memory
          * so the instance can be reused without retaining prior frame data.
          */
@@ -1006,22 +1006,22 @@ boolean compare(long a, long b);
          *
          * <p>Computations performed:
          * - If rowsLo is bounded (> Long.MIN_VALUE) the constructor treats the frame as having a
-         *   bounded number of preceding rows and sets frameSize, bufferSize and dequeBufferSize
-         *   accordingly.
+         * bounded number of preceding rows and sets frameSize, bufferSize and dequeBufferSize
+         * accordingly.
          * - If rowsLo is unbounded (Long.MIN_VALUE) the constructor treats the frame as having an
-         *   unbounded preceding side and sets buffer sizing for a bounded following side.
+         * unbounded preceding side and sets buffer sizing for a bounded following side.
          * - Determines whether the frame includes the current row (rowsHi == 0).
          * - Stores provided memory buffers and comparator for use by the frame implementation.</p>
          *
-         * @param rowsLo the lower rows bound (number of rows preceding current row). Use Long.MIN_VALUE
-         *               to indicate "UNBOUNDED PRECEDING".
-         * @param rowsHi the upper rows bound (number of rows following current row or 0 for current row).
-         * @param arg the input function that produces the long values to aggregate (the value source).
-         * @param memory a MemoryARW instance used as the primary ring buffer for timestamps/values.
+         * @param rowsLo      the lower rows bound (number of rows preceding current row). Use Long.MIN_VALUE
+         *                    to indicate "UNBOUNDED PRECEDING".
+         * @param rowsHi      the upper rows bound (number of rows following current row or 0 for current row).
+         * @param arg         the input function that produces the long values to aggregate (the value source).
+         * @param memory      a MemoryARW instance used as the primary ring buffer for timestamps/values.
          * @param dequeMemory optional MemoryARW used to store the monotonic deque when needed;
          *                    may be null if no deque is required.
-         * @param comparator comparator used to compare long values for determining the max.
-         * @param name descriptive name for the window function instance (used in plan/debug output).
+         * @param comparator  comparator used to compare long values for determining the max.
+         * @param name        descriptive name for the window function instance (used in plan/debug output).
          */
         public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
@@ -1058,7 +1058,7 @@ boolean compare(long a, long b);
 
         /**
          * Closes the window function and releases internal resources.
-         *
+         * <p>
          * Calls the superclass close implementation then closes the memory buffer used by this instance.
          */
         @Override
@@ -1073,11 +1073,11 @@ boolean compare(long a, long b);
          * <p>This method:
          * - Looks up or initializes per-partition state in the backing map.
          * - Maintains a circular buffer of recent values in native memory and an optional monotonic deque (for bounded lower frames)
-         *   to support O(1) retrieval of the frame maximum.
+         * to support O(1) retrieval of the frame maximum.
          * - Handles null input values by preserving nulls in the buffer but ignoring them when computing the max.
          * - Updates the partition map with the new buffer indices and deque metadata and writes the incoming value into memory.
          * - Sets the instance field `maxMin` to the current frame maximum (or `Numbers.LONG_NULL` if no non-null values are present).
-         *
+         * <p>
          * The implementation assumes `bufferSize`, `dequeBufferSize`, `frameSize`, `frameIncludesCurrentValue`, `frameLoBounded`,
          * `memory`, `dequeMemory`, `map`, `partitionByRecord`, `partitionBySink`, `arg`, `comparator`, and related fields are valid
          * and correctly configured by the surrounding class.
@@ -1186,7 +1186,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed max value for the current row.
-         *
+         * <p>
          * The provided Record parameter is ignored; this function returns the value
          * cached in the instance (set during pass1).
          *
@@ -1231,7 +1231,7 @@ boolean compare(long a, long b);
 
         /**
          * Reopens resources for reuse by the planner.
-         *
+         * <p>
          * Delegates to the superclass implementation. Called when the function instance is
          * reopened (for example when a plan is reused) to ensure internal state or resources
          * are reset or reinitialized as required by the parent class.
@@ -1259,7 +1259,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends a textual plan representation of this window function to the provided PlanSink.
-         *
+         * <p>
          * The representation has the form:
          * "<functionName>(<arg>) over (partition by <partitionKeys> rows between <lower> preceding and <upper>)"
          * where <lower> is either the numeric lower bound or "unbounded", and <upper> is either
@@ -1347,25 +1347,25 @@ boolean compare(long a, long b);
          * - records whether the lower frame bound is bounded,
          * - computes absolute distances used to evaluate frame membership,
          * - reserves space in the provided {@code memory} buffer for the ring of (timestamp,value)
-         *   records and, when the lower bound is bounded, reserves a parallel deque buffer in
-         *   {@code dequeMemory} for maintaining candidate maxima in monotonic order,
+         * records and, when the lower bound is bounded, reserves a parallel deque buffer in
+         * {@code dequeMemory} for maintaining candidate maxima in monotonic order,
          * - initializes bookkeeping fields (start index/offset, current frame size and current max).
-         *
+         * <p>
          * Note: If {@code rangeLo} is not Long.MIN_VALUE (bounded lower bound), a non-null
          * {@code dequeMemory} must be supplied so the deque structure can be allocated.
          *
-         * @param rangeLo lower bound of the RANGE frame in timestamp units, or {@link Long#MIN_VALUE}
-         *                to indicate an unbounded (unbounded preceding) lower bound
-         * @param rangeHi upper bound of the RANGE frame in timestamp units (absolute distance
-         *                used relative to the current row's timestamp)
-         * @param arg input value expression whose long values are aggregated
+         * @param rangeLo       lower bound of the RANGE frame in timestamp units, or {@link Long#MIN_VALUE}
+         *                      to indicate an unbounded (unbounded preceding) lower bound
+         * @param rangeHi       upper bound of the RANGE frame in timestamp units (absolute distance
+         *                      used relative to the current row's timestamp)
+         * @param arg           input value expression whose long values are aggregated
          * @param configuration used to determine initial buffer sizing (page-size)
-         * @param memory memory area used to store the ring buffer of records (timestamps + values)
-         * @param dequeMemory memory area used to store the deque when the lower bound is bounded;
-         *                    may be null if {@code rangeLo} is {@link Long#MIN_VALUE}
-         * @param timestampIdx index of the designated timestamp column used for RANGE comparisons
-         * @param comparator comparator used to select the max between two long values
-         * @param name function instance name (used for diagnostics / plan text)
+         * @param memory        memory area used to store the ring buffer of records (timestamps + values)
+         * @param dequeMemory   memory area used to store the deque when the lower bound is bounded;
+         *                      may be null if {@code rangeLo} is {@link Long#MIN_VALUE}
+         * @param timestampIdx  index of the designated timestamp column used for RANGE comparisons
+         * @param comparator    comparator used to select the max between two long values
+         * @param name          function instance name (used for diagnostics / plan text)
          */
         public MaxMinOverRangeFrameFunction(
                 long rangeLo,
@@ -1428,7 +1428,7 @@ boolean compare(long a, long b);
          * - Timestamps are read from the record at {@code timestampIndex}; the value is read via {@code arg.getLong(record)}.
          * - NULL long values are represented by {@link io.questdb.std.Numbers#LONG_NULL} and are not added to the deque.
          * - This method mutates internal state: ring buffer (startOffset, capacity, firstIdx, size), deque
-         *   (dequeStartOffset, dequeCapacity, dequeStartIndex, dequeEndIndex), frameSize and {@code maxMin}.
+         * (dequeStartOffset, dequeCapacity, dequeStartIndex, dequeEndIndex), frameSize and {@code maxMin}.
          * - Ring buffer and deque may be reallocated and moved; indices are adjusted accordingly.</p>
          *
          * @param record input record whose timestamp and value are used to advance the frame
@@ -1562,7 +1562,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed max value for the current row.
-         *
+         * <p>
          * The provided Record parameter is ignored; this function returns the value
          * cached in the instance (set during pass1).
          *
@@ -1606,7 +1606,7 @@ boolean compare(long a, long b);
 
         /**
          * Reinitializes internal state and allocates buffers to their initial capacities for reuse.
-         *
+         * <p>
          * Resets the running maximum to NULL, clears counters and indices (start index, first index,
          * frame size, and size), and (re)allocates the primary record buffer using the configured
          * initial capacity. If a deque buffer is used, it is likewise (re)allocated to the initial
@@ -1646,7 +1646,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends a textual representation of this window function's plan to the provided sink.
-         *
+         * <p>
          * The emitted format is:
          * `functionName(arg) over (range between <lower> preceding and <upper>)`
          * where `<lower>` is either the numeric `maxDiff` or the literal `unbounded`,
@@ -1674,7 +1674,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset this function's internal state and buffers to their initial "top" (clean) state.
-         *
+         * <p>
          * This reinitializes the aggregated max value, frame/structure sizes and indices, and
          * truncates and re-allocates the underlying ring and deque memories to the configured
          * initial capacities so the instance can be reused for a new plan or partition.
@@ -1720,19 +1720,19 @@ boolean compare(long a, long b);
 
         /**
          * Constructs a rows-frame max window function backed by native memory buffers.
-         *
+         * <p>
          * The constructor configures internal ring buffer and optional monotonic deque sizes from the
          * rows-based frame bounds and wires provided memory regions and comparator. For frames with a
          * bounded lower bound a deque buffer is used; for unbounded lower bounds no deque is allocated.
          *
-         * @param arg              input function producing long values for each row
-         * @param rowsLo           lower bound of the ROWS frame (negative values indicate preceding;
-         *                         Long.MIN_VALUE denotes unbounded preceding)
-         * @param rowsHi           upper bound of the ROWS frame (0 typically indicates inclusion of the current row)
-         * @param memory           native memory region used as the circular buffer for timestamps/values
-         * @param dequeMemory      native memory region used for the monotonic deque (only used when the lower bound is bounded)
-         * @param comparator       comparator used to determine the window aggregate (e.g., GREATER_THAN for max)
-         * @param name             name used for identification/plan output
+         * @param arg         input function producing long values for each row
+         * @param rowsLo      lower bound of the ROWS frame (negative values indicate preceding;
+         *                    Long.MIN_VALUE denotes unbounded preceding)
+         * @param rowsHi      upper bound of the ROWS frame (0 typically indicates inclusion of the current row)
+         * @param memory      native memory region used as the circular buffer for timestamps/values
+         * @param dequeMemory native memory region used for the monotonic deque (only used when the lower bound is bounded)
+         * @param comparator  comparator used to determine the window aggregate (e.g., GREATER_THAN for max)
+         * @param name        name used for identification/plan output
          */
         public MaxMinOverRowsFrameFunction(Function arg,
                                            long rowsLo,
@@ -1773,7 +1773,7 @@ boolean compare(long a, long b);
 
         /**
          * Release resources held by this instance.
-         *
+         * <p>
          * Calls super.close(), closes the primary buffer, and closes the optional deque memory if it was allocated.
          */
         @Override
@@ -1787,12 +1787,12 @@ boolean compare(long a, long b);
 
         /**
          * Advance the sliding-frame state by incorporating the given record.
-         *
+         * <p>
          * Updates internal circular buffer, optional monotonic deque, and the current window maximum (maxMin)
          * according to the configured frame semantics (bounded or unbounded lower bound and whether the
          * frame includes the current row). NULL long values (Numbers.LONG_NULL) are ignored for aggregation;
          * non-NULL values are compared using the configured comparator.
-         *
+         * <p>
          * Side effects:
          * - mutates the circular buffer storing recent row values,
          * - updates dequeStartIndex/dequeEndIndex and dequeMemory when a bounded lower frame is used,
@@ -1844,7 +1844,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed max value for the current row.
-         *
+         * <p>
          * The provided Record parameter is ignored; this function returns the value
          * cached in the instance (set during pass1).
          *
@@ -1889,7 +1889,7 @@ boolean compare(long a, long b);
 
         /**
          * Reinitializes internal state so the function can be reused without reallocating.
-         *
+         * <p>
          * Resets the cached max value to NULL, resets the low index pointer, reinitializes
          * the underlying circular buffer, and clears the monotonic deque indices if a
          * deque is in use.
@@ -1926,7 +1926,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends a textual plan fragment for this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced text has the form `max(arg) over ( rows between <lower> preceding and <upper> )`,
          * where `<lower>` is either the numeric lower bound (bufferSize) or `unbounded` when
          * `frameLoBounded` is false, and `<upper>` is `current row` when `frameIncludesCurrentValue`
@@ -1954,7 +1954,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset internal state to the top (start) so the function can be reused.
-         *
+         * <p>
          * Clears the currently tracked maximum, resets index counters, reinitializes
          * the circular buffer, and resets deque pointers when present.
          */
@@ -1972,7 +1972,7 @@ boolean compare(long a, long b);
 
         /**
          * Initialize the memory buffer by writing the sentinel LONG_NULL value into each slot.
-         *
+         * <p>
          * Each slot is a 64-bit long at offset i * Long.BYTES for i in [0, bufferSize).
          * This prepares the ring buffer/memory region so subsequent logic can treat empty slots as NULL.
          */
@@ -2016,7 +2016,7 @@ boolean compare(long a, long b);
 
         /**
          * Advance aggregation for the current record: update and store the per-partition maximum.
-         *
+         * <p>
          * If the input value is non-null, this method inserts or updates the partition map entry
          * with the greater of the existing stored value and the current value, and sets the
          * instance field `maxMin` to the partition's current maximum. If the input value is null,
@@ -2050,7 +2050,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed max value for the current row.
-         *
+         * <p>
          * The provided Record parameter is ignored; this function returns the value
          * cached in the instance (set during pass1).
          *
@@ -2095,7 +2095,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends this window function's plan representation to the provided PlanSink.
-         *
+         * <p>
          * The output format is:
          * "max(arg) over (partition by <partition-functions> rows between unbounded preceding and current row)"
          */
@@ -2121,9 +2121,9 @@ boolean compare(long a, long b);
          * Create a MaxMinOverUnboundedRowsFrameFunction that computes a running extreme (max/min)
          * over an unbounded-preceding ROWS frame.
          *
-         * @param arg       function that produces the long value for each row
+         * @param arg        function that produces the long value for each row
          * @param comparator comparator used to compare two long values (defines max vs min behavior)
-         * @param name      output column name used by this function instance
+         * @param name       output column name used by this function instance
          */
         public MaxMinOverUnboundedRowsFrameFunction(Function arg, LongComparator comparator, String name) {
             super(arg);
@@ -2133,7 +2133,7 @@ boolean compare(long a, long b);
 
         /**
          * Processes the given record and updates the running maximum value.
-         *
+         * <p>
          * Reads a long value from {@code arg} for the provided {@code record}. If the value is
          * not null and is greater (according to {@code comparator}) than the current
          * stored value, updates the internal {@code maxMin} to that value.
@@ -2150,7 +2150,7 @@ boolean compare(long a, long b);
 
         /**
          * Return the previously computed max value for the current row.
-         *
+         * <p>
          * The provided Record parameter is ignored; this function returns the value
          * cached in the instance (set during pass1).
          *
@@ -2195,7 +2195,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function's internal state between uses.
-         *
+         * <p>
          * Calls the superclass reset implementation and clears the current maximum
          * by setting {@code maxMin} to {@link Numbers#LONG_NULL}, so subsequent
          * passes start with no remembered value.
@@ -2208,7 +2208,7 @@ boolean compare(long a, long b);
 
         /**
          * Appends this window function's plan representation to the provided sink.
-         *
+         * <p>
          * The produced plan looks like: `max(arg) over (rows between unbounded preceding and current row)`.
          *
          * @param sink destination for the textual plan output
@@ -2243,9 +2243,9 @@ boolean compare(long a, long b);
         /**
          * Create a window function that computes an aggregate (max/min) for the whole result set.
          *
-         * @param arg the input function that produces long values to aggregate
+         * @param arg        the input function that produces long values to aggregate
          * @param comparator comparison used to decide the winning value (e.g. {@code GREATER_THAN} for max)
-         * @param name human-readable function name returned by getName()/toPlan()
+         * @param name       human-readable function name returned by getName()/toPlan()
          */
         public MaxMinOverWholeResultSetFunction(Function arg, LongComparator comparator, String name) {
             super(arg);
@@ -2265,7 +2265,7 @@ boolean compare(long a, long b);
 
         /**
          * Indicates the function requires two processing passes.
-         *
+         * <p>
          * The first pass aggregates values (e.g., computes a partition or global maximum)
          * and the second pass emits results for each row.
          *
@@ -2278,7 +2278,7 @@ boolean compare(long a, long b);
 
         /**
          * First pass processing: update the running maximum with the current row's long value.
-         *
+         * <p>
          * Examines the argument value from the provided record; if it is not LONG_NULL and
          * compares greater (per the configured comparator) than the stored `maxMin` (or if
          * `maxMin` is LONG_NULL), replaces `maxMin` with this value.
@@ -2293,7 +2293,7 @@ boolean compare(long a, long b);
 
         /**
          * Write the current aggregated maximum value into the function's output column for the given row.
-         *
+         * <p>
          * This implementation stores the precomputed `maxMin` long value at the memory address obtained
          * from {@code spi.getAddress(recordOffset, columnIndex)}.
          *
@@ -2307,7 +2307,7 @@ boolean compare(long a, long b);
 
         /**
          * Reset the function's internal state between uses.
-         *
+         * <p>
          * Calls the superclass reset implementation and clears the current maximum
          * by setting {@code maxMin} to {@link Numbers#LONG_NULL}, so subsequent
          * passes start with no remembered value.
