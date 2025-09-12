@@ -154,7 +154,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                             GREATER_THAN,
                             NAME
                     );
-                } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
+                } // range between {unbounded | x} preceding and {x preceding | current row}, except unbounded preceding to current row
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -297,7 +297,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);
-                } // range between [unbounded | x] preceding and [x preceding | current row]
+                } // range between {unbounded | x} preceding and {x preceding | current row}
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -347,7 +347,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
-                } // between [unbounded | x] preceding and [x preceding | current row]
+                } // between {unbounded | x} preceding and {x preceding | current row}
                 else {
                     MemoryARW mem = Vm.getCARWInstance(
                             configuration.getSqlWindowStorePageSize(),
@@ -567,7 +567,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
     }
 
-    // Handles max() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
+    // Handles max() over (partition by x order by ts range between {unbounded | y} preceding and {z preceding | current row})
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When the lower bound is unbounded, we only need to keep one maximum value in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
@@ -582,7 +582,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final MemoryARW dequeMemory;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
-        // list of [size, startOffset] pairs marking free space within mem
+        // list of {size, startOffset} pairs marking free space within mem
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
         private final long maxDiff;
@@ -944,7 +944,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          * Append this window function's SQL-like plan representation to the given PlanSink.
          * <p>
          * The produced text follows the pattern:
-         * "{name}({arg}) over (partition by {partition functions} range between {lower bound or 'unbounded'} preceding and {current row or '<minDiff> preceding'})".
+         * "{name}({arg}) over (partition by {partition functions} range between {lower bound or 'unbounded'} preceding and {current row or '{minDiff} preceding'})".
          */
         @Override
         public void toPlan(PlanSink sink) {
@@ -986,7 +986,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
     }
 
-    // handles max() over (partition by x [order by o] rows between y and z)
+    // handles max() over (partition by x {order by o} rows between y and z)
     // removable cumulative aggregation
     public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
 
@@ -1090,7 +1090,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void computeNext(Record record) {
             // map stores:
-            // 0 - (0-based) index of oldest value [0, bufferSize]
+            // 0 - (0-based) index of oldest value {0, bufferSize}
             // 1 - native array start offset (relative to memory address)
             // we keep nulls in window and reject them when computing max
             // 2 - max value if frameLoBounded is false
@@ -1265,8 +1265,8 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          * Appends a SQL-style plan fragment describing this window function to the provided PlanSink.
          * <p>
          * The produced fragment has the form:
-         * "<name>(<arg>) over (partition by <partitionFunctions> rows between <lower> preceding and <upper>)"
-         * where <lower> is either a numeric buffer size or "unbounded", and <upper> is either "current row"
+         * "{name}({arg}) over (partition by {partitionFunctions} rows between {lower} preceding and {upper})"
+         * where {lower} is either a numeric buffer size or "unbounded", and {upper} is either "current row"
          * or a numeric "N preceding" computed as `bufferSize - frameSize`.
          */
         @Override
@@ -1308,7 +1308,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
     }
 
-    // Handles max() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
+    // Handles max() over ({order by ts} range between {unbounded | x} preceding and { x preceding | current row } ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
     // When the lower bound is unbounded, we only need to keep one maximum value(max) in history.
@@ -1321,7 +1321,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final long initialCapacity;
         private final long maxDiff;
         // holds resizable ring buffers
-        // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
+        // actual frame data - {timestamp, value} pairs - is stored in mem at { offset + first_idx*16, offset + last_idx*16}
         // note: we ignore nulls to reduce memory usage
         private final MemoryARW memory;
         private final long minDiff;
@@ -1648,9 +1648,9 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          * Writes the SQL plan fragment for this window function into the supplied PlanSink.
          * <p>
          * The emitted fragment has the form:
-         * "<name>(<arg>) over (range between <lower> preceding and <upper>)", where
-         * "<lower>" is either the numeric lower bound or "unbounded" when the lower
-         * bound is not set, and "<upper>" is either "current row" for a zero upper
+         * "{name}({arg}) over (range between {lower} preceding and {upper})", where
+         * "{lower}" is either the numeric lower bound or "unbounded" when the lower
+         * bound is not set, and "{upper}" is either "current row" for a zero upper
          * bound or the numeric upper bound followed by "preceding".
          */
         @Override
@@ -1704,7 +1704,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
     }
 
-    // Handles max() over ([order by o] rows between y and z); there's no partition by.
+    // Handles max() over ({order by o} rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
     public static class MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowTimestampFunction {
 
@@ -1730,7 +1730,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          * <p>The constructor configures internal sizes and backing memory:
          * - Asserts that the frame is not the unbounded-previous-to-current special case (Long.MIN_VALUE, 0).
          * - If the lower bound is bounded (rowsLo > Long.MIN_VALUE) the instance keeps a bounded
-         * sliding window: frameSize = rowsHi - rowsLo (+1 when rowsHi < 0) and bufferSize = |rowsLo|.
+         * sliding window: frameSize = rowsHi - rowsLo (+1 when rowsHi &lt; 0) and bufferSize = |rowsLo|.
          * - If the lower bound is unbounded, frameSize = |rowsHi| and bufferSize = frameSize.
          * - frameIncludesCurrentValue is set when rowsHi == 0.
          * - The provided MemoryARW `memory` is used as the ring buffer; when the lower bound is bounded
@@ -1951,8 +1951,8 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         /**
          * Appends a human-readable plan fragment for this window function to the provided PlanSink.
          * <p>
-         * The produced fragment has the form: `max(arg) over ( rows between <lower> preceding and <upper> )`,
-         * where `<lower>` is either the numeric lower bound or "unbounded", and `<upper>` is either "current row"
+         * The produced fragment has the form: `max(arg) over ( rows between {lower} preceding and {upper} )`,
+         * where `{lower}` is either the numeric lower bound or "unbounded", and `{upper}` is either "current row"
          * or a numeric preceding offset computed from the buffer size and frame size.
          */
         @Override
@@ -2131,7 +2131,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          * Append a SQL-style plan representation of this window function to the provided sink.
          * <p>
          * The emitted text has the form:
-         * `name(arg) over (partition by <partition expressions> rows between unbounded preceding and current row)`
+         * `name(arg) over (partition by {partition expressions} rows between unbounded preceding and current row)`
          * and reflects that this function is applied with a partition clause and an unbounded-preceding-to-current-row rows frame.
          */
         @Override
@@ -2251,7 +2251,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         /**
          * Appends this function's textual plan representation to the provided PlanSink.
          * <p>
-         * The produced plan has the form: "<functionName>(<arg>) over (rows between unbounded preceding and current row)".
+         * The produced plan has the form: "{functionName}({arg}) over (rows between unbounded preceding and current row)".
          */
         @Override
         public void toPlan(PlanSink sink) {

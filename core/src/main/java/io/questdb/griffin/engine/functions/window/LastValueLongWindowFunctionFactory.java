@@ -77,7 +77,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
     /**
      * Create a window-function instance for LAST_VALUE(L) based on the current window context.
      *
-     * <p>If the resolved frame is empty (rowsHi < rowsLo) this returns a LongNullFunction that
+     * <p>If the resolved frame is empty (rowsHi &lt; rowsLo) this returns a LongNullFunction that
      * always yields NULL for the frame bounds. Otherwise the method delegates to the factory
      * helpers to produce an implementation that either ignores NULLs or respects NULLs depending
      * on the window context.</p>
@@ -619,7 +619,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * <p>
          * The emitted plan describes a `last_value` variant that ignores nulls and uses
          * the framing "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", formatted as:
-         * `<functionName>(<arg>) ignore nulls over (rows between unbounded preceding and current row)`.
+         * `{functionName}({arg}) ignore nulls over (rows between unbounded preceding and current row)`.
          */
         @Override
         public void toPlan(PlanSink sink) {
@@ -1240,7 +1240,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * <p>
          * The plan includes the function name and argument, the "ignore nulls" marker,
          * the partition-by expressions, and the ROWS framing clause in the form:
-         * "rows between <bufferSize> preceding and <current row|N preceding>".
+         * "rows between {bufferSize} preceding and {current row|N preceding}".
          */
         @Override
         public void toPlan(PlanSink sink) {
@@ -1594,9 +1594,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * Appends a human-readable plan fragment for this window function to the provided PlanSink.
          * <p>
          * The produced fragment has the form:
-         * "functionName(arg) ignore nulls over ( rows between <bufferSize> preceding and <bound> )"
-         * where <bound> is either "current row" when the frame includes the current row, or
-         * "<bufferSize + 1 - frameSize> preceding" otherwise.
+         * "functionName(arg) ignore nulls over ( rows between {bufferSize} preceding and {bound} )"
+         * where {bound} is either "current row" when the frame includes the current row, or
+         * "{bufferSize + 1 - frameSize} preceding" otherwise.
          * <p>
          * This method directly writes to the given PlanSink; it does not return a value.
          */
@@ -1764,7 +1764,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * Appends a textual plan description for this window function to the provided PlanSink.
          * <p>
          * The produced plan has the form:
-         * "name(arg) ignore nulls over (partition by <partition-functions> rows between unbounded preceding and current row)".
+         * "name(arg) ignore nulls over (partition by {partition-functions} rows between unbounded preceding and current row)".
          * <p>
          * This describes an IGNORE NULLS variant of LAST_VALUE operating over a partitioned ROWS frame
          * that spans from the partition start (UNBOUNDED PRECEDING) to the current row.
@@ -1995,7 +1995,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * Appends a concise textual plan representation of this window function to the provided PlanSink.
          * <p>
          * The produced text has the form:
-         * <name>(<arg>)[ ignore nulls] over (range|rows between <unbounded|N> preceding and current row)
+         * {name}({arg})[ ignore nulls] over (range|rows between {unbounded|N} preceding and current row)
          * <p>
          * If {@code rowsLo} equals {@link Long#MIN_VALUE} the lower bound is printed as "unbounded"; otherwise
          * the absolute value of {@code rowsLo} is printed. The method writes directly to the given PlanSink.
@@ -2129,7 +2129,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * <p>
          * The output includes the function name and argument, optional "ignore nulls" marker,
          * the PARTITION BY clause (derived from partitionByRecord), and a ROWS/RANGE frame
-         * described as "<n> preceding and current row" (or "unbounded" when rowsLo is Long.MIN_VALUE).
+         * described as "{n} preceding and current row" (or "unbounded" when rowsLo is Long.MIN_VALUE).
          */
         @Override
         public void toPlan(PlanSink sink) {
@@ -2940,7 +2940,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * Appends a textual plan fragment for this last_value function to the provided PlanSink.
          * <p>
          * The emitted form is:
-         * name(arg)[ ignore nulls] over (range between <maxDiff|unbounded> preceding and <minDiff> preceding)
+         * name(arg)[ ignore nulls] over (range between {maxDiff|unbounded} preceding and {minDiff} preceding)
          * <p>
          * It includes the function name and argument, an optional "ignore nulls" token, and the RANGE frame
          * bounds using `maxDiff` (or "unbounded") and `minDiff`.
@@ -3117,7 +3117,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * Appends a textual plan representation of this ROWS-framed last_value function to the given PlanSink.
          * <p>
          * The output includes the function name and argument, an optional "ignore nulls" marker,
-         * and the ROWS frame specification ("rows between <n|unbounded> preceding and <bufferSize> preceding").
+         * and the ROWS frame specification ("rows between {n|unbounded} preceding and {bufferSize} preceding").
          *
          * @param sink target PlanSink to receive the plan string
          */

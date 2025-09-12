@@ -1901,7 +1901,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * Appends a textual plan representation of this window function to the given PlanSink.
          * <p>
          * The produced plan includes the function name and argument, an optional "ignore nulls"
-         * clause, and a "partition by ... range between <maxDiff> preceding and <minDiff> preceding|current row"
+         * clause, and a "partition by ... range between {maxDiff} preceding and {minDiff} preceding|current row"
          * framing description.
          */
         @Override
@@ -2153,7 +2153,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * Write a textual plan description of this window function to the provided PlanSink.
          * <p>
          * The produced plan has the form:
-         * "<name>(<arg>)[ ignore nulls] over (partition by <partition functions> rows between <bufferSize> preceding and <X preceding|current row>)"
+         * "{name}({arg})[ ignore nulls] over (partition by {partition functions} rows between {bufferSize} preceding and {X preceding|current row})"
          * <p>
          * Notes:
          * - Uses the instance's `arg`, `partitionByRecord`, `bufferSize`, `frameSize`, and
@@ -2452,7 +2452,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * Appends this function's textual plan representation to the given PlanSink.
          * <p>
          * The produced plan fragment has the form:
-         * "first_value(<arg>)[ ignore nulls] over (range between <maxDiff> preceding and <minDiff> preceding|current row)".
+         * "first_value({arg})[ ignore nulls] over (range between {maxDiff} preceding and {minDiff} preceding|current row)".
          */
         @Override
         public void toPlan(PlanSink sink) {
@@ -2679,9 +2679,9 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * Append a textual plan fragment for this window function to the provided sink.
          * <p>
          * The emitted text has the form:
-         * `name(arg) [ignore nulls] over ( rows between <bufferSize> preceding and <frame-end> )`
-         * where `<frame-end>` is either `current row` when the frame includes the current value,
-         * or `<bufferSize + 1 - frameSize> preceding` otherwise.
+         * `name(arg) [ignore nulls] over ( rows between {bufferSize} preceding and {frame-end} )`
+         * where `{frame-end}` is either `current row` when the frame includes the current value,
+         * or `{bufferSize + 1 - frameSize} preceding` otherwise.
          */
         @Override
         public void toPlan(PlanSink sink) {

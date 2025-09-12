@@ -76,7 +76,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
     /**
      * Create a window-function instance for `first_value(L)` based on the current WindowContext.
      * <p>
-     * If the frame bounds are invalid (rowsHi < rowsLo) this returns a LongNullFunction that yields
+     * If the frame bounds are invalid (rowsHi &lt; rowsLo) this returns a LongNullFunction that yields
      * SQL NULL for every row in the frame. Otherwise delegates to an implementation chosen for the
      * window's null-handling mode (ignore vs. respect nulls), framing mode, partitioning and ordering.
      *
@@ -1869,7 +1869,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          * Append this window function's textual plan to the provided sink.
          * <p>
          * Writes `name(arg)` followed by an optional `ignore nulls` hint and an
-         * `OVER (partition by ... range between <maxDiff> preceding and <minDiff> preceding|current row)` clause.
+         * `OVER (partition by ... range between {maxDiff} preceding and {minDiff} preceding|current row)` clause.
          */
         @Override
         public void toPlan(PlanSink sink) {
@@ -2104,8 +2104,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Appends a textual "plan" representation of this window function into the given PlanSink.
          * <p>
-         * The output format is `<name>(<arg>) [ignore nulls] over (partition by <partitionFuncs>
-         * rows between <bufferSize> preceding and <N> preceding|current row)`, where the trailing
+         * The output format is `{name}({arg}) [ignore nulls] over (partition by {partitionFuncs}
+         * rows between {bufferSize} preceding and {N} preceding|current row)`, where the trailing
          * bound is rendered as "current row" when the frame includes the current value, otherwise
          * as an explicit preceding offset computed from bufferSize and frameSize.
          *
@@ -2398,7 +2398,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Append a textual plan representation of this window function to the given PlanSink.
          * <p>
-         * The output format is: `<name>(<arg>) [ignore nulls] over (range between <maxDiff> preceding and <minDiff or "current row">)`.
+         * The output format is: `{name}({arg}) [ignore nulls] over (range between {maxDiff} preceding and {minDiff or "current row"})`.
          * This includes the function name, argument, optional "ignore nulls" hint, and RANGE frame bounds using
          * `maxDiff` as the preceding upper bound and `minDiff` (or "current row" when zero) as the lower bound.
          *
@@ -2626,8 +2626,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          * Renders a textual plan representation of this window function into the provided PlanSink.
          * <p>
          * The output format is:
-         * <functionName>(<arg>)[ ignore nulls] over ( rows between <bufferSize> preceding and
-         * <current row|(bufferSize + 1 - frameSize) preceding> )
+         * {functionName}({arg})[ ignore nulls] over ( rows between {bufferSize} preceding and
+         * {current row|(bufferSize + 1 - frameSize) preceding} )
          * <p>
          * Uses the instance's name, argument, nulls-handling flag, bufferSize, and frameSize/frameIncludesCurrentValue
          * to produce the formatted window clause.

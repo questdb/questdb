@@ -64,7 +64,7 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
      * The concrete implementation is chosen based on the WindowContext (partitioning, framing mode — RANGE or ROWS,
      * ordering, and row bounds). The method may allocate native resources (maps and circular buffers) for stateful
      * implementations and ensures those resources are freed on allocation failure. If the window bounds specify an
-     * empty frame (rowsHi < rowsLo) a TimestampNullFunction is returned.
+     * empty frame (rowsHi &lt; rowsLo) a TimestampNullFunction is returned.
      *
      * @param position parser position of the function call used for error reporting
      * @param args     the function arguments (first argument is the timestamp expression)
