@@ -1521,6 +1521,11 @@ public class FilesTest {
     }
 
     private static void assumeIsNotTmpFs(String path) {
+        // Assumption to skip a test if we run on 'tmpfs' filesystem.
+        // Background: tmpfs doesn't support sparse files - when posix_fallocate() is called,
+        // tmpfs immediately materializes the entire allocation in RAM rather than
+        // just reserving space like ext4 and other filesystems do. This can cause
+        // memory exhaustion for tests that allocate large files.
         if (!Os.isLinux()) {
             return;
         }
