@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3559,22 +3559,25 @@ if __name__ == "__main__":
         // this test exercises maxRows feature of the protocol, which is not supported (not sent to the server)
         // in "simple" mode.
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
-
             try (Statement stmt = connection.createStatement()) {
                 stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
             }
 
             //max rows bigger than result set sie (empty result set)
-            assertResultTenTimes(connection,
+            assertResultTenTimes(
+                    connection,
                     "select * from tab",
-                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n", 5
+                    "a[INTEGER],b[BIGINT],ts[TIMESTAMP]\n",
+                    5
             );
 
             //max rows bigger than result set sie (non-empty result set)
-            assertResultTenTimes(connection,
+            assertResultTenTimes(
+                    connection,
                     "select 1 as x",
                     "x[INTEGER]\n" +
-                            "1\n", 5
+                            "1\n",
+                    5
             );
 
             //max rows smaller than result set size
@@ -3587,20 +3590,24 @@ if __name__ == "__main__":
             );
 
             // max rows smaller than cursor size, cursor does not return size
-            assertResultTenTimes(connection,
+            assertResultTenTimes(
+                    connection,
                     "show columns from tab",
-                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
-                            "a,INT,false,0,false,0,false,false\n" +
-                            "b,LONG,false,0,false,0,false,false\n", 2
+                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]\n" +
+                            "a,INT,false,0,false,0,0,false,false\n" +
+                            "b,LONG,false,0,false,0,0,false,false\n",
+                    2
             );
 
             // max rows bigger than cursor size, cursor does not return size
-            assertResultTenTimes(connection,
+            assertResultTenTimes(
+                    connection,
                     "show columns from tab",
-                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],designated[BIT],upsertKey[BIT]\n" +
-                            "a,INT,false,0,false,0,false,false\n" +
-                            "b,LONG,false,0,false,0,false,false\n" +
-                            "ts,TIMESTAMP,false,0,false,0,false,false\n", 6
+                    "column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]\n" +
+                            "a,INT,false,0,false,0,0,false,false\n" +
+                            "b,LONG,false,0,false,0,0,false,false\n" +
+                            "ts,TIMESTAMP,false,0,false,0,0,false,false\n",
+                    6
             );
         });
     }

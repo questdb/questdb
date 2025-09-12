@@ -7790,8 +7790,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "0214\r\n" +
-                                    "{\"query\":\"show columns from balances\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"},{\"name\":\"type\",\"type\":\"STRING\"},{\"name\":\"indexed\",\"type\":\"BOOLEAN\"},{\"name\":\"indexBlockCapacity\",\"type\":\"INT\"},{\"name\":\"symbolCached\",\"type\":\"BOOLEAN\"},{\"name\":\"symbolCapacity\",\"type\":\"INT\"},{\"name\":\"designated\",\"type\":\"BOOLEAN\"},{\"name\":\"upsertKey\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[\"cust_id\",\"INT\",false,0,false,0,false,false],[\"ccy\",\"SYMBOL\",false,256,true,128,false,false],[\"balance\",\"DOUBLE\",false,0,false,0,false,false]],\"count\":3}\r\n" +
+                                    "0242\r\n" +
+                                    "{\"query\":\"show columns from balances\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"},{\"name\":\"type\",\"type\":\"STRING\"},{\"name\":\"indexed\",\"type\":\"BOOLEAN\"},{\"name\":\"indexBlockCapacity\",\"type\":\"INT\"},{\"name\":\"symbolCached\",\"type\":\"BOOLEAN\"},{\"name\":\"symbolCapacity\",\"type\":\"INT\"},{\"name\":\"symbolTableSize\",\"type\":\"INT\"},{\"name\":\"designated\",\"type\":\"BOOLEAN\"},{\"name\":\"upsertKey\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[\"cust_id\",\"INT\",false,0,false,0,0,false,false],[\"ccy\",\"SYMBOL\",false,256,true,128,0,false,false],[\"balance\",\"DOUBLE\",false,0,false,0,0,false,false]],\"count\":3}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,
