@@ -41,7 +41,7 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      * @param columnIndex the column index to get the bitmap index for
      * @param direction   the direction for index traversal (BitmapIndexReader.DIR_FORWARD or DIR_BACKWARD)
      * @return BitmapIndexReader for the specified column, or null if the column is not indexed
-     *         or if this cursor doesn't support indexed access
+     * or if this cursor doesn't support indexed access
      */
     default BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
         // Default implementation returns null - no indexed access
@@ -82,7 +82,7 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
     }
 
     /**
-     * Rewinds cursor to a beginning of the given frame. The frame must have been previously opened.
+     * Rewinds cursor to the beginning of the given frame. The frame must have been previously opened.
      *
      * @param frameIndex index of the frame to rewind to
      */

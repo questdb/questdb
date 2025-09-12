@@ -184,7 +184,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             slaveSinkTarget.clear();
             slaveKeySink.copy(slaveRecB, slaveSinkTarget);
             if (masterSinkTarget.memeq(slaveSinkTarget)) {
-                // we have a match, that's awesome, no need to traverse the slave cursor!
                 record.hasSlave(true);
                 break;
             }

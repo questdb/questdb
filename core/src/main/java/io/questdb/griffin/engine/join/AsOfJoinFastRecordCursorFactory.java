@@ -158,7 +158,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             masterSinkTarget.clear();
             masterKeySink.copy(masterRecord, masterSinkTarget);
 
-
             // reset the cursor to the frame corresponding to slaveRecB
             // (earlier nextSlave() call might have moved it)
             int slaveFrameIndex = Rows.toPartitionIndex(slaveRecB.getRowId());

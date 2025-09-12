@@ -30,7 +30,7 @@ package io.questdb.cairo.sql;
 public interface RowCursor {
 
     /**
-     * @return true if cursor has more rows, otherwise false.
+     * @return true if the cursor has more rows, otherwise false.
      */
     boolean hasNext();
 
