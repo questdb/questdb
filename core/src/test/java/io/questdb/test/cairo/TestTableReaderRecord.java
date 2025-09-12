@@ -29,6 +29,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
@@ -98,6 +99,76 @@ public class TestTableReaderRecord implements Record, Sinkable {
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
+    }
+
+    @Override
+    public long getDecimal128Hi(int col) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 1);
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL128_HI_NULL : reader.getColumn(absoluteColumnIndex).getDecimal128Hi(offset);
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 1);
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL128_LO_NULL : reader.getColumn(absoluteColumnIndex).getDecimal128Lo(offset);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL16_NULL : reader.getColumn(absoluteColumnIndex).getDecimal16(offset);
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL256_HH_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256HH(offset);
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL256_HL_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256HL(offset);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL256_LH_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256LH(offset);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL256_LL_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256LL(offset);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL32_NULL : reader.getColumn(absoluteColumnIndex).getDecimal32(offset);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL64_NULL : reader.getColumn(absoluteColumnIndex).getDecimal64(offset);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Byte.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? Decimals.DECIMAL8_NULL : reader.getColumn(absoluteColumnIndex).getDecimal8(offset);
     }
 
     @Override

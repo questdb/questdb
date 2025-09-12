@@ -126,6 +126,14 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testCompareToMinValue() {
+        Decimal128 a = new Decimal128();
+        a.copyFrom(Decimal128.MIN_VALUE);
+        a.add(Decimal128.fromLong(1, 0));
+        Assert.assertEquals(1, a.compareTo(Decimal128.MIN_VALUE));
+    }
+
+    @Test
     public void testCompareToScaled() {
         Decimal128 smaller = new Decimal128(0, 10, 1);
         Decimal128 larger = new Decimal128(0, 200, 2);
@@ -726,6 +734,11 @@ public class Decimal128Test {
         } catch (NumericException e) {
             Assert.assertTrue(e.getMessage().contains("Overflow"));
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOverflowCtor() {
+        new Decimal128(Long.MAX_VALUE, -1L, 0);
     }
 
     @Test

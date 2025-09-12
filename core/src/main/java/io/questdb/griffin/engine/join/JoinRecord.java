@@ -98,6 +98,86 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public long getDecimal128Hi(int col) {
+        if (col < split) {
+            return master.getDecimal128Hi(col);
+        }
+        return slave.getDecimal128Hi(col - split);
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        if (col < split) {
+            return master.getDecimal128Lo(col);
+        }
+        return slave.getDecimal128Lo(col - split);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        if (col < split) {
+            return master.getDecimal16(col);
+        }
+        return slave.getDecimal16(col - split);
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        if (col < split) {
+            return master.getDecimal256HH(col);
+        }
+        return slave.getDecimal256HH(col - split);
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        if (col < split) {
+            return master.getDecimal256HL(col);
+        }
+        return slave.getDecimal256HL(col - split);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        if (col < split) {
+            return master.getDecimal256LH(col);
+        }
+        return slave.getDecimal256LH(col - split);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        if (col < split) {
+            return master.getDecimal256LL(col);
+        }
+        return slave.getDecimal256LL(col - split);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        if (col < split) {
+            return master.getDecimal32(col);
+        }
+        return slave.getDecimal32(col - split);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        if (col < split) {
+            return master.getDecimal64(col);
+        }
+        return slave.getDecimal64(col - split);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        if (col < split) {
+            return master.getDecimal8(col);
+        }
+        return slave.getDecimal8(col - split);
+    }
+
+    @Override
     public double getDouble(int col) {
         if (col < split) {
             return master.getDouble(col);

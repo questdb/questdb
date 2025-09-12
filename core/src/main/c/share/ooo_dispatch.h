@@ -74,6 +74,11 @@ struct index_t {
     }
 };
 
+typedef struct __attribute__ ((packed)) long_128bit {
+    uint64_t long0;
+    uint64_t long1;
+} long_128bit;
+
 typedef struct __attribute__ ((packed)) long_256bit {
     uint64_t long0;
     uint64_t long1;
@@ -111,6 +116,10 @@ DECLARE_DISPATCHER_TYPE(set_memory_vanilla_double, double *data, const double va
 DECLARE_DISPATCHER_TYPE(set_memory_vanilla_float, float *data, const float value, const int64_t count);
 
 DECLARE_DISPATCHER_TYPE(set_memory_vanilla_short, int16_t *data, const int16_t value, const int64_t count);
+
+DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int128, long_128bit *data, const long_128bit value, const int64_t count);
+
+DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int256, long_256bit *data, const long_256bit value, const int64_t count);
 
 DECLARE_DISPATCHER_TYPE(make_timestamp_index, const int64_t *data, int64_t low, int64_t high, index_t *dest);
 

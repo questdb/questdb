@@ -120,6 +120,56 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public long getDecimal128Hi(int col) {
+        return values[4 * col];
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        return values[4 * col + 1];
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return (short) values[4 * col];
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        return values[4 * col];
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        return values[4 * col + 1];
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        return values[4 * col + 2];
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        return values[4 * col + 3];
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return (int) values[4 * col];
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return values[4 * col];
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return (byte) values[4 * col];
+    }
+
+    @Override
     public double getDouble(int index) {
         return Double.longBitsToDouble(values[4 * index]);
     }
@@ -245,6 +295,22 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putDate(int index, long value) {
         values[4 * index] = value;
+    }
+
+    @Override
+    public void putDecimal128(int index, long hi, long lo) {
+        final int idx = 4 * index;
+        values[idx] = hi;
+        values[idx + 1] = lo;
+    }
+
+    @Override
+    public void putDecimal256(int index, long hh, long hl, long lh, long ll) {
+        final int idx = 4 * index;
+        values[idx] = hh;
+        values[idx + 1] = hl;
+        values[idx + 2] = lh;
+        values[idx + 3] = ll;
     }
 
     @Override

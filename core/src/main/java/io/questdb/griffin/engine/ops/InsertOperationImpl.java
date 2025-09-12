@@ -128,7 +128,7 @@ public class InsertOperationImpl implements InsertOperation {
         public long execute(SqlExecutionContext executionContext) {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
-                row.append(writer);
+                row.append(executionContext, writer);
             }
             return insertRows.size();
         }

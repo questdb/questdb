@@ -716,7 +716,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                         + Timestamps.toUSecString(replacementTimestampHi) + "), actual: "
                                         + Timestamps.toUSecString(timestamp);
                                 TableWriter.Row row = walWriter.newRow(timestamp);
-                                copier.copy(record, row);
+                                copier.copy(refreshSqlExecutionContext, record, row);
                                 row.append();
                                 rowCount++;
                             }

@@ -127,6 +127,106 @@ public interface Record {
     }
 
     /**
+     * Gets the high 64-bit part of a 128-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit signed integer
+     */
+    default long getDecimal128Hi(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the low 64-bit part of a 128-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit unsigned integer
+     */
+    default long getDecimal128Lo(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 16-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 16-bit signed integer
+     */
+    default short getDecimal16(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the highest 64-bit part of a 256-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit signed integer
+     */
+    default long getDecimal256HH(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the high 64-bit part of a 256-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit unsigned integer
+     */
+    default long getDecimal256HL(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the middle 64-bit part of a 256-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit unsigned integer
+     */
+    default long getDecimal256LH(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the low 64-bit part of a 256-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit unsigned integer
+     */
+    default long getDecimal256LL(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 32-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 32-bit signed integer
+     */
+    default int getDecimal32(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 64-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit signed integer
+     */
+    default long getDecimal64(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 8-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 8-bit signed integer
+     */
+    default byte getDecimal8(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Gets the value of a double column by index
      *
      * @param col numeric index of the column

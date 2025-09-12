@@ -314,6 +314,28 @@ public class RecordChainTest extends AbstractCairoTest {
                     Assert.assertEquals(expected.getLong128Hi(i), actual.getLong128Hi(i));
                     Assert.assertEquals(expected.getLong128Lo(i), actual.getLong128Lo(i));
                     break;
+                case ColumnType.DECIMAL8:
+                    Assert.assertEquals(expected.getDecimal8(i), actual.getDecimal8(i));
+                    break;
+                case ColumnType.DECIMAL16:
+                    Assert.assertEquals(expected.getDecimal16(i), actual.getDecimal16(i));
+                    break;
+                case ColumnType.DECIMAL32:
+                    Assert.assertEquals(expected.getDecimal32(i), actual.getDecimal32(i));
+                    break;
+                case ColumnType.DECIMAL64:
+                    Assert.assertEquals(expected.getDecimal64(i), actual.getDecimal64(i));
+                    break;
+                case ColumnType.DECIMAL128:
+                    Assert.assertEquals(expected.getDecimal128Hi(i), actual.getDecimal128Hi(i));
+                    Assert.assertEquals(expected.getDecimal128Lo(i), actual.getDecimal128Lo(i));
+                    break;
+                case ColumnType.DECIMAL256:
+                    Assert.assertEquals(expected.getDecimal256HH(i), actual.getDecimal256HH(i));
+                    Assert.assertEquals(expected.getDecimal256HL(i), actual.getDecimal256HL(i));
+                    Assert.assertEquals(expected.getDecimal256LH(i), actual.getDecimal256LH(i));
+                    Assert.assertEquals(expected.getDecimal256LL(i), actual.getDecimal256LL(i));
+                    break;
                 default:
                     throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
             }

@@ -68,6 +68,7 @@ public interface FunctionFactory {
      * <li>Z = uuid</li>
      * <li>Ø(ø) = varchar</li>
      * <li>Δ(δ) = interval</li>
+     * <li>Ξ(ξ) = decimal</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
