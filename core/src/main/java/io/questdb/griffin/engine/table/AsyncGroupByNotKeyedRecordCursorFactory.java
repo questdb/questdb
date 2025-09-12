@@ -285,6 +285,13 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
     }
 
+    /**
+     * Releases resources held by this factory.
+     *
+     * Frees the underlying base factory, the prepared cursor, and the frame sequence,
+     * and also frees and clears the list of group-by function instances to remove
+     * references.
+     */
     @Override
     protected void _close() {
         Misc.free(base);

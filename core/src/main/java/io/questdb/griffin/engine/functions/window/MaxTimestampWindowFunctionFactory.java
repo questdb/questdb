@@ -66,11 +66,34 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     public static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(N)";
 
+    /**
+     * Returns the function signature used for registration and lookups.
+     *
+     * @return the signature string (e.g. "max(N)")
+     */
     @Override
     public String getSignature() {
         return SIGNATURE;
     }
 
+    /**
+     * Create a MAX timestamp window function instance appropriate for the current
+     * window context.
+     *
+     * The factory inspects the SqlExecutionContext's WindowContext (framing mode,
+     * partitioning, ordering, and frame bounds) and returns a concrete Function
+     * implementation optimized for that scenario (e.g. whole-result-set, partitioned
+     * two-pass, unbounded/rows/range frames, or memory-backed ring-buffer variants).
+     *
+     * @param position parsing position used to report errors
+     * @param args function arguments (first argument is the timestamp expression)
+     * @param argPositions argument positions in the SQL text
+     * @param configuration runtime configuration (used for memory/page sizing) — omitted from @param per project conventions
+     * @param sqlExecutionContext execution context providing WindowContext and other runtime services — omitted from @param per project conventions
+     * @return a Function that computes the MAX over the requested window
+     * @throws SqlException if window validation fails, if RANGE is requested for queries not ordered by the designated timestamp,
+     *                      or if the combination of window parameters is not implemented
+     */
     @Override
     public Function newInstance(
             int position,
@@ -358,7 +381,14 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // Avoid autoboxing by not using the Comparator functional interface with generic parameters.
     @FunctionalInterface
     public interface TimestampComparator {
-        boolean compare(long a, long b);
+        /**
+ * Compare two timestamp values.
+ *
+ * @param a first timestamp value
+ * @param b second timestamp value
+ * @return true if `a` is considered greater than `b`, false otherwise
+ */
+boolean compare(long a, long b);
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
@@ -367,31 +397,68 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final String name;
         private long value;
 
+        /**
+         * Create a MAX-over-current-row window function.
+         *
+         * @param arg  function that produces the timestamp value for the current row
+         * @param name display name used by the function (e.g., "max")
+         */
         MaxMinOverCurrentRowFunction(Function arg, String name) {
             super(arg);
             this.name = name;
         }
 
+        /**
+         * Read the timestamp value for the current input record and store it as this function's current value.
+         *
+         * @param record the current input record to read the timestamp from
+         */
         @Override
         public void computeNext(Record record) {
             value = arg.getTimestamp(record);
         }
 
+        /**
+         * Return the last-computed timestamp value for the current row.
+         *
+         * @param rec ignored; this implementation does not read from the provided record
+         * @return the stored timestamp value produced by the most recent computeNext call
+         */
         @Override
         public long getTimestamp(Record rec) {
             return value;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return ZERO_PASS indicating the function produces results without additional passes
+         */
         @Override
         public int getPassCount() {
             return ZERO_PASS;
         }
 
+        /**
+         * Compute the next value for the current input record and write it to the window output slot.
+         *
+         * This evaluates the function for the given input Record, then stores the resulting timestamp
+         * (primitive long) into the output memory location identified by recordOffset and the
+         * function's configured output column.
+         *
+         * @param record the input record to evaluate
+         * @param recordOffset the row-address/offset where the result should be written
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -406,6 +473,16 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final TimestampComparator comparator;
         private final String name;
 
+        /**
+         * Creates a partitioned max/min window function that maintains per-partition aggregates.
+         *
+         * <p>Constructs a function which uses the provided map to store per-partition state and
+         * the provided comparator to decide the aggregate (e.g., max vs min) when processing rows.
+         *
+         * @param map a mutable Map used to store and retrieve per-partition aggregation state
+         * @param comparator comparator used to compare two timestamp values to determine the current aggregate (returns true when the first argument should replace the second)
+         * @param name human-readable name for this function variant (used for planning/diagnostics)
+         */
         public MaxMinOverPartitionFunction(Map map,
                                            VirtualRecord partitionByRecord,
                                            RecordSink partitionBySink,
@@ -417,16 +494,37 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             this.comparator = comparator;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Indicates this window function requires two processing passes.
+         *
+         * @return {@link WindowFunction#TWO_PASS} signifying the function performs work in two passes
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
 
+        /**
+         * First-pass accumulator that updates the per-partition maximum timestamp.
+         *
+         * For the given input record, reads the timestamp from the argument function and, if not null,
+         * looks up the partition key in the map and updates the stored timestamp to the greater value
+         * according to the provided comparator. New partition entries are initialized with the record's
+         * timestamp. Null timestamps are ignored.
+         *
+         * @param record       input record to read the timestamp and partition key from
+         * @param recordOffset unused here (present for API compatibility)
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             long l = arg.getTimestamp(record);
@@ -446,6 +544,16 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Second pass: materializes the precomputed per-partition maximum timestamp into the result.
+         *
+         * Looks up the partition key for the current input record, reads the stored max timestamp
+         * from the map (or uses SQL NULL when absent), and writes that long value to the output
+         * address obtained from the WindowSPI.
+         *
+         * @param record current input record used to derive the partition key
+         * @param recordOffset offset passed to WindowSPI to obtain the output address where the timestamp is written
+         */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
             partitionByRecord.of(record);
@@ -487,6 +595,26 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         // current max value
         private long maxMin;
 
+        /**
+         * Builds a window function that computes the maximum timestamp over a RANGE frame scoped per partition.
+         *
+         * This constructor configures whether the lower bound is bounded, whether the frame includes the current row,
+         * and stores the memory buffers and comparator used to maintain a per-partition ring buffer and optional deque
+         * of candidate maxima.
+         *
+         * @param map               per-partition state map used to store frame metadata and offsets
+         * @param partitionByRecord a virtual record representing the partition-by values
+         * @param partitionBySink   sink used to serialize partition-by values into map keys
+         * @param rangeLo           lower bound of the RANGE frame (Long.MIN_VALUE indicates unboundedpreceding)
+         * @param rangeHi           upper bound of the RANGE frame (0 typically indicates "to current row")
+         * @param arg               argument function that produces the input timestamps
+         * @param memory            primary MemoryARW used as the per-partition ring buffer for frame rows
+         * @param dequeMemory       optional MemoryARW used as a monotonic deque for candidate maxima (may be null for unbounded lower bound)
+         * @param initialBufferSize initial capacity for per-partition buffers
+         * @param timestampIdx      column index within the frame entries that holds the timestamp value
+         * @param comparator        comparator used to choose the maximum timestamp (non-boxing)
+         * @param name              function name used in plan/output
+         */
         public MaxMinOverPartitionRangeFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -516,6 +644,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             this.name = name;
         }
 
+        /**
+         * Release resources used by this window function instance.
+         *
+         * Closes underlying memory buffers and the optional deque memory, clears internal free lists,
+         * and invokes {@code super.close()} to perform superclass cleanup.
+         */
         @Override
         public void close() {
             super.close();
@@ -527,6 +661,31 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Updates per-partition frame state with the next input record and computes the current
+         * partitioned maximum timestamp/value (stored in this.maxMin).
+         *
+         * <p>This method:
+         * - Advances or initializes the ring-buffer frame and optional monotonic deque for the
+         *   partition identified by the record's partition key.
+         * - Appends the incoming (timestamp, value) pair when the value is not null.
+         * - Evicts elements that fall outside the configured range/rows frame.
+         * - Maintains and expands underlying MemoryARW buffers when capacity is exceeded.
+         * - Updates the partition map value with the new frame metadata (frameSize, buffer offsets,
+         *   sizes, indices) and, when the lower bound is unbounded, stores the current max directly
+         *   in the map value.
+         *
+         * The behavior differs based on whether the partition entry is new and whether the frame's
+         * lower bound is bounded:
+         * - New partition: allocates initial buffers, writes the first element if present and
+         *   initializes deque or max accordingly.
+         * - Existing partition: trims old elements outside the lower bound, appends the new element,
+         *   updates the deque (for bounded lower bound) or recomputes the max by scanning the frame
+         *   (for unbounded lower bound).
+         *
+         * @param record the input record whose partition key, ordering timestamp, and value are used
+         *               to update per-partition window state
+         */
         @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
@@ -706,26 +865,56 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Returns the current computed maximum timestamp for this window function.
+         *
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
         @Override
         public long getTimestamp(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of passes required by this window function.
+         *
+         * @return {@code WindowFunction.ZERO_PASS} indicating the function produces results without multi-pass aggregation.
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Not applicable for this implementation; calling it always fails.
+         *
+         * @throws UnsupportedOperationException always thrown because this window function does not use a separate pass1 phase
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * Reinitializes the function for a new execution cycle.
+         *
+         * Calls the superclass reopen logic and resets the internal max/min accumulator
+         * to a NULL sentinel so that any backing memory is allocated lazily on first use.
+         */
         @Override
         public void reopen() {
             super.reopen();
@@ -733,6 +922,13 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Reset the function's internal state and release associated native resources.
+         *
+         * Clears in-memory ring-buffer/free-list state so the function can be reused,
+         * closes the primary memory region, clears internal free lists used for
+         * element management, and closes the optional deque memory if present.
+         */
         @Override
         public void reset() {
             super.reset();
@@ -744,6 +940,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Append this window function's SQL-like plan representation to the given PlanSink.
+         *
+         * The produced text follows the pattern:
+         * "{name}({arg}) over (partition by {partition functions} range between {lower bound or 'unbounded'} preceding and {current row or '<minDiff> preceding'})".
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -766,6 +968,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             sink.val(')');
         }
 
+        /**
+         * Reset this function's internal state to the start of iteration.
+         *
+         * Truncates the primary frame memory and optional deque memory, and clears
+         * internal free lists so the function is ready to be reused from the top.
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -797,6 +1005,27 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final String name;
         private long maxMin;
 
+        /**
+         * Constructs a partitioned rows-frame max/min function and configures its internal ring buffer
+         * and optional monotonic deque parameters according to the supplied row-frame bounds.
+         *
+         * The constructor computes:
+         * - frameSize: number of slots used to retain values inside the frame
+         * - bufferSize: number of extra slots required to accommodate negative row offsets
+         * - frameLoBounded: true when the frame lower bound is finite (requires a deque)
+         * - dequeBufferSize: size of the deque buffer when the lower bound is bounded
+         * - frameIncludesCurrentValue: true when the upper bound includes the current row (rowsHi == 0)
+         *
+         * It then stores provided memory buffers, comparator and name for use during runtime.
+         *
+         * @param rowsLo lower row bound for the frame (may be Long.MIN_VALUE to denote unbounded preceding)
+         * @param rowsHi upper row bound for the frame (relative to the current row)
+         * @param arg value-producing function for each row (timestamp source)
+         * @param memory ring-buffer memory used to store per-partition frame entries
+         * @param dequeMemory optional memory for the monotonic deque (may be null when lower bound is unbounded)
+         * @param comparator comparator used to decide max/min between two timestamps
+         * @param name function instance name used for plan/output identification
+         */
         public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -830,12 +1059,34 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             this.name = name;
         }
 
+        /**
+         * Releases resources held by this window function.
+         *
+         * Calls the superclass close implementation and closes the associated MemoryARW used for frame storage.
+         */
         @Override
         public void close() {
             super.close();
             memory.close();
         }
 
+        /**
+         * Advances the sliding-window state for the current input record and computes the windowed maximum timestamp.
+         *
+         * <p>This updates per-partition storage in the factory's backing map and memory buffers:
+         * - When encountering a new partition key, it initializes the ring buffer and optional deque and sets the initial
+         *   max according to whether the frame includes the current value.
+         * - For existing partitions it pushes the new timestamp into the ring buffer, updates or maintains the monotonic
+         *   deque when the lower bound is bounded, evicts the oldest value from the deque when necessary, and updates
+         *   the stored per-partition max for unbounded-lower-bound frames.
+         *
+         * <p>Behavior notes:
+         * - Null timestamps (Numbers.LONG_NULL) are kept in the ring buffer but ignored for max computation.
+         * - The method mutates: the partition map value, off-heap memory for the ring buffer (memory), optional dequeMemory,
+         *   and the instance field {@code this.maxMin} which receives the computed max for the current record.
+         *
+         * @param record the input record whose timestamp is pushed into the window and used to update per-partition state
+         */
         @Override
         public void computeNext(Record record) {
             // map stores:
@@ -936,32 +1187,71 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             memory.putLong(startOffset + loIdx * Long.BYTES, l);
         }
 
+        /**
+         * Returns the current computed maximum timestamp for this window function.
+         *
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
         @Override
         public long getTimestamp(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of passes required by this window function.
+         *
+         * @return {@code WindowFunction.ZERO_PASS} indicating the function produces results without multi-pass aggregation.
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         *
+         * Calls computeNext(record) to update the internal max/min state, then writes that
+         * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
+         *
+         * @param record current input record to process
+         * @param recordOffset byte offset identifying the output row frame where the result should be written
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reopens and reinitializes this window function for a new execution.
+         *
+         * Delegates to the superclass implementation to reset any internal state.
+         */
         @Override
         public void reopen() {
             super.reopen();
         }
 
+        /**
+         * Reset the function state and release any allocated off-heap resources.
+         *
+         * Calls the superclass reset behavior, closes the primary frame memory, and closes
+         * the optional deque memory if it was allocated.
+         */
         @Override
         public void reset() {
             super.reset();
@@ -971,6 +1261,14 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Appends a SQL-style plan fragment describing this window function to the provided PlanSink.
+         *
+         * The produced fragment has the form:
+         *   "<name>(<arg>) over (partition by <partitionFunctions> rows between <lower> preceding and <upper>)"
+         * where <lower> is either a numeric buffer size or "unbounded", and <upper> is either "current row"
+         * or a numeric "N preceding" computed as `bufferSize - frameSize`.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -994,6 +1292,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             sink.val(')');
         }
 
+        /**
+         * Reset this function to its initial state for reuse.
+         *
+         * Performs superclass reset behavior and releases any accumulated frame and deque
+         * storage by truncating the associated MemoryARW buffers.
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -1036,6 +1340,27 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private long size;
         private long startOffset;
 
+        /**
+         * Constructs a range-frame max window function that maintains a sliding frame of timestamped
+         * records in off-heap memory and an optional monotonic deque for efficient max computation.
+         *
+         * The instance retains references to the provided memory regions and computes initial
+         * buffer capacities from the SQL window store page size. If the lower range bound is
+         * finite (`rangeLo != Long.MIN_VALUE`), a deque buffer is allocated using `dequeMemory`.
+         * In that case `maxDiff` is set to `abs(rangeLo)` and must only be used when
+         * `frameLoBounded` is true; otherwise `maxDiff` is Long.MAX_VALUE.
+         *
+         * Parameters:
+         * - rangeLo, rangeHi: inclusive offsets (relative to the row timestamp) that define the
+         *   window frame. `rangeLo == Long.MIN_VALUE` indicates an unbounded preceding lower bound.
+         * - arg: the argument function that produces timestamps for each input row.
+         * - configuration: provides SQL runtime configuration (used to derive the initial buffer size).
+         * - memory: primary ring-buffer memory region for storing timestamp/value records.
+         * - dequeMemory: optional memory region used to store deque indices when the lower bound is bounded.
+         * - timestampIdx: index of the timestamp column within stored records.
+         * - comparator: non-boxing comparator used to decide the max between two timestamps.
+         * - name: function name for plan/debug output.
+         */
         public MaxMinOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
@@ -1070,6 +1395,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             this.name = name;
         }
 
+        /**
+         * Releases resources held by this function, including backing memory buffers.
+         *
+         * Performs superclass cleanup, closes the primary frame memory, and closes
+         * the optional deque memory if present.
+         */
         @Override
         public void close() {
             super.close();
@@ -1079,6 +1410,31 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Advance the sliding window state for the given input record and update the current maximum.
+         *
+         * <p>This method reads the record's timestamp and the argument function's timestamp value,
+         * then updates in-memory ring buffers and an optional monotonic deque to maintain the max
+         * value over the configured range/rows frame.</p>
+         *
+         * <p>Behavior summary:
+         * - If the frame has a bounded lower bound, evict elements that fall outside the lower
+         *   bound, append the current element (if not null), and extend the top of the frame by
+         *   scanning forward, pushing qualifying values into the monotonic deque. The deque holds
+         *   candidate maxima; the current max is the deque head or `Numbers.LONG_NULL` when empty.
+         * - If the frame lower bound is unbounded, append the current element (if not null) and
+         *   recompute the max by scanning buffered elements that meet the top bound criteria.</p>
+         *
+         * <p>Side effects:
+         * - Mutates internal buffer state: startOffset, capacity, firstIdx, size, frameSize
+         *   and may grow `memory` and `dequeMemory` (reallocating and copying existing contents).
+         * - Mutates deque indices (dequeStartIndex, dequeEndIndex) and writes deque entries.
+         * - Updates `maxMin` to the current maximum or `Numbers.LONG_NULL` if no candidates exist.</p>
+         *
+         * <p>Notes:
+         * - Null argument timestamps (equal to `Numbers.LONG_NULL`) are not added to the buffers.
+         * - Uses the configured `comparator` to compare candidate values for deque maintenance.</p>
+         */
         @Override
         public void computeNext(Record record) {
             long timestamp = record.getTimestamp(timestampIndex);
@@ -1206,26 +1562,57 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Returns the current computed maximum timestamp for this window function.
+         *
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
         @Override
         public long getTimestamp(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of passes required by this window function.
+         *
+         * @return {@code WindowFunction.ZERO_PASS} indicating the function produces results without multi-pass aggregation.
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Not applicable for this implementation; calling it always fails.
+         *
+         * @throws UnsupportedOperationException always thrown because this window function does not use a separate pass1 phase
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * Reset and initialize internal buffers and indices for a new execution/reopen.
+         *
+         * Reinitializes the running maximum to null, resets ring buffer and deque sizes and indices,
+         * and (re)allocates contiguous memory regions for the frame and optional deque using the
+         * configured initial capacities. If `dequeMemory` is null, deque-related fields are left unset.
+         */
         @Override
         public void reopen() {
             maxMin = Numbers.LONG_NULL;
@@ -1242,6 +1629,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Reset the function state and release any allocated off-heap resources.
+         *
+         * Calls the superclass reset behavior, closes the primary frame memory, and closes
+         * the optional deque memory if it was allocated.
+         */
         @Override
         public void reset() {
             super.reset();
@@ -1251,6 +1644,15 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Writes the SQL plan fragment for this window function into the supplied PlanSink.
+         *
+         * The emitted fragment has the form:
+         * "<name>(<arg>) over (range between <lower> preceding and <upper>)", where
+         * "<lower>" is either the numeric lower bound or "unbounded" when the lower
+         * bound is not set, and "<upper>" is either "current row" for a zero upper
+         * bound or the numeric upper bound followed by "preceding".
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1271,6 +1673,17 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             sink.val(')');
         }
 
+        /**
+         * Reset this function's internal state and buffers to their initial empty configuration.
+         *
+         * <p>This clears the current maximum, resets capacities and indices to their initial values,
+         * truncates and reallocates the main ring-buffer memory for the initial capacity, and
+         * zeros the frame size and element count. If a deque buffer is present, it is also
+         * truncated and reinitialized to the initial deque capacity and indices.</p>
+         *
+         * <p>Intended to prepare the function for a fresh execution pass without reallocating
+         * the factory/struct that owns this instance.</p>
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -1310,6 +1723,30 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private int loIdx = 0;
         private long maxMin = Numbers.LONG_NULL;
 
+        /**
+         * Create a max-over-rows-frame window function instance that maintains a ring buffer
+         * (and an optional monotonic deque) to compute the maximum timestamp over a rows-based frame.
+         *
+         * <p>The constructor configures internal sizes and backing memory:
+         * - Asserts that the frame is not the unbounded-previous-to-current special case (Long.MIN_VALUE, 0).
+         * - If the lower bound is bounded (rowsLo > Long.MIN_VALUE) the instance keeps a bounded
+         *   sliding window: frameSize = rowsHi - rowsLo (+1 when rowsHi < 0) and bufferSize = |rowsLo|.
+         * - If the lower bound is unbounded, frameSize = |rowsHi| and bufferSize = frameSize.
+         * - frameIncludesCurrentValue is set when rowsHi == 0.
+         * - The provided MemoryARW `memory` is used as the ring buffer; when the lower bound is bounded
+         *   the provided `dequeMemory` is used for the monotonic deque and dequeBufferSize is computed.
+         *
+         * The constructor initializes the buffers via initBuffer(); if buffer initialization throws,
+         * resources are closed and the throwable is rethrown.
+         *
+         * @param arg          function producing the timestamp values to aggregate
+         * @param rowsLo       lower bound of the rows frame (may be Long.MIN_VALUE for unbounded)
+         * @param rowsHi       upper bound of the rows frame (relative to current row)
+         * @param memory       pre-allocated memory to use for the ring buffer
+         * @param dequeMemory  pre-allocated memory to use for the deque; only used when lower bound is bounded
+         * @param comparator   comparator used to decide the max between two timestamps
+         * @param name         name used for function identification (e.g., "max")
+         */
         public MaxMinOverRowsFrameFunction(Function arg,
                                            long rowsLo,
                                            long rowsHi,
@@ -1347,6 +1784,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             this.name = name;
         }
 
+        /**
+         * Releases resources held by this function.
+         *
+         * Closes the underlying buffer and, if present, the deque memory, and then invokes
+         * superclass cleanup. Safe to call multiple times; null deque memory is ignored.
+         */
         @Override
         public void close() {
             super.close();
@@ -1356,6 +1799,29 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Advance the sliding window by one row: ingest the timestamp from the provided record,
+         * update the circular frame buffer and (when configured) the monotonic deque used to
+         * maintain the current maximum, evict old elements, and update the cached max value.
+         *
+         * <p>Behavior details:</p>
+         * <ul>
+         *   <li>Reads the timestamp via the wrapped argument function (arg.getTimestamp(record)).</li>
+         *   <li>If the frame lower bound is bounded, maintains a monotonic deque in dequeMemory:
+         *       new values are pushed while removing smaller elements according to the comparator;
+         *       the deque front represents the current frame maximum.</li>
+         *   <li>If the frame lower bound is unbounded, maintains a single accumulator (maxMin)
+         *       that is updated when encountering larger timestamps.</li>
+         *   <li>Handles frames that either include or exclude the current row when computing the
+         *       top/frame element used for comparison.</li>
+         *   <li>Ignores null timestamps (Numbers.LONG_NULL) when updating maxima or deque.</li>
+         *   <li>Evicts the oldest element from the deque when it leaves the frame.</li>
+         *   <li>Overwrites the oldest slot in the circular buffer with the new timestamp and
+         *       advances loIdx.</li>
+         * </ul>
+         *
+         * @param record the input record whose timestamp will be added to the window
+         */
         @Override
         public void computeNext(Record record) {
             long l = arg.getTimestamp(record);
@@ -1397,27 +1863,61 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             loIdx = (loIdx + 1) % bufferSize;
         }
 
+        /**
+         * Returns the current computed maximum timestamp for this window function.
+         *
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
         @Override
         public long getTimestamp(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of passes required by this window function.
+         *
+         * @return {@code WindowFunction.ZERO_PASS} indicating the function produces results without multi-pass aggregation.
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         *
+         * Calls computeNext(record) to update the internal max/min state, then writes that
+         * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
+         *
+         * @param record current input record to process
+         * @param recordOffset byte offset identifying the output row frame where the result should be written
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reset the function's internal state for a new execution pass.
+         *
+         * Clears the current max/min accumulator, resets the frame start index, reinitializes the ring
+         * buffer, and, if a deque buffer is present, resets deque start/end indices.
+         */
         @Override
         public void reopen() {
             maxMin = Numbers.LONG_NULL;
@@ -1429,6 +1929,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Reset internal state for reuse: close and clear the ring buffer and optional deque,
+         * and reset indices and cached maximum timestamp to null sentinel.
+         *
+         * <p>This clears resources acquired by the function so it can be reopened or discarded.
+         */
         @Override
         public void reset() {
             super.reset();
@@ -1442,6 +1948,13 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Appends a human-readable plan fragment for this window function to the provided PlanSink.
+         *
+         * The produced fragment has the form: `max(arg) over ( rows between <lower> preceding and <upper> )`,
+         * where `<lower>` is either the numeric lower bound or "unbounded", and `<upper>` is either "current row"
+         * or a numeric preceding offset computed from the buffer size and frame size.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1462,6 +1975,13 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             sink.val(')');
         }
 
+        /**
+         * Reset the function to its initial state before scanning from the start.
+         *
+         * Calls the superclass reset, clears the current max/min sentinel, resets the frame index
+         * and deque indices, and reinitializes the internal buffer(s) so the function can be reused
+         * for a fresh pass over data.
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -1474,6 +1994,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Initialize the ring buffer by setting each slot to the sentinel null timestamp.
+         *
+         * Writes Numbers.LONG_NULL at consecutive long-sized offsets for bufferSize entries
+         * starting at offset 0.
+         */
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
                 buffer.putLong((long) i * Long.BYTES, Numbers.LONG_NULL);
@@ -1491,6 +2017,17 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final String name;
         private long maxMin;
 
+        /**
+         * Create a window function that computes the maximum timestamp for each partition with an unbounded
+         * preceding rows frame (i.e., accumulates a running max per partition).
+         *
+         * @param map               map holding per-partition state (keys -> values)
+         * @param partitionByRecord record wrapper used to read the partition key from the current row
+         * @param partitionBySink   sink used to write partition key values into map keys
+         * @param arg               function that produces the timestamp value for the current row
+         * @param comparator        comparator used to decide which timestamp is greater
+         * @param name              function name used in plan/output
+         */
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
                                                              VirtualRecord partitionByRecord,
                                                              RecordSink partitionBySink,
@@ -1502,6 +2039,19 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             this.name = name;
         }
 
+        /**
+         * Process the given record and update the per-partition maximum timestamp.
+         *
+         * Advances the partition key using the supplied record, reads the timestamp from
+         * the argument function, and updates the partition's stored maximum if the
+         * value is non-null and compares greater according to {@code comparator}.
+         * Sets {@code this.maxMin} to the partition's current maximum timestamp after
+         * processing the record, or {@link io.questdb.std.Numbers#LONG_NULL} if no value
+         * exists for the partition.
+         *
+         * @param record current row being processed; used to derive the partition key
+         *               and the timestamp to consider for the partition's maximum
+         */
         @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
@@ -1528,27 +2078,62 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Returns the current computed maximum timestamp for this window function.
+         *
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
         @Override
         public long getTimestamp(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of passes required by this window function.
+         *
+         * @return {@code WindowFunction.ZERO_PASS} indicating the function produces results without multi-pass aggregation.
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         *
+         * Calls computeNext(record) to update the internal max/min state, then writes that
+         * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
+         *
+         * @param record current input record to process
+         * @param recordOffset byte offset identifying the output row frame where the result should be written
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Append a SQL-style plan representation of this window function to the provided sink.
+         *
+         * The emitted text has the form:
+         * `name(arg) over (partition by <partition expressions> rows between unbounded preceding and current row)`
+         * and reflects that this function is applied with a partition clause and an unbounded-preceding-to-current-row rows frame.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1567,12 +2152,33 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final String name;
         private long maxMin = Numbers.LONG_NULL;
 
+        /**
+         * Create a MAX-over-unbounded-rows window function instance.
+         *
+         * This constructor builds a function that maintains the maximum timestamp seen so far
+         * across all rows (no partitioning, unbounded preceding). The provided `arg` supplies
+         * the timestamp value for each row; `comparator` is used to compare timestamps; `name`
+         * is the function name returned by getName().
+         *
+         * @param arg the input function that produces a timestamp value for each row
+         * @param comparator comparator used to decide which timestamp is greater
+         * @param name the reported function name (e.g., "max")
+         */
         public MaxMinOverUnboundedRowsFrameFunction(Function arg, TimestampComparator comparator, String name) {
             super(arg);
             this.comparator = comparator;
             this.name = name;
         }
 
+        /**
+         * Consume the next input record and update the running maximum timestamp.
+         *
+         * Reads the timestamp from {@code arg} for the given {@code record}; if the value is not null
+         * and is greater (per {@code comparator}) than the current stored value, replaces the stored
+         * maximum with that timestamp.
+         *
+         * @param record input record to read the timestamp from
+         */
         @Override
         public void computeNext(Record record) {
             long l = arg.getTimestamp(record);
@@ -1581,33 +2187,72 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Returns the current computed maximum timestamp for this window function.
+         *
+         * The provided Record argument is not used by this implementation; the result is taken
+         * from the function's internal state.
+         *
+         * @param rec ignored
+         * @return the current max timestamp stored in this function's state
+         */
         @Override
         public long getTimestamp(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of passes required by this window function.
+         *
+         * @return {@code WindowFunction.ZERO_PASS} indicating the function produces results without multi-pass aggregation.
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Compute the aggregate for the current input row and write the result to the output column.
+         *
+         * Calls computeNext(record) to update the internal max/min state, then writes that
+         * timestamp value into the output row at the address returned by spi.getAddress(recordOffset, columnIndex).
+         *
+         * @param record current input record to process
+         * @param recordOffset byte offset identifying the output row frame where the result should be written
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reset the function's execution state for a new evaluation.
+         *
+         * Clears the accumulated maximum timestamp by setting {@code maxMin} to the null timestamp marker
+         * so subsequent processing starts with an empty accumulator.
+         */
         @Override
         public void reset() {
             super.reset();
             maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Appends this function's textual plan representation to the provided PlanSink.
+         *
+         * The produced plan has the form: "<functionName>(<arg>) over (rows between unbounded preceding and current row)".
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1615,6 +2260,12 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             sink.val(" over (rows between unbounded preceding and current row)");
         }
 
+        /**
+         * Reset the function to its initial state for reuse.
+         *
+         * Clears any accumulated maximum timestamp by setting {@code maxMin} to {@code Numbers.LONG_NULL}
+         * and delegates common reset logic to the superclass via {@code super.toTop()}.
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -1629,22 +2280,47 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final String name;
         private long maxMin = Numbers.LONG_NULL;
 
+        /**
+         * Constructs a window function that computes the maximum timestamp across the entire result set.
+         *
+         * @param arg the input timestamp-producing function
+         * @param comparator comparator used to determine which timestamp is greater
+         * @param name the function name used for labeling/plan output
+         */
         public MaxMinOverWholeResultSetFunction(Function arg, TimestampComparator comparator, String name) {
             super(arg);
             this.comparator = comparator;
             this.name = name;
         }
 
+        /**
+         * Returns the window function's name.
+         *
+         * @return the name used to identify this function instance
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Indicates this window function requires two processing passes.
+         *
+         * @return {@link WindowFunction#TWO_PASS} signifying the function performs work in two passes
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
 
+        /**
+         * Processes a single input row for the first pass: reads the timestamp from the argument
+         * function and updates the running maximum (`maxMin`) if the timestamp is non-null and
+         * greater according to the provided comparator.
+         *
+         * @param record        the input record to read the timestamp from
+         * @param recordOffset  offset associated with the record (not used by this implementation)
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             long l = arg.getTimestamp(record);
@@ -1653,17 +2329,35 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        /**
+         * Writes the computed maximum timestamp for the current partition into the output column for the specified row.
+         *
+         * @param record unused input record for this pass
+         * @param recordOffset row identifier used by WindowSPI to locate the output slot
+         */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reset the function's execution state for a new evaluation.
+         *
+         * Clears the accumulated maximum timestamp by setting {@code maxMin} to the null timestamp marker
+         * so subsequent processing starts with an empty accumulator.
+         */
         @Override
         public void reset() {
             super.reset();
             maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Reset the function to its initial state for reuse.
+         *
+         * Clears any accumulated maximum timestamp by setting {@code maxMin} to {@code Numbers.LONG_NULL}
+         * and delegates common reset logic to the superclass via {@code super.toTop()}.
+         */
         @Override
         public void toTop() {
             super.toTop();

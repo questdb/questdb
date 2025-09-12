@@ -48,11 +48,32 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(L)";
 
+    /**
+     * Returns the textual signature that identifies this window function.
+     *
+     * @return the function signature, "min(L)"
+     */
     @Override
     public String getSignature() {
         return SIGNATURE;
     }
 
+    /**
+     * Create a window function instance that computes the minimum of long values for the configured window.
+     *
+     * This method selects and wires one of several specialized implementations based on
+     * window framing (ROWS or RANGE), presence of PARTITION BY, ordering/timestamp usage,
+     * and the rowsLo/rowsHi bounds. It also allocates and attaches any required map or
+     * circular buffer memory resources; allocated resources are freed on error.
+     *
+     * @param position position of the function in the SQL statement (used for error reporting)
+     * @param args the function argument list (first argument is the value to aggregate)
+     * @param argPositions source positions for each argument (passed through to validation)
+     * @return a Function instance that computes the min(L) for the specified window
+     * @throws SqlException if the window parameters are not supported (for example, RANGE used
+     *         with a non-designated timestamp ordering) or if the combination of framing/partitioning
+     *         is not implemented
+     */
     @Override
     public Function newInstance(
             int position,

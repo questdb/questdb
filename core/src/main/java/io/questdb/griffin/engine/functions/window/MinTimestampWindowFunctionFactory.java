@@ -48,11 +48,30 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(N)";
 
+    /**
+     * Returns the function signature provided by this factory.
+     *
+     * @return the signature string (e.g., {@code "min(N)"})
+     */
     @Override
     public String getSignature() {
         return SIGNATURE;
     }
 
+    /**
+     * Creates a window-function instance that computes the minimum timestamp for the current window context.
+     *
+     * The concrete implementation is chosen based on the WindowContext (partitioning, framing mode — RANGE or ROWS,
+     * ordering, and row bounds). The method may allocate native resources (maps and circular buffers) for stateful
+     * implementations and ensures those resources are freed on allocation failure. If the window bounds specify an
+     * empty frame (rowsHi < rowsLo) a TimestampNullFunction is returned.
+     *
+     * @param position parser position of the function call used for error reporting
+     * @param args the function arguments (first argument is the timestamp expression)
+     * @return a Function that computes the minimum timestamp for the configured window
+     * @throws SqlException if the WindowContext is invalid or the requested combination of framing/ordering/partitioning
+     *                      is not supported
+     */
     @Override
     public Function newInstance(
             int position,
