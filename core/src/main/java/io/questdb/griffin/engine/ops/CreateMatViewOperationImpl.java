@@ -458,14 +458,30 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn column = columns.getQuick(i);
-                if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                    final CreateTableColumnModel columnModel = createColumnModelMap.get(column.getName());
-                    if (columnModel == null) {
-                        throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
+            final int baseTableTimestampIndex = baseTableMetadata.getTimestampIndex();
+            if (baseTableTimestampIndex >= 0) {
+                final String baseTableTimestampColumn = baseTableMetadata.getColumnName(baseTableTimestampIndex);
+
+                final String finalTimestamp = createTableOperation.getTimestampColumnName();
+                if (finalTimestamp != null) {
+                    if (!Chars.equalsIgnoreCase(finalTimestamp, baseTableTimestampColumn)) {
+                        throw SqlException.position(timestampPos != 0 ? timestampPos : selectTextPosition)
+                                .put("materialized view query timestamp must match base table designated timestamp [")
+                                .put("base table timestamp=").put(baseTableTimestampColumn)
+                                .put(", materialized view timestamp=").put(finalTimestamp)
+                                .put(']');
                     }
-                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                } else {
+                    final ExpressionNode queryTimestamp = queryModel.getTimestamp();
+                    if (queryTimestamp != null && queryTimestamp.type == ExpressionNode.LITERAL) {
+                        if (!Chars.equalsIgnoreCase(queryTimestamp.token, baseTableTimestampColumn)) {
+                            throw SqlException.position(queryTimestamp.position)
+                                    .put("materialized view query timestamp must match base table designated timestamp [")
+                                    .put("base table timestamp=").put(baseTableTimestampColumn)
+                                    .put(", query timestamp=").put(queryTimestamp.token)
+                                    .put(']');
+                        }
+                    }
                 }
             }
         }
