@@ -68,6 +68,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.DatabaseActivityRegistry;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.IOContext;
 import io.questdb.network.IOOperation;
@@ -270,6 +271,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private boolean typesAndUpdateIsCached = false;
     private NamedStatementWrapper wrapper;
+    private int activityConnectionId = -1;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -468,6 +470,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         clear();
         if (sqlExecutionContext != null) {
             sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
+        }
+        if (activityConnectionId != -1) {
+            DatabaseActivityRegistry.getInstance().unregisterConnection(activityConnectionId);
+            activityConnectionId = -1;
         }
         path = Misc.free(path);
         authenticator = Misc.free(authenticator);
@@ -1366,6 +1372,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private boolean compileQuery() throws SqlException {
         if (queryText != null && queryText.length() > 0) {
+            // Track query execution
+            if (activityConnectionId != -1) {
+                DatabaseActivityRegistry.getInstance().updateQuery(activityConnectionId, queryText.toString(), Os.currentTimeMicros());
+            }
             // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
             typesAndInsert = typesAndInsertCache.peek(queryText);
@@ -1784,9 +1794,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
+                    // Register connection for activity tracking
+                    if (activityConnectionId == -1) {
+                        String remoteAddress = Net.getPeerIP(getFd());
+                        String username = authenticator.getPrincipal() != null ? authenticator.getPrincipal().toString() : "unknown";
+                        activityConnectionId = DatabaseActivityRegistry.getInstance().registerConnection(remoteAddress, username, "questdb");
+ 
                 } catch (CairoException e) {
                     LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
                     r = authenticator.denyAccess(e.getFlyweightMessage());
+
                 }
             }
         } catch (AuthenticatorException e) {
@@ -2368,11 +2385,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryTag = TAG_COMMIT;
                 if (transactionState != ERROR_TRANSACTION) {
                     transactionState = COMMIT_TRANSACTION;
+                    // Track commit
+                    if (activityConnectionId != -1) {
+                        DatabaseActivityRegistry.getInstance().incrementCommits();
+                    }
                 }
                 break;
             case CompiledQuery.ROLLBACK:
                 queryTag = TAG_ROLLBACK;
                 transactionState = ROLLING_BACK_TRANSACTION;
+                // Track rollback
+                if (activityConnectionId != -1) {
+                    DatabaseActivityRegistry.getInstance().incrementRollbacks();
+                }
                 break;
             case CompiledQuery.ALTER_USER:
                 queryTag = TAG_ALTER_ROLE;
@@ -2701,6 +2726,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void resumeQueryComplete(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // Clear query tracking when query completes
+        if (activityConnectionId != -1) {
+            DatabaseActivityRegistry.getInstance().clearQuery(activityConnectionId);
+        }
         prepareCommandComplete(true);
         sendReadyForNewQuery();
     }
