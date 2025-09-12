@@ -1448,11 +1448,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             return NAME;
         }
 
-        / **
+        /**
          * Returns the number of execution passes required for this window function.
          *
          * @return the pass count (ZERO_PASS)
-         * /
+         */
         @Override
         public int getPassCount() {
             return ZERO_PASS;

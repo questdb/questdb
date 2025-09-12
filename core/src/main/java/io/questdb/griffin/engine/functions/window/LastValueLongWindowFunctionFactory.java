@@ -82,11 +82,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
      * helpers to produce an implementation that either ignores NULLs or respects NULLs depending
      * on the window context.</p>
      *
-     * @param position      parse position used for error reporting
-     * @param args          function argument list (first argument is the LONG input)
-     * @param argPositions  source positions of each argument (used for error reporting)
-     * @throws SqlException if window context validation fails or configuration is unsupported
+     * @param position     parse position used for error reporting
+     * @param args         function argument list (first argument is the LONG input)
+     * @param argPositions source positions of each argument (used for error reporting)
      * @return a Function implementing last_value over LONG according to the window frame and context
+     * @throws SqlException if window context validation fails or configuration is unsupported
      */
     @Override
     public Function newInstance(
@@ -119,14 +119,14 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
      * Selects and constructs a Window Function implementation for the `last_value` aggregation
      * when NULLs are ignored, based on the window context (partitioning, framing mode, bounds,
      * ordering) and provided arguments.
-     *
+     * <p>
      * The method inspects windowContext to determine the exact variant required (partitioned vs.
      * global, RANGE vs. ROWS, unbounded vs. bounded, current-row vs. whole-partition/result-set)
      * and returns a specialized Function instance that implements the semantics of
      * `last_value(... ) IGNORE NULLS` for long inputs.
      *
      * @param position parser/source position used for error reporting when a configuration is not supported
-     * @param args list of function argument expressions (first element is the input value function)
+     * @param args     list of function argument expressions (first element is the input value function)
      * @return a Function implementing `last_value(... )` with ignore-null semantics appropriate for the window parameters
      * @throws SqlException if the window parameters request an unsupported configuration (for example RANGE with non-designated timestamp ordering) or if no matching implementation exists
      */
@@ -319,12 +319,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
      * Selects and constructs a concrete Window Function implementation for LAST_VALUE(L)
      * that respects NULLs, based on the provided WindowContext (framing mode, partitioning,
      * ordering, and frame bounds).
-     *
+     * <p>
      * The method returns a specialized Function instance for combinations such as:
      * - partitioned vs. non-partitioned
      * - RANGE vs. ROWS framing
      * - whole-partition / whole-result-set, include-current-row, preceding-N-rows, and range-window variants
-     *
+     * <p>
      * Implementations created here may allocate per-partition maps or memory-backed circular buffers as needed.
      *
      * @throws SqlException if RANGE framing is used with ordering that is not by the designated timestamp,
@@ -520,7 +520,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Construct a last_value function (ignore NULLs) for an unbounded ROWS frame.
-         *
+         * <p>
          * The created function returns the most recent non-null long value seen in the
          * partition from the start up to the current row.
          *
@@ -588,12 +588,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * First-pass handler: updates the internal `lastValue` with the given input record
          * and writes that value to the function output column at the provided record offset.
-         *
+         * <p>
          * The method calls {@code computeNext(record)} to advance internal state (which may
          * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
          * row using the configured `columnIndex`.
          *
-         * @param record the input record used to update the function state
+         * @param record       the input record used to update the function state
          * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
          */
         @Override
@@ -604,7 +604,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset the function's runtime state to its initial condition.
-         *
+         * <p>
          * Clears any cached last value by setting {@code lastValue} to {@link Numbers#LONG_NULL}
          * and invokes superclass reset behavior.
          */
@@ -616,7 +616,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends this window function's plan representation to the provided PlanSink.
-         *
+         * <p>
          * The emitted plan describes a `last_value` variant that ignores nulls and uses
          * the framing "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", formatted as:
          * `<functionName>(<arg>) ignore nulls over (rows between unbounded preceding and current row)`.
@@ -630,7 +630,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset the function's internal state to the initial position.
-         *
+         * <p>
          * Clears the cached last value (sets it to Numbers.LONG_NULL) and delegates other reset work to the superclass.
          */
         @Override
@@ -645,13 +645,13 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         private long value = Numbers.LONG_NULL;
 
-        / **
+        /**
          * Create a LastNotNullValueOverCurrentRowFunction.
          *
          * @param arg the input function that produces the long value for the current row; this
          *            constructor builds an implementation that returns that value only when it is non-null
          *            (ignore-nulls semantics for the current row).
-         * /
+         */
         LastNotNullValueOverCurrentRowFunction(Function arg) {
             super(arg);
         }
@@ -669,7 +669,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Returns the cached last value for the current row.
-         *
+         * <p>
          * The supplied Record parameter is not used by this implementation; the method
          * simply returns the stored long value.
          *
@@ -713,7 +713,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * First-pass handler that computes and writes the last_value for the current input record.
-         *
+         * <p>
          * Computes the next aggregated value from the supplied record (updating this function's internal
          * state) and writes the resulting long to the output slot identified by the given recordOffset
          * and this function's columnIndex.
@@ -734,7 +734,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Creates a partition-aware last_value function that ignores NULLs.
-         *
+         * <p>
          * This constructor builds an instance that maintains per-partition state in the supplied
          * map and uses the provided partition key record/sink to identify partitions. The function
          * computes the last non-null long value for each partition.
@@ -770,7 +770,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * The number of execution passes this window function requires.
-         *
+         * <p>
          * This implementation requires two-pass execution (build intermediate state in pass1, produce output in pass2).
          *
          * @return {@link WindowFunction#TWO_PASS}
@@ -792,12 +792,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * First pass: ensure each partition has an initial entry storing the first non-null timestamp seen.
-         *
+         * <p>
          * For the given input record this method locates the partition map entry by the partition key.
          * If no entry exists and the record's timestamp (from the function argument) is not NULL,
          * it creates a new map value and stores that timestamp at index 0.
          *
-         * @param record the input record to inspect for partition key and timestamp
+         * @param record       the input record to inspect for partition key and timestamp
          * @param recordOffset unused in this implementation
          */
         @Override
@@ -817,7 +817,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Emits the stored last-value timestamp for the partition of the given record into the
          * window output column at the provided recordOffset.
-         *
+         * <p>
          * Looks up the partition key derived from {@code record} in the internal map; if an entry
          * exists, its timestamp is written, otherwise {@code Numbers.LONG_NULL} is written.
          *
@@ -844,7 +844,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Constructs a partitioned RANGE-frame implementation of LAST_VALUE that ignores NULLs.
-         *
+         * <p>
          * This constructor creates a function that maintains a per-partition sliding window of
          * (timestamp, value) pairs in off-heap memory and computes the last non-null value
          * within the frame defined by the inclusive bounds [rangeLo, rangeHi] relative to the
@@ -879,14 +879,14 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * <p>This method:
          * - Looks up or creates per-partition state in the partition map.
          * - Maintains an in-memory ring buffer of [timestamp, value] pairs for the partition,
-         *   allocating or expanding the buffer in persistent memory as needed.
+         * allocating or expanding the buffer in persistent memory as needed.
          * - Evicts entries that fall outside the frame's maxDiff (when the lower bound is
-         *   bounded), appends the current record's value when non-null, and advances the
-         *   buffer start so that `lastValue` reflects the newest value inside the frame
-         *   according to the configured minDiff/maxDiff rules and whether the frame
-         *   includes the current row.
+         * bounded), appends the current record's value when non-null, and advances the
+         * buffer start so that `lastValue` reflects the newest value inside the frame
+         * according to the configured minDiff/maxDiff rules and whether the frame
+         * includes the current row.
          * - Writes the updated per-partition metadata (start offset, size, capacity, first index)
-         *   back to the map value.
+         * back to the map value.
          *
          * @param record the input record to process; its timestamp is used for frame arithmetic
          *               and `arg.getTimestamp(record)` provides the long value appended to the buffer
@@ -1031,7 +1031,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          *
          * @param rowsLo lower bound of the ROWS frame (can be Long.MIN_VALUE to indicate unbounded PRECEDING)
          * @param rowsHi upper bound of the ROWS frame
-         * @param arg function providing input values for the window
+         * @param arg    function providing input values for the window
          * @param memory ring-buffer memory used to store per-partition (timestamp, value) entries
          */
         public LastNotNullValueOverPartitionRowsFrameFunction(
@@ -1197,12 +1197,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * First-pass handler: updates the internal `lastValue` with the given input record
          * and writes that value to the function output column at the provided record offset.
-         *
+         * <p>
          * The method calls {@code computeNext(record)} to advance internal state (which may
          * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
          * row using the configured `columnIndex`.
          *
-         * @param record the input record used to update the function state
+         * @param record       the input record used to update the function state
          * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
          */
         @Override
@@ -1213,7 +1213,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reopens the function for reuse, invoking superclass reopen behavior.
-         *
+         * <p>
          * Any memory-backed resources are not allocated here and will be lazily
          * allocated on first use.
          */
@@ -1225,7 +1225,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Resets the function's state and releases its memory buffer.
-         *
+         * <p>
          * This calls the superclass reset logic and closes the associated memory resource to free any
          * allocated native/storage buffers used by this instance.
          */
@@ -1237,7 +1237,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends this window function's textual plan representation to the given PlanSink.
-         *
+         * <p>
          * The plan includes the function name and argument, the "ignore nulls" marker,
          * the partition-by expressions, and the ROWS framing clause in the form:
          * "rows between <bufferSize> preceding and <current row|N preceding>".
@@ -1280,9 +1280,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Create a last_value window function variant that ignores NULLs and evaluates over a RANGE frame.
          *
-         * @param rangeLo     lower bound of the RANGE frame (as provided by the window frame specification)
-         * @param rangeHi     upper bound of the RANGE frame (as provided by the window frame specification)
-         * @param arg         the input value expression (long) whose last non-null value is produced
+         * @param rangeLo      lower bound of the RANGE frame (as provided by the window frame specification)
+         * @param rangeHi      upper bound of the RANGE frame (as provided by the window frame specification)
+         * @param arg          the input value expression (long) whose last non-null value is produced
          * @param timestampIdx index of the timestamp column used to evaluate RANGE boundaries
          */
         public LastNotNullValueOverRangeFrameFunction(
@@ -1303,7 +1303,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * - Appends the current record's argument timestamp/value to the ring buffer when the argument is non-null.
          * - Trims older entries that do not satisfy `minDiff` so only the candidate for last_value is kept.
          * - Updates internal buffer state (`firstIdx`, `size`, `capacity`, `startOffset`) and sets `lastValue`
-         *   to the most recent value within the frame or to `Numbers.LONG_NULL` when none exists.</p>
+         * to the most recent value within the frame or to `Numbers.LONG_NULL` when none exists.</p>
          *
          * @param record input record; must contain the row timestamp at `timestampIndex` and the argument value retrievable via `arg.getTimestamp(record)`.
          */
@@ -1409,11 +1409,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * for following rows). The constructor computes the window's frame size and the backing buffer
          * capacity based on those bounds and initializes the provided MemoryARW buffer for use.</p>
          *
-         * @param arg      argument expression that produces input long values
-         * @param rowsLo   lower frame bound (relative to current row)
-         * @param rowsHi   upper frame bound (relative to current row)
-         * @param memory   preallocated MemoryARW used as the function's ring buffer (must be initialized
-         *                 by caller and will be prepared by this constructor)
+         * @param arg    argument expression that produces input long values
+         * @param rowsLo lower frame bound (relative to current row)
+         * @param rowsHi upper frame bound (relative to current row)
+         * @param memory preallocated MemoryARW used as the function's ring buffer (must be initialized
+         *               by caller and will be prepared by this constructor)
          */
         public LastNotNullValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg);
@@ -1435,7 +1435,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Release resources held by this function.
-         *
+         * <p>
          * Calls the superclass close handler and closes the internal buffer used for window state.
          */
         @Override
@@ -1451,13 +1451,13 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * <p>The method reads the current row's timestamp from {@code arg} and updates {@code lastValue}
          * and {@code cacheValue} according to the active frame semantics:
          * - If {@code frameIncludesCurrentValue} and the current timestamp is not {@code Numbers.LONG_NULL},
-         *   the current timestamp becomes the new last value.
+         * the current timestamp becomes the new last value.
          * - If the frame has a lower bound ({@code frameLoBounded}), the value is selected from the
-         *   frame buffer at the logical end of the frame; if that slot is null, the buffer is scanned
-         *   backwards within the frame to find the most recent non-null value. If none is found the
-         *   previous {@code lastValue} is preserved.
+         * frame buffer at the logical end of the frame; if that slot is null, the buffer is scanned
+         * backwards within the frame to find the most recent non-null value. If none is found the
+         * previous {@code lastValue} is preserved.
          * - If the frame is unbounded below, the method reads the value at the buffer's lowest index
-         *   and falls back to {@code cacheValue} when that slot is null.
+         * and falls back to {@code cacheValue} when that slot is null.
          *
          * <p>After selecting the appropriate last value, the method writes the current timestamp into
          * the ring buffer at the current {@code loIdx} position, advances {@code loIdx}, and updates
@@ -1548,12 +1548,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * First-pass handler: updates the internal `lastValue` with the given input record
          * and writes that value to the function output column at the provided record offset.
-         *
+         * <p>
          * The method calls {@code computeNext(record)} to advance internal state (which may
          * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
          * row using the configured `columnIndex`.
          *
-         * @param record the input record used to update the function state
+         * @param record       the input record used to update the function state
          * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
          */
         @Override
@@ -1564,7 +1564,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reinitializes the function's mutable state so it can be reused.
-         *
+         * <p>
          * Resets the cached last value to SQL NULL, resets the low index used by the
          * ring buffer, and (re)initializes the underlying buffer structure.
          */
@@ -1577,7 +1577,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset the function to its initial state for reuse.
-         *
+         * <p>
          * Calls super.reset(), closes the internal buffer, clears cached values by
          * setting them to NULL, and resets the low index pointer to 0.
          */
@@ -1592,12 +1592,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends a human-readable plan fragment for this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced fragment has the form:
          * "functionName(arg) ignore nulls over ( rows between <bufferSize> preceding and <bound> )"
          * where <bound> is either "current row" when the frame includes the current row, or
          * "<bufferSize + 1 - frameSize> preceding" otherwise.
-         *
+         * <p>
          * This method directly writes to the given PlanSink; it does not return a value.
          */
         @Override
@@ -1618,7 +1618,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset this function's runtime state to the initial/top position.
-         *
+         * <p>
          * Clears the tracked last and cached long values, resets the low index used
          * for the ring buffer, and reinitializes the internal buffer so the function
          * can be reused from the beginning of its input stream.
@@ -1634,7 +1634,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Fill the internal buffer with sentinel null values.
-         *
+         * <p>
          * Initializes each long slot in the backing buffer (at offsets 0, 8, 16, ...) up to
          * bufferSize entries to Numbers.LONG_NULL, marking them as empty/unset.
          */
@@ -1669,14 +1669,14 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * Process a single input row: update per-partition state with the row's timestamp
          * and set the instance's current `value` to the latest known timestamp for the
          * partition (ignoring null timestamps).
-         *
+         * <p>
          * This method:
          * - Looks up or creates the partition entry in `map` using `partitionByRecord`.
          * - Reads the row timestamp via `arg.getTimestamp(record)`.
          * - If the partition entry is new, stores the timestamp and sets `value` to it.
          * - If the entry exists, updates the stored timestamp and `value` when the row's
-         *   timestamp is not null; otherwise leaves the stored timestamp and `value`
-         *   unchanged and uses the stored timestamp for `value`.
+         * timestamp is not null; otherwise leaves the stored timestamp and `value`
+         * unchanged and uses the stored timestamp for `value`.
          *
          * @param record the input row to process (current record for which to compute the window value)
          */
@@ -1702,7 +1702,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Returns the cached last value for the current row.
-         *
+         * <p>
          * The supplied Record parameter is not used by this implementation; the method
          * simply returns the stored long value.
          *
@@ -1746,7 +1746,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * First-pass handler that computes and writes the last_value for the current input record.
-         *
+         * <p>
          * Computes the next aggregated value from the supplied record (updating this function's internal
          * state) and writes the resulting long to the output slot identified by the given recordOffset
          * and this function's columnIndex.
@@ -1762,10 +1762,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends a textual plan description for this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced plan has the form:
          * "name(arg) ignore nulls over (partition by <partition-functions> rows between unbounded preceding and current row)".
-         *
+         * <p>
          * This describes an IGNORE NULLS variant of LAST_VALUE operating over a partitioned ROWS frame
          * that spans from the partition start (UNBOUNDED PRECEDING) to the current row.
          */
@@ -1840,11 +1840,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * First pass — capture the first non-null timestamp from the input stream.
-         *
+         * <p>
          * Reads the timestamp from the provided record and, if a non-null value is encountered
          * and no value has been captured yet, stores it in {@code this.value} and marks {@code found}.
          *
-         * @param record current input record
+         * @param record       current input record
          * @param recordOffset offset of the current record (unused by this implementation)
          */
         @Override
@@ -1860,11 +1860,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Write the computed long result into the window output for the given row.
-         *
+         * <p>
          * Writes the function's current `value` into the output column at the memory address
          * returned by {@code spi.getAddress(recordOffset, columnIndex)} for the provided row.
          *
-         * @param record the input record (unused by this implementation)
+         * @param record       the input record (unused by this implementation)
          * @param recordOffset offset of the output row within the SPI's address space
          */
         @Override
@@ -1874,7 +1874,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset the function's internal state to its initial values.
-         *
+         * <p>
          * Clears any stored last value and marks that no value has been found yet.
          */
         @Override
@@ -1886,7 +1886,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset internal state to its initial "no value" condition.
-         *
+         * <p>
          * Sets the stored long value to NULL and clears the found flag. Called when the function's
          * cursor is repositioned to the start (top) of the input so subsequent processing begins
          * with a clean state.
@@ -1909,9 +1909,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Create a last_value implementation that includes the current row in the frame.
          *
-         * @param rowsLo number of preceding rows (offset) that define the frame's lower bound
+         * @param rowsLo  number of preceding rows (offset) that define the frame's lower bound
          * @param isRange true if the frame is RANGE-based, false if ROWS-based
-         * @param arg the input value expression to evaluate for last_value
+         * @param arg     the input value expression to evaluate for last_value
          */
         public LastValueIncludeCurrentFrameFunction(long rowsLo, boolean isRange, Function arg) {
             super(arg);
@@ -1932,7 +1932,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Returns the cached last value for the current row.
-         *
+         * <p>
          * The supplied Record parameter is not used by this implementation; the method
          * simply returns the stored long value.
          *
@@ -1966,7 +1966,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * First-pass handler that computes and writes the last_value for the current input record.
-         *
+         * <p>
          * Computes the next aggregated value from the supplied record (updating this function's internal
          * state) and writes the resulting long to the output slot identified by the given recordOffset
          * and this function's columnIndex.
@@ -1982,7 +1982,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset function state for reuse.
-         *
+         * <p>
          * Calls the superclass reset logic and clears the cached value by setting it to the long NULL sentinel (Numbers.LONG_NULL).
          */
         @Override
@@ -1993,10 +1993,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends a concise textual plan representation of this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced text has the form:
-         *   <name>(<arg>)[ ignore nulls] over (range|rows between <unbounded|N> preceding and current row)
-         *
+         * <name>(<arg>)[ ignore nulls] over (range|rows between <unbounded|N> preceding and current row)
+         * <p>
          * If {@code rowsLo} equals {@link Long#MIN_VALUE} the lower bound is printed as "unbounded"; otherwise
          * the absolute value of {@code rowsLo} is printed. The method writes directly to the given PlanSink.
          */
@@ -2023,7 +2023,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset this function to its initial state for reuse.
-         *
+         * <p>
          * Calls the superclass reset logic and clears the stored last-value by setting it to
          * Numbers.LONG_NULL.
          */
@@ -2046,7 +2046,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Create a window function that computes LAST_VALUE (including the current row) for a partitioned
          * frame expressed as ROWS or RANGE.
-         *
+         * <p>
          * This constructor configures a partition-aware implementation that includes the current row
          * in the frame. The function uses the provided partition key record/sink to group rows by
          * partition and evaluates `arg` to obtain the long value for each row.
@@ -2076,7 +2076,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Returns the cached last value for the current row.
-         *
+         * <p>
          * The supplied Record parameter is not used by this implementation; the method
          * simply returns the stored long value.
          *
@@ -2110,7 +2110,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * First-pass handler that computes and writes the last_value for the current input record.
-         *
+         * <p>
          * Computes the next aggregated value from the supplied record (updating this function's internal
          * state) and writes the resulting long to the output slot identified by the given recordOffset
          * and this function's columnIndex.
@@ -2126,7 +2126,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends a textual representation of this window function to the given PlanSink.
-         *
+         * <p>
          * The output includes the function name and argument, optional "ignore nulls" marker,
          * the PARTITION BY clause (derived from partitionByRecord), and a ROWS/RANGE frame
          * described as "<n> preceding and current row" (or "unbounded" when rowsLo is Long.MIN_VALUE).
@@ -2161,15 +2161,15 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Constructs a partitioned last_value function that tracks the last LONG value per partition.
-         *
+         * <p>
          * This constructor initializes the function with the per-partition state map, the current
          * partition key record and its sink, and the input argument function whose values are used
          * to compute the last value.
          *
-         * @param map              per-partition state map used to store the last-seen long value for each partition
+         * @param map               per-partition state map used to store the last-seen long value for each partition
          * @param partitionByRecord record providing the current row's partition key
-         * @param partitionBySink  sink used to write/compare partition key values into the map
-         * @param arg              input function producing the LONG values to track
+         * @param partitionBySink   sink used to write/compare partition key values into the map
+         * @param arg               input function producing the LONG values to track
          */
         public LastValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -2197,13 +2197,13 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Records the partition's timestamp into the window state buffer for the current row.
-         *
+         * <p>
          * Performs a per-partition lookup using the current record's partition key; if the
          * partition is new, stores the row's timestamp in the partition map. The chosen
          * timestamp (existing or newly stored) is written as a long into the SPI output
          * buffer at the provided recordOffset and the function's columnIndex.
          *
-         * @param record current input record
+         * @param record       current input record
          * @param recordOffset offset within the SPI output buffer where the long value will be written
          */
         @Override
@@ -2244,16 +2244,16 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Creates a partitioned RANGE-frame implementation of LAST_VALUE for long values using
          * a memory-backed ring buffer to maintain [timestamp, value] pairs.
-         *
+         * <p>
          * The constructor configures whether the lower bound is bounded and computes the
          * absolute minimum and maximum allowed timestamp differences (used to evict entries
          * outside the range frame).
          *
-         * @param rangeLo            lower bound of the RANGE frame (relative to current row); use Long.MIN_VALUE for unbounded
-         * @param rangeHi            upper bound of the RANGE frame (relative to current row)
-         * @param memory             memory-backed ring buffer storage for timestamp/value pairs
-         * @param initialBufferSize  initial capacity for the per-partition ring buffer
-         * @param timestampIdx       index within the stored tuple that contains the designated timestamp used for range comparisons
+         * @param rangeLo           lower bound of the RANGE frame (relative to current row); use Long.MIN_VALUE for unbounded
+         * @param rangeHi           upper bound of the RANGE frame (relative to current row)
+         * @param memory            memory-backed ring buffer storage for timestamp/value pairs
+         * @param initialBufferSize initial capacity for the per-partition ring buffer
+         * @param timestampIdx      index within the stored tuple that contains the designated timestamp used for range comparisons
          */
         public LastValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -2277,7 +2277,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Release resources held by this window function.
-         *
+         * <p>
          * Calls the superclass cleanup, closes the underlying memory buffer, and clears the internal free list.
          */
         @Override
@@ -2430,7 +2430,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * This implementation does not support the first pass; calling it will always fail.
          *
-         * @param record current input record (unused)
+         * @param record       current input record (unused)
          * @param recordOffset offset of the current record (unused)
          * @throws UnsupportedOperationException always thrown because pass1 is not applicable
          */
@@ -2441,7 +2441,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reinitializes the function for a new execution pass.
-         *
+         * <p>
          * Calls the superclass reopen() and resets the cached lastValue to the long null sentinel.
          */
         @Override
@@ -2465,7 +2465,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends this window function's textual plan representation to the provided PlanSink.
-         *
+         * <p>
          * The emitted plan includes the function name and argument, optional "ignore nulls" marker,
          * the partition-by expression(s), and the RANGE frame specification (preceding bounds).
          */
@@ -2528,7 +2528,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          *
          * @param rowsLo lower bound of the ROWS frame (preceding offset or other frame-specific lower bound)
          * @param rowsHi upper bound of the ROWS frame; its absolute value determines the initial ring buffer size
-         * @param arg function producing the input long values to be tracked
+         * @param arg    function producing the input long values to be tracked
          * @param memory off-heap memory (MemoryARW) used as the ring buffer backing store for frame data
          */
         public LastValueOverPartitionRowsFrameFunction(
@@ -2553,7 +2553,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * - Looks up or creates partition state in the map keyed by the partition record.
          * - On first encounter allocates a contiguous memory region for the partition's circular buffer and initializes it with `Numbers.LONG_NULL`.
          * - Reads the current "oldest" index from partition state, writes the record timestamp into the buffer position pointed to by that index,
-         *   advances the stored oldest index (modulo buffer size), and updates the in-memory `lastValue` from the overwritten slot before the write.</p>
+         * advances the stored oldest index (modulo buffer size), and updates the in-memory `lastValue` from the overwritten slot before the write.</p>
          *
          * @param record input record whose timestamp is appended into the partition's rows-frame ring buffer
          */
@@ -2621,12 +2621,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * First-pass handler: updates the internal `lastValue` with the given input record
          * and writes that value to the function output column at the provided record offset.
-         *
+         * <p>
          * The method calls {@code computeNext(record)} to advance internal state (which may
          * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
          * row using the configured `columnIndex`.
          *
-         * @param record the input record used to update the function state
+         * @param record       the input record used to update the function state
          * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
          */
         @Override
@@ -2637,7 +2637,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reopens the function instance for reuse, resetting its transient state.
-         *
+         * <p>
          * Calls super.reopen(), defers memory allocation until first use, and resets
          * the cached `lastValue` to the sentinel `Numbers.LONG_NULL`.
          */
@@ -2650,7 +2650,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Resets the function's state and releases its memory buffer.
-         *
+         * <p>
          * This calls the superclass reset logic and closes the associated memory resource to free any
          * allocated native/storage buffers used by this instance.
          */
@@ -2662,7 +2662,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends the query-plan representation of this window function to the given PlanSink.
-         *
+         * <p>
          * The produced plan includes the function name and argument, an "ignore nulls" marker when
          * applicable, and a "over (partition by ... rows between ... preceding and ... preceding)" frame
          * description. When rowLo equals Long.MAX_VALUE the lower bound is rendered as "unbounded";
@@ -2724,12 +2724,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Constructs a range-framed last_value function for long inputs that maintains a sliding
          * window of (timestamp, value) records in a native circular buffer.
-         *
+         * <p>
          * The frame is defined by [rangeLo, rangeHi] (both inclusive). If `rangeLo` equals
          * Long.MIN_VALUE the lower bound is treated as unbounded. The constructor computes
          * absolute min/max differences used to evict old entries and allocates an initial
          * ring-buffer in native memory sized from the SQL window store page configuration.
-         *
+         * <p>
          * Internal fields initialized:
          * - frameLoBounded: whether the lower bound is finite.
          * - minDiff / maxDiff: absolute differences derived from the provided bounds.
@@ -2738,7 +2738,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          * - memory: native CARW memory backing the circular buffer.
          * - startOffset: byte offset of the buffer start relative to the memory page base.
          * - firstIdx: index of the first element in the ring buffer (initialized to 0).
-         *
+         * <p>
          * Note: This constructor allocates native memory for the ring buffer; callers are
          * responsible for the function's lifecycle methods (reset/close/reopen) for proper
          * resource management.
@@ -2769,7 +2769,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Releases resources held by this function.
-         *
+         * <p>
          * Invokes the superclass close behavior and closes the associated memory buffer.
          */
         @Override
@@ -2785,13 +2785,13 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          *
          * <p>Behavior details:
          * - Uses the current record's timestamp to remove entries older than `maxDiff` (evict from
-         *   buffer head).
+         * buffer head).
          * - Collapses entries that are at least `minDiff` away so only one candidate remains at the
-         *   head used for `lastValue`.
+         * head used for `lastValue`.
          * - Sets `lastValue` to the value paired with the retained head entry or to `Numbers.LONG_NULL`
-         *   if the buffer is empty after eviction.
+         * if the buffer is empty after eviction.
          * - Appends the current record's (timestamp, value) to the tail of the ring buffer, growing
-         *   the underlying memory region and compacting wrapped contents when capacity is reached.
+         * the underlying memory region and compacting wrapped contents when capacity is reached.
          *
          * @param record the input record whose timestamp and value are appended and used to adjust the frame
          */
@@ -2899,7 +2899,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * This implementation does not support the first pass; calling it will always fail.
          *
-         * @param record current input record (unused)
+         * @param record       current input record (unused)
          * @param recordOffset offset of the current record (unused)
          * @throws UnsupportedOperationException always thrown because pass1 is not applicable
          */
@@ -2910,7 +2910,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reinitializes the function's internal sliding buffer to its starting state.
-         *
+         * <p>
          * Clears the remembered last value and resets the in-memory ring buffer to the
          * configured initial capacity: allocates/advances memory, resets indices
          * (start offset and first index) and size so the function behaves as if newly opened.
@@ -2926,7 +2926,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Resets the function's state and releases its memory buffer.
-         *
+         * <p>
          * This calls the superclass reset logic and closes the associated memory resource to free any
          * allocated native/storage buffers used by this instance.
          */
@@ -2938,10 +2938,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends a textual plan fragment for this last_value function to the provided PlanSink.
-         *
+         * <p>
          * The emitted form is:
-         *   name(arg)[ ignore nulls] over (range between <maxDiff|unbounded> preceding and <minDiff> preceding)
-         *
+         * name(arg)[ ignore nulls] over (range between <maxDiff|unbounded> preceding and <minDiff> preceding)
+         * <p>
          * It includes the function name and argument, an optional "ignore nulls" token, and the RANGE frame
          * bounds using `maxDiff` (or "unbounded") and `minDiff`.
          */
@@ -2966,7 +2966,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset the function's internal ring-buffer state to its initial empty condition.
-         *
+         * <p>
          * Clears stored values and metadata so the function behaves as if newly constructed:
          * sets the last observed value to NULL, restores capacity to the initial capacity,
          * truncates the backing memory, recalculates the start offset for the buffer pages,
@@ -2996,7 +2996,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Create a rows-framed last_value implementation backed by a ring buffer.
          *
-         * @param arg the value-producing function for each row
+         * @param arg    the value-producing function for each row
          * @param rowsLo lower bound of the ROWS frame (preceding offset)
          * @param rowsHi upper bound of the ROWS frame (following offset). The absolute
          *               value of this parameter determines the internal buffer capacity.
@@ -3012,7 +3012,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Release resources held by this function.
-         *
+         * <p>
          * Calls the superclass close handler and closes the internal buffer used for window state.
          */
         @Override
@@ -3023,7 +3023,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Advance the ring buffer by one entry for the given input row.
-         *
+         * <p>
          * Reads the long value currently stored at the buffer slot indicated by {@code loIdx}
          * into {@code lastValue}, writes the current record's timestamp into that slot,
          * and increments {@code loIdx} (wrapping around {@code bufferSize}).
@@ -3071,12 +3071,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * First-pass handler: updates the internal `lastValue` with the given input record
          * and writes that value to the function output column at the provided record offset.
-         *
+         * <p>
          * The method calls {@code computeNext(record)} to advance internal state (which may
          * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
          * row using the configured `columnIndex`.
          *
-         * @param record the input record used to update the function state
+         * @param record       the input record used to update the function state
          * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
          */
         @Override
@@ -3087,7 +3087,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reinitializes the function's mutable state so it can be reused.
-         *
+         * <p>
          * Resets the cached last value to SQL NULL, resets the low index used by the
          * ring buffer, and (re)initializes the underlying buffer structure.
          */
@@ -3115,7 +3115,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Appends a textual plan representation of this ROWS-framed last_value function to the given PlanSink.
-         *
+         * <p>
          * The output includes the function name and argument, an optional "ignore nulls" marker,
          * and the ROWS frame specification ("rows between <n|unbounded> preceding and <bufferSize> preceding").
          *
@@ -3156,7 +3156,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Fill the internal buffer with sentinel null values.
-         *
+         * <p>
          * Initializes each long slot in the backing buffer (at offsets 0, 8, 16, ...) up to
          * bufferSize entries to Numbers.LONG_NULL, marking them as empty/unset.
          */
@@ -3204,12 +3204,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         /**
          * Pass 1 handler for unbounded ROWS frames that ignores NULLs: records the first seen (latest non-null)
          * timestamp value and writes it to the output column for every processed row.
-         *
+         * <p>
          * This method updates the internal `value` with the timestamp from the current input record the first
          * time a non-null value is encountered, sets `found` to true, and stores `value` into the window
          * output column at the memory location identified by `recordOffset` and `columnIndex`.
          *
-         * @param record the input record being processed
+         * @param record       the input record being processed
          * @param recordOffset memory offset (row address) in the SPI where the output value should be written
          */
         @Override
@@ -3223,7 +3223,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset the function's internal state to its initial values.
-         *
+         * <p>
          * Clears any stored last value and marks that no value has been found yet.
          */
         @Override
@@ -3235,7 +3235,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
 
         /**
          * Reset internal state to its initial "no value" condition.
-         *
+         * <p>
          * Sets the stored long value to NULL and clears the found flag. Called when the function's
          * cursor is repositioned to the start (top) of the input so subsequent processing begins
          * with a clean state.
