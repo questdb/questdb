@@ -2147,7 +2147,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
+            LOG.info().$("could not alter table [table=").$(tableToken)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
@@ -4251,7 +4251,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(dstPath);
         }
 
-        private void backupTable(@NotNull TableToken tableToken) throws SqlException {
+        private void backupTable(@NotNull final TableToken tableToken) throws SqlException {
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
@@ -4264,7 +4264,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 cachedBackupTmpRoot = Utf8s.toString(auxPath); // absolute path to the TMP folder
             }
 
-            String tableName = tableToken.getTableName();
+            final String tableName = tableToken.getTableName();
             auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash();
             int tableRootLen = auxPath.size();
             try {
@@ -4434,7 +4434,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     break;
                                 } catch (TableReferenceOutOfDateException ex) {
                                     // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
-                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").$safe(tableName)
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").$(tableToken)
                                             .$(", ex=").$(ex.getFlyweightMessage())
                                             .I$();
                                 }
@@ -4448,13 +4448,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableToken);
                     TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath.$());
-                    LOG.info().$("backup complete [table=").$safe(tableName).$(", to=").$(dstPath).I$();
+                    LOG.info().$("backup complete [table=").$(tableToken).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
             } catch (CairoException e) {
                 LOG.info()
-                        .$("could not backup [table=").$safe(tableName)
+                        .$("could not backup [table=").$(tableToken)
                         .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
