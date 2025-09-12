@@ -325,20 +325,16 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
             while (elapsedMillis < timeoutMillis) {
                 long startMillis = System.currentTimeMillis();
-
-
                 serverMain.close();
                 assert serverMain.hasBeenClosed();
-                int jitter = rnd.nextIntSync(jitterMillis);
-                jitter = (jitter >> 1) ^ (-(jitter & 1)); // zigzag conversion
-                Os.sleep(1_500 + jitter);
+                int jitter = rnd.nextIntSync(jitterMillis) - jitterMillis / 2;
+                Os.sleep(1_500 + jitter); // enough time to give the client a chance to reconnect to a different server
 
                 serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
                 serverMain.start();
                 assert serverMain.hasStarted();
 
-                jitter = rnd.nextIntSync(jitterMillis);
-                jitter = (jitter >> 1) ^ (-(jitter & 1)); // zigzag conversion
+                jitter = rnd.nextIntSync(jitterMillis) - jitterMillis / 2;
 
                 Os.sleep(delayMillis + jitter);
                 long endMillis = System.currentTimeMillis();
@@ -346,7 +342,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             }
         } finally {
             if (serverMain == null || serverMain.hasBeenClosed()) {
-                System.out.println(Thread.currentThread() + " is creating a new server, current serverMain = + " + serverMain);
                 serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
                 serverMain.start();
                 Os.sleep(50);
@@ -366,7 +361,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     count.set(getRowCount(serverMain.getEngine(), serverMain.getEngine().getTableTokenIfExists("line"), txReader));
                 }
             }
-            System.out.println(Thread.currentThread() + " is closing the server " + serverMain);
             Misc.free(serverMain);
             Path.clearThreadLocals();
         }
