@@ -484,6 +484,16 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     }
                 }
             }
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
+                    final CreateTableColumnModel columnModel = createColumnModelMap.get(column.getName());
+                    if (columnModel == null) {
+                        throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
+                    }
+                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                }
+            }
         }
 
         // Don't forget to reset augmented columns in create table op with what we have scraped.
