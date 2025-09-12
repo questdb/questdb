@@ -653,7 +653,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     "Cannot flush buffer while row is in progress. " +
                             "Use sender.at() or sender.atNow() to finish the current row first.");
         }
-        if (pendingRows == 0 || lastFlushFailed) {
+        if (pendingRows == 0 || (closing && lastFlushFailed)) {
             return;
         }
 
