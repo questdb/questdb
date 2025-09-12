@@ -783,7 +783,16 @@ public class WalTxnDetails implements QuietCloseable {
 
             while ((entry = symbolMapDiff.nextEntry()) != null) {
                 final int key = entry.getKey() - cleanSymbolCount;
-                assert key == symbolIndex;
+                if (key != symbolIndex) {
+                    throw CairoException.critical(CairoException.ERRNO_INVALID_WAL_SYMBOL_KEY)
+                        .put("Invalid symbol key in WAL transaction [expected=").put(symbolIndex)
+                        .put(", actual=").put(key)
+                        .put(", seqTxn=").put(seqTxn)
+                        .put(", columnIndex=").put(symbolMapDiff.getColumnIndex())
+                        .put(", cleanSymbolCount=").put(cleanSymbolCount)
+                        .put(", entryKey=").put(entry.getKey())
+                        .put(']');
+                }
                 symbolIndex++;
                 entry.appendSymbolTo(symbolMem);
             }
