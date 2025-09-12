@@ -1237,6 +1237,47 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
+        @Test
+    public void testCreateMatViewWithSymbolIndexShowCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + "), index (k) partition by day");
+
+            assertQuery0("ts\tk\tavg\n", "test", "ts");
+
+            String expected = "ddl\n" +
+                    "CREATE MATERIALIZED VIEW 'test' WITH BASE '" + TABLE1 + "' REFRESH IMMEDIATE AS (\n" +
+                    query + "\n" +
+                    "), INDEX(k CAPACITY 256) PARTITION BY DAY;\n";
+            assertSql(expected, "show create materialized view test");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithMultipleIndexesShowCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_table ("
+                    + "ts timestamp, "
+                    + "sym1 symbol, "
+                    + "sym2 symbol, "
+                    + "value double"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            final String query = "select ts, sym1, sym2, avg(value) as avg_val from base_table sample by 1h";
+            execute("create materialized view test_mv as (" + query + "), index (sym1 capacity 512), index (sym2 capacity 1024) partition by day");
+
+            assertQuery0("ts\tsym1\tsym2\tavg_val\n", "test_mv", "ts");
+
+            String expected = "ddl\n" +
+                    "CREATE MATERIALIZED VIEW 'test_mv' WITH BASE 'base_table' REFRESH IMMEDIATE AS (\n" +
+                    query + "\n" +
+                    "), INDEX(sym1 CAPACITY 512), INDEX(sym2 CAPACITY 1024) PARTITION BY DAY;\n";
+            assertSql(expected, "show create materialized view test_mv");
+        });
+    }
+
     @Test
     public void testCreateMatViewWithInvalidVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows());

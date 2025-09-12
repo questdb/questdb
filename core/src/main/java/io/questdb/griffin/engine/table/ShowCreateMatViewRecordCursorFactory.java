@@ -24,6 +24,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
@@ -242,6 +243,20 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             sink.putAscii(" AS (\n")
                     .put(viewDefinition.getMatViewSql())
                     .putAscii('\n');
+            sink.putAscii(')');
+
+            for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+                final CairoColumn column = table.getColumnQuiet(i);
+                if (column.isIndexed()) {
+                    sink.putAscii(", INDEX(");
+                    sink.put(column.getName());
+                    sink.putAscii(" CAPACITY ");
+                    sink.put(column.getIndexBlockCapacity());
+                    sink.putAscii(')');
+                }
+            }
+
+            sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(table.getTtlHoursOrMonths(), sink);
             inVolumeToSink(configuration, table, sink);
