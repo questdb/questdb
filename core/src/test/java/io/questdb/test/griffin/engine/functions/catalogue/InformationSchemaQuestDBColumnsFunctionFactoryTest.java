@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class InformationSchemaQuestdbColumnsFunctionFactoryTest extends AbstractCairoTest {
+public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumns() throws Exception {
@@ -61,24 +61,36 @@ public class InformationSchemaQuestdbColumnsFunctionFactoryTest extends Abstract
             execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_rename");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "show columns from test_rename"
+            );
 
-            assertSql("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                    "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
-                    "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n", "information_schema.questdb_columns()");
+            assertSql(
+                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                            "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
+                            "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n",
+                    "information_schema.questdb_columns()"
+            );
 
             execute("rename table test_rename to test_renamed");
             drainWalQueue();
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_renamed");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "show columns from test_renamed"
+            );
 
-            assertSql("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                    "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP\n" +
-                    "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT\n", "information_schema.questdb_columns()");
+            assertSql(
+                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                            "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP\n" +
+                            "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT\n",
+                    "information_schema.questdb_columns()"
+            );
         });
     }
 }
