@@ -3134,7 +3134,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 sink.val(" unbounded preceding and ");
             } else {
                 sink.val(Math.abs(rowsLo));
-                sink.val(" preceding between and ");
+                sink.val(" preceding and ");
             }
             sink.val(bufferSize).val(" preceding");
             sink.val(')');

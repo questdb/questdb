@@ -545,10 +545,10 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
                 if (!value.isNew()) {
                     if (comparator.compare(l, value.getLong(0))) {
-                        value.putTimestamp(0, l);
+                        value.putLong(0, l);
                     }
                 } else {
-                    value.putTimestamp(0, l);
+                    value.putLong(0, l);
                 }
             }
         }
@@ -854,7 +854,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 mapValue.putLong(7, dequeStartIndex);
                 mapValue.putLong(8, dequeEndIndex);
             } else {
-                mapValue.putTimestamp(5, this.maxMin);
+                mapValue.putLong(5, this.maxMin);
             }
         }
 
@@ -1127,7 +1127,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                         dequeEndIndex++;
                     }
                 } else {
-                    value.putTimestamp(2, this.maxMin);
+                    value.putLong(2, this.maxMin);
                 }
             } else {
                 loIdx = value.getLong(0);
@@ -1159,7 +1159,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     if (hiValue != Numbers.LONG_NULL) {
                         if (max == Numbers.LONG_NULL || comparator.compare(hiValue, max)) {
                             max = hiValue;
-                            value.putTimestamp(2, max);
+                            value.putLong(2, max);
                         }
                     }
                     this.maxMin = max;
@@ -2032,12 +2032,12 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             if (l != Numbers.LONG_NULL) {
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    value.putTimestamp(0, l);
+                    value.putLong(0, l);
                     this.maxMin = l;
                 } else {
                     long max = value.getLong(0);
                     if (comparator.compare(l, max)) {
-                        value.putTimestamp(0, l);
+                        value.putLong(0, l);
                         max = l;
                     }
                     this.maxMin = max;
@@ -2333,7 +2333,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
     static {
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
-        MAX_COLUMN_TYPES.add(ColumnType.TIMESTAMP); // max value
+        MAX_COLUMN_TYPES.add(ColumnType.LONG); // max value
 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // frame size
@@ -2341,7 +2341,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory size
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory capacity
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory firstIdx
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.TIMESTAMP); // max value case when unbounded preceding
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // max value case when unbounded preceding
 
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // frame size
@@ -2357,7 +2357,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.TIMESTAMP); // max value case when unbounded preceding
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // max value case when unbounded preceding
 
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
