@@ -939,6 +939,70 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxTimestampOverPartitionedRangeWithLargeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test similar to testFrameFunctionOverPartitionedRangeWithLargeFrame but for max(timestamp)
+            // This tests boundary conditions with large ranges that trigger buffer growth
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
+
+            // Trigger per-partition buffers growth and free list usage
+            execute("insert into tab select " +
+                    "x::timestamp, " +
+                    "x/10000, " +
+                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
+                    "'k' || (x%5) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(39999)");
+            
+            // Trigger removal of rows below lo boundary AND resize of buffer
+            execute("insert into tab select " +
+                    "(100000+x)::timestamp, " +
+                    "(100000+x)%4, " +
+                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
+                    "'k' || (x%20) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(360000)");
+
+            // Test max(timestamp) with window function over partitioned data with large frame
+            // Test the last row of each partition to verify boundary conditions
+            assertSql(
+                    "i\tts\tmax_ts_window\n" +
+                            "0\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z\n" +
+                            "1\t1970-01-01T00:00:00.459997Z\t1970-01-01T00:00:00.459997Z\n" +
+                            "2\t1970-01-01T00:00:00.459998Z\t1970-01-01T00:00:00.459998Z\n" +
+                            "3\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z\n",
+                    "select i, ts, max_ts_window from (" +
+                            "select i, ts, " +
+                            "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
+                            "row_number() over (partition by i order by ts desc) as rn " +
+                            "from tab " +
+                            "where i < 4" +
+                            ") where rn = 1 " +
+                            "order by i"
+            );
+
+            // Cross-check: aggregate query equivalent to the window function
+            assertSql(
+                    "max_ts\ti\n" +
+                            "1970-01-01T00:00:00.459999Z\t0\n" +
+                            "1970-01-01T00:00:00.459997Z\t1\n" +
+                            "1970-01-01T00:00:00.459998Z\t2\n" +
+                            "1970-01-01T00:00:00.459999Z\t3\n",
+                    "select max(ts) as max_ts, i " +
+                            "from ( " +
+                            "  select data.ts, data.i " +
+                            "  from (select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "where i in (0,1,2,3) " +
+                            "group by i " +
+                            "order by i"
+            );
+        });
+    }
+
+    @Test
     public void testMaxTimestampRangeFrameDequeOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
