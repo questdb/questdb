@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -56,7 +57,7 @@ public class TestTimestampCounterFactory implements FunctionFactory {
     ) {
         final Function tsFunc = args.getQuick(0);
         if (configuration.isDevModeEnabled()) {
-            return new Func(tsFunc);
+            return new Func(tsFunc, ColumnType.getTimestampType(tsFunc.getType()));
         }
         return tsFunc;
     }
@@ -64,7 +65,8 @@ public class TestTimestampCounterFactory implements FunctionFactory {
     private static class Func extends TimestampFunction implements UnaryFunction {
         private final Function tsFunc;
 
-        private Func(Function tsFunc) {
+        private Func(Function tsFunc, int timestampType) {
+            super(timestampType);
             this.tsFunc = tsFunc;
         }
 

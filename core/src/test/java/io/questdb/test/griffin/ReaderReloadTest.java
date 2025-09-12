@@ -25,9 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -40,7 +40,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.std.datetime.microtime.Timestamps.HOUR_MICROS;
+import static io.questdb.std.datetime.microtime.Micros.HOUR_MICROS;
 
 public class ReaderReloadTest extends AbstractCairoTest {
 
@@ -153,7 +153,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
 
                 for (int i = 1; i < 50; i++) {
                     // Add PARTITION
-                    execute("insert into x(x, ts) values (1, " + (IntervalUtils.parseFloorPartialTimestamp("2024-02-24") + i * HOUR_MICROS) + "L)");
+                    execute("insert into x(x, ts) values (1, " + (MicrosTimestampDriver.floor("2024-02-24") + i * HOUR_MICROS) + "L)");
                     drainWalQueue();
 
                     reader.goActive();

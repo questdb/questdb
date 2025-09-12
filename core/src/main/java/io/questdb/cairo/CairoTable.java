@@ -46,6 +46,7 @@ public class CairoTable implements Sinkable {
     private int partitionBy;
     private boolean softLink;
     private int timestampIndex;
+    private int timestampType;
     private TableToken token;
     private int ttlHoursOrMonths;
 
@@ -65,6 +66,7 @@ public class CairoTable implements Sinkable {
         columnNameIndexMap = fromTab.columnNameIndexMap;
 
         metadataVersion = fromTab.getMetadataVersion();
+        timestampType = fromTab.getTimestampType();
         partitionBy = fromTab.getPartitionBy();
         maxUncommittedRows = fromTab.getMaxUncommittedRows();
         o3MaxLag = fromTab.getO3MaxLag();
@@ -165,6 +167,10 @@ public class CairoTable implements Sinkable {
         return null;
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     /**
      * Returns the time-to-live (TTL) of the data in this table: if positive,
      * it's in hours; if negative, it's in months (and the actual value is positive)
@@ -187,22 +193,6 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
-    }
-
-    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
-        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
-    }
-
-    public void setMatViewTimerInterval(int matViewTimerInterval) {
-        this.matViewTimerInterval = matViewTimerInterval;
-    }
-
-    public void setMatViewTimerStart(long matViewTimerStart) {
-        this.matViewTimerStart = matViewTimerStart;
-    }
-
-    public void setMatViewTimerUnit(char matViewTimerUnit) {
-        this.matViewTimerUnit = matViewTimerUnit;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -231,6 +221,10 @@ public class CairoTable implements Sinkable {
 
     public void setTimestampIndex(int timestampIndex) {
         this.timestampIndex = timestampIndex;
+    }
+
+    public void setTimestampType(int timestampType) {
+        this.timestampType = timestampType;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {

@@ -26,10 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -38,20 +35,16 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class GenerateSeriesTimestampLongFunctionFactory implements FunctionFactory {
-    public static final RecordMetadata METADATA;
-
     @Override
     public String getSignature() {
         return "generate_series(NNL)";
     }
 
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new CursorFunction(new GenerateSeriesTimestampRecordCursorFactory(args.getQuick(0), args.getQuick(1), args.getQuick(2), argPositions));
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("generate_series", ColumnType.TIMESTAMP));
-        METADATA = metadata;
+        Function arg = args.getQuick(0);
+        Function arg1 = args.getQuick(1);
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(arg1.getType()), ColumnType.getTimestampType(arg.getType()));
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
+        return new CursorFunction(new GenerateSeriesTimestampRecordCursorFactory(timestampType, arg, arg1, args.getQuick(2), argPositions));
     }
 }

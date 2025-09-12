@@ -35,7 +35,8 @@ import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAdder;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final int columnIndex;
@@ -46,9 +47,12 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     private int valueOffset;
 
     public SumIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
-        if (keyKind == GKK_HOUR_INT) {
-            distinctFunc = Rosti::keyedHourDistinct;
-            keyValueFunc = Rosti::keyedHourSumInt;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            distinctFunc = Rosti::keyedMicroHourDistinct;
+            keyValueFunc = Rosti::keyedMicroHourSumInt;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            distinctFunc = Rosti::keyedNanoHourDistinct;
+            keyValueFunc = Rosti::keyedNanoHourSumInt;
         } else {
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumInt;

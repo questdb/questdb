@@ -241,6 +241,7 @@ public class MetadataCache implements QuietCloseable {
                 if (isDesignated) {
                     // Timestamp index is the logical index of the column in the column list. Rather than
                     // physical index of the column in the metadata file (writer index).
+                    table.setTimestampType(columnType);
                     table.setTimestampIndex(table.getColumnCount());
                 }
 
@@ -289,7 +290,13 @@ public class MetadataCache implements QuietCloseable {
         }
     }
 
-    private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {
+    private void loadCapacities(
+            CairoColumn column,
+            TableToken token,
+            Path path,
+            CairoConfiguration configuration,
+            ColumnVersionReader columnVersionReader
+    ) {
         final CharSequence columnName = column.getName();
         final int writerIndex = column.getWriterIndex();
 
@@ -305,7 +312,6 @@ public class MetadataCache implements QuietCloseable {
             final FilesFacade ff = configuration.getFilesFacade();
             try (columnVersionReader) {
                 columnVersionReader.ofRO(ff, path.$());
-
                 columnVersionReader.readUnsafe();
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }

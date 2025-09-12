@@ -40,9 +40,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
@@ -163,7 +163,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
         if (lifeDuration != null) {
             try {
-                nLifeDuration = Numbers.parseLongDuration(lifeDuration);
+                nLifeDuration = Numbers.parseLongDurationMicros(lifeDuration);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for lifeDuration");
             }
@@ -337,23 +337,23 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private long getNextDayDeadline() {
-        return Timestamps.addDays(Timestamps.floorDD(clock.getTicks()), 1);
+        return Micros.addDays(Micros.floorDD(clock.getTicks()), 1);
     }
 
     private long getNextHourDeadline() {
-        return Timestamps.addHours(Timestamps.floorHH(clock.getTicks()), 1);
+        return Micros.addHours(Micros.floorHH(clock.getTicks()), 1);
     }
 
     private long getNextMinuteDeadline() {
-        return Timestamps.floorMI(clock.getTicks()) + Timestamps.MINUTE_MICROS;
+        return Micros.floorMI(clock.getTicks()) + Micros.MINUTE_MICROS;
     }
 
     private long getNextMonthDeadline() {
-        return Timestamps.addMonths(Timestamps.floorMM(clock.getTicks()), 1);
+        return Micros.addMonths(Micros.floorMM(clock.getTicks()), 1);
     }
 
     private long getNextYearDeadline() {
-        return Timestamps.addYears(Timestamps.floorYYYY(clock.getTicks()), 1);
+        return Micros.addYears(Micros.floorYYYY(clock.getTicks()), 1);
     }
 
     private void openFile() {
@@ -462,7 +462,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             path.trimTo(logDir.length()).concat(filePointer);
             logFileName.of(filePointer);
             if (Utf8s.containsAscii(logFileName, logFileTemplate)
-                    && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
+                    && clock.getTicks() - ff.getLastModified(path.$()) * Micros.MILLI_MICROS > nLifeDuration) {
                 if (!ff.removeQuiet(path.$())) {
                     throw new LogError("cannot remove: " + path);
                 }

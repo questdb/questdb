@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
@@ -40,8 +41,8 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -303,6 +304,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseMicros() throws SqlException {
+        Assert.assertEquals(1, SqlUtil.expectMicros("1000ns", 12));
         Assert.assertEquals(1, SqlUtil.expectMicros("1us", 12));
         Assert.assertEquals(1000, SqlUtil.expectMicros("1ms", 12));
         Assert.assertEquals(2000000, SqlUtil.expectMicros("2s", 12));
@@ -536,17 +538,18 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrTimestamp() {
-        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastStrAsTimestamp(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("-900")));
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        Assert.assertEquals(Numbers.LONG_NULL, timestampDriver.implicitCast(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20T10:30:55.123999Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Micros.toUSecString(timestampDriver.implicitCast("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Micros.toUSecString(timestampDriver.implicitCast("-900")));
 
         // not a number
         try {
-            SqlUtil.implicitCastStrAsTimestamp("hello");
+            timestampDriver.implicitCast("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [STRING -> TIMESTAMP]", e.getFlyweightMessage());
@@ -555,17 +558,18 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrVarcharAsTimestamp0() {
-        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastVarcharAsTimestamp(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20T10:30:55.123999Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("-900")));
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        Assert.assertEquals(Numbers.LONG_NULL, timestampDriver.implicitCastVarchar(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20T10:30:55.123999Z"))));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20 10:30:55Z"))));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20 Z"))));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20 10:30:55.123Z"))));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("200"))));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("-900"))));
 
         // not a number
         try {
-            SqlUtil.implicitCastVarcharAsTimestamp("hello");
+            timestampDriver.implicitCastVarchar(new Utf8String("hello"));
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> TIMESTAMP]", e.getFlyweightMessage());
@@ -830,6 +834,6 @@ public class SqlUtilTest {
     static {
         // this is required to initialize calendar indexes ahead of using them
         // otherwise sink can end up having odd characters
-        TimestampFormatUtils.init();
+        MicrosFormatUtils.init();
     }
 }

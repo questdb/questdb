@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -654,7 +654,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 Assert.assertEquals(3, cols.length);
                 final CharSequence s = cols[0];
                 final double h = Double.parseDouble(cols[1]);
-                final long k = TimestampFormatUtils.parseTimestamp(cols[2]);
+                final long k = MicrosFormatUtils.parseTimestamp(cols[2]);
                 return new Record() {
                     @Override
                     public double getDouble(int col) {
@@ -678,7 +678,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 final CharSequence s = cols[0];
                 final double lat = Double.parseDouble(cols[1]);
                 final double lon = Double.parseDouble(cols[2]);
-                final long k = TimestampFormatUtils.parseTimestamp(cols[3]);
+                final long k = MicrosFormatUtils.parseTimestamp(cols[3]);
                 return new Record() {
                     @Override
                     public double getDouble(int col) {

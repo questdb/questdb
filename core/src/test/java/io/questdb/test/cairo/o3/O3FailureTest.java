@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -38,7 +39,6 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -46,13 +46,12 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -61,17 +60,32 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.vm.Vm.getStorageLength;
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
+@RunWith(Parameterized.class)
 public class O3FailureTest extends AbstractO3Test {
-
     private final static AtomicInteger counter = new AtomicInteger(0);
+    private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+    };
+    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
         @Override
         public boolean close(long fd) {
@@ -100,16 +114,6 @@ public class O3FailureTest extends AbstractO3Test {
             return fd;
         }
     };
-    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
-    private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
-                return -1;
-            }
-            return super.openRW(name, opts);
-        }
-    };
     private static final FilesFacade ffMkDirFailure = new TestFilesFacadeImpl() {
         @Override
         public int mkdirs(Path path, int mode) {
@@ -130,6 +134,17 @@ public class O3FailureTest extends AbstractO3Test {
             return super.openRW(name, opts);
         }
     };
+
+    public O3FailureTest(TestTimestampType timestampType) {
+        super(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Override
     @Before
@@ -634,7 +649,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         executeWithPool(
                 0,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, compiler, sqlExecutionContext, timestampTypeAndName) -> {
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
@@ -642,14 +657,14 @@ public class O3FailureTest extends AbstractO3Test {
                             "create atomic table " + tableName + " as ( " +
                                     "select " +
                                     "x, " +
-                                    " timestamp_sequence('2022-02-24', 1000) ts" +
+                                    " timestamp_sequence('2022-02-24', 1000)::" + timestampTypeAndName + " ts" +
                                     " from long_sequence(" + records + ")" +
                                     ") timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
-                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+                    long maxTimestamp = MICRO_DRIVER.parseFloorLiteral("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 2000);
 
                     try {
                         engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
@@ -662,27 +677,27 @@ public class O3FailureTest extends AbstractO3Test {
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
-                            "x\tts\n" +
+                            replaceTimestampSuffix1("x\tts\n" +
                                     "496\t2022-02-24T00:00:00.495000Z\n" +
                                     "497\t2022-02-24T00:00:00.496000Z\n" +
                                     "498\t2022-02-24T00:00:00.497000Z\n" +
                                     "499\t2022-02-24T00:00:00.498000Z\n" +
-                                    "500\t2022-02-24T00:00:00.499000Z\n"
+                                    "500\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
                     );
 
                     // Insert ok after failure
-                    o3Ts = Timestamps.toString(maxTimestamp - 3000);
+                    o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext, "select * from " + tableName + " limit -5,5",
                             sink,
-                            "x\tts\n" +
+                            replaceTimestampSuffix1("x\tts\n" +
                                     "497\t2022-02-24T00:00:00.496000Z\n" +
                                     "498\t2022-02-24T00:00:00.497000Z\n" +
                                     "-1\t2022-02-24T00:00:00.497000Z\n" +
                                     "499\t2022-02-24T00:00:00.498000Z\n" +
-                                    "500\t2022-02-24T00:00:00.499000Z\n"
+                                    "500\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
                     );
                 },
                 new TestFilesFacadeImpl() {
@@ -713,7 +728,7 @@ public class O3FailureTest extends AbstractO3Test {
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
         executeWithPool(
                 0,
-                (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
+                (engine, compiler, sqlExecutionContext, timestampTypeName) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace, timestampTypeName),
                 new TestFilesFacadeImpl() {
                     boolean armageddon = false;
                     long theFd = 0;
@@ -991,7 +1006,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         executeWithPool(
                 0,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, compiler, sqlExecutionContext, timestampTypeAndName) -> {
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testVarColumnCopyPrefixFails";
@@ -999,14 +1014,14 @@ public class O3FailureTest extends AbstractO3Test {
                             "create atomic table " + tableName + " as ( " +
                                     "select " +
                                     "'" + strColVal + "' as str, " +
-                                    " timestamp_sequence('2022-02-24', 1000) ts" +
+                                    " timestamp_sequence('2022-02-24', 1000)::" + timestampTypeAndName + "  ts" +
                                     " from long_sequence(" + records + ")" +
                                     ") timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
-                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+                    long maxTimestamp = MICRO_DRIVER.parseFloorLiteral("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 2000);
 
                     try {
                         engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
@@ -1019,27 +1034,27 @@ public class O3FailureTest extends AbstractO3Test {
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
-                            "str\tts\n" +
+                            replaceTimestampSuffix1("str\tts\n" +
                                     strColVal + "\t2022-02-24T00:00:00.495000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
-                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n"
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
                     );
 
                     // Insert ok after failure
-                    o3Ts = Timestamps.toString(maxTimestamp - 3000);
+                    o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext, "select * from " + tableName + " limit -5,5",
                             sink,
-                            "str\tts\n" +
+                            replaceTimestampSuffix1("str\tts\n" +
                                     strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
                                     "abcd\t2022-02-24T00:00:00.497000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
-                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n"
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
                     );
                 },
                 new TestFilesFacadeImpl() {
@@ -1187,7 +1202,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testAllocateFailsAtO3OpenColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -1195,13 +1211,13 @@ public class O3FailureTest extends AbstractO3Test {
                         "select" +
                         " cast(x as int) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts" +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "  ts" +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
         );
 
-        final String expected = "i\tj\tts\tv\n" +
+        final String expected = replaceTimestampSuffix1("i\tj\tts\tv\n" +
                 "1\t4689592037643856\t1970-01-06T18:53:20.000000Z\tnull\n" +
                 "2\t4729996258992366\t1970-01-06T18:55:00.000000Z\tnull\n" +
                 "3\t7746536061816329025\t1970-01-06T18:56:40.000000Z\tnull\n" +
@@ -1703,7 +1719,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "498\t6829382503979752449\t1970-01-07T08:41:40.000000Z\tnull\n" +
                 "499\t3669882909701240516\t1970-01-07T08:43:20.000000Z\tnull\n" +
                 "500\t8068645982235546347\t1970-01-07T08:45:00.000000Z\tnull\n" +
-                "10\t3500000\t1970-01-07T08:45:00.000000Z\t10.2\n";
+                "10\t3500000\t1970-01-07T08:45:00.000000Z\t10.2\n", timestampTypeName);
 
         try (TableWriter w = TestUtils.getWriter(engine, "x")) {
 
@@ -1763,7 +1779,8 @@ public class O3FailureTest extends AbstractO3Test {
         TableWriter.Row row;
         // this row goes into a non-recent partition
         // triggering O3
-        row = w.newRow(518300000000L);
+        TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
+        row = w.newRow(driver.fromMicros(518300000000L));
         row.putInt(0, 10);
         row.putLong(1, 3500000L);
         // skip over the timestamp
@@ -1771,7 +1788,7 @@ public class O3FailureTest extends AbstractO3Test {
         row.append();
 
         // another O3 row, this time it is appended to last partition
-        row = w.newRow(549900000000L);
+        row = w.newRow(driver.fromMicros(549900000000L));
         row.putInt(0, 10);
         row.putLong(1, 3500000L);
         // skip over the timestamp
@@ -1782,7 +1799,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testAllocateToResizeLastPartition0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -1790,7 +1808,7 @@ public class O3FailureTest extends AbstractO3Test {
                         "select" +
                         " cast(x as int) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts" +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "  ts" +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -1800,11 +1818,11 @@ public class O3FailureTest extends AbstractO3Test {
 
             // stash copy of X, in case X is corrupt
             engine.execute("create atomic table y as (select * from x)", executionContext);
-
+            TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
             TableWriter.Row row;
             // this row goes into a non-recent partition
             // triggering O3
-            row = w.newRow(518300000000L);
+            row = w.newRow(driver.fromMicros(518300000000L));
             row.putInt(0, 10);
             row.putLong(1, 3500000L);
             row.append();
@@ -1812,7 +1830,7 @@ public class O3FailureTest extends AbstractO3Test {
             // here we need enough rows to saturate existing page
             // same timestamp is ok
             for (int i = 0; i < 4_000_000; i++) {
-                row = w.newRow(549900000000L);
+                row = w.newRow(driver.fromMicros(549900000000L));
                 row.putInt(0, 10);
                 row.putLong(1, 3500000L);
                 row.append();
@@ -1837,7 +1855,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         engine.execute(
-                "create atomic table z as (select rnd_int() i, rnd_long() j, timestamp_sequence(549900000000L-4000000L, 10) ts from long_sequence(3000000))",
+                "create atomic table z as (select rnd_int() i, rnd_long() j, timestamp_sequence(549900000000L-4000000L, 10)::" + timestampTypeName + " ts from long_sequence(3000000))",
                 executionContext
         );
 
@@ -1874,7 +1892,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testColumnTopLastDataOOODataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
 
         //
@@ -1898,7 +1917,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -1907,7 +1926,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -1943,7 +1962,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -1952,7 +1971,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " timestamp_sequence(549920000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -1986,7 +2005,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -1995,7 +2014,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549930000000L,100000L) ts," +
+                        " timestamp_sequence(549930000000L,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2048,7 +2067,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testColumnTopLastOOOPrefixFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
@@ -2057,7 +2077,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2066,7 +2086,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,330000000L) ts," +
+                        " (timestamp_sequence(500000000000L,330000000L))::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2103,7 +2123,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2112,7 +2132,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(664670000000L,10000L) ts," +
+                        " timestamp_sequence(664670000000L,10000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2147,7 +2167,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2156,7 +2176,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(604800000000L,10000L) ts," +
+                        " timestamp_sequence(604800000000L,10000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2207,7 +2227,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testColumnTopMidAppendBlankColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -2216,7 +2237,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2225,7 +2246,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "  ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2259,7 +2280,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2268,7 +2289,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " timestamp_sequence(518300000010L,100000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2322,7 +2343,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testColumnTopMidAppendColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
@@ -2331,7 +2353,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2340,7 +2362,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2375,7 +2397,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2384,7 +2406,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549900000000L,100000000L) ts," +
+                        " timestamp_sequence(549900000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2418,7 +2440,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2427,7 +2449,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(604700000001,100000L) ts," +
+                        " timestamp_sequence(604700000001,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2476,7 +2498,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testColumnTopMidDataMergeDataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
 
         engine.execute(
@@ -2486,7 +2509,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2495,7 +2518,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2532,7 +2555,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2541,7 +2564,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " timestamp_sequence(549920000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2576,7 +2599,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2585,7 +2608,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549900000000L,50000000L) ts," +
+                        " timestamp_sequence(549900000000L,50000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2637,7 +2660,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testColumnTopMidMergeBlankColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -2646,7 +2670,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2655,7 +2679,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2689,7 +2713,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -2698,7 +2722,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518300000000L-1000L,100000L) ts," +
+                        " timestamp_sequence(518300000000L-1000L,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2756,7 +2780,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testFailMergeWalFixIntoLag0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         o3MemMaxPages = 1;
         engine.execute(
@@ -2765,7 +2790,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_long256(5) l256," +
-                        " timestamp_sequence('2020-02-24T01',1000L) ts" +
+                        " timestamp_sequence('2020-02-24T01',1000L)::" + timestampTypeName + "   ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2800,15 +2825,16 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext,
                 "count\n" +
                         "50020\n",
-                "max\n" +
-                        "2020-02-24T01:00:00.019000Z\n"
+                replaceTimestampSuffix1("max\n" +
+                        "2020-02-24T01:00:00.019000Z\n", timestampTypeName)
         );
     }
 
     private static void testFailMergeWalVarIntoLag0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         o3MemMaxPages = 1;
         cairoCommitLatency = Long.MAX_VALUE;
@@ -2820,7 +2846,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str(5,16,2) str," +
                         " rnd_varchar(1,40,1) vc1," +
                         " rnd_varchar(1,1,1) vc2," +
-                        " timestamp_sequence('2020-02-24T01',1000L) ts" +
+                        " timestamp_sequence('2020-02-24T01',1000L)::" + timestampTypeName + "   ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2857,15 +2883,16 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext,
                 "count\n" +
                         "50020\n",
-                "max\n" +
-                        "2020-02-24T01:00:00.019000Z\n"
+                replaceTimestampSuffix1("max\n" +
+                        "2020-02-24T01:00:00.019000Z\n", timestampTypeName)
         );
     }
 
     private static void testFailMoveUncommitted0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         o3MemMaxPages = 1;
         // create table with roughly 2AM data
@@ -2874,7 +2901,7 @@ public class O3FailureTest extends AbstractO3Test {
                         "select" +
                         " cast(x as int) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " timestamp_sequence('2020-02-24',1000L)::" + timestampTypeName + "   ts" +
                         " from long_sequence(500000)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -2910,8 +2937,8 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext,
                 "count\n" +
                         "500002\n",
-                "max\n" +
-                        "2020-02-25T00:00:00.000000Z\n"
+                replaceTimestampSuffix1("max\n" +
+                        "2020-02-25T00:00:00.000000Z\n", timestampTypeName)
         );
 
     }
@@ -2919,7 +2946,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testFailMoveWalToLag0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         o3MemMaxPages = 1;
         // create table with roughly 2AM data
@@ -2928,7 +2956,7 @@ public class O3FailureTest extends AbstractO3Test {
                         "select" +
                         " cast(x as int) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " timestamp_sequence('2020-02-24',1000L)::" + timestampTypeName + "   ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2976,22 +3004,23 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext,
                 "count\n" +
                         "1000022\n",
-                "max\n" +
-                        "2020-02-26T00:00:49.999900Z\n"
+                replaceTimestampSuffix1("max\n" +
+                        "2020-02-26T00:00:49.999900Z\n", timestampTypeName)
         );
     }
 
     private static void testInsertAsSelectNegativeTimestamp0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i, " +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " timestamp_sequence(500000000000L,1000000L)::" + timestampTypeName + "   ts," +
                         " cast(x as short) l" +
                         " from long_sequence(50)" +
                         "), index(sym) timestamp (ts) partition by DAY",
@@ -3003,7 +3032,7 @@ public class O3FailureTest extends AbstractO3Test {
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(-500,10L) ts," +
+                        " timestamp_sequence(-500,10L)::" + timestampTypeName + "   ts," +
                         " cast(x + 1000 as short)  l" +
                         " from long_sequence(100)" +
                         ")",
@@ -3035,14 +3064,15 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testInsertAsSelectNulls0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i, " +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " timestamp_sequence(500000000000L,1000000L)::" + timestampTypeName + "   ts," +
                         " cast(x as short) l" +
                         " from long_sequence(50)" +
                         "), index(sym) timestamp (ts) partition by DAY",
@@ -3087,7 +3117,8 @@ public class O3FailureTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            AtomicBoolean restoreDiskSpace
+            AtomicBoolean restoreDiskSpace,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
@@ -3096,7 +3127,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3105,7 +3136,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(10000000000,1000000L) ts," +
+                        " timestamp_sequence(10000000000,1000000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3132,7 +3163,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3141,7 +3172,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(9993000000,1000000L) ts," +
+                        " timestamp_sequence(9993000000,1000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3160,7 +3191,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3169,7 +3200,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(9997000010L,1000000L) ts," +
+                        " timestamp_sequence(9997000010L,1000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3224,7 +3255,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testOutOfFileHandles0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
@@ -3241,7 +3273,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str(5,16,2) g," +
                         " rnd_str(5,16,2) ik," +
                         " rnd_str(5,16,2) j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "   ts," +
                         " rnd_str(5,16,2) l," +
                         " rnd_str(5,16,2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3269,7 +3301,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str(5,16,2) g," +
                         " rnd_str(5,16,2) ik," +
                         " rnd_str(5,16,2) j," +
-                        " timestamp_sequence(500000080000L,79999631L) ts," +
+                        " timestamp_sequence(500000080000L,79999631L)::" + timestampTypeName + "   ts," +
                         " rnd_str(5,16,2) l," +
                         " rnd_str(5,16,2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3353,7 +3385,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testPartitionedDataAppendOODataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -3362,7 +3395,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "  timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3371,7 +3404,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "  ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3389,7 +3422,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3398,7 +3431,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " timestamp_sequence(518300000010L,100000L)::" + timestampTypeName + "  ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3440,7 +3473,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testPartitionedDataAppendOODataIndexedFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
@@ -3448,7 +3482,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3457,7 +3491,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3475,7 +3509,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3484,7 +3518,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " timestamp_sequence(518300000010L,100000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3520,7 +3554,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
@@ -3528,7 +3563,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3537,7 +3572,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " timestamp_sequence(500000000000L,1000000L)::" + timestampTypeName + "   ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3557,7 +3592,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -3566,7 +3601,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(15000000000L,100000000L) ts," +
+                        " timestamp_sequence(15000000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3603,14 +3638,15 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testPartitionedWithAllocationCallLimit0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create atomic table x as (" +
                         "select" +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " timestamp_sequence(500000000000L,1000000L) ts" +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
+                        " timestamp_sequence(500000000000L,1000000L)::" + timestampTypeName + "   ts" +
                         " from long_sequence(100000L)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3620,8 +3656,8 @@ public class O3FailureTest extends AbstractO3Test {
                 "create atomic table append as (" +
                         "select" +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " timestamp_sequence(518300000010L,100000L) ts" +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + "   timestamp," +
+                        " timestamp_sequence(518300000010L,100000L)::" + timestampTypeName + "   ts" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3643,10 +3679,11 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testTwoRowsConsistency0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
-                "create table x (ts timestamp, block_nr long) timestamp (ts) partition by DAY",
+                "create table x (ts " + timestampTypeName + ", block_nr long) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
@@ -3665,8 +3702,8 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 sink,
-                "ts\tblock_nr\n" +
-                        "2010-02-04T21:43:14.000000Z\t38304\n"
+                replaceTimestampSuffix1("ts\tblock_nr\n" +
+                        "2010-02-04T21:43:14.000000Z\t38304\n", timestampTypeName)
         );
 
         engine.execute("insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)", sqlExecutionContext);
@@ -3676,9 +3713,9 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 sink,
-                "ts\tblock_nr\n" +
+                replaceTimestampSuffix1("ts\tblock_nr\n" +
                         "2010-02-04T21:43:14.000000Z\t38304\n" +
-                        "2010-02-14T23:52:59.000000Z\t40320\n"
+                        "2010-02-14T23:52:59.000000Z\t40320\n", timestampTypeName)
         );
 
     }
@@ -3686,10 +3723,11 @@ public class O3FailureTest extends AbstractO3Test {
     private static void testVarColumnStress(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            String timestampTypeName
     ) throws SqlException {
 
-        engine.execute("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
+        engine.execute("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t " + timestampTypeName + ") timestamp (t) partition by DAY", executionContext);
         // max timestamp should be 100_000
         engine.execute("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
 
@@ -3736,7 +3774,7 @@ public class O3FailureTest extends AbstractO3Test {
         }
     }
 
-    private void executeWithoutPool(CustomisableRunnable runnable, FilesFacade ff) throws Exception {
+    private void executeWithoutPool(CustomisableRunnableWithTimestampType runnable, FilesFacade ff) throws Exception {
         executeVanilla(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -3744,7 +3782,12 @@ public class O3FailureTest extends AbstractO3Test {
                     return ff;
                 }
             };
-            TestUtils.execute(null, runnable, configuration, LOG);
+            TestUtils.execute(
+                    null,
+                    (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampType.getTypeName()),
+                    configuration,
+                    LOG
+            );
         });
     }
 

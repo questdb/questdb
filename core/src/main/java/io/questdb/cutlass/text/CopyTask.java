@@ -195,6 +195,7 @@ public class CopyTask {
             int index,
             CharSequence inputFileName,
             CharSequence importRoot,
+            int timestampType,
             int partitionBy,
             byte columnDelimiter,
             int timestampIndex,
@@ -210,6 +211,7 @@ public class CopyTask {
                 index,
                 inputFileName,
                 importRoot,
+                timestampType,
                 partitionBy,
                 columnDelimiter,
                 timestampIndex,
@@ -228,7 +230,8 @@ public class CopyTask {
             int columnIndex,
             int symbolColumnIndex,
             int tmpTableCount,
-            int partitionBy
+            int partitionBy,
+            int timestampType
     ) {
         this.phase = PHASE_SYMBOL_TABLE_MERGE;
         this.phaseSymbolTableMerge.of(
@@ -240,7 +243,8 @@ public class CopyTask {
                 columnIndex,
                 symbolColumnIndex,
                 tmpTableCount,
-                partitionBy
+                partitionBy,
+                timestampType
         );
     }
 
@@ -557,6 +561,7 @@ public class CopyTask {
         private CharSequence column;
         private int columnIndex;
         private CharSequence importRoot;
+        private int timestampType;
         private int partitionBy;
         private int symbolColumnIndex;
         private TableToken tableToken;
@@ -573,6 +578,7 @@ public class CopyTask {
             this.symbolColumnIndex = -1;
             this.tmpTableCount = -1;
             this.partitionBy = -1;
+            this.timestampType = ColumnType.NULL;
         }
 
         public void of(
@@ -584,7 +590,8 @@ public class CopyTask {
                 int columnIndex,
                 int symbolColumnIndex,
                 int tmpTableCount,
-                int partitionBy
+                int partitionBy,
+                int timestampType
         ) {
             this.cfg = cfg;
             this.importRoot = importRoot;
@@ -595,6 +602,7 @@ public class CopyTask {
             this.symbolColumnIndex = symbolColumnIndex;
             this.tmpTableCount = tmpTableCount;
             this.partitionBy = partitionBy;
+            this.timestampType = timestampType;
         }
 
         public void run(Path path) {
@@ -605,7 +613,7 @@ public class CopyTask {
                 path.trimTo(plen);
                 path.putAscii('_').put(i);
                 int tableLen = path.size();
-                try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
+                try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy)) {
                     path.trimTo(tableLen);
                     txFile.unsafeLoadAll();
                     int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
@@ -680,7 +688,13 @@ public class CopyTask {
             TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
             path.of(root).concat(tableToken.getTableName()).put('_').put(index);
             int plen = path.size();
-            TableUtils.setPathForNativePartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
+            TableUtils.setPathForNativePartition(
+                    path.slash(),
+                    TableUtils.getTimestampType(tableStructure),
+                    tableStructure.getPartitionBy(),
+                    partitionTimestamp,
+                    -1
+            );
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
             long columnMemory = 0;
@@ -734,6 +748,7 @@ public class CopyTask {
         private long lineCount;
         private long lineNumber;
         private int partitionBy;
+        private int timestampType;
         private int timestampIndex;
 
         public void clear() {
@@ -742,11 +757,11 @@ public class CopyTask {
             this.lineNumber = -1;
             this.lineCount = 0;
             this.errorCount = 0;
-
             this.index = -1;
             this.inputFileName = null;
             this.importRoot = null;
             this.partitionBy = -1;
+            this.timestampType = ColumnType.NULL;
             this.columnDelimiter = (byte) -1;
             this.timestampIndex = -1;
             this.adapter = null;
@@ -773,6 +788,7 @@ public class CopyTask {
                 int index,
                 CharSequence inputFileName,
                 CharSequence importRoot,
+                int timestampType,
                 int partitionBy,
                 byte columnDelimiter,
                 int timestampIndex,
@@ -786,10 +802,10 @@ public class CopyTask {
             this.chunkStart = chunkStart;
             this.chunkEnd = chunkEnd;
             this.lineNumber = lineNumber;
-
             this.index = index;
             this.inputFileName = inputFileName;
             this.importRoot = importRoot;
+            this.timestampType = timestampType;
             this.partitionBy = partitionBy;
             this.columnDelimiter = columnDelimiter;
             this.timestampIndex = timestampIndex;
@@ -804,6 +820,7 @@ public class CopyTask {
                         inputFileName,
                         importRoot,
                         index,
+                        timestampType,
                         partitionBy,
                         columnDelimiter,
                         timestampIndex,

@@ -35,6 +35,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
@@ -3407,7 +3408,12 @@ public class SqlOptimiser implements Mutable {
                     if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
                         throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                     }
-                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken);
+
+                    int timestampType;
+                    try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                        timestampType = metadata.getTimestampType();
+                    }
+                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType);
                     break;
                 case QueryModel.SHOW_TRANSACTION:
                 case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
@@ -6905,8 +6911,8 @@ public class SqlOptimiser implements Mutable {
                             break;
                     }
 
-                    ac.setRowsLo(rowsLo * ac.getRowsLoExprTimeUnit());
-                    ac.setRowsHi(rowsHi * ac.getRowsHiExprTimeUnit());
+                    ac.setRowsLo(rowsLo);
+                    ac.setRowsHi(rowsHi);
                 }
             }
         }

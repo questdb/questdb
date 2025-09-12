@@ -35,7 +35,8 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MaxIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
@@ -51,9 +52,12 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         super();
         this.columnIndex = columnIndex;
-        if (keyKind == GKK_HOUR_INT) {
-            this.distinctFunc = Rosti::keyedHourDistinct;
-            this.keyValueFunc = Rosti::keyedHourMaxInt;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedMicroHourDistinct;
+            this.keyValueFunc = Rosti::keyedMicroHourMaxInt;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedNanoHourDistinct;
+            this.keyValueFunc = Rosti::keyedNanoHourMaxInt;
         } else {
             this.distinctFunc = Rosti::keyedIntDistinct;
             this.keyValueFunc = Rosti::keyedIntMaxInt;

@@ -27,7 +27,7 @@ package org.questdb;
 import io.questdb.client.Sender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 import java.time.temporal.ChronoUnit;
@@ -104,14 +104,12 @@ public class LineTCPSenderMain {
         int n = 1;
         final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
         for (int i = 0; i < n; i++) {
-            int k = i;
-            new Thread(() -> doSend(k, haltLatch, ccy, ccyDist, venue, venueDist, pool, poolDist)).start();
+            new Thread(() -> doSend(haltLatch, ccy, ccyDist, venue, venueDist, pool, poolDist)).start();
         }
         haltLatch.await();
     }
 
     private static void doSend(
-            int k,
             SOCountDownLatch haltLatch,
             String[] ccy,
             int[] ccyDist,
@@ -121,13 +119,9 @@ public class LineTCPSenderMain {
             int[] poolDist
     ) {
         final long count = 30_000_000;
-        String hostIPv4 = "127.0.0.1";
-        int port = 9009; // 8089 influx
-        int bufferCapacity = 4 * 1024;
-
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        MicrosecondClock clock = new MicrosecondClockImpl();
+        Clock clock = new MicrosecondClockImpl();
         String tab = "quotes";
         try (Sender sender = Sender.builder(Sender.Transport.TCP)
                 .address("wet-crimson-879-30b0c6db.ilp.c7at.questdb.com:32495")

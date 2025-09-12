@@ -133,7 +133,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
 
         public void startAndExecute(String sqlText) {
             start();
-            serverMain.ddl(sqlText);
+            serverMain.execute(sqlText);
         }
 
         public void stop() {

@@ -109,52 +109,6 @@ public final class Rosti {
         return Unsafe.getUnsafe().getLong(pRosti + 7 * Long.BYTES);
     }
 
-    //returns true if rosti is set to trigger OOM on  allocation
-    public static native boolean keyedHourCount(long pRosti, long pKeys, long count, int valueOffset);
-
-    public static native boolean keyedHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
-
-    public static native boolean keyedHourCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
-
-    public static native boolean keyedHourDistinct(long pRosti, long pKeys, long count);
-
-    public static native boolean keyedHourKSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMaxDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMaxInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMaxShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
-
-    public static native boolean keyedHourMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourMinShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
-
-    public static native boolean keyedHourNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native boolean keyedHourSumLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
-
-    // sum long256
-    public static native boolean keyedHourSumLong256(long pRosti, long pKeys, long pLong256, long count, int valueOffset);
-
-    public static native boolean keyedHourSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
-
-    public static native boolean keyedHourSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
-
-    public static native boolean keyedHourSumShortLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
-
     public static native boolean keyedIntAvgDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
 
     public static native boolean keyedIntAvgLongLongWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
@@ -275,6 +229,97 @@ public final class Rosti {
     public static native boolean keyedIntSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
 
     public static native boolean keyedIntSumShortLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    //returns true if rosti is set to trigger OOM on  allocation
+    public static native boolean keyedMicroHourCount(long pRosti, long pKeys, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourDistinct(long pRosti, long pKeys, long count);
+
+    public static native boolean keyedMicroHourKSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMaxDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMaxInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMaxShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    // sum long256
+    public static native boolean keyedMicroHourSumLong256(long pRosti, long pKeys, long pLong256, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumShortLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourCount(long pRosti, long pKeys, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourDistinct(long pRosti, long pKeys, long count);
+
+    public static native boolean keyedNanoHourKSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    // sum long256
+    public static native boolean keyedNanoHourSumLong256(long pRosti, long pKeys, long pLong256, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumShortLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static void printRosti(long pRosti) {
         final long slots = getSlots(pRosti);

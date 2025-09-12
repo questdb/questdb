@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -39,14 +41,12 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
-    private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
     private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
 
     @Override
@@ -67,9 +67,9 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         if (format == null) {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
-
-        DateFormat timestampFormat = tlCompiler.get().compile(fmt.getStrA(null));
         Function var = args.getQuick(0);
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(var.getType()), ColumnType.TIMESTAMP_MICRO));
+        DateFormat timestampFormat = driver.getTimestampDateFormatFactory().get(fmt.getStrA(null));
         if (var.isConstant()) {
             long value = var.getTimestamp(null);
             if (value == Numbers.LONG_NULL) {

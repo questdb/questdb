@@ -26,8 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -36,17 +35,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
 public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
-    private static final GenericRecordMetadata METADATA;
+    private final TimestampDriver timestampDriver;
     private GenerateSeriesTimestampRecordCursor cursor;
 
-    public GenerateSeriesTimestampRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
-        super(METADATA, startFunc, endFunc, stepFunc, argPositions);
+    public GenerateSeriesTimestampRecordCursorFactory(int timestampType, Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
+        super(GenerateSeriesTimestampStringRecordCursorFactory.getMetadata(timestampType), startFunc, endFunc, stepFunc, argPositions);
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
-            cursor = new GenerateSeriesTimestampRecordCursor(startFunc, endFunc, stepFunc);
+            cursor = new GenerateSeriesTimestampRecordCursor(timestampDriver, startFunc, endFunc, stepFunc);
         }
         cursor.of(executionContext, stepPosition);
         return cursor;
@@ -64,12 +64,14 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
     private static class GenerateSeriesTimestampRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesTimestampRecord recordA = new GenerateSeriesTimestampRecord();
         private final GenerateSeriesTimestampRecord recordB = new GenerateSeriesTimestampRecord();
+        private final TimestampDriver timestampDriver;
         private long end;
         private long start;
         private long step;
 
-        public GenerateSeriesTimestampRecordCursor(Function startFunc, Function endFunc, Function stepFunc) {
+        public GenerateSeriesTimestampRecordCursor(TimestampDriver driver, Function startFunc, Function endFunc, Function stepFunc) {
             super(startFunc, endFunc, stepFunc);
+            this.timestampDriver = driver;
         }
 
         @Override
@@ -94,9 +96,9 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
         public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
             super.of(executionContext);
-            this.start = startFunc.getTimestamp(null);
-            this.end = endFunc.getTimestamp(null);
-            this.step = stepFunc.getTimestamp(null);
+            this.start = timestampDriver.from(startFunc.getTimestamp(null), ColumnType.getTimestampType(startFunc.getType()));
+            this.end = timestampDriver.from(endFunc.getTimestamp(null), ColumnType.getTimestampType(endFunc.getType()));
+            this.step = stepFunc.getLong(null);
             if (step == 0) {
                 throw SqlException.$(stepPosition, "step cannot be zero");
             }
@@ -162,12 +164,5 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
                 curr = value;
             }
         }
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("generate_series", ColumnType.TIMESTAMP));
-        metadata.setTimestampIndex(0);
-        METADATA = metadata;
     }
 }

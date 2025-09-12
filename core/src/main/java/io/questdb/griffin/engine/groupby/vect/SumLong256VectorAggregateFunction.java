@@ -29,13 +29,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.mp.SimpleSpinLock;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
     private static final ThreadLocal<Long256Impl> partialSums = new ThreadLocal<>(Long256Impl::new);
@@ -50,9 +56,12 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
 
     public SumLong256VectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
-        if (keyKind == GKK_HOUR_INT) {
-            distinctFunc = Rosti::keyedHourDistinct;
-            keyValueFunc = Rosti::keyedHourSumLong256;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            distinctFunc = Rosti::keyedMicroHourDistinct;
+            keyValueFunc = Rosti::keyedMicroHourSumLong256;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            distinctFunc = Rosti::keyedNanoHourDistinct;
+            keyValueFunc = Rosti::keyedNanoHourSumLong256;
         } else {
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumLong256;

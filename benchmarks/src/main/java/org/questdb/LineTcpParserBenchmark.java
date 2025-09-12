@@ -24,13 +24,18 @@
 
 package org.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sink;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -65,8 +70,7 @@ public class LineTcpParserBenchmark {
     @Setup
     public void setup() {
         this.input = new DirectUtf8Sink(BUFFER_SIZE);
-        CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(".");
-        this.parser = new LineTcpParser(cairoConfiguration);
+        this.parser = new LineTcpParser();
 
         Rnd rnd = new Rnd();
         long lineLenEstimate = 0;

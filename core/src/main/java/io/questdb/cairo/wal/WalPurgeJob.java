@@ -27,11 +27,11 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -49,7 +49,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -63,7 +63,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -80,7 +80,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private long last = 0;
     private TableToken tableToken;
 
-    public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
+    public WalPurgeJob(CairoEngine engine, FilesFacade ff, Clock clock) {
         this.engine = engine;
         this.ff = ff;
         this.clock = clock;
@@ -299,7 +299,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                             try {
                                                 final int segmentId = Numbers.parseInt(walName);
                                                 if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
-                                                    throw NumericException.INSTANCE;
+                                                    throw NumericException.instance()
+                                                            .position(0)
+                                                            .put("segment id out of range [min=").put(WalUtils.SEG_MIN_ID)
+                                                            .put(", max=").put(WalUtils.SEG_MAX_ID)
+                                                            .put(", segmentId=").put(segmentId)
+                                                            .put(']')
+                                                            ;
                                                 }
                                                 path.trimTo(walPathLen);
                                                 final Path segmentPath = setSegmentLockPath(tableToken, walId, segmentId);
@@ -345,8 +351,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
-                try {
-                    txReader.ofRO(path.$(), PartitionBy.NONE);
+                try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
+                    txReader.ofRO(path.$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                 } catch (CairoException ex) {
                     if (engine.isTableDropped(tableToken)) {

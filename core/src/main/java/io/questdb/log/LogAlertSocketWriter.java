@@ -31,7 +31,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.TestOnly;
@@ -54,7 +54,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String ORG_ID_ENV = "ORGID";
     private final TemplateParser alertTemplate = new TemplateParser();
     private final RingQueue<LogRecordUtf8Sink> alertsSourceQueue;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final FilesFacade ff;
     private final int level;
     private final NetworkFacade nf;
@@ -91,7 +91,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     public LogAlertSocketWriter(
             FilesFacade ff,
             NetworkFacade nf,
-            MicrosecondClock clock,
+            Clock clock,
             RingQueue<LogRecordUtf8Sink> alertsSrc,
             SCSequence writeSequence,
             int level,

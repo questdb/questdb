@@ -33,6 +33,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -44,6 +46,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -97,9 +100,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
@@ -110,6 +115,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.BindVariableTestTuple;
@@ -138,6 +144,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    protected static final String TIMESTAMP_NS_TYPE_NAME = "TIMESTAMP_NS";
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
     private static final double EPSILON = 0.000001;
@@ -150,9 +157,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
-    protected static final MicrosecondClock defaultMicrosecondClock = () ->
-            currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
+    protected static final NanosecondClock defaultNanosecondClock = () -> currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
+    protected static NanosecondClock testNanoClock = defaultNanosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
@@ -434,6 +442,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return doubleEquals(a, b, EPSILON);
     }
 
+    public static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        engine.execute(sqlText, sqlExecutionContext);
+    }
+
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
     // join map memory - because it's usually a small and can't really be released until the factory is closed
@@ -446,6 +459,18 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         return memUsed;
+    }
+
+    public static String getTimestampSuffix(String timestampType) {
+        return AsOfJoinTest.TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
+    }
+
+    public static long parseFloorPartialTimestamp(String toTs) {
+        try {
+            return MicrosTimestampDriver.floor(toTs);
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public static void printFactoryMemoryUsageDiff() {
@@ -505,7 +530,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
         try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
             Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), rdr.getTimestampType(), PartitionBy.DAY);
             rdr.unsafeLoadAll();
 
             return txnToString(rdr, compareTxns, compareTruncateVersion, false);
@@ -515,7 +540,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
         try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
             Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), rdr.getTimestampType(), PartitionBy.DAY);
             rdr.unsafeLoadAll();
 
             return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns);
@@ -524,6 +549,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void refreshTablesInBaseEngine() {
         engine.reloadTableNames();
+    }
+
+    public static String replaceTimestampSuffix(String expected, String timestampType) {
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace(".00", ".00000") : expected;
+    }
+
+    public static String replaceTimestampSuffix1(String expected, String timestampType) {
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("00Z", "00000Z").replaceAll("-00000", "-00000000") : expected;
     }
 
     @BeforeClass
@@ -550,7 +583,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
-
+        ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
+        ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testNanoClock);
         ColumnType.makeUtf8DefaultString();
     }
 
@@ -686,8 +720,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     fut.await();
                 }
             } else {
-                // make sure to close update operation
-                try (UpdateOperation ignore = cq.getUpdateOperation()) {
+                // make sure to close update/insert operation
+                try (
+                        UpdateOperation ignore = cq.getUpdateOperation();
+                        InsertOperation ignored = cq.popInsertOperation()
+                ) {
                     execute(compiler, sql, sqlExecutionContext);
                 }
             }
@@ -921,7 +958,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 sink.put(",");
             }
             sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
+            MicrosFormatUtils.appendDateTime(sink, timestamp);
             sink.put("', rowCount: ").put(rowCount);
             // Do not print name txn, it can be different in expected and actual table
             if (comparePartitionTxns) {
@@ -939,9 +976,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
         sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
         sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
         sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
         if (compareTruncateVersion) {
             sink.put("', dataVersion: ").put(txReader.getDataVersion());
         }
@@ -957,9 +994,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
         sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
         sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
         sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
         sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
         sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
         sink.put("}");
@@ -1426,7 +1463,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
         int index = factory.getMetadata().getTimestampIndex();
-        Assert.assertEquals(ColumnType.TIMESTAMP, factory.getMetadata().getColumnType(index));
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(factory.getMetadata().getColumnType(index)));
         long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
@@ -1436,9 +1473,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
-                    TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
+                    MicrosFormatUtils.appendDateTimeUSec(error, timestamp);
                     error.put(" current=");
-                    TimestampFormatUtils.appendDateTimeUSec(error, ts);
+                    MicrosFormatUtils.appendDateTimeUSec(error, ts);
 
                     Assert.fail(error.toString());
                 }

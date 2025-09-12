@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -32,6 +33,10 @@ import io.questdb.std.Numbers;
 
 class TimestampBindVariable extends TimestampFunction implements Mutable {
     long value;
+
+    public TimestampBindVariable() {
+        super(ColumnType.TIMESTAMP_MICRO);
+    }
 
     @Override
     public void clear() {

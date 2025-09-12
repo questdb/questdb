@@ -41,7 +41,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -115,16 +115,16 @@ public class TableReaderReloadBenchmark {
         );
         writer.truncate();
         // create 10 partitions
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-01T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-02T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-03T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-04T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-05T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-06T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-07T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-08T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
-        appendRow(TimestampFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-01T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-02T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-03T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-04T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-05T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-06T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-07T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-08T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
+        appendRow(MicrosFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
         writer.commit();
         reader = new TableReader(0, configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
 
@@ -161,7 +161,7 @@ public class TableReaderReloadBenchmark {
 
     static {
         try {
-            ts = TimestampFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z");
+            ts = MicrosFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z");
         } catch (NumericException e) {
             throw new ExceptionInInitializerError();
         }

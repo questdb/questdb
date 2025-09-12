@@ -45,13 +45,13 @@ public class TablesBootstrapTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
-                serverMain.ddl("CREATE TABLE tab (sym SYMBOL, bar VARCHAR, ts TIMESTAMP, foo INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE tab (sym SYMBOL, bar VARCHAR, ts TIMESTAMP, foo INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 assertTables(serverMain);
 
-                serverMain.ddl("ALTER TABLE tab DROP COLUMN foo");
+                serverMain.execute("ALTER TABLE tab DROP COLUMN foo");
                 assertTables(serverMain);
 
-                serverMain.ddl("ALTER TABLE tab DROP COLUMN bar");
+                serverMain.execute("ALTER TABLE tab DROP COLUMN bar");
                 assertTables(serverMain);
             }
 
@@ -60,7 +60,7 @@ public class TablesBootstrapTest extends AbstractBootstrapTest {
                 serverMain.start();
                 TestUtils.assertEventually(() -> assertTables(serverMain));
 
-                serverMain.ddl("ALTER TABLE tab DROP COLUMN sym");
+                serverMain.execute("ALTER TABLE tab DROP COLUMN sym");
                 assertTables(serverMain);
             }
         });

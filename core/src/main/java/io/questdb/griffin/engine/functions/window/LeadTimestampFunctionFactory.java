@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -65,7 +66,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), args.getQuick(0).getType())) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
@@ -76,15 +77,29 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
     }
 
     static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowTimestampFunction {
+        private final int defaultValueTimestampType;
+        private final TimestampDriver timestampDriver;
+
         public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+            if (defaultValueFunc != null) {
+                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValueFunc.getType());
+            } else {
+                this.defaultValueTimestampType = ColumnType.UNDEFINED;
+            }
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override
         protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
             long leadValue;
             if (count < offset) {
-                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
             } else {
                 leadValue = buffer.getLong((long) loIdx * Long.BYTES);
             }
@@ -99,6 +114,9 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
     }
 
     static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowTimestampFunction {
+        private final int defaultValueTimestampType;
+        private final TimestampDriver timestampDriver;
+
         public LeadOverPartitionFunction(Map map,
                                          VirtualRecord partitionByRecord,
                                          RecordSink partitionBySink,
@@ -108,6 +126,17 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                                          Function defaultValue,
                                          long offset) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+            if (defaultValue != null) {
+                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValue.getType());
+            } else {
+                this.defaultValueTimestampType = ColumnType.UNDEFINED;
+            }
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override
@@ -121,7 +150,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             long l = arg.getTimestamp(record);
             long leadValue;
             if (count < offset) {
-                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getTimestamp(record);
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
             } else {
                 leadValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
             }

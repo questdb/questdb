@@ -37,7 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 
@@ -87,12 +86,13 @@ public class TxReader implements Closeable, Mutable {
     protected long seqTxn;
     protected long structureVersion;
     protected int symbolColumnCount;
+    protected int timestampType;
     protected long transientRowCount;
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
-    private PartitionBy.PartitionCeilMethod partitionCeilMethod;
-    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
+    private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;
     private long size;
@@ -191,6 +191,10 @@ public class TxReader implements Closeable, Mutable {
         return columnVersion;
     }
 
+    public long getCurrentPartitionMaxTimestamp(long timestamp) {
+        return getNextPartitionTimestamp(timestamp) - 1;
+    }
+
     public long getDataVersion() {
         return dataVersion;
     }
@@ -238,6 +242,24 @@ public class TxReader implements Closeable, Mutable {
         return minTimestamp;
     }
 
+    public long getNextExistingPartitionTimestamp(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index < 0) {
+            index = -index - 1;
+        } else {
+            index += LONGS_PER_TX_ATTACHED_PARTITION;
+        }
+        int nextIndex = index + PARTITION_TS_OFFSET;
+        if (nextIndex < attachedPartitions.size()) {
+            return attachedPartitions.get(nextIndex);
+        }
+        return Long.MAX_VALUE;
+    }
+
     public long getNextLogicalPartitionTimestamp(long timestamp) {
         if (partitionCeilMethod != null) {
             return partitionCeilMethod.ceil(timestamp);
@@ -265,24 +287,6 @@ public class TxReader implements Closeable, Mutable {
             }
         }
         return partitionCeilMethod.ceil(timestamp);
-    }
-
-    public long getNextExistingPartitionTimestamp(long timestamp) {
-        if (partitionBy == PartitionBy.NONE) {
-            return Long.MAX_VALUE;
-        }
-
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
-        if (index < 0) {
-            index = -index - 1;
-        } else {
-            index += LONGS_PER_TX_ATTACHED_PARTITION;
-        }
-        int nextIndex = index + PARTITION_TS_OFFSET;
-        if (nextIndex < attachedPartitions.size()) {
-            return attachedPartitions.get(nextIndex);
-        }
-        return Long.MAX_VALUE;
     }
 
     public int getPartitionCount() {
@@ -381,6 +385,10 @@ public class TxReader implements Closeable, Mutable {
         return symbolCountSnapshot.get(i);
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     public long getTransientRowCount() {
         return transientRowCount;
     }
@@ -397,11 +405,12 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
-    public void initRO(MemoryMR txnFile, int partitionBy) {
+    public void initRO(MemoryMR txnFile, int timestampType, int partitionBy) {
         this.roTxMemBase = txnFile;
-        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
+        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
         this.partitionBy = partitionBy;
+        this.timestampType = timestampType;
     }
 
     public boolean isLagOrdered() {
@@ -475,12 +484,12 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.addAll(srcReader.attachedPartitions);
     }
 
-    public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
+    public TxReader ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         clear();
         try {
             openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
+            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();
@@ -492,6 +501,7 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public String toString() {
         // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         StringSink sink = new StringSink();
         sink.put("{");
         sink.put("txn: ").put(txn);
@@ -511,7 +521,8 @@ public class TxReader implements Closeable, Mutable {
                 sink.put(",");
             }
             sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
+
+            timestampDriver.append(sink, timestamp);
             sink.put("', rowCount: ").put(rowCount);
             sink.put(", nameTxn: ").put(nameTxn);
             if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
@@ -525,9 +536,9 @@ public class TxReader implements Closeable, Mutable {
         sink.put("\n], transientRowCount: ").put(transientRowCount);
         sink.put(", fixedRowCount: ").put(fixedRowCount);
         sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, minTimestamp);
+        timestampDriver.append(sink, minTimestamp);
         sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, maxTimestamp);
+        timestampDriver.append(sink, maxTimestamp);
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
@@ -537,9 +548,9 @@ public class TxReader implements Closeable, Mutable {
         sink.put(", symbolColumnCount: ").put(symbolColumnCount);
         sink.put(", lagRowCount: ").put(lagRowCount);
         sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, lagMinTimestamp);
+        timestampDriver.append(sink, lagMinTimestamp);
         sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, lagMaxTimestamp);
+        timestampDriver.append(sink, lagMaxTimestamp);
         sink.put("', lagTxnCount: ").put(lagTxnCount);
         sink.put(", lagOrdered: ").put(lagOrdered);
         sink.put("}");
@@ -756,8 +767,8 @@ public class TxReader implements Closeable, Mutable {
         seqTxn = -1;
     }
 
-    protected int findAttachedPartitionRawIndex(long ts) {
-        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+    protected int findAttachedPartitionRawIndex(long timestamp) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
         if (indexRaw > -1L) {
             return indexRaw;
         }
@@ -767,7 +778,7 @@ public class TxReader implements Closeable, Mutable {
             return -1;
         }
         long prevPartitionTimestamp = attachedPartitions.getQuick(prevIndexRaw + PARTITION_TS_OFFSET);
-        if (getPartitionFloor(prevPartitionTimestamp) == getPartitionFloor(ts)) {
+        if (getPartitionFloor(prevPartitionTimestamp) == getPartitionFloor(timestamp)) {
             return prevIndexRaw;
         }
         // Not found.

@@ -28,20 +28,21 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -56,21 +57,19 @@ public class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
-    private final MicrosecondClock clock;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int maxColumnNameLength;
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
     private final boolean stringToCharCastAllowed;
-    private final LineTcpTimestampAdapter timestampAdapter;
     private boolean commitOnWriterClose;
     private TableUpdateDetails tableUpdateDetails;
+    private final byte timestampUnit;
     private int writerWorkerId;
 
     LineTcpMeasurementEvent(
             long bufLo,
             long bufSize,
-            MicrosecondClock clock,
-            LineTcpTimestampAdapter timestampAdapter,
+            byte timestampUnit,
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
             int maxColumnNameLength,
@@ -79,9 +78,8 @@ public class LineTcpMeasurementEvent implements Closeable {
         this.maxColumnNameLength = maxColumnNameLength;
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
-        this.clock = clock;
-        this.timestampAdapter = timestampAdapter;
         this.defaultColumnTypes = defaultColumnTypes;
+        this.timestampUnit = timestampUnit;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
     }
 
@@ -104,6 +102,16 @@ public class LineTcpMeasurementEvent implements Closeable {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
     }
 
+    private byte getOverloadTimestampUnit(byte unit) {
+        switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS:
+            case CommonUtils.TIMESTAMP_UNIT_MICROS:
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
+                return unit;
+        }
+        return timestampUnit;
+    }
+
     void append() throws CommitFailedException {
         TableWriter.Row row = null;
         try {
@@ -120,7 +128,7 @@ public class LineTcpMeasurementEvent implements Closeable {
             long timestamp = buffer.readLong(address);
             address += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
-                timestamp = clock.getTicks();
+                timestamp = tableUpdateDetails.getTimestampDriver().getTicks();
             }
             row = writer.newRow(timestamp);
             final int nEntities = buffer.readInt(address);
@@ -301,7 +309,7 @@ public class LineTcpMeasurementEvent implements Closeable {
         securityContext.authorizeInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
+            timestamp = tud.getTimestampDriver().from(timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
         }
         buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
@@ -316,7 +324,7 @@ public class LineTcpMeasurementEvent implements Closeable {
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
-                    timestamp = timestampAdapter.getMicros(entity.getLongValue(), entity.getUnit());
+                    timestamp = tud.getTimestampDriver().from(entity.getLongValue(), entity.getUnit());
                     continue;
                 }
 
@@ -381,7 +389,7 @@ public class LineTcpMeasurementEvent implements Closeable {
                             break;
                         }
                         case ColumnType.TIMESTAMP:
-                            long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), LineTcpParser.ENTITY_UNIT_NONE);
+                            long timestampValue = entity.getLongValue();
                             offset = buffer.addTimestamp(offset, timestampValue);
                             break;
                         case ColumnType.DATE:
@@ -536,12 +544,13 @@ public class LineTcpMeasurementEvent implements Closeable {
                 case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                     switch (ColumnType.tagOf(colType)) {
                         case ColumnType.TIMESTAMP:
-                            long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
+                            long timestampValue = ColumnType.getTimestampDriver(colType).from(entity.getLongValue(), entity.getUnit());
                             offset = buffer.addTimestamp(offset, timestampValue);
                             break;
                         case ColumnType.DATE:
-                            long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
-                            offset = buffer.addDate(offset, dateValue / 1000);
+                            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+                            long dateValue = driver.toDate(driver.from(entity.getLongValue(), entity.getUnit()));
+                            offset = buffer.addDate(offset, dateValue);
                             break;
                         case ColumnType.SYMBOL:
                             offset = buffer.addSymbol(
