@@ -5214,16 +5214,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                17,
-                "there is no matching function `lead` with the argument types: (SYMBOL)"
+                0,
+                "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP]"
         );
 
         assertException(
                 "SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                        "AS next_price FROM trades " +
-                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
-                17,
-                "there is no matching function `first_value` with the argument types: (SYMBOL)"
+                        "AS next_price FROM trades ",
+                0,
+                "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP]"
         );
     }
 

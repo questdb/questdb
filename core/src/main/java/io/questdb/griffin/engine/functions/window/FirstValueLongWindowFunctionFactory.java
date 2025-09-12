@@ -63,7 +63,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
     /**
      * Returns the function signature for this factory.
-     *
+     * <p>
      * The signature identifies the function name and accepted argument types (e.g. "first_value(L)").
      *
      * @return the signature string
@@ -75,15 +75,15 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
     /**
      * Create a window-function instance for `first_value(L)` based on the current WindowContext.
-     *
+     * <p>
      * If the frame bounds are invalid (rowsHi < rowsLo) this returns a LongNullFunction that yields
      * SQL NULL for every row in the frame. Otherwise delegates to an implementation chosen for the
      * window's null-handling mode (ignore vs. respect nulls), framing mode, partitioning and ordering.
      *
-     * @param position SQL token position used for error reporting
-     * @param args function arguments (first argument is the input long value)
-     * @param argPositions positions of the arguments in the SQL for error reporting
-     * @param configuration Cairo configuration (passed through to generated functions)
+     * @param position            SQL token position used for error reporting
+     * @param args                function arguments (first argument is the input long value)
+     * @param argPositions        positions of the arguments in the SQL for error reporting
+     * @param configuration       Cairo configuration (passed through to generated functions)
      * @param sqlExecutionContext execution context supplying the WindowContext
      * @return a Function that implements the requested first_value behavior for LONG inputs
      * @throws SqlException if the WindowContext is invalid or the requested window configuration is unsupported
@@ -126,11 +126,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
      * or simple current-row implementations) to compute the first non-null LONG value within the
      * active frame.</p>
      *
-     * @param position  parser/statement position used for error reporting when the window
-     *                  configuration is unsupported
-     * @param args      function argument list; this factory uses args.get(0) as the value expression
-     * @param windowContext  describes partitioning, ordering, framing mode and bounds that determine
-     *                       which concrete implementation is returned
+     * @param position      parser/statement position used for error reporting when the window
+     *                      configuration is unsupported
+     * @param args          function argument list; this factory uses args.get(0) as the value expression
+     * @param windowContext describes partitioning, ordering, framing mode and bounds that determine
+     *                      which concrete implementation is returned
      * @return a Function instance implementing first_value(long) with ignore-null semantics
      * @throws SqlException if the provided window parameters are not supported (for example,
      *                      RANGE framing without a designated timestamp or other unimplemented
@@ -341,7 +341,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
     /**
      * Create a first_value window-function implementation that respects NULLs.
-     *
+     * <p>
      * Chooses and constructs an optimized Function implementation based on the provided
      * WindowContext (partitioning, framing mode FRAMING_RANGE/FRAMING_ROWS, frame bounds,
      * ordering and designated timestamp) and the supplied argument list. Returned implementations
@@ -576,10 +576,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Creates a function that computes the first non-null long value for each partition.
          *
-         * @param map storage used to hold per-partition state
+         * @param map               storage used to hold per-partition state
          * @param partitionByRecord provides the current row's partition key
-         * @param partitionBySink serializes the partition key into the map
-         * @param arg expression that produces the long value evaluated for each row
+         * @param partitionBySink   serializes the partition key into the map
+         * @param arg               expression that produces the long value evaluated for each row
          */
         public FirstNotNullValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -618,7 +618,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * First pass: record the first non-null long value seen for the current partition.
-         *
+         * <p>
          * For the given row's partition key, if the partition is not yet present in the map
          * and the argument value is not NULL, stores that value as the partition's first value.
          * This method updates the factory's partition map state; it does not emit results.
@@ -639,12 +639,12 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Second pass: look up the partition's first-value (long) and write it to the output slot for the current row.
-         *
+         * <p>
          * Looks up the value previously stored in the per-partition map; if no entry exists writes
          * SQL NULL for LONG. The result is written into the window output memory for the given
          * recordOffset and the function's configured column index.
          *
-         * @param record current input record used to derive the partition key
+         * @param record       current input record used to derive the partition key
          * @param recordOffset byte offset for the current row in the WindowSPI output memory
          */
         @Override
@@ -663,15 +663,15 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
     public static class FirstNotNullValueOverPartitionRangeFrameFunction extends FirstValueOverPartitionRangeFrameFunction {
         /**
          * Creates a partitioned RANGE-frame implementation of FIRST_VALUE that skips nulls.
-         *
+         * <p>
          * This constructor builds a function instance that maintains a per-partition ring buffer
          * of (timestamp, value) pairs in native memory and computes the first non-null long value
          * within the inclusive range [rangeLo, rangeHi] relative to each row's timestamp.
          *
-         * @param rangeLo lower bound of the RANGE frame (relative offset, inclusive)
-         * @param rangeHi upper bound of the RANGE frame (relative offset, inclusive)
+         * @param rangeLo           lower bound of the RANGE frame (relative offset, inclusive)
+         * @param rangeHi           upper bound of the RANGE frame (relative offset, inclusive)
          * @param initialBufferSize initial capacity (in entries) for the native ring buffer used to store (timestamp, value) pairs
-         * @param timestampIdx column index of the timestamp value in the input record used for RANGE comparisons
+         * @param timestampIdx      column index of the timestamp value in the input record used for RANGE comparisons
          */
         public FirstNotNullValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -693,15 +693,15 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          *
          * <p>This method:
          * - Locates or creates the per-partition map entry that stores ring-buffer metadata
-         *   (start offset, size, capacity, index of the oldest element).
+         * (start offset, size, capacity, index of the oldest element).
          * - For a new partition entry, initializes the buffer and sets the stored first value
-         *   when the current value is non-null and the frame includes the current row.
+         * when the current value is non-null and the frame includes the current row.
          * - For existing entries, evicts elements that fall outside the range frame defined by
-         *   timestamp difference bounds (minDiff/maxDiff), expands the ring buffer if full,
-         *   and appends the current (timestamp, value) pair when the value is non-null.
+         * timestamp difference bounds (minDiff/maxDiff), expands the ring buffer if full,
+         * and appends the current (timestamp, value) pair when the value is non-null.
          * - Maintains the instance field `firstValue` to reflect the first element within the
-         *   current frame (or LONG_NULL when there is none).
-         *
+         * current frame (or LONG_NULL when there is none).
+         * <p>
          * The method persists updated buffer metadata back into the map entry (start offset,
          * size, capacity, first index) so subsequent calls and partitions can continue
          * incremental frame processing.
@@ -832,7 +832,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Create a partitioned ROWS-frame implementation that returns the first non-null long
          * value within the frame for each partition.
-         *
+         * <p>
          * The instance maintains per-partition state in `map` and uses `memory` as a native
          * ring buffer for storing recent rows required by the moving ROWS frame.
          *
@@ -862,20 +862,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          * <p>This method:
          * - Looks up or initializes per-partition state in {@code map} and a native ring buffer in {@code memory}.
          * - Maintains buffer metadata stored in the map value:
-         *   0 = index of the oldest value (lo index),
-         *   1 = start offset of the native buffer,
-         *   2 = cached index of the first non-null value (or -1 if none cached),
-         *   3 = total count of values appended (used for unbounded lower frames).
+         * 0 = index of the oldest value (lo index),
+         * 1 = start offset of the native buffer,
+         * 2 = cached index of the first non-null value (or -1 if none cached),
+         * 3 = total count of values appended (used for unbounded lower frames).
          * - For unbounded-lower frames, appends the current value and uses the cached first-non-null index when still valid;
-         *   otherwise updates the cache when a new non-null arrives and sets {@code firstValue} accordingly.
+         * otherwise updates the cache when a new non-null arrives and sets {@code firstValue} accordingly.
          * - For bounded (rows) frames, scans the in-buffer window (of size {@code frameSize}) beginning at the lo index
-         *   to find the first non-null value (falling back to the current row value only if the frame contains none),
-         *   advances the lo index, stores the new value into the ring buffer, and updates the cached index.
-         *
+         * to find the first non-null value (falling back to the current row value only if the frame contains none),
+         * advances the lo index, stores the new value into the ring buffer, and updates the cached index.
+         * <p>
          * Effects:
          * - Updates the per-partition map entry and the native buffer in {@code memory}.
          * - Sets the instance field {@code firstValue} to the computed result or {@code Numbers.LONG_NULL} when no value is found
-         *   inside the frame (and the frame does not include the current row).
+         * inside the frame (and the frame does not include the current row).
          *
          * @param record the input row for which to compute and materialize the window's first non-null LONG value
          */
@@ -976,15 +976,15 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Create a RANGE-framed first-value implementation that ignores nulls.
-         *
+         * <p>
          * This constructor builds a window function that computes the first non-null
          * long value inside a RANGE frame defined by offsets [rangeLo, rangeHi]
          * relative to the designated ordering timestamp.
          *
-         * @param rangeLo       lower bound of the RANGE frame (inclusive), expressed as an offset relative to the ordering timestamp
-         * @param rangeHi       upper bound of the RANGE frame (inclusive), expressed as an offset relative to the ordering timestamp
-         * @param arg           expression that produces the LONG values for which the first non-null is computed
-         * @param timestampIdx  index of the designated timestamp column used to evaluate RANGE frame bounds
+         * @param rangeLo      lower bound of the RANGE frame (inclusive), expressed as an offset relative to the ordering timestamp
+         * @param rangeHi      upper bound of the RANGE frame (inclusive), expressed as an offset relative to the ordering timestamp
+         * @param arg          expression that produces the LONG values for which the first non-null is computed
+         * @param timestampIdx index of the designated timestamp column used to evaluate RANGE frame bounds
          */
         public FirstNotNullValueOverRangeFrameFunction(
                 long rangeLo,
@@ -1002,14 +1002,14 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          *
          * <p>This method:
          * - Computes the current row timestamp and, if the frame has an unbounded lower bound,
-         *   updates the cached first value quickly when possible.
+         * updates the cached first value quickly when possible.
          * - Evicts elements outside the allowed timestamp window (based on maxDiff) from the buffer.
          * - Locates the first non-null value inside the current frame bounds (based on minDiff).
          * - Appends the current row's value to the circular buffer if it is not `Numbers.LONG_NULL`,
-         *   expanding the underlying memory and re-linearizing the circular buffer when capacity is reached.
+         * expanding the underlying memory and re-linearizing the circular buffer when capacity is reached.
          * - Sets {@code firstValue} to the discovered first-in-frame value, or to `Numbers.LONG_NULL`
-         *   (or to the current value when the frame includes the current row) when no earlier value is found.
-         *
+         * (or to the current value when the frame includes the current row) when no earlier value is found.
+         * <p>
          * Side effects: mutates fields including {@code firstIdx}, {@code firstValue}, {@code size},
          * {@code capacity}, and {@code startOffset}, and may resize the backing memory.
          *
@@ -1104,12 +1104,12 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Create a rows-based "first value" window function that ignores nulls.
-         *
+         * <p>
          * This constructor initializes a frame that scans a sliding window defined by
          * the row-offset bounds [rowsLo, rowsHi] and returns the first non-null long
          * value within that frame for each row.
          *
-         * @param arg the input long-valued function whose values are scanned for the first non-null entry
+         * @param arg    the input long-valued function whose values are scanned for the first non-null entry
          * @param rowsLo lower bound of the rows frame (can be negative for preceding rows)
          * @param rowsHi upper bound of the rows frame (can be zero or positive)
          * @param memory native memory buffer used to store the frame's ring buffer state (must remain valid for the function's lifetime)
@@ -1134,7 +1134,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          *       to the current row's value only when the frame includes the current row; otherwise
          *       it becomes `Numbers.LONG_NULL`.</li>
          * </ul>
-         *
+         * <p>
          * Side effects:
          * - mutates the circular `buffer` contents and `loIdx`,
          * - updates `firstNotNullIdx`, `count` (for unbounded case), and the exported `firstValue`.
@@ -1202,7 +1202,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reinitializes this function for a new processing pass.
-         *
+         * <p>
          * Calls the superclass reopen logic and clears the cached index of the first non-null value
          * by setting {@code firstNotNullIdx} to {@code -1}.
          */
@@ -1214,7 +1214,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset internal state for reuse.
-         *
+         * <p>
          * Clears the superclass state and resets the cached index of the first non-null value
          * to -1 (meaning "not set").
          */
@@ -1226,7 +1226,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's iteration state to the start.
-         *
+         * <p>
          * Calls the superclass reset and clears the cached index of the first non-null value by
          * setting {@code firstNotNullIdx} to {@code -1}.
          */
@@ -1257,12 +1257,12 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Advances computation for the given record: looks up the partition key and sets this.value
          * to the first seen non-null long for that partition.
-         *
+         * <p>
          * If a map entry for the partition exists, this.value is loaded from the map. Otherwise the
          * function reads the long from the input argument; if that value is not `Numbers.LONG_NULL`
          * a new map entry is created and the value is stored and assigned to this.value. If the input
          * is null, this.value is set to `Numbers.LONG_NULL`.
-         *
+         * <p>
          * Side effects: may create a new map value for the current partition and updates the instance
          * field `this.value`.
          */
@@ -1313,7 +1313,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Processes the next input record and captures the first non-null long value seen.
-         *
+         * <p>
          * If a non-null value is found in the supplied record via {@code arg.getLong(record)},
          * it is stored into {@code this.value} and {@code this.found} is set to {@code true}.
          *
@@ -1352,11 +1352,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * First pass consumer that captures the first non-null long value seen.
-         *
+         * <p>
          * If a non-null long is read from the supplied record and no value has been
          * recorded yet, stores that value and marks the function as having found a
          * value. Subsequent calls are no-ops once a value has been found.
-         *
+         * <p>
          * This method intentionally ignores records whose `arg.getLong(record)` returns
          * {@code Numbers.LONG_NULL}.
          */
@@ -1373,7 +1373,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Write the function's current long result into the output column for the given row.
-         *
+         * <p>
          * This stores the internally held `value` at the memory location corresponding to
          * the row identified by {@code recordOffset} and the function's output column.
          *
@@ -1386,7 +1386,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's transient state for reuse.
-         *
+         * <p>
          * Clears the cached first-value flag and stored value, and invokes the superclass reset.
          */
         @Override
@@ -1398,7 +1398,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Resets the function's iteration state to the start.
-         *
+         * <p>
          * Invokes the superclass reset, clears the "found" flag, and resets the cached
          * value to `Numbers.LONG_NULL` so subsequent computations start from a clean state.
          */
@@ -1439,6 +1439,19 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Returns the function's current long result.
+         * <p>
+         * This implementation ignores the supplied Record and always returns the internally stored value.
+         *
+         * @param rec ignored
+         * @return the stored long value
+         */
+        @Override
+        public long getLong(Record rec) {
+            return value;
+        }
+
+        /**
          * Returns the function name exposed by this factory.
          *
          * @return the function name ("first_value")
@@ -1459,23 +1472,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Returns the function's current long result.
-         *
-         * This implementation ignores the supplied Record and always returns the internally stored value.
-         *
-         * @param rec ignored
-         * @return the stored long value
-         */
-        @Override
-        public long getLong(Record rec) {
-            return value;
-        }
-
-        /**
          * Indicates whether this window function is configured to ignore NULL input values.
          *
          * @return true if NULLs are ignored (rows with NULL inputs are skipped when computing the first value);
-         *         false if NULLs are respected (NULL may be returned as the first value)
+         * false if NULLs are respected (NULL may be returned as the first value)
          */
         @Override
         public boolean isIgnoreNulls() {
@@ -1507,7 +1507,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Constructs a partitioned first_value operator using the supplied per-partition state and
          * partitioning metadata.
-         *
+         * <p>
          * The provided map stores per-partition results; partitionByRecord and partitionBySink describe
          * how partition keys are read and written; `arg` is the expression supplying values for
          * which the first value per partition is computed.
@@ -1519,7 +1519,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Advance computation for the next input row: locate or create the per-partition slot,
          * and ensure `firstValue` contains the first-seen value for that partition.
-         *
+         * <p>
          * If the partition key is new, this reads the argument value from the provided record,
          * stores it in the partition map, and sets the instance field `firstValue`. If the
          * partition already exists, `firstValue` is loaded from the stored map value.
@@ -1543,6 +1543,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Return the computed first_value for the current window position.
+         *
+         * <p>The supplied Record parameter is ignored; the function returns the internally held
+         * firstValue for the window.</p>
+         *
+         * @param rec ignored; present to satisfy the WindowLongFunction contract
+         * @return the first_value long result for the current window
+         */
+        @Override
+        public long getLong(Record rec) {
+            return firstValue;
+        }
+
+        /**
          * Returns the function name exposed by this factory.
          *
          * @return the function name ("first_value")
@@ -1563,22 +1577,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Return the computed first_value for the current window position.
-         *
-         * <p>The supplied Record parameter is ignored; the function returns the internally held
-         * firstValue for the window.</p>
-         *
-         * @param rec ignored; present to satisfy the WindowLongFunction contract
-         * @return the first_value long result for the current window
-         */
-        @Override
-        public long getLong(Record rec) {
-            return firstValue;
-        }
-
-        /**
          * Computes the next first_value for the given input record and writes it to the output column.
-         *
+         * <p>
          * computeNext(record) updates internal state, and the current `firstValue` is written as a 64-bit
          * long into the column memory for the row at `recordOffset`.
          */
@@ -1609,7 +1609,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Create a partitioned, RANGE-framed implementation of FIRST_VALUE for LONG values.
-         *
+         * <p>
          * Constructs an instance configured for a RANGE frame defined by {@code rangeLo} and {@code rangeHi}
          * and initialized with per-partition state and an underlying ring-buffer memory region.
          *
@@ -1647,7 +1647,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Release resources held by this function.
-         *
+         * <p>
          * Calls the superclass close, closes the associated native memory buffer, and clears the free-list
          * used for buffer management.
          */
@@ -1660,7 +1660,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Computes the next value for the first_value window function, handling range-based and rows-based framing.
-         *
+         * <p>
          * The function maintains a per-partition ring buffer of (timestamp, value) pairs to track the first value within the current frame.
          * It dynamically expands the buffer as needed and updates the frame boundaries as new rows are processed.
          *
@@ -1793,6 +1793,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Return the computed first_value for the current window position.
+         *
+         * <p>The supplied Record parameter is ignored; the function returns the internally held
+         * firstValue for the window.</p>
+         *
+         * @param rec ignored; present to satisfy the WindowLongFunction contract
+         * @return the first_value long result for the current window
+         */
+        @Override
+        public long getLong(Record rec) {
+            return firstValue;
+        }
+
+        /**
          * Returns the function name exposed by this factory.
          *
          * @return the function name ("first_value")
@@ -1813,22 +1827,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Return the computed first_value for the current window position.
-         *
-         * <p>The supplied Record parameter is ignored; the function returns the internally held
-         * firstValue for the window.</p>
-         *
-         * @param rec ignored; present to satisfy the WindowLongFunction contract
-         * @return the first_value long result for the current window
-         */
-        @Override
-        public long getLong(Record rec) {
-            return firstValue;
-        }
-
-        /**
          * pass1 is not supported by this implementation.
-         *
+         * <p>
          * This method always throws UnsupportedOperationException.
          *
          * @throws UnsupportedOperationException always
@@ -1840,7 +1840,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reinitializes state for a reopened window.
-         *
+         * <p>
          * Calls the superclass reopen logic and resets the cached first value to
          * the LONG null sentinel (Numbers.LONG_NULL). Memory for buffers is not
          * allocated here and will be deferred until first use.
@@ -1854,7 +1854,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's internal state and release per-frame native resources.
-         *
+         * <p>
          * Performs superclass reset logic, closes the associated MemoryARW buffer, and clears
          * the free-list used for recycled buffer slots.
          */
@@ -1867,7 +1867,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Append this window function's textual plan to the provided sink.
-         *
+         * <p>
          * Writes `name(arg)` followed by an optional `ignore nulls` hint and an
          * `OVER (partition by ... range between <maxDiff> preceding and <minDiff> preceding|current row)` clause.
          */
@@ -1894,7 +1894,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset this object's internal state to its initial "top" position.
-         *
+         * <p>
          * Truncates the associated memory storage and clears the free-list so the
          * buffer is empty and ready for reuse. Also calls the superclass toTop()
          * to perform any base-class reset behavior.
@@ -1925,7 +1925,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          * Constructs a rows-frame, partitioned FirstValue implementation and initializes
          * frame bookkeeping (frame size, circular buffer size and bounds) based on the
          * frame's lower/upper offsets.
-         *
+         * <p>
          * The constructor computes:
          * - frameSize: number of rows in the frame window (or 1 when lower bound is unbounded),
          * - bufferSize: capacity of the circular buffer used to track preceding rows,
@@ -1964,17 +1964,17 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          *
          * <p>This method:
          * - Retrieves or creates per-partition state from a Map. The MapValue layout is:
-         *   0: 0-based index of the oldest slot in the ring buffer (lo index),
-         *   1: native memory start offset for the partition's ring buffer,
-         *   2: current count of values stored in the buffer.
+         * 0: 0-based index of the oldest slot in the ring buffer (lo index),
+         * 1: native memory start offset for the partition's ring buffer,
+         * 2: current count of values stored in the buffer.
          * - Maintains a fixed-size circular buffer stored in native memory where each slot
-         *   holds a long (initialized to LONG_NULL for new partitions).
+         * holds a long (initialized to LONG_NULL for new partitions).
          * - Determines the first value for the partition's current frame using the buffer
-         *   contents, the current input value, and frame bounds (bounded/unbounded,
-         *   whether the frame includes the current row).
+         * contents, the current input value, and frame bounds (bounded/unbounded,
+         * whether the frame includes the current row).
          * - Updates the per-partition state in the map (lo index and count) and writes the
-         *   current row's value into the buffer slot previously identified as the oldest.
-         *
+         * current row's value into the buffer slot previously identified as the oldest.
+         * <p>
          * Side effects:
          * - Mutates the per-partition MapValue and native memory buffer.
          * - Sets the instance field `firstValue` to the computed result (or LONG_NULL).
@@ -2032,6 +2032,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Return the computed first_value for the current window position.
+         *
+         * <p>The supplied Record parameter is ignored; the function returns the internally held
+         * firstValue for the window.</p>
+         *
+         * @param rec ignored; present to satisfy the WindowLongFunction contract
+         * @return the first_value long result for the current window
+         */
+        @Override
+        public long getLong(Record rec) {
+            return firstValue;
+        }
+
+        /**
          * Returns the function name exposed by this factory.
          *
          * @return the function name ("first_value")
@@ -2052,22 +2066,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Return the computed first_value for the current window position.
-         *
-         * <p>The supplied Record parameter is ignored; the function returns the internally held
-         * firstValue for the window.</p>
-         *
-         * @param rec ignored; present to satisfy the WindowLongFunction contract
-         * @return the first_value long result for the current window
-         */
-        @Override
-        public long getLong(Record rec) {
-            return firstValue;
-        }
-
-        /**
          * Computes the next first_value for the given input record and writes it to the output column.
-         *
+         * <p>
          * computeNext(record) updates internal state, and the current `firstValue` is written as a 64-bit
          * long into the column memory for the row at `recordOffset`.
          */
@@ -2079,7 +2079,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reinitializes the function for reuse across reopen calls.
-         *
+         * <p>
          * Calls the superclass reopen logic; memory-backed buffers are not allocated here and
          * will be allocated lazily on first use.
          */
@@ -2091,7 +2091,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function to its initial state and release owned native memory.
-         *
+         * <p>
          * Calls super.reset() to clear base-class state, then closes the associated
          * memory buffer to free native resources.
          */
@@ -2103,7 +2103,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Appends a textual "plan" representation of this window function into the given PlanSink.
-         *
+         * <p>
          * The output format is `<name>(<arg>) [ignore nulls] over (partition by <partitionFuncs>
          * rows between <bufferSize> preceding and <N> preceding|current row)`, where the trailing
          * bound is rendered as "current row" when the frame includes the current value, otherwise
@@ -2134,7 +2134,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset iteration state to the top and clear any stored frame data.
-         *
+         * <p>
          * Invokes the superclass reset behavior and truncates the backing memory buffer so previously
          * accumulated frame entries are discarded.
          */
@@ -2167,18 +2167,18 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Constructs a range-framed first_value function for LONG values.
-         *
+         * <p>
          * Initializes frame bounds, buffer sizing, and a native circular memory buffer used to
          * store (timestamp, value) records for computing the first value within a sliding
          * RANGE window.
          *
-         * @param rangeLo      lower bound of the RANGE frame (inclusive offset relative to row timestamp);
-         *                     Long.MIN_VALUE denotes unbounded preceding.
-         * @param rangeHi      upper bound of the RANGE frame (inclusive offset relative to row timestamp);
-         *                     typically 0 when the frame includes the current row.
-         * @param arg          the value argument function (LONG) whose first value is computed over the frame
+         * @param rangeLo       lower bound of the RANGE frame (inclusive offset relative to row timestamp);
+         *                      Long.MIN_VALUE denotes unbounded preceding.
+         * @param rangeHi       upper bound of the RANGE frame (inclusive offset relative to row timestamp);
+         *                      typically 0 when the frame includes the current row.
+         * @param arg           the value argument function (LONG) whose first value is computed over the frame
          * @param configuration runtime configuration used to size and allocate the native circular buffer
-         * @param timestampIdx column index of the designated timestamp used for RANGE comparisons
+         * @param timestampIdx  column index of the designated timestamp used for RANGE comparisons
          */
         public FirstValueOverRangeFrameFunction(
                 long rangeLo,
@@ -2208,7 +2208,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Closes the function and frees associated resources.
-         *
+         * <p>
          * This releases superclass resources and closes the backing memory region. After calling
          * this method the instance must not be used.
          */
@@ -2321,6 +2321,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Return the computed first_value for the current window position.
+         *
+         * <p>The supplied Record parameter is ignored; the function returns the internally held
+         * firstValue for the window.</p>
+         *
+         * @param rec ignored; present to satisfy the WindowLongFunction contract
+         * @return the first_value long result for the current window
+         */
+        @Override
+        public long getLong(Record rec) {
+            return firstValue;
+        }
+
+        /**
          * Returns the function name exposed by this factory.
          *
          * @return the function name ("first_value")
@@ -2341,22 +2355,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Return the computed first_value for the current window position.
-         *
-         * <p>The supplied Record parameter is ignored; the function returns the internally held
-         * firstValue for the window.</p>
-         *
-         * @param rec ignored; present to satisfy the WindowLongFunction contract
-         * @return the first_value long result for the current window
-         */
-        @Override
-        public long getLong(Record rec) {
-            return firstValue;
-        }
-
-        /**
          * pass1 is not supported by this implementation.
-         *
+         * <p>
          * This method always throws UnsupportedOperationException.
          *
          * @throws UnsupportedOperationException always
@@ -2368,7 +2368,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's internal state and buffers to their initial configuration.
-         *
+         * <p>
          * Clears any stored first-value marker, restores the ring-buffer capacity to the
          * initial capacity, and resets offsets, indices, and size counters so the
          * function behaves as if newly constructed.
@@ -2385,7 +2385,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function to its initial state and release owned native memory.
-         *
+         * <p>
          * Calls super.reset() to clear base-class state, then closes the associated
          * memory buffer to free native resources.
          */
@@ -2397,7 +2397,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Append a textual plan representation of this window function to the given PlanSink.
-         *
+         * <p>
          * The output format is: `<name>(<arg>) [ignore nulls] over (range between <maxDiff> preceding and <minDiff or "current row">)`.
          * This includes the function name, argument, optional "ignore nulls" hint, and RANGE frame bounds using
          * `maxDiff` as the preceding upper bound and `minDiff` (or "current row" when zero) as the lower bound.
@@ -2425,7 +2425,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's internal state and backing memory to its initial empty configuration.
-         *
+         * <p>
          * This clears any stored values, truncates the allocated memory buffer, restores the
          * initial capacity, sets the first-value marker to NULL, and resets indices and sizes
          * so the instance behaves as if just constructed.
@@ -2457,7 +2457,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Creates a rows-based FIRST_VALUE window function instance configured for the given frame.
-         *
+         * <p>
          * The constructor interprets rowsLo and rowsHi as the lower and upper frame bounds
          * relative to the current row (e.g., -N for N preceding, 0 for current row, N for N following).
          * It computes internal buffer and frame sizes and flags used by the implementation:
@@ -2465,11 +2465,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          * - bufferSize: number of previous rows that must be retained to evaluate the frame.
          * - frameLoBounded: true when the lower bound is bounded (rowsLo > Long.MIN_VALUE).
          * - frameIncludesCurrentValue: true when the frame includes the current row (rowsHi == 0).
-         *
+         * <p>
          * Special conditions:
          * - The pair (Long.MIN_VALUE, 0) is not allowed here; that case should use FirstValueOverWholeResultSetFunction.
          *
-         * @param arg the input value function whose long values are evaluated by this window function
+         * @param arg    the input value function whose long values are evaluated by this window function
          * @param rowsLo lower frame bound relative to the current row (use Long.MIN_VALUE for unbounded preceding)
          * @param rowsHi upper frame bound relative to the current row
          */
@@ -2495,7 +2495,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Closes the function and releases associated resources.
-         *
+         * <p>
          * Calls {@code super.close()} and then closes the internal ring buffer to free its memory.
          */
         @Override
@@ -2506,17 +2506,17 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Advance the rows-based sliding window by one input record and compute the current first_value.
-         *
+         * <p>
          * This reads the current long value from the provided record, appends it into the internal circular
          * buffer (overwriting the oldest entry when full), advances the buffer index and element count, and
          * updates the cached {@code firstValue} according to the configured frame:
          * - If the frame is effectively unbounded on the low side and the buffer contains more elements
-         *   than the frame can hold, the first value is taken from the oldest element within the active
-         *   frame window.
+         * than the frame can hold, the first value is taken from the oldest element within the active
+         * frame window.
          * - If the frame currently includes only the current row and no prior rows are present, the
-         *   current record's value becomes {@code firstValue}.
+         * current record's value becomes {@code firstValue}.
          * - Otherwise, {@code firstValue} is set to the LONG null sentinel (Numbers.LONG_NULL).
-         *
+         * <p>
          * The method mutates internal state: the circular buffer contents, {@code loIdx}, {@code count},
          * and {@code firstValue}.
          *
@@ -2547,6 +2547,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
+         * Return the computed first_value for the current window position.
+         *
+         * <p>The supplied Record parameter is ignored; the function returns the internally held
+         * firstValue for the window.</p>
+         *
+         * @param rec ignored; present to satisfy the WindowLongFunction contract
+         * @return the first_value long result for the current window
+         */
+        @Override
+        public long getLong(Record rec) {
+            return firstValue;
+        }
+
+        /**
          * Returns the function name exposed by this factory.
          *
          * @return the function name ("first_value")
@@ -2567,22 +2581,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Return the computed first_value for the current window position.
-         *
-         * <p>The supplied Record parameter is ignored; the function returns the internally held
-         * firstValue for the window.</p>
-         *
-         * @param rec ignored; present to satisfy the WindowLongFunction contract
-         * @return the first_value long result for the current window
-         */
-        @Override
-        public long getLong(Record rec) {
-            return firstValue;
-        }
-
-        /**
          * Computes the next first_value for the given input record and writes it to the output column.
-         *
+         * <p>
          * computeNext(record) updates internal state, and the current `firstValue` is written as a 64-bit
          * long into the column memory for the row at `recordOffset`.
          */
@@ -2594,7 +2594,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's internal state and buffers so the instance can be reused.
-         *
+         * <p>
          * Sets the current first-value marker to NULL, resets the low index and count,
          * and reinitializes the internal ring buffer.
          */
@@ -2608,7 +2608,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset this function's running state to its initial, empty condition.
-         *
+         * <p>
          * Calls {@code super.reset()}, closes the underlying buffer (releasing its resources),
          * and clears internal state used to track the frame: sets {@code firstValue} to NULL,
          * and zeroes {@code loIdx} and {@code count}.
@@ -2624,11 +2624,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Renders a textual plan representation of this window function into the provided PlanSink.
-         *
+         * <p>
          * The output format is:
          * <functionName>(<arg>)[ ignore nulls] over ( rows between <bufferSize> preceding and
          * <current row|(bufferSize + 1 - frameSize) preceding> )
-         *
+         * <p>
          * Uses the instance's name, argument, nulls-handling flag, bufferSize, and frameSize/frameIncludesCurrentValue
          * to produce the formatted window clause.
          */
@@ -2653,7 +2653,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function to its initial state so it can be reused from the start.
-         *
+         * <p>
          * Clears the stored first value, resets the low index and row counter, and
          * reinitializes the internal buffer.
          */
@@ -2669,7 +2669,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         /**
          * Initialize the native buffer by writing the sentinel value `Numbers.LONG_NULL` into
          * each long-sized slot.
-         *
+         * <p>
          * This fills `bufferSize` consecutive long positions at offsets `i * Long.BYTES` with
          * the null sentinel to mark them as empty/uninitialized.
          */
@@ -2699,7 +2699,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Processes the next input record by locating or creating the partition entry and producing the partition's first value.
-         *
+         * <p>
          * If the partition key does not exist yet, reads the long argument from the supplied record, stores it as the partition's value,
          * and updates the instance field `value`. If the partition entry already exists, loads that stored value into `value`.
          *
@@ -2719,6 +2719,19 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             } else {
                 value = mapValue.getLong(0);
             }
+        }
+
+        /**
+         * Returns the function's current long result.
+         * <p>
+         * This implementation ignores the supplied Record and always returns the internally stored value.
+         *
+         * @param rec ignored
+         * @return the stored long value
+         */
+        @Override
+        public long getLong(Record rec) {
+            return value;
         }
 
         /**
@@ -2742,19 +2755,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Returns the function's current long result.
-         *
-         * This implementation ignores the supplied Record and always returns the internally stored value.
-         *
-         * @param rec ignored
-         * @return the stored long value
-         */
-        @Override
-        public long getLong(Record rec) {
-            return value;
-        }
-
-        /**
          * First pass for the window function: computes the next value for the given input record
          * and writes the resulting long into the WindowSPI's memory at the supplied record offset
          * and the instance's columnIndex.
@@ -2771,7 +2771,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Append a textual plan representation of this window function to the provided sink.
-         *
+         * <p>
          * The rendered form is: `name(arg)` optionally followed by ` ignore nulls`, then
          * ` over (partition by <partition expressions> rows between unbounded preceding and current row)`.
          */
@@ -2807,7 +2807,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Consume a single input record and capture the first encountered long value.
-         *
+         * <p>
          * If a value has not yet been captured for this window frame, reads the long
          * from the provided record and stores it in the instance state (`value`),
          * marking the value as found. Subsequent calls have no effect.
@@ -2820,6 +2820,20 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 this.value = arg.getLong(record);
                 this.found = true;
             }
+        }
+
+        /**
+         * Return the current stored long result for the window function.
+         * <p>
+         * The provided record parameter is ignored; this implementation always
+         * returns the internally held value.
+         *
+         * @param rec ignored input record
+         * @return the stored long value
+         */
+        @Override
+        public long getLong(Record rec) {
+            return this.value;
         }
 
         /**
@@ -2843,20 +2857,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         /**
-         * Return the current stored long result for the window function.
-         *
-         * The provided record parameter is ignored; this implementation always
-         * returns the internally held value.
-         *
-         * @param rec ignored input record
-         * @return the stored long value
-         */
-        @Override
-        public long getLong(Record rec) {
-            return this.value;
-        }
-
-        /**
          * First pass for the window function: computes the next value for the given input record
          * and writes the resulting long into the WindowSPI's memory at the supplied record offset
          * and the instance's columnIndex.
@@ -2873,7 +2873,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Reset the function's transient state for reuse.
-         *
+         * <p>
          * Clears the cached first-value flag and stored value, and invokes the superclass reset.
          */
         @Override
@@ -2885,7 +2885,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         /**
          * Resets the function's iteration state to the start.
-         *
+         * <p>
          * Invokes the superclass reset, clears the "found" flag, and resets the cached
          * value to `Numbers.LONG_NULL` so subsequent computations start from a clean state.
          */

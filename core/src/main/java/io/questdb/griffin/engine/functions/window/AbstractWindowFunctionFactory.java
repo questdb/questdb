@@ -179,7 +179,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
         /**
          * Constructs a LongNullFunction that produces a constant long value for every row in the window.
-         *
+         * <p>
          * The constructor initializes the null-function frame (name, bounds, range flag and partition spec)
          * and sets the constant value written/read by this function.
          *
@@ -192,50 +192,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return zeroValue;
-        }
-
-        /**
-         * Writes the configured zero timestamp value into the window buffer for the given record offset.
-         *
-         * @param record       the source record (unused; kept for interface compatibility)
-         * @param recordOffset byte offset of the record within window memory
-         */
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
-        }
-    }
-
-    static class TimestampNullFunction extends BaseNullFunction implements WindowTimestampFunction {
-        private final long zeroValue;
-
-        /**
-         * Create a TimestampNullFunction that supplies a constant timestamp for null window entries.
-         *
-         * @param arg the wrapped argument function
-         * @param name function name used in plans and diagnostics
-         * @param rowLo lower window bound (rows or range units)
-         * @param rowHi upper window bound (rows or range units)
-         * @param isRange true if the window frame is RANGE, false if ROWS
-         * @param partitionByRecord optional partitioning record (may be null)
-         * @param zeroValue timestamp value returned/written for null results
-         */
-        TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
-            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
-            this.zeroValue = zeroValue;
-        }
-
-        /**
-         * Returns the configured constant timestamp used to represent null/window-default values.
-         *
-         * <p>The provided record is ignored; the method always returns the stored `zeroValue`.</p>
-         *
-         * @param rec unused record parameter provided by the WindowTimestampFunction interface
-         * @return the constant timestamp value used for nulls
-         */
-        @Override
-        public long getTimestamp(Record rec) {
             return zeroValue;
         }
 
@@ -264,6 +220,50 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             this.size = size;
             this.firstIdx = firstIdx;
             this.freeList = freeList;
+        }
+    }
+
+    static class TimestampNullFunction extends BaseNullFunction implements WindowTimestampFunction {
+        private final long zeroValue;
+
+        /**
+         * Create a TimestampNullFunction that supplies a constant timestamp for null window entries.
+         *
+         * @param arg               the wrapped argument function
+         * @param name              function name used in plans and diagnostics
+         * @param rowLo             lower window bound (rows or range units)
+         * @param rowHi             upper window bound (rows or range units)
+         * @param isRange           true if the window frame is RANGE, false if ROWS
+         * @param partitionByRecord optional partitioning record (may be null)
+         * @param zeroValue         timestamp value returned/written for null results
+         */
+        TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.zeroValue = zeroValue;
+        }
+
+        /**
+         * Returns the configured constant timestamp used to represent null/window-default values.
+         *
+         * <p>The provided record is ignored; the method always returns the stored `zeroValue`.</p>
+         *
+         * @param rec unused record parameter provided by the WindowTimestampFunction interface
+         * @return the constant timestamp value used for nulls
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return zeroValue;
+        }
+
+        /**
+         * Writes the configured zero timestamp value into the window buffer for the given record offset.
+         *
+         * @param record       the source record (unused; kept for interface compatibility)
+         * @param recordOffset byte offset of the record within window memory
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
         }
     }
 }

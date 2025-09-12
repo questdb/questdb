@@ -79,10 +79,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
      * to either the "ignore nulls" or "respect nulls" implementation generator based on
      * windowContext.isIgnoreNulls().</p>
      *
-     * @param position   parser/bytecode position used for error reporting
-     * @param args       function argument list (first argument is the value expression)
+     * @param position parser/bytecode position used for error reporting
+     * @param args     function argument list (first argument is the value expression)
      * @return a Function implementation tailored to the window framing, partitioning,
-     *         and nulls handling of the current WindowContext
+     * and nulls handling of the current WindowContext
      * @throws SqlException if the WindowContext is invalid or the requested combination
      *                      of framing/ordering/partitioning is not supported
      */
@@ -118,17 +118,17 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
      * Selects and constructs the appropriate "first_value" window-function implementation for the
      * "IGNORE NULLS" mode based on window framing (RANGE or ROWS), presence of a partition key,
      * ordering, and frame bounds.
-     *
+     * <p>
      * The method returns specialized Function instances optimized for:
      * - partitioned vs. non-partitioned windows,
      * - range-based or row-based frames,
      * - unbounded/whole-partition cases,
      * - moving frames backed by in-memory circular buffers or partition-scoped maps,
      * - single-row (current row) frames.
-     *
+     * <p>
      * Behavior notes:
      * - When RANGE framing is used with ordering, the method requires ordering by the designated
-     *   timestamp; otherwise it throws a SqlException.
+     * timestamp; otherwise it throws a SqlException.
      * - For unsupported combinations of framing/partitioning/bounds the method throws a SqlException.
      *
      * @param position source position used for SqlException error reporting when parameters are unsupported
@@ -342,16 +342,16 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
     /**
      * Creates a window function implementation for FIRST_VALUE(...) when NULLs are respected.
-     *
+     * <p>
      * The returned implementation is chosen based on the WindowContext: partitioning presence,
      * framing mode (RANGE or ROWS), ordering, and frame bounds (rowsLo/rowsHi). Supported targets
      * include whole-result-set, per-partition, range-frame and row-frame variants; implementations
      * may allocate per-partition maps or native circular buffers as required.
      *
-     * @param position        parser/token position used when constructing SqlException for unsupported combinations
-     * @param args            function arguments (first argument is the value expression for FIRST_VALUE)
-     * @param configuration   Cairo configuration used for creating maps and native memory (omitted from @param of services is intentional)
-     * @param windowContext   describes partitioning, ordering, framing mode and frame bounds used to select the implementation
+     * @param position      parser/token position used when constructing SqlException for unsupported combinations
+     * @param args          function arguments (first argument is the value expression for FIRST_VALUE)
+     * @param configuration Cairo configuration used for creating maps and native memory (omitted from @param of services is intentional)
+     * @param windowContext describes partitioning, ordering, framing mode and frame bounds used to select the implementation
      * @return a Function implementing FIRST_VALUE for timestamp values that respects NULLs
      * @throws SqlException if the requested combination is not implemented or if RANGE framing is used with a non-designated-timestamp ordering
      */
@@ -575,7 +575,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Construct a function that computes the first non-null timestamp value for each partition.
-         *
+         * <p>
          * The instance stores per-partition state in the provided map and uses the given record/sink
          * to identify partitions. The supplied argument function is used to read the timestamp value
          * for each input record; the function emits the first non-null value observed for a partition.
@@ -619,12 +619,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * First pass: record the first non-null timestamp observed for the current partition.
-         *
+         * <p>
          * If the partition has no stored value and the argument's timestamp for this record is not
          * NULL, stores that timestamp into the partition map. Existing per-partition values are never
          * overwritten by this method.
          *
-         * @param record current input record
+         * @param record       current input record
          * @param recordOffset offset of the record in the input (unused)
          */
         @Override
@@ -643,11 +643,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Emit the stored first-value timestamp for the record's partition into the output column during pass 2.
-         *
+         * <p>
          * Looks up the partition key in the per-partition map (populated during pass1) and writes the persisted
          * timestamp or SQL NULL (Numbers.LONG_NULL) into the SPI-backed row at the given recordOffset.
          *
-         * @param record the current record used to derive the partition key
+         * @param record       the current record used to derive the partition key
          * @param recordOffset byte offset within the SPI row where the timestamp should be written
          */
         @Override
@@ -667,16 +667,16 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Creates a partitioned RANGE-frame implementation that tracks the first non-null timestamp value
          * within a sliding time range for each partition using an in-memory ring buffer.
-         *
+         * <p>
          * The instance maintains per-partition buffers of (timestamp, value) pairs and updates the
          * first-non-null value as the frame moves. This constructor wires the partition map and
          * partition keys/sink together with framing bounds and buffer configuration.
          *
-         * @param rangeLo lower bound of the RANGE frame (inclusive) expressed as timestamp offset
-         * @param rangeHi upper bound of the RANGE frame (inclusive) expressed as timestamp offset
-         * @param arg the value-producing function (the column/expression whose timestamp values are tracked)
+         * @param rangeLo           lower bound of the RANGE frame (inclusive) expressed as timestamp offset
+         * @param rangeHi           upper bound of the RANGE frame (inclusive) expressed as timestamp offset
+         * @param arg               the value-producing function (the column/expression whose timestamp values are tracked)
          * @param initialBufferSize initial capacity (number of entries) for the per-partition ring buffer
-         * @param timestampIdx index of the designated timestamp column within buffered records
+         * @param timestampIdx      index of the designated timestamp column within buffered records
          */
         public FirstNotNullValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -699,15 +699,15 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          *
          * <p>Behavior summary:
          * - Locates or creates a partition entry in the backing map and reads/writes four metadata
-         *   fields (stored at positions 0..3): startOffset, size, capacity, firstIdx.
+         * fields (stored at positions 0..3): startOffset, size, capacity, firstIdx.
          * - For a new partition, allocates an initial in-memory buffer and inserts the current row
-         *   if its argument value is non-null.
+         * if its argument value is non-null.
          * - For an existing partition, evicts elements that fall outside the current range frame
-         *   (based on maxDiff/minDiff relative to the current row's timestamp), optionally expands
-         *   the ring buffer when full, and appends the current row's [timestamp, value] pair if
-         *   non-null.
+         * (based on maxDiff/minDiff relative to the current row's timestamp), optionally expands
+         * the ring buffer when full, and appends the current row's [timestamp, value] pair if
+         * non-null.
          * - Updates this.firstValue to the first (oldest) value that belongs to the active frame
-         *   according to frameIncludesCurrentValue and frameLoBounded flags.
+         * according to frameIncludesCurrentValue and frameLoBounded flags.
          *
          * <p>State layout in the map value:
          * - index 0: startOffset (relative to memory page address)
@@ -718,7 +718,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * <p>Side effects:
          * - Mutates the provided map (creates entries on demand).
          * - Reads and writes to the shared MemoryARW buffer and may call expandRingBuffer which
-         *   modifies that buffer and updates memoryDesc.
+         * modifies that buffer and updates memoryDesc.
          * - Updates the instance field this.firstValue.
          *
          * @param record the current input record to process (its timestamp and argument value are used
@@ -847,7 +847,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Constructs a FirstNotNullValueOverPartitionRowsFrameFunction for a partitioned, row-based window frame.
-         *
+         * <p>
          * This function computes the first non-null timestamp value within a sliding row-based frame for each partition.
          *
          * @param rowsLo number of rows preceding the current row that define the lower bound of the frame (may be 0)
@@ -874,27 +874,27 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * - Locates or creates the partition map entry for the record.
          * - Initializes a fixed-size circular buffer in MemoryARW when a partition is new.
          * - Maintains per-partition metadata stored in the map:
-         *   index of the oldest element, native buffer start offset, cached first-not-null index,
-         *   and a count of appended values (used for unbounded-low frames).
+         * index of the oldest element, native buffer start offset, cached first-not-null index,
+         * and a count of appended values (used for unbounded-low frames).
          * - Updates the buffer with the current row's timestamp argument and computes {@code firstValue}
-         *   according to whether the window frame's lower bound is bounded or unbounded and whether
-         *   the current row is included in the frame (controlled by {@code frameIncludesCurrentValue}).
-         *
+         * according to whether the window frame's lower bound is bounded or unbounded and whether
+         * the current row is included in the frame (controlled by {@code frameIncludesCurrentValue}).
+         * <p>
          * Behavior details:
          * - For unbounded-low frames: the implementation appends values to the buffer (tracking count),
-         *   caches the index of the first non-null value, and sets {@code firstValue} to that value
-         *   only when it falls within the active window; otherwise it emits null (or the current value
-         *   when applicable).
+         * caches the index of the first non-null value, and sets {@code firstValue} to that value
+         * only when it falls within the active window; otherwise it emits null (or the current value
+         * when applicable).
          * - For bounded-low (row-based) frames: the method scans the active frame region in the circular
-         *   buffer to find the first non-null timestamp; if none found it may use the current row's value
-         *   depending on {@code frameIncludesCurrentValue}. The oldest index is advanced and the buffer
-         *   slot for the evicted position is overwritten with the current timestamp.
-         *
+         * buffer to find the first non-null timestamp; if none found it may use the current row's value
+         * depending on {@code frameIncludesCurrentValue}. The oldest index is advanced and the buffer
+         * slot for the evicted position is overwritten with the current timestamp.
+         * <p>
          * Side effects:
          * - Mutates map-backed per-partition state (stored longs at specified offsets).
          * - Writes to the MemoryARW buffer for the partition.
          * - Sets the instance field {@code firstValue} to the first timestamp to be emitted for this row
-         *   (or {@code Numbers.LONG_NULL} when no suitable value exists).
+         * (or {@code Numbers.LONG_NULL} when no suitable value exists).
          *
          * @param record the input record for which to advance the window and compute the next value
          */
@@ -996,7 +996,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Constructs a FirstNotNullValueOverRangeFrameFunction for a RANGE-based, non-partitioned
          * window that returns the first non-null timestamp within the moving time window.
-         *
+         * <p>
          * This function maintains an in-memory ring buffer of (timestamp, value) entries bounded by
          * the provided range offsets and uses the specified argument function to read values.
          *
@@ -1026,18 +1026,18 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * <p>Behavior details:
          * - Reads the ordering timestamp from the input {@code record} using {@code timestampIndex}.
          * - If the frame is unbounded on the low side ({@code !frameLoBounded}) and the buffer is non-empty,
-         *   uses the value at the buffer's first slot as the candidate first value and returns early.
+         * uses the value at the buffer's first slot as the candidate first value and returns early.
          * - Otherwise, scans the buffer from {@code firstIdx} to drop elements older than {@code maxDiff}
-         *   relative to the current timestamp and locates the first element that satisfies {@code |timestamp - ts| >= minDiff}
-         *   to set {@code firstValue}.
+         * relative to the current timestamp and locates the first element that satisfies {@code |timestamp - ts| >= minDiff}
+         * to set {@code firstValue}.
          * - Retrieves the current row value via {@code arg.getTimestamp(record)}; if non-null, appends it to the ring buffer,
-         *   expanding and realigning the underlying memory when capacity is reached.
+         * expanding and realigning the underlying memory when capacity is reached.
          * - If no qualifying first value was found during the scan, sets {@code firstValue} to the current row's value
-         *   when the frame includes the current row, otherwise to {@code Numbers.LONG_NULL}.</p>
+         * when the frame includes the current row, otherwise to {@code Numbers.LONG_NULL}.</p>
          *
          * <p>Side effects:
          * - Mutates the ring-buffer memory region, {@code size}, {@code capacity}, {@code startOffset}, {@code firstIdx},
-         *   and {@code firstValue}.
+         * and {@code firstValue}.
          * - May call {@code memory.appendAddressFor(...)} which can reallocate and change the base page address.</p>
          */
         @Override
@@ -1129,7 +1129,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Construct a row-based frame implementation that returns the first non-null timestamp value in the frame.
          *
-         * @param arg function that produces the timestamp value to consider
+         * @param arg    function that produces the timestamp value to consider
          * @param rowsLo lower bound of the row frame (e.g., preceding offset or unbounded)
          * @param rowsHi upper bound of the row frame (e.g., following offset, current row, or unbounded)
          * @param memory memory buffer used by the frame to retain values for window computation
@@ -1150,7 +1150,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          *       non-null timestamp, update `firstNotNullIdx` and `firstValue` accordingly, then write the
          *       current row's timestamp into the ring buffer and advance `loIdx`.</li>
          * </ul>
-         *
+         * <p>
          * Side effects: updates internal state used by the window function including `firstValue`,
          * `firstNotNullIdx`, `buffer`, `loIdx`, and `count`.</p>
          *
@@ -1217,7 +1217,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reinitializes internal state for a new scan/pass.
-         *
+         * <p>
          * Calls the superclass reopen() and resets the index that tracks the first non-null
          * value in the current frame so the frame search starts from scratch.
          */
@@ -1229,7 +1229,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset internal state for reuse.
-         *
+         * <p>
          * Resets the superclass state and clears the index tracking the first non-null
          * value within the current frame by setting {@code firstNotNullIdx} to -1.
          */
@@ -1241,7 +1241,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function's read state to the start of processing.
-         *
+         * <p>
          * Calls the superclass toTop() to reset inherited state and clears the cached
          * index of the first non-null value so the function can be reused from the
          * beginning.
@@ -1260,15 +1260,15 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Create a function that computes the first non-NULL timestamp over an unbounded-rows frame
          * scoped to each partition.
-         *
+         * <p>
          * This constructor builds a partition-scoped implementation used when the window frame is
          * "UNBOUNDED PRECEDING ... CURRENT ROW" (rows framing) and NULLs are ignored. The instance
          * maintains per-partition state in the provided map.
          *
-         * @param map storage for per-partition state (keys -> first non-NULL value)
+         * @param map               storage for per-partition state (keys -> first non-NULL value)
          * @param partitionByRecord a record representing the partition key for the current row
-         * @param partitionBySink serializes the partition key into map key form
-         * @param arg the argument function that produces the timestamp value for the current row
+         * @param partitionBySink   serializes the partition key into map key form
+         * @param arg               the argument function that produces the timestamp value for the current row
          */
         public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1276,7 +1276,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Advances computation for the current input row and ensures the partition's first timestamp is recorded.
-         *
+         * <p>
          * If a first value for the record's partition already exists in the map, this sets the function's current
          * value to that stored timestamp. If no value exists, it reads the timestamp from the provided record;
          * if that timestamp is non-null it is stored as the partition's first value and becomes the current value;
@@ -1371,7 +1371,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Pass 1: inspect the current record and capture the first non-null timestamp from the argument.
-         *
+         * <p>
          * If a non-null timestamp is found and no value has been recorded yet, stores it in {@code this.value}
          * and marks {@code this.found} true. Null timestamps (Numbers.LONG_NULL) are ignored.
          */
@@ -1388,7 +1388,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Write the stored timestamp value into the output column for the current row during pass 2.
-         *
+         * <p>
          * This writes the long `value` directly into the memory address returned by the WindowSPI for
          * the given record offset and the function's output column index.
          *
@@ -1402,7 +1402,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function to its initial state for reuse.
-         *
+         * <p>
          * Calls the superclass reset, clears the 'found' flag, and sets the stored
          * timestamp value to the sentinel LONG_NULL.
          */
@@ -1415,7 +1415,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function to the initial state for a new scan.
-         *
+         * <p>
          * Calls {@code super.toTop()} and clears internal state by marking no value as found
          * and setting the cached timestamp to {@link Numbers#LONG_NULL}.
          */
@@ -1435,11 +1435,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Constructs a first_value implementation that returns the argument's timestamp for the current row.
-         *
+         * <p>
          * The instance implements a single-row frame: it emits the argument's value from the current record,
          * honoring the ignoreNulls flag to determine whether NULL values should be treated as absent.
          *
-         * @param arg the input timestamp expression evaluated for the current row
+         * @param arg         the input timestamp expression evaluated for the current row
          * @param ignoreNulls if true, NULL argument values are treated as absent (the function will skip/emit null accordingly); if false, NULLs are returned as-is
          */
         FirstValueOverCurrentRowFunction(Function arg, boolean ignoreNulls) {
@@ -1479,7 +1479,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached timestamp value for this function.
-         *
+         * <p>
          * The input record is ignored; this function always returns the stored first-value
          * timestamp for the current window state.
          *
@@ -1504,7 +1504,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advances the window computation for the given input record and writes the current
          * computed timestamp value into the SPI output column for that record.
-         *
+         * <p>
          * This method updates internal state by invoking {@code computeNext(record)} and
          * then stores the resulting long timestamp value into the SPI memory at
          * {@code spi.getAddress(recordOffset, columnIndex)}.
@@ -1527,7 +1527,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Create a partitioned FirstValue window function instance.
-         *
+         * <p>
          * The function records and returns the first (earliest) timestamp value seen for each partition.
          *
          * @param map               partition-scoped state map used to store the first value per partition
@@ -1542,7 +1542,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advance computation for the given record by updating or retrieving the first-value
          * timestamp for the record's partition.
-         *
+         * <p>
          * If the partition is seen for the first time, reads the timestamp from the argument
          * function and stores it in the partition map; otherwise loads the previously stored
          * partition first-value into the instance field `firstValue`.
@@ -1584,7 +1584,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached first value's timestamp for the current window frame.
-         *
+         * <p>
          * The supplied Record parameter is not consulted; this method always returns
          * the stored `firstValue`.
          *
@@ -1599,12 +1599,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advance internal state for the current input record and write the current first-value
          * timestamp into the window SPI output column.
-         *
+         * <p>
          * This method updates the function's state for `record` (via {@code computeNext})
          * and stores the resulting timestamp value into the SPI at the provided record slot
          * and the function's output column index.
          *
-         * @param record input record to process
+         * @param record       input record to process
          * @param recordOffset slot/address offset in the WindowSPI where the output should be written
          */
         @Override
@@ -1635,16 +1635,16 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Create a partitioned RANGE-frame implementation that maintains a timestamp/value ring buffer
          * for computing the first_value over a moving time window.
-         *
+         * <p>
          * The constructor configures whether the lower bound is bounded (Long.MIN_VALUE denotes unbounded),
          * precomputes absolute bounds used to limit the ring buffer window, and records whether the frame
          * includes the current row's timestamp (when rangeHi == 0).
          *
-         * @param rangeLo            lower bound of the range frame; use Long.MIN_VALUE to indicate unbounded preceding
-         * @param rangeHi            upper bound of the range frame; an upper bound of 0 means the frame includes the current row
-         * @param memory             MemoryARW instance used to back the ring buffer storage for the frame
-         * @param initialBufferSize  initial capacity to allocate for the ring buffer
-         * @param timestampIdx       column index of the ordering timestamp within the input record (used to compare/expire entries)
+         * @param rangeLo           lower bound of the range frame; use Long.MIN_VALUE to indicate unbounded preceding
+         * @param rangeHi           upper bound of the range frame; an upper bound of 0 means the frame includes the current row
+         * @param memory            MemoryARW instance used to back the ring buffer storage for the frame
+         * @param initialBufferSize initial capacity to allocate for the ring buffer
+         * @param timestampIdx      column index of the ordering timestamp within the input record (used to compare/expire entries)
          */
         public FirstValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -1670,7 +1670,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Release resources held by this function.
-         *
+         * <p>
          * Calls {@code super.close()}, closes the associated memory buffer, and clears the internal free-list.
          */
         @Override
@@ -1688,12 +1688,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * - Initializes per-partition ring buffer and first-value state for new partitions.
          * - Evicts elements outside the configured range bounds when the frame is range-bounded.
          * - Appends the current record's timestamp/value pair to the ring buffer, expanding
-         *   the buffer in memory when full.
+         * the buffer in memory when full.
          * - Recomputes the frame size and the index of the first (oldest) element in the frame,
-         *   then updates the cached firstValue (set to Numbers.LONG_NULL when the frame is empty).
+         * then updates the cached firstValue (set to Numbers.LONG_NULL when the frame is empty).
          * - Persists updated frame metadata back into the MapValue at indices:
-         *   0: frameSize, 1: startOffset, 2: size, 3: capacity, 4: firstIdx.
-         *
+         * 0: frameSize, 1: startOffset, 2: size, 3: capacity, 4: firstIdx.
+         * <p>
          * This method mutates shared memory buffers and the provided map value. It may return
          * early when the frame is not lower-bounded and the first value is already known.
          *
@@ -1847,7 +1847,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached first value's timestamp for the current window frame.
-         *
+         * <p>
          * The supplied Record parameter is not consulted; this method always returns
          * the stored `firstValue`.
          *
@@ -1862,7 +1862,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * pass1 is not supported for this implementation and always fails.
          *
-         * @param record the current record (input row)
+         * @param record       the current record (input row)
          * @param recordOffset the record's offset within the window/frame
          * @throws UnsupportedOperationException always thrown to indicate pass1 is not implemented
          */
@@ -1873,7 +1873,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reinitializes the function for a new execution pass.
-         *
+         * <p>
          * Resets internal state so memory is allocated lazily on first use and clears the cached
          * first-value sentinel by setting {@code firstValue} to {@link Numbers#LONG_NULL}.
          */
@@ -1899,7 +1899,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Appends a textual plan representation of this window function to the given PlanSink.
-         *
+         * <p>
          * The produced plan includes the function name and argument, an optional "ignore nulls"
          * clause, and a "partition by ... range between <maxDiff> preceding and <minDiff> preceding|current row"
          * framing description.
@@ -1927,7 +1927,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function's internal state to the beginning/top.
-         *
+         * <p>
          * Truncates the associated memory buffer and clears the free-list allocator,
          * in addition to performing superclass reset actions.
          */
@@ -1956,16 +1956,16 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Constructs a rows-based, partitioned first_value window function that maintains a sliding
          * row-frame per partition using the provided memory buffer.
-         *
+         * <p>
          * The constructor computes internal buffering and frame metadata from the row-frame bounds:
          * - If `rowsLo` is bounded (greater than Long.MIN_VALUE) the frame lower bound is considered
-         *   bounded and `frameSize` is derived from `rowsHi - rowsLo` (adjusting for negative high bounds),
-         *   while `bufferSize` is set to |rowsLo|.
+         * bounded and `frameSize` is derived from `rowsHi - rowsLo` (adjusting for negative high bounds),
+         * while `bufferSize` is set to |rowsLo|.
          * - If `rowsLo` is unbounded (Long.MIN_VALUE) the frame lower bound is unbounded; `frameSize` is
-         *   set to 1 (the first element entering the frame determines the first value) and `bufferSize`
-         *   is set to |rowsHi|.
+         * set to 1 (the first element entering the frame determines the first value) and `bufferSize`
+         * is set to |rowsHi|.
          * - `frameIncludesCurrentValue` is true when `rowsHi == 0`.
-         *
+         * <p>
          * The instance uses the supplied MemoryARW as the backing storage for the per-partition ring buffer.
          *
          * @param rowsLo lower row offset of the frame (use Long.MIN_VALUE to indicate UNBOUNDED PRECEDING)
@@ -2014,7 +2014,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          *       and updates the instance field {@code firstValue} with the computed first-timestamp
          *       (or {@code Numbers.LONG_NULL} if none).</li>
          * </ul>
-         *
+         * <p>
          * Side effects:
          * - Mutates the partition MapValue (metadata slots 0/1/2).
          * - Writes into the underlying memory region for the partition's ring buffer.
@@ -2096,7 +2096,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached first value's timestamp for the current window frame.
-         *
+         * <p>
          * The supplied Record parameter is not consulted; this method always returns
          * the stored `firstValue`.
          *
@@ -2111,12 +2111,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advance internal state for the current input record and write the current first-value
          * timestamp into the window SPI output column.
-         *
+         * <p>
          * This method updates the function's state for `record` (via {@code computeNext})
          * and stores the resulting timestamp value into the SPI at the provided record slot
          * and the function's output column index.
          *
-         * @param record input record to process
+         * @param record       input record to process
          * @param recordOffset slot/address offset in the WindowSPI where the output should be written
          */
         @Override
@@ -2127,7 +2127,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Prepare the function for reuse by reopening its resources.
-         *
+         * <p>
          * Calls the superclass reopen implementation and leaves any large memory
          * buffers unallocated — allocation is deferred until first actual use.
          */
@@ -2151,13 +2151,13 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Write a textual plan description of this window function to the provided PlanSink.
-         *
+         * <p>
          * The produced plan has the form:
          * "<name>(<arg>)[ ignore nulls] over (partition by <partition functions> rows between <bufferSize> preceding and <X preceding|current row>)"
-         *
+         * <p>
          * Notes:
          * - Uses the instance's `arg`, `partitionByRecord`, `bufferSize`, `frameSize`, and
-         *   `frameIncludesCurrentValue` to determine the exact framing clause.
+         * `frameIncludesCurrentValue` to determine the exact framing clause.
          * - Includes "ignore nulls" when the function is configured to ignore NULL values.
          *
          * @param sink target PlanSink to receive the plan text
@@ -2185,7 +2185,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function's internal state to the start and clear any buffered frame data.
-         *
+         * <p>
          * Calls the superclass toTop() then truncates the backing memory buffer to release stored frame contents.
          */
         @Override
@@ -2217,17 +2217,17 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Constructs a range-framed first_value implementation for timestamp windows.
-         *
+         * <p>
          * Initializes internal ring-buffer memory and framing parameters derived from the provided
          * inclusive range bounds and configuration. The instance will maintain a circular buffer
          * sized from configuration.getSqlWindowStorePageSize(), track the current frame size and
          * first-element index, and set whether the frame includes the current row when `rangeHi == 0`.
          *
-         * @param rangeLo inclusive lower bound of the time range (may be Long.MIN_VALUE to indicate unbounded)
-         * @param rangeHi inclusive upper bound of the time range (typically 0 to include current row)
-         * @param arg the argument function that produces the timestamp value for each record
+         * @param rangeLo       inclusive lower bound of the time range (may be Long.MIN_VALUE to indicate unbounded)
+         * @param rangeHi       inclusive upper bound of the time range (typically 0 to include current row)
+         * @param arg           the argument function that produces the timestamp value for each record
          * @param configuration runtime configuration used to size the buffer (not documented as a service)
-         * @param timestampIdx index of the timestamp column within stored records used for range comparisons
+         * @param timestampIdx  index of the timestamp column within stored records used for range comparisons
          */
         public FirstValueOverRangeFrameFunction(
                 long rangeLo,
@@ -2257,7 +2257,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Releases resources held by this function.
-         *
+         * <p>
          * Delegates to the superclass close implementation and closes the associated
          * MemoryARW buffer.
          */
@@ -2275,7 +2275,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * - Evict out-of-range elements from the ring buffer when the lower bound is bounded.
          * - Append the current (timestamp, value) pair into the ring buffer (the value may be null).
          * - Grow and realign the underlying memory buffer when capacity is reached (note: resizing can change
-         *   the memory base address).
+         * the memory base address).
          * - Recompute the frameSize, firstIdx, and firstValue according to minDiff/maxDiff range bounds.
          *
          * <p>Side effects: mutates the instance's ring-buffer-backed state (memory, startOffset, capacity,
@@ -2395,7 +2395,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached first value's timestamp for the current window frame.
-         *
+         * <p>
          * The supplied Record parameter is not consulted; this method always returns
          * the stored `firstValue`.
          *
@@ -2410,7 +2410,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * pass1 is not supported for this implementation and always fails.
          *
-         * @param record the current record (input row)
+         * @param record       the current record (input row)
          * @param recordOffset the record's offset within the window/frame
          * @throws UnsupportedOperationException always thrown to indicate pass1 is not implemented
          */
@@ -2450,7 +2450,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Appends this function's textual plan representation to the given PlanSink.
-         *
+         * <p>
          * The produced plan fragment has the form:
          * "first_value(<arg>)[ ignore nulls] over (range between <maxDiff> preceding and <minDiff> preceding|current row)".
          */
@@ -2476,7 +2476,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Reset the function's internal state and memory buffer so the instance can be reused
          * from the beginning of a new evaluation.
-         *
+         * <p>
          * This clears the current first value, restores capacity to the initial capacity,
          * truncates and reinitializes the backing memory region, and resets frame bookkeeping
          * (start offset, indices, and sizes) to their empty defaults.
@@ -2508,20 +2508,20 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Creates a row-based first_value window function configured for a rows-frame.
-         *
+         * <p>
          * The constructor interprets the frame bounds (rowsLo, rowsHi) and initializes
          * internal buffer sizing and flags used to maintain a sliding row window:
          * - asserts that the special pair (Long.MIN_VALUE, 0) is not used here (use
-         *   FirstValueOverWholeResultSetFunction for that case).
+         * FirstValueOverWholeResultSetFunction for that case).
          * - when rowsLo is bounded (> Long.MIN_VALUE) the buffer keeps values equal to
-         *   abs(rowsLo) and the logical frame size is computed from rowsLo..rowsHi;
-         *   otherwise the frame is treated as unbounded below and the buffer size is
-         *   set to abs(rowsHi).
+         * abs(rowsLo) and the logical frame size is computed from rowsLo..rowsHi;
+         * otherwise the frame is treated as unbounded below and the buffer size is
+         * set to abs(rowsHi).
          * - frameIncludesCurrentValue is set when rowsHi == 0.
          *
-         * @param arg      the value expression whose first value inside the frame is computed
-         * @param rowsLo   lower bound of the row frame (can be Long.MIN_VALUE to indicate unbounded preceding)
-         * @param rowsHi   upper bound of the row frame (relative to the current row; 0 means current row is included)
+         * @param arg    the value expression whose first value inside the frame is computed
+         * @param rowsLo lower bound of the row frame (can be Long.MIN_VALUE to indicate unbounded preceding)
+         * @param rowsHi upper bound of the row frame (relative to the current row; 0 means current row is included)
          */
         public FirstValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg);
@@ -2559,11 +2559,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * incrementing the element count (capped at bufferSize) and advancing the buffer start index
          * (loIdx). It also updates the cached {@code firstValue} according to the current frame state:
          * - If the frame is unbounded on the low side and the total count exceeds the capacity available
-         *   for the frame, the first value is taken from the appropriate position in the circular buffer.
+         * for the frame, the first value is taken from the appropriate position in the circular buffer.
          * - If there are already elements that belong to the frame, the first value is read from the
-         *   buffer at the computed index.
+         * buffer at the computed index.
          * - If the buffer is empty and the frame definition includes the current row, the current record's
-         *   timestamp becomes the first value.
+         * timestamp becomes the first value.
          * - Otherwise the cached first value is set to {@code LONG_NULL}.
          *
          * <p>Side effects: writes the timestamp into {@code buffer}, advances {@code loIdx}, updates
@@ -2615,7 +2615,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached first value's timestamp for the current window frame.
-         *
+         * <p>
          * The supplied Record parameter is not consulted; this method always returns
          * the stored `firstValue`.
          *
@@ -2630,12 +2630,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advance internal state for the current input record and write the current first-value
          * timestamp into the window SPI output column.
-         *
+         * <p>
          * This method updates the function's state for `record` (via {@code computeNext})
          * and stores the resulting timestamp value into the SPI at the provided record slot
          * and the function's output column index.
          *
-         * @param record input record to process
+         * @param record       input record to process
          * @param recordOffset slot/address offset in the WindowSPI where the output should be written
          */
         @Override
@@ -2646,7 +2646,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function's internal state and buffers so it can be reused.
-         *
+         * <p>
          * Clears the cached first value, resets the buffer start index and element count,
          * and reinitializes the underlying buffer storage via initBuffer().
          */
@@ -2677,7 +2677,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Append a textual plan fragment for this window function to the provided sink.
-         *
+         * <p>
          * The emitted text has the form:
          * `name(arg) [ignore nulls] over ( rows between <bufferSize> preceding and <frame-end> )`
          * where `<frame-end>` is either `current row` when the frame includes the current value,
@@ -2720,7 +2720,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Fill the internal buffer with the sentinel long value (Numbers.LONG_NULL) for each slot.
-         *
+         * <p>
          * The method writes Numbers.LONG_NULL at offsets 0, 8, 16, ... up to (bufferSize-1)*Long.BYTES,
          * effectively marking all buffer slots as empty/null.
          */
@@ -2756,7 +2756,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * Advance state using the supplied input record: determine the partition key for the record,
          * look up (or create) the per-partition map entry, and ensure the partition's first timestamp
          * value is recorded.
-         *
+         * <p>
          * If the partition entry is new, the method reads the timestamp from `arg` for the current
          * record, stores it into the map entry and updates the instance `value` field. If the entry
          * already exists, it loads the stored timestamp into `value` without modifying the map.
@@ -2801,7 +2801,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Return the cached timestamp value for this function.
-         *
+         * <p>
          * The input record is ignored; this function always returns the stored first-value
          * timestamp for the current window state.
          *
@@ -2816,7 +2816,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advances the window computation for the given input record and writes the current
          * computed timestamp value into the SPI output column for that record.
-         *
+         * <p>
          * This method updates internal state by invoking {@code computeNext(record)} and
          * then stores the resulting long timestamp value into the SPI memory at
          * {@code spi.getAddress(recordOffset, columnIndex)}.
@@ -2832,10 +2832,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Writes a textual plan representation of this window function into the given PlanSink.
-         *
+         * <p>
          * The produced plan has the form:
          * `functionName(arg)[ ignore nulls] over (partition by <partition-exprs> rows between unbounded preceding and current row)`
-         *
+         * <p>
          * This method emits the function name and argument, appends " ignore nulls" when configured,
          * and includes the partition expressions taken from {@code partitionByRecord} followed by the
          * fixed rows frame "rows between unbounded preceding and current row".
@@ -2909,7 +2909,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Returns the cached timestamp value representing the first value for the current context.
-         *
+         * <p>
          * The provided Record parameter is ignored; the method always returns the stored timestamp.
          *
          * @param rec (ignored) record passed by the caller
@@ -2923,7 +2923,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         /**
          * Advances the window computation for the given input record and writes the current
          * computed timestamp value into the SPI output column for that record.
-         *
+         * <p>
          * This method updates internal state by invoking {@code computeNext(record)} and
          * then stores the resulting long timestamp value into the SPI memory at
          * {@code spi.getAddress(recordOffset, columnIndex)}.
@@ -2939,7 +2939,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function to its initial state for reuse.
-         *
+         * <p>
          * Calls the superclass reset, clears the 'found' flag, and sets the stored
          * timestamp value to the sentinel LONG_NULL.
          */
@@ -2952,7 +2952,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
         /**
          * Reset the function to the initial state for a new scan.
-         *
+         * <p>
          * Calls {@code super.toTop()} and clears internal state by marking no value as found
          * and setting the cached timestamp to {@link Numbers#LONG_NULL}.
          */
