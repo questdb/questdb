@@ -458,7 +458,7 @@ public class IntrinsicModelTest {
         IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("0Z", "0000Z").replaceAll("9Z", "9999Z")
+                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
         );
