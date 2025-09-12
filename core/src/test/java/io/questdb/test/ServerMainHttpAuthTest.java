@@ -198,6 +198,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                             "\"posthog.api.key\":null," +
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
+                            "\"accepting.writes\":true," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +
                             "}" +

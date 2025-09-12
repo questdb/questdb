@@ -204,6 +204,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         // expected message: Could not flush buffer: https://localhost:<ephemeral_port>/write?precision=n Connection Failed
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: https://localhost:");
                         TestUtils.assertContains(e.getMessage(), "/write?precision=n Connection Failed");
+                        sender.reset();
                     }
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 1);
@@ -273,6 +274,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         fail("should fail, the server is not trusted");
                     } catch (LineSenderException ex) {
                         TestUtils.assertContains(ex.getMessage(), "Could not flush buffer");
+                        sender.reset();
                     }
                 }
             }

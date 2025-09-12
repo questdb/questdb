@@ -31,11 +31,14 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
 
+    @SuppressWarnings("unused")
     protected LineHttpSenderV1(String host,
                                int port,
                                String path,
@@ -65,6 +68,40 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                 maxRetriesNanos,
                 minRequestThroughput,
                 flushIntervalNanos,
+                rnd);
+    }
+
+    protected LineHttpSenderV1(ObjList<String> hosts,
+                               IntList ports,
+                               String path,
+                               HttpClientConfiguration clientConfiguration,
+                               ClientTlsConfiguration tlsConfig,
+                               HttpClient client,
+                               int autoFlushRows,
+                               String authToken,
+                               String username,
+                               String password,
+                               int maxNameLength,
+                               long maxRetriesNanos,
+                               long minRequestThroughput,
+                               long flushIntervalNanos,
+                               int currentAddressIndex,
+                               Rnd rnd) {
+        super(hosts,
+                ports,
+                path,
+                clientConfiguration,
+                tlsConfig,
+                client,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxNameLength,
+                maxRetriesNanos,
+                minRequestThroughput,
+                flushIntervalNanos,
+                currentAddressIndex,
                 rnd);
     }
 
