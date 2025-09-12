@@ -285,12 +285,14 @@ public final class Files {
     }
 
     public static boolean isErrnoFileCannotRead(int errno) {
-        return isErrnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
+        return isErrnoFileDoesNotExist(errno)
+                || (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN)
+                || (Os.isOSX() && errno == CairoException.ERRNO_FILE_READ_TIMEOUT_MACOS);
     }
 
     public static boolean isErrnoFileDoesNotExist(int errno) {
         return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST ||
-                (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+                (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
     public native static boolean isSoftLink(long lpszPath);
