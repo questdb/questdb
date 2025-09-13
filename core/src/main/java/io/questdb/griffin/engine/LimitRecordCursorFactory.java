@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -91,13 +92,21 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         Function loFunc = cursor.loFunction;
         Function hiFunc = cursor.hiFunction;
         if (loFunc != null) {
-            sink.meta("lo").val(loFunc);
+            if (loFunc instanceof IntConstant) {
+                sink.meta("lo").val(loFunc.getInt(null));
+            } else {
+                sink.meta("lo").val(loFunc);
+            }
             if (loFunc.isRuntimeConstant()) {
                 sink.val('[').val(loFunc.getLong(null)).val(']');
             }
         }
         if (hiFunc != null) {
-            sink.meta("hi").val(hiFunc);
+            if (hiFunc instanceof IntConstant) {
+                sink.meta("hi").val(hiFunc.getInt(null));
+            } else {
+                sink.meta("hi").val(hiFunc);
+            }
             if (hiFunc.isRuntimeConstant()) {
                 sink.val('[').val(hiFunc.getLong(null)).val(']');
             }

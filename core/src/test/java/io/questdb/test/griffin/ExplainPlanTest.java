@@ -12089,4 +12089,83 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "S1\t1970-01-01T01:00:00.000003Z\n" +
                 "S2\t1970-01-01T00:00:00.000001Z\n", queryDesc, "ts###DESC", true, true);
     }
+
+    // Helper method to run a single JSON EXPLAIN limit test
+    private void runLimitJsonExplainTest(String sql, Integer lo, Integer hi) throws Exception {
+        int skipOverRows;
+        int limit;
+
+        if (lo != null && hi != null) {
+            // handle negative lo as offset from end of table
+            int tableCount = 50; // adjust based on long_sequence() size used in test cases
+            skipOverRows = lo < 0 ? tableCount + lo : lo;
+            limit = hi - lo;
+        } else if (lo != null) {
+            // Single LIMIT value
+            int tableCount = 50; // adjust as needed
+            skipOverRows = lo < 0 ? tableCount + lo : 0;
+            limit = lo;
+        } else {
+            skipOverRows = 0;
+            limit = 0; // fallback
+        }
+
+        String expectedPlan =
+                "QUERY PLAN\n" +
+                        "[\n" +
+                        "  {\n" +
+                        "    \"Plan\": {\n" +
+                        "        \"Node Type\": \"Limit\",\n" +
+                        "        \"lo\":  " + (lo != null ? lo : 0) + ",\n" +
+                        (hi != null ? "        \"hi\":  " + hi + ",\n" : "") +
+                        "        \"skip-over-rows\":  " + skipOverRows + ",\n" +
+                        "        \"limit\":  " + limit + ",\n" +
+                        "        \"Plans\": [\n" +
+                        "        {\n" +
+                        "            \"Node Type\": \"long_sequence\",\n" +
+                        "            \"count\":  50\n" +
+                        "        } ]\n" +
+                        "    }\n" +
+                        "  }\n" +
+                        "]\n";
+
+        assertQuery(expectedPlan, sql, null, null, false, true);
+    }
+
+// --------------------- Separate test methods for Explain Json format Limit Function check ---------------------
+
+    @Test
+    public void testLimitConstantLoHi() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit 5,20", 5, 20);
+    }
+
+    @Test
+    public void testLimitLoOnlyConstant() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit 3", 3, null);
+    }
+
+    @Test
+    public void testLimitNegativeLoHi() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit -5,-2", -5, -2);
+    }
+
+    @Test
+    public void testLimitFunctionLoHi() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit abs(-2), 2+6", 2, 8);
+    }
+
+    @Test
+    public void testLimitLoFunctionOnly() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit ceil(4.0)::int", 4, null);
+    }
+
+    @Test
+    public void testLimitHiFunctionOnly() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit 0, ceil(7.0)::int", 0, 7);
+    }
+
+    @Test
+    public void testLimitLoAndHiFunctions() throws Exception {
+        runLimitJsonExplainTest("explain (format json) select * from long_sequence(50) limit ceil(4.0)::int, ceil(7.0)::int", 4, 7);
+    }
 }
