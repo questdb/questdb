@@ -61,6 +61,13 @@ public abstract class SampleByIntervalIterator {
     public abstract int getStep();
 
     /**
+     * Returns the bucket size of the underlying timestamp sampler.
+     */
+    public long getBucketSize() {
+        return sampler.getApproxBucketSize();
+    }
+
+    /**
      * High boundary for the current iteration's interval.
      * Meant to be used as an exclusive boundary when querying.
      */
