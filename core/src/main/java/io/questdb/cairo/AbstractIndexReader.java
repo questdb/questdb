@@ -28,11 +28,13 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
@@ -46,8 +48,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
+    private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
+    private long partitionTxn;
     private long valueMemSize = -1;
 
     @Override
@@ -62,6 +66,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return columnTop;
     }
 
+    @Override
+    public long getColumnTxn() {
+        return columnTxn;
+    }
+
     public long getKeyBaseAddress() {
         return keyMem.addressOf(0);
     }
@@ -73,6 +82,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     public long getKeyMemorySize() {
         return keyMem.size();
+    }
+
+    @Override
+    public long getPartitionTxn() {
+        return partitionTxn;
     }
 
     public long getValueBaseAddress() {
@@ -93,21 +107,33 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long columnTop) {
+    public void of(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop
+    ) {
         this.columnTop = columnTop;
+        this.columnTxn = columnNameTxn;
+        this.partitionTxn = partitionTxn;
         final int plen = path.size();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
 
         try {
-            keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
+            FilesFacade ff = configuration.getFilesFacade();
+            LPSZ name = BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            keyMem.of(
+                    ff,
+                    name,
+                    ff.getMapPageSize(),
+                    BitmapIndexUtils.getKeyEntryOffset(0),
+                    MemoryTag.MMAP_INDEX_READER,
+                    CairoConfiguration.O_NONE,
+                    -1
+            );
             this.clock = configuration.getMillisecondClock();
-
-            // key file should already be created at least with header
-            long keyMemSize = keyMem.size();
-            if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
-                LOG.error().$("file too short [corrupt] ").$(path).$();
-                throw CairoException.critical(0).put("Index file too short: ").put(path);
-            }
 
             // verify header signature
             if (keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
@@ -117,8 +143,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             readIndexMetadataAtomically();
 
-            // Resize key memory eagerly to avoid doing that when searching keys.
-            keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(this.keyCount));
             this.valueMem.of(
                     configuration.getFilesFacade(),
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
@@ -179,12 +203,13 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         if (keyCount > this.keyCount) {
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+            keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
         }
     }
 
     private void readIndexMetadataAtomically() {
-        // Triple check atomic read. We read first and last sequences. If they match - there is a chance at stable
-        // read. Confirm start sequence hasn't changed after values read. If it has changed - retry the whole thing.
+        // Triple check atomic read. We read the first and last sequences. If they match - there is a chance at stable
+        // read. Confirm the start sequence hasn't changed after values read. If it has changed - retry the whole thing.
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
             long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -206,6 +231,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     this.blockValueCountMod = blockValueCountMod;
                     this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                    keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
                     break;
                 }
             }

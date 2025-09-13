@@ -36,7 +36,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.Job;
@@ -78,7 +78,7 @@ public class WorkerPoolManagerTest {
         final int workerCount = 2;
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(new WorkerPoolConfiguration() {
+        WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return poolName;
@@ -110,9 +110,9 @@ public class WorkerPoolManagerTest {
                 return workerCount;
             }
         };
-        WorkerPool networkSharedPool0 = workerPoolManager.getSharedNetworkPool(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
+        WorkerPool networkSharedPool0 = workerPoolManager.getSharedPoolNetwork(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
         Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool0);
-        WorkerPool networkSharedPool1 = workerPoolManager.getSharedNetworkPool(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
+        WorkerPool networkSharedPool1 = workerPoolManager.getSharedPoolNetwork(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
         Assert.assertSame(networkSharedPool0, networkSharedPool1);
         Assert.assertEquals(workerCount, networkSharedPool0.getWorkerCount());
         Assert.assertEquals(poolName, networkSharedPool0.getPoolName());
@@ -124,7 +124,7 @@ public class WorkerPoolManagerTest {
     public void testGetInstanceDefaultPool() {
         final int workerCount = 2;
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(new WorkerPoolConfiguration() {
+        WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return "pool";
@@ -145,7 +145,7 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.start(null);
         try {
-            workerPoolManager.getSharedNetworkPool(new WorkerPoolConfiguration() {
+            workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return null;
@@ -178,11 +178,11 @@ public class WorkerPoolManagerTest {
                 sharedPoolW.assign(scrapeIntoPrometheusJob(sink));
             }
         };
-        WorkerPool p0 = workerPoolManager.getSharedNetworkPool(
+        WorkerPool p0 = workerPoolManager.getSharedPoolNetwork(
                 workerPoolConfiguration("UP", 30L),
                 WorkerPoolManager.Requester.OTHER
         );
-        WorkerPool p1 = workerPoolManager.getSharedNetworkPool(
+        WorkerPool p1 = workerPoolManager.getSharedPoolNetwork(
                 workerPoolConfiguration("DOWN", 10L),
                 WorkerPoolManager.Requester.OTHER
         );
@@ -267,7 +267,7 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public PGWireConfiguration getPGWireConfiguration() {
+            public PGConfiguration getPGWireConfiguration() {
                 return null;
             }
 
@@ -282,17 +282,17 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+            public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
                 return () -> workerCount;
             }
 
             @Override
-            public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
+            public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
                 return () -> workerCount;
             }
 
             @Override
-            public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
+            public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
                 return () -> workerCount;
             }
         };

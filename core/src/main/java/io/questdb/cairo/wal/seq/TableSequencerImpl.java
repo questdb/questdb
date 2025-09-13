@@ -94,7 +94,11 @@ public class TableSequencerImpl implements TableSequencer {
 
             metadata = new SequencerMetadata(ff, configuration.getCommitMode());
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
-            walIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, WAL_INDEX_FILE_NAME, configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep());
+            walIdGenerator = IDGeneratorFactory.newIDGenerator(
+                    configuration,
+                    WAL_INDEX_FILE_NAME,
+                    configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
+            );
             tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
@@ -125,7 +129,7 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
+            if (ex.isFileCannotRead() && engine.isTableDropped(tableToken)) {
                 LOG.info().$("could not open sequencer, table is dropped [table=").$(tableToken)
                         .$(", path=").$(path)
                         .$(", error=").$safe(ex.getMessage())

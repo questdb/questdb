@@ -311,12 +311,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
+                TableToken tn1 = new TableToken("tbl_name", "tbl_name", null, 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
-                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false, false);
+                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", null, 123, false, false, false);
                 ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
@@ -349,7 +349,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     return super.allocate(fd, size);
                 }
 
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, "completed.d")) {
                         this.fd = fd;
@@ -968,13 +968,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
+                TableToken tn1 = new TableToken("tbl_name", "tbl_name", null, 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
 
-                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false, false);
+                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", null, 123, false, false, false);
                 ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 

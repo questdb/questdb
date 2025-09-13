@@ -452,7 +452,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
                 // on the state of the writer and revert any dirty txns that might have advanced. We do that
                 // by equalizing writerTxn and dirtyWriterTxn.
-                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getTxn(), writer.getTxn());
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -514,7 +514,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             logRecord.$(", error=").$(throwable).I$();
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
-            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName())
+            LOG.critical().$("could not suspend table [table=").$(tableToken)
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
         }

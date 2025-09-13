@@ -1592,7 +1592,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             int i = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
                 if (Utf8s.containsAscii(name, "2022-02-25") && i++ == 0) {
                     TestUtils.unchecked(() -> execute("drop table " + newTableName));
@@ -1960,7 +1960,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testSuspendedTablesTriedOnceOnStart() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "fail.d")) {
                     return -1;
                 }
@@ -1977,12 +1977,18 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
+            execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01')");
+            execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T02')");
+            execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T03')");
             execute("alter table " + tableName + " add column fail int");
             long walNotification = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
 
             drainWalQueue();
             TableToken tableToken = engine.verifyTableName(tableName);
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(4, engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn());
+            Assert.assertEquals(5, engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn());
+
             long notifications = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
             Assert.assertEquals(walNotification, notifications);
 

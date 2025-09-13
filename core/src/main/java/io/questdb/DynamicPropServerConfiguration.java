@@ -35,8 +35,8 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationWrapper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfigurationWrapper;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfigurationWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -88,7 +88,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES,
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD,
-            PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY
+            PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY,
+            PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
@@ -110,7 +111,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final HttpMinServerConfigurationWrapper minHttpServerConfig;
-    private final PGWireConfigurationWrapper pgWireConfig;
+    private final PGConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final AtomicReference<PropServerConfiguration> serverConfig;
@@ -155,7 +156,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
         this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
         this.memoryConfig = new MemoryConfigurationWrapper();
-        this.pgWireConfig = new PGWireConfigurationWrapper(this.metrics);
+        this.pgWireConfig = new PGConfigurationWrapper(this.metrics);
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
@@ -328,7 +329,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
+    public PGConfiguration getPGWireConfiguration() {
         return pgWireConfig;
     }
 
@@ -336,6 +337,22 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getPublicPassthroughConfiguration();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getSharedWorkerPoolNetworkConfiguration();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+        return serverConfig.get().getSharedWorkerPoolQueryConfiguration();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return serverConfig.get().getSharedWorkerPoolWriteConfiguration();
     }
 
     @Override
@@ -347,22 +364,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getWalApplyPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getNetworkWorkerPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
-        return serverConfig.get().getQueryWorkerPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
-        return serverConfig.get().getWriteWorkerPoolConfiguration();
     }
 
     @Override

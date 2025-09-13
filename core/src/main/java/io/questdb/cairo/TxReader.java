@@ -239,7 +239,11 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getNextLogicalPartitionTimestamp(long timestamp) {
-        return partitionCeilMethod.ceil(timestamp);
+        if (partitionCeilMethod != null) {
+            return partitionCeilMethod.ceil(timestamp);
+        }
+        assert partitionBy == PartitionBy.NONE;
+        return Long.MAX_VALUE;
     }
 
     public long getNextPartitionTimestamp(long timestamp) {
@@ -476,6 +480,7 @@ public class TxReader implements Closeable, Mutable {
         try {
             openTxnFile(ff, path);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();
@@ -665,10 +670,15 @@ public class TxReader implements Closeable, Mutable {
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
         if (ff.exists(path)) {
+            // This method is called from constructor, and it's possible that
+            // the code will run concurrently with table truncation. For that reason,
+            // we must not rely on the file size but only assume that header is present.
+            // The reload method will extend the file if needed.
+            long size = TableUtils.TX_BASE_HEADER_SIZE;
             if (roTxMemBase == null) {
-                roTxMemBase = Vm.getCMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+                roTxMemBase = Vm.getCMRInstance(ff, path, size, MemoryTag.MMAP_DEFAULT);
             } else {
-                roTxMemBase.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.MMAP_DEFAULT);
+                roTxMemBase.of(ff, path, ff.getPageSize(), size, MemoryTag.MMAP_DEFAULT);
             }
             return;
         }

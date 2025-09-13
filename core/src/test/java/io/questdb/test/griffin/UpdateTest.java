@@ -437,7 +437,7 @@ public class UpdateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "s1.d.1") && Utf8s.containsAscii(name, "1970-01-03")) {
                         return -1;
                     }
@@ -625,7 +625,7 @@ public class UpdateTest extends AbstractCairoTest {
 
         testUpdateAsyncMode(
                 tableWriter -> tableWriter.addColumn("newCol", ColumnType.INT),
-                "cached query plan cannot be used because table schema has changed [table='up']",
+                "cached query plan cannot be used because table schema has changed [table=up]",
                 "ts\tx\tnewCol\n" +
                         "1970-01-01T00:00:00.000000Z\t1\tnull\n" +
                         "1970-01-01T00:00:01.000000Z\t2\tnull\n" +
@@ -672,7 +672,7 @@ public class UpdateTest extends AbstractCairoTest {
 
         testUpdateAsyncMode(
                 tableWriter -> tableWriter.removeColumn("x"),
-                "cached query plan cannot be used because table schema has changed [table='up']",
+                "cached query plan cannot be used because table schema has changed [table=up]",
                 "ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:01.000000Z\n" +
@@ -1440,7 +1440,7 @@ public class UpdateTest extends AbstractCairoTest {
                     applyUpdate(updateOperation);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "table='up'");
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "table=up");
                 }
             }
         });
@@ -3058,7 +3058,7 @@ public class UpdateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "x.d.1") && Utf8s.containsAscii(name, "1970-01-03")) {
                         return -1;
                     }

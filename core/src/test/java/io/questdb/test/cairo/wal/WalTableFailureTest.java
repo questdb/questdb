@@ -57,7 +57,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -69,8 +68,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Arrays;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -215,7 +212,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             int counter = 0;
 
             @Override
-            public long openRW(LPSZ name, long mode) {
+            public long openRW(LPSZ name, int mode) {
                 if (Utf8s.endsWithAscii(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
                     return -1;
                 }
@@ -943,7 +940,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
@@ -987,7 +984,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
@@ -1042,7 +1039,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            TableToken ignored = new TableToken(tableName, tableName, 123, false, false, false);
+            TableToken ignored = new TableToken(tableName, tableName, null, 123, false, false, false);
             createStandardWalTable(tableName);
 
             drainWalQueue();
@@ -1141,7 +1138,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             int counter = 0;
 
             @Override
-            public long openRW(LPSZ name, long mode) {
+            public long openRW(LPSZ name, int mode) {
                 if (Utf8s.containsAscii(name, "b.d.") && counter++ == 0) {
                     return -1;
                 }
@@ -1314,7 +1311,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1374,7 +1371,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "sym5.c")) {
                     return -1;
                 }
@@ -1509,7 +1506,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.") && attempt++ < 2) {
                     return -1;
                 }
@@ -1568,7 +1565,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1603,7 +1600,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1713,7 +1710,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1731,30 +1728,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
         }
     }
 
-    private void assertWalApplyMetrics(int suspendedTables, int seqTxnTotal, int writerTxnTotal) {
-        String tagSuspendedTables = "questdb_suspended_tables ";
-        String tagSeqTxn = "questdb_wal_apply_seq_txn_total ";
-        String tagWriterTxn = "questdb_wal_apply_writer_txn_total ";
-        String missing = "missing";
-        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
-            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
-            String[] lines = metricsSink.toString().split("\n");
-
-            Optional<String> suspendedTablesLine = Arrays.stream(lines)
-                    .filter(line -> line.startsWith(tagSuspendedTables)).findFirst();
-            Assert.assertTrue(tagSuspendedTables + missing, suspendedTablesLine.isPresent());
-            Assert.assertEquals(tagSuspendedTables + suspendedTables, suspendedTablesLine.get());
-
-            Optional<String> seqTxnLine = Arrays.stream(lines)
-                    .filter(line -> line.startsWith(tagSeqTxn)).findFirst();
-            Assert.assertTrue(tagSeqTxn + missing, seqTxnLine.isPresent());
-            Assert.assertEquals(tagSeqTxn + seqTxnTotal, seqTxnLine.get());
-
-            Optional<String> writerTxnLine = Arrays.stream(lines)
-                    .filter(line -> line.startsWith(tagWriterTxn)).findFirst();
-            Assert.assertTrue(tagWriterTxn + missing, writerTxnLine.isPresent());
-            Assert.assertEquals(tagWriterTxn + writerTxnTotal, writerTxnLine.get());
-        }
+    private void assertWalApplyMetrics(int suspendedTables, int seqTxn, int writerTxn) {
+        String tagSuspendedTables = "questdb_suspended_tables";
+        String tagSeqTxn = "questdb_wal_apply_seq_txn";
+        String tagWriterTxn = "questdb_wal_apply_writer_txn";
+        Assert.assertEquals(tagSuspendedTables, suspendedTables, TestUtils.getMetricValue(engine, tagSuspendedTables));
+        Assert.assertEquals(tagSeqTxn, seqTxn, TestUtils.getMetricValue(engine, tagSeqTxn));
+        Assert.assertEquals(tagWriterTxn, writerTxn, TestUtils.getMetricValue(engine, tagWriterTxn));
     }
 
     private void createStandardNonWalTable(String tableName) throws SqlException {
@@ -1833,7 +1813,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
                     fd = super.openRW(name, opts);
                     return fd;
@@ -1980,7 +1960,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }

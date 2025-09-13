@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
@@ -61,6 +62,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class FilesTest {
@@ -268,6 +270,15 @@ public class FilesTest {
     }
 
     @Test
+    public void testDeatch() throws Exception {
+        assertMemoryLeak(() -> {
+            int fdFake = 123;
+            long fd = Files.createUniqueFd(fdFake);
+            Files.detach(fd);
+        });
+    }
+
+    @Test
     public void testDeleteDir() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
@@ -470,6 +481,21 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testFdCache() {
+        for (int index = 0; index < 128; index++) {
+            int NON_CACHED = (2 << 30);
+            long fd = Numbers.encodeLowHighInts(index | NON_CACHED, 3342);
+            int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+            Assert.assertTrue(fdKind > 1);
+
+            int RO_MASK = 0;
+            fd = Numbers.encodeLowHighInts(index | RO_MASK, 78234);
+            fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+            Assert.assertEquals(0, fdKind);
+        }
     }
 
     @Test
@@ -734,6 +760,107 @@ public class FilesTest {
             try (Path path = new Path().of(r.getAbsolutePath())) {
                 path.concat("a").concat("b").concat("c");
                 Assert.assertTrue(Files.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testMmapInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fdrw = Files.openRW(path.$());
+                try {
+                    if (!Files.allocate(fdrw, 1024)) {
+                        Assert.fail("Files.allocate() failed with errno " + Os.errno());
+                    }
+                } finally {
+                    Files.close(fdrw);
+                }
+                long fdro = Files.openRO(path.$());
+                try {
+                    long mmapAddr = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    Files.munmap(mmapAddr, 0, MemoryTag.MMAP_DEFAULT);
+                    Assert.fail("mmap with zero len should have failed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid len");
+                } finally {
+                    Files.close(fdro);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMremapInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fdrw = Files.openRW(path.$());
+                try {
+                    if (!Files.allocate(fdrw, 1024)) {
+                        Assert.fail("Files.allocate() failed with errno " + Os.errno());
+                    }
+                } finally {
+                    Files.close(fdrw);
+                }
+                long fdro = Files.openRO(path.$());
+                try {
+                    long mmapAddr = Files.mmap(fdro, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    Assert.assertNotEquals("mmap should have succeeded", FilesFacade.MAP_FAILED, mmapAddr);
+                    try {
+                        mmapAddr = Files.mremap(fdro, mmapAddr, 64, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                        Files.munmap(mmapAddr, 0, MemoryTag.MMAP_DEFAULT);
+                        Assert.fail("mremap with len 0 should have failed");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "invalid newSize");
+                    } finally {
+                        Files.munmap(mmapAddr, 64, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fdro);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMunmapInvalidZeroAddress() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Files.munmap(0, 64, MemoryTag.MMAP_DEFAULT);
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "invalid address");
+            }
+        });
+    }
+
+    @Test
+    public void testMunmapInvalidZeroLength() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+
+                long fdrw = Files.openRW(path.$());
+                long fdro = Files.openRO(path.$());
+
+                if (Files.allocate(fdrw, 1024)) {
+                    long addr1 = Files.mmap(fdro, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        Files.munmap(addr1, 0, MemoryTag.MMAP_DEFAULT);
+                    } catch (CairoException e) {
+                        assertContains(e.getFlyweightMessage(), "invalid address or length");
+                    } finally {
+                        Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+
+                Files.close(fdrw);
+                Files.close(fdro);
             }
         });
     }

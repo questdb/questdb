@@ -175,12 +175,12 @@ public final class PurgingOperator {
                     );
                     cleanupColumnVersions.setPos(cleanupVersionSize);
 
-                    log.info().$("column purge scheduled [table=").$safe(tableToken.getTableName())
+                    log.info().$("column purge scheduled [table=").$(tableToken)
                             .$(", column=").$safe(columnName)
                             .$(", updateTxn=").$(txn)
                             .I$();
                 } else {
-                    log.info().$("column purge complete [table=").$safe(tableToken.getTableName())
+                    log.info().$("column purge complete [table=").$(tableToken)
                             .$(", column=").$safe(columnName)
                             .$(", newColumnVersion=").$(txn - 1)
                             .I$();
@@ -192,7 +192,7 @@ public final class PurgingOperator {
     }
 
     private void purgeColumnVersionAsync(
-            TableToken tableName,
+            TableToken tableToken,
             String columnName,
             int tableId,
             int tableTruncateVersion,
@@ -208,12 +208,12 @@ public final class PurgingOperator {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                task.of(tableName, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updateTxn, columnVersions, columnVersionsLo, columnVersionsHi);
+                task.of(tableToken, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updateTxn, columnVersions, columnVersionsLo, columnVersionsHi);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableName.getTableName())
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableToken.getTableName())
                         .$("\"' [columnName=").$safe(columnName)
                         .$(", updateTxn=").$(updateTxn)
                         .I$();

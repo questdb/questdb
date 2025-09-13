@@ -205,6 +205,7 @@ public class TableWriterSegmentFileCache {
         if (fdCacheKey < 0) {
             fds = walFdCache.valueAt(fdCacheKey);
         }
+        int initialSize = walMappedColumns.size();
 
         try {
             int file = 0;
@@ -293,8 +294,23 @@ public class TableWriterSegmentFileCache {
                 }
             }
         } catch (Throwable th) {
-            closeWalFiles(true, walSegmentId, 0);
+            closeWalFiles(true, walSegmentId, initialSize);
+            walMappedColumns.setPos(initialSize); // already done by closeWalFiles(); kept for clarity
+            // Avoid double removal/pool push by the finally block when cached FDs were consumed.
+            fds = null;
             throw th;
+        } finally {
+            // Now that the FDs are used in the column objects, remove them from the cache.
+            // to avoid double close in case of exceptions.
+            if (fdCacheKey < 0) {
+                walFdCache.removeAt(fdCacheKey);
+                walFdCacheSize--;
+            }
+
+            if (fds != null) {
+                fds.clear();
+                walFdCacheListPool.push(fds);
+            }
         }
     }
 
@@ -312,14 +328,21 @@ public class TableWriterSegmentFileCache {
         try {
             path.concat(WalUtils.WAL_NAME_BASE);
             int walBaseLen = path.size();
-            for (int i = 0; i < segmentCopyInfo.getSegmentCount(); i++) {
-                int walId = segmentCopyInfo.getWalId(i);
-                int segmentId = segmentCopyInfo.getSegmentId(i);
-                path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
-                long rowLo = segmentCopyInfo.getRowLo(i);
-                long rowHi = segmentCopyInfo.getRowHi(i);
-                long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-                mmapSegments(metadata, path, walIdSegmentId, rowLo, rowHi);
+            try {
+                for (int i = 0, n = segmentCopyInfo.getSegmentCount(); i < n; i++) {
+                    int walId = segmentCopyInfo.getWalId(i);
+                    int segmentId = segmentCopyInfo.getSegmentId(i);
+                    path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
+                    long rowLo = segmentCopyInfo.getRowLo(i);
+                    long rowHi = segmentCopyInfo.getRowHi(i);
+                    long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+                    mmapSegments(metadata, path, walIdSegmentId, rowLo, rowHi);
+                }
+            } catch (Throwable th) {
+                // Close all the columns without placing into the cache.
+                Misc.freeObjListAndClear(walMappedColumns);
+                closeWalFiles();
+                throw th;
             }
         } finally {
             path.trimTo(pathSize1);

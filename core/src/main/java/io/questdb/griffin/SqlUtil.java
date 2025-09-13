@@ -28,21 +28,21 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -65,7 +65,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
 public class SqlUtil {
 
-    static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
+    static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
@@ -96,23 +96,28 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
-        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base) && (
-                Chars.indexOf(base, '.') > -1 || disallowedAliases.contains(base)
-        );
+        final int baseLen = base.length();
+        final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
+        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
+        boolean quote = nonLiteral
+                ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
+                : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
 
-        int len = base.length();
         // early exit for simple cases
-        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ') {
+        if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
+                && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
             return base;
         }
 
+        final int start = prefixedLiteral ? indexOfDot + 1 : 0;
+        int len = baseLen - start;
         final CharacterStoreEntry entry = store.newEntry();
         final int entryLen = entry.length();
         if (quote) {
             entry.put('"');
             len += 2;
         }
-        entry.put(base);
+        entry.put(base, start, baseLen);
 
         int sequence = 1;
         int seqSize = 0;
@@ -123,8 +128,8 @@ public class SqlUtil {
             len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
 
             // We don't want the alias to finish with a space.
-            if (!quote && len > 0 && base.charAt(len - 1) == ' ') {
-                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+            if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + len, ' ') - start;
                 if (lastSpace > 0) {
                     len = lastSpace + 1;
                 }
@@ -153,22 +158,8 @@ public class SqlUtil {
     }
 
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -223,22 +214,8 @@ public class SqlUtil {
     }
 
     public static long expectSeconds(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -816,9 +793,6 @@ public class SqlUtil {
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
         }
-        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
-        }
         return parser;
     }
 
@@ -874,6 +848,15 @@ public class SqlUtil {
             }
         }
         return Double.NaN;
+    }
+
+    public static ArrayView implicitCastVarcharAsDoubleArray(Utf8Sequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            parser.of(value.asAsciiCharSequence(), ColumnType.decodeArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
+        }
+        return parser;
     }
 
     public static float implicitCastVarcharAsFloat(Utf8Sequence value) {
@@ -1067,6 +1050,23 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
+    }
+
+    private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
+        int k = -1;
+        // look for end of digits
+        for (int i = 0; i < tokLen; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
+        }
+        return k;
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

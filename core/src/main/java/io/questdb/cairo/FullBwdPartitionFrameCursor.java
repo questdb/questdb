@@ -44,9 +44,9 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     }
 
     @Override
-    public PartitionFrame next() {
+    public PartitionFrame next(long skipTarget) {
         while (partitionIndex > -1) {
-            final long hi = reader.openPartition(partitionIndex);
+            final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
                 partitionIndex--;
@@ -54,27 +54,11 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.partitionIndex = partitionIndex;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
-                partitionIndex--;
-
-                final byte format = reader.getPartitionFormat(frame.partitionIndex);
-                if (format == PartitionFormat.PARQUET) {
-                    final long addr = reader.getParquetAddr(frame.partitionIndex);
-                    assert addr != 0;
-                    final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
-                    assert parquetSize > 0;
-                    if (parquetDecoder == null) {
-                        parquetDecoder = new PartitionDecoder();
-                    }
-                    parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    frame.format = PartitionFormat.PARQUET;
-                    frame.parquetDecoder = parquetDecoder;
+                if (hi <= skipTarget) {
+                    partitionIndex--;
                     return frame;
                 }
-
-                assert format == PartitionFormat.NATIVE;
-                frame.format = PartitionFormat.NATIVE;
-                frame.parquetDecoder = null;
-                return frame;
+                return nextSlow();
             }
         }
         return null;
@@ -88,5 +72,33 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void toTop() {
         partitionIndex = partitionHi - 1;
+    }
+
+    private FullTablePartitionFrame nextSlow() {
+        reader.openPartition(partitionIndex);
+
+        // opening partition may produce "data unavailable errors", in which case we must not
+        // change partition index prematurely
+        partitionIndex--;
+
+        final byte format = reader.getPartitionFormat(frame.partitionIndex);
+        if (format == PartitionFormat.PARQUET) {
+            final long addr = reader.getParquetAddr(frame.partitionIndex);
+            assert addr != 0;
+            final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
+            assert parquetSize > 0;
+            if (parquetDecoder == null) {
+                parquetDecoder = new PartitionDecoder();
+            }
+            parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            frame.format = PartitionFormat.PARQUET;
+            frame.parquetDecoder = parquetDecoder;
+            return frame;
+        }
+
+        assert format == PartitionFormat.NATIVE;
+        frame.format = PartitionFormat.NATIVE;
+        frame.parquetDecoder = null;
+        return frame;
     }
 }

@@ -572,7 +572,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
-            scoreboardPool.remove(tableToken);
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
@@ -585,6 +584,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
 
                 tableNameRegistry.dropTable(tableToken);
+                // Remove the scoreboard after dropping the table from the registry
+                // Otherwise someone (like Column Purge Job) can create pooled instances of the scoreboard
+                // it from the registry without knowing that the table is being dropped.
+                // Then it can push the scoreboard max txn value into incorrect state.
+                scoreboardPool.remove(tableToken);
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken)
@@ -1093,8 +1097,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (lockedReason == null) {
                     // not locked
                     if (readerPool.lock(tableToken)) {
-                        LOG.info().$("locked [table=`").$(tableToken)
-                                .$("`, thread=").$(Thread.currentThread().getId())
+                        LOG.info().$("locked [table=").$(tableToken)
+                                .$(", thread=").$(Thread.currentThread().getId())
                                 .I$();
                         return null;
                     }
@@ -1471,7 +1475,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         verifyTableToken(tableToken);
         unlockTableUnsafe(tableToken, writer, newTable);
-        LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+        LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
     }
 
     public void unlockReaders(TableToken tableToken) {
@@ -1680,7 +1684,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             // in concurrent threads
                             unlockTableUnsafe(tableToken, null, true);
                             locked = false;
-                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                            LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
@@ -1689,7 +1693,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     } finally {
                         if (!keepLock && locked) {
                             unlockTableUnsafe(tableToken, null, false);
-                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                            LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
                     }
                 } else {
@@ -1723,7 +1727,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), fromTableToken.isMatView(), fromTableToken.isWal());
         if (toTableToken == null) {
             LOG.error()
-                    .$("rename target exists [from='").$safe(fromTableToken.getTableName())
+                    .$("rename target exists [from='").$(fromTableToken)
                     .$("', to='").$safe(toTableName)
                     .I$();
             throw CairoException.nonCritical().put("Rename target exists");

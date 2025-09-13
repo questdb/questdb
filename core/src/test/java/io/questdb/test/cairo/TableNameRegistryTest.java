@@ -701,7 +701,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (failReloadNameRegistry.get() && Utf8s.endsWithAscii(name, "tables.d.0")) {
                     return -1;
                 }
@@ -894,7 +894,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             )) {
                 store.lock();
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
-                store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
+                store.writeEntry(new TableToken("tab1", "tab1~1", null, 1, true, false, false), OPERATION_ADD);
             }
 
             simulateEngineRestart();
