@@ -62,6 +62,8 @@ public final class Files {
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
+    // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
+    public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
