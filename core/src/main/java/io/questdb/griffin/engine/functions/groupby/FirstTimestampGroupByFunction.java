@@ -114,6 +114,9 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
+        // Disable parallelism for first() functions as parallel execution can break
+        // the assumption that row IDs reflect scan order, leading to incorrect results
+        // when dealing with ORDER BY clauses. See GitHub issue #6121.
+        return false;
     }
 }
