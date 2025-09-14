@@ -183,6 +183,7 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public enum Status {
+        NONE(""),
         STARTED("started"),
         FINISHED("finished"),
         FAILED("failed"),

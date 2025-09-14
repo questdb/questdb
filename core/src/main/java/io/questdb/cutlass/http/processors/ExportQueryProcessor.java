@@ -504,6 +504,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         } catch (SqlException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
+                        } catch (CairoException e) {
+                            sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
+                            break OUT;
                         }
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
                         // fall through
@@ -573,7 +576,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 response.sendChunk(false);
             }
         }
-        
+
         // Clean up parquet state when done
         cleanupParquetState(state);
         readyForNextRequest(context);
@@ -753,11 +756,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     Record record = cursor.getRecord();
                     CharSequence copyIdSequence = record.getStrA(0);
                     if (copyIdSequence == null) {
-                        throw new RuntimeException("Copy export task did not return a valid copy ID");
+                        throw CairoException.nonCritical().put("Copy export task did not return a valid copy ID");
                     }
-                    state.copyID = copyIdSequence.toString();
+                    state.copyID = copyIdSequence;
                 } else {
-                    throw new RuntimeException("Copy export task did not return any results");
+                    throw CairoException.nonCritical().put("Copy export task did not return any results");
                 }
             }
             state.waitingForCopy = true;
