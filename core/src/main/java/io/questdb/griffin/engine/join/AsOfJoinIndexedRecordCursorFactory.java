@@ -220,14 +220,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                             ) {
                                 // Found our match
                                 record.hasSlave(true);
-                                slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
-                                slaveTimeFrameCursor.open();
                                 return;
                             } else {
                                 // Past tolerance interval, no point continuing
                                 record.hasSlave(false);
-                                slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
-                                slaveTimeFrameCursor.open();
                                 return;
                             }
                         }
@@ -236,8 +232,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     // No match in this frame, try previous frame
                     if (!slaveTimeFrameCursor.prev()) {
                         record.hasSlave(false);
-                        slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
-                        slaveTimeFrameCursor.open();
                         return;
                     }
                     slaveTimeFrameCursor.open();

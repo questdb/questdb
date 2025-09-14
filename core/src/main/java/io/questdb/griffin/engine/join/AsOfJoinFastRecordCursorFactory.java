@@ -177,8 +177,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     record,
                     circuitBreaker
             );
-
-            assert slaveFrameIndex == timeFrame.getFrameIndex();
         }
     }
 }

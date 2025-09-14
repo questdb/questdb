@@ -79,8 +79,10 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             return false;
         }
 
-        // Common slave state restoration logic
+        // Common slave cursor state restoration logic
         if (origSlaveRowId != -1) {
+            slaveTimeFrameCursor.jumpTo(origSlaveFrameIndex);
+            slaveTimeFrameCursor.open();
             slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
         }
         record.hasSlave(origHasSlave);
@@ -208,11 +210,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
-
-        // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
-        slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
-        slaveTimeFrameCursor.open();
-        record.hasSlave();
     }
 
     /**
