@@ -36,8 +36,11 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -273,6 +276,42 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionMacFileReadTimeoutError() throws Exception {
+        assertMemoryLeak(new FilesFacadeImpl() {
+                             private boolean returnError = true;
+
+                             @Override
+                             public int errno() {
+                                 if (returnError) {
+                                     returnError = false;
+                                     return CairoException.ERRNO_FILE_READ_TIMEOUT_MACOS;
+                                 }
+                                 return Os.errno();
+                             }
+
+                             @Override
+                             public long openRO(LPSZ name) {
+                                 try {
+                                     if (name.asAsciiCharSequence().toString().endsWith("x~/_meta")) {
+                                         throw new RuntimeException();
+                                     }
+                                 } catch (Exception e) {
+                                     final StackTraceElement ste = e.getStackTrace()[6];
+                                     if (returnError && ste.getClassName().equals("io.questdb.cairo.TableReaderMetadata") && ste.getMethodName().equals("load")) {
+                                         return -1;
+                                     }
+                                 }
+                                 return Files.openRO(name);
+                             }
+                         },
+                () -> {
+                    createX("DAY", 72000000);
+                    execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                 }
         );
     }
