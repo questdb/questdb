@@ -253,7 +253,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     // Both rowLo and rowHi are inclusive.
     // When multiple rows have the same matching timestamp, the last one is returned.
     // When all rows have timestamps greater than the master timestamp, rowLo - 1 is returned.
-    protected long binarySearch(long value, long rowLo, long rowHi) {
+    protected long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
         // this is the same algorithm as implemented in C (util.h)
         // template<class T, class V>
         // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
@@ -275,9 +275,9 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, mid);
             long midVal = slaveRecA.getTimestamp(slaveTimestampIndex);
 
-            if (midVal < value) {
+            if (midVal < masterTimestamp) {
                 low = mid;
-            } else if (midVal > value) {
+            } else if (midVal > masterTimestamp) {
                 high = mid - 1;
             } else {
                 // In case of multiple equal values, find the last
@@ -285,7 +285,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             }
         }
 
-        return binarySearchScanDown(value, low, high + 1, rowLo);
+        return binarySearchScanDown(masterTimestamp, low, high + 1, rowLo);
     }
 
     protected void nextSlave(long masterTimestamp) {
