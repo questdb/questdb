@@ -106,19 +106,19 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
             boolean avoidBinarySearchHint = (boolean) params[7];
+            String paramsMsg = "joinType=" + joinType +
+                    ", exerciseIntervals=" + exerciseIntervals +
+                    ", limitType=" + limitType +
+                    ", exerciseFilters=" + exerciseFilters +
+                    ", projectionType=" + projectionType +
+                    ", applyOuterProjection = " + applyOuterProjection +
+                    ", maxTolerance=" + maxTolerance +
+                    ", avoidBinarySearchHint=" + avoidBinarySearchHint;
+            LOG.info().$("Testing with parameters: ").$(paramsMsg).$();
             try {
                 assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, avoidBinarySearchHint, rnd);
-            } catch (AssertionError e) {
-                throw new AssertionError("Failed with parameters: " +
-                        "joinType=" + joinType +
-                        ", exerciseIntervals=" + exerciseIntervals +
-                        ", limitType=" + limitType +
-                        ", exerciseFilters=" + exerciseFilters +
-                        ", projectionType=" + projectionType +
-                        ", applyOuterProjection = " + applyOuterProjection +
-                        ", maxTolerance=" + maxTolerance +
-                        ", avoidBinarySearchHint=" + avoidBinarySearchHint,
-                        e);
+            } catch (Throwable e) {
+                throw new AssertionError("Failed with parameters: " + paramsMsg, e);
             }
         }
     }
@@ -290,7 +290,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         if (slaveTimestampColumnName != null) {
             try (RecordCursorFactory factory = select(query);
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
                 Record record = cursor.getRecord();
                 RecordMetadata metadata = factory.getMetadata();
                 int masterColIndex = metadata.getColumnIndex("ts");
