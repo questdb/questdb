@@ -64,7 +64,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
     public static final String NAME = "max";
-    private static final String SIGNATURE = NAME + "(N)";
+    private static final String SIGNATURE = NAME + "(L)";
 
     /**
      * Returns the SQL function signature for this factory.
