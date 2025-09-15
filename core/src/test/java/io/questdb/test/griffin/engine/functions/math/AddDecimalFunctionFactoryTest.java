@@ -45,6 +45,14 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     private static final AddDecimalFunctionFactory factory = new AddDecimalFunctionFactory();
 
     @Test
+    public void testAddDecimal128Overflow() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal128Constant(Long.MAX_VALUE, Long.MAX_VALUE, ColumnType.getDecimalType(37, 0)));
+        args.add(new Decimal128Constant(0, 1, ColumnType.getDecimalType(37, 0)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(38, 0));
+    }
+
+    @Test
     public void testAddDecimal128Simple() {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 2))); // 1.00
@@ -118,6 +126,14 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
+    public void testAddDecimal256Overflow() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal256Constant(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0)));
+        args.add(new Decimal256Constant(0, 0, 0, 1, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0));
+    }
+
+    @Test
     public void testAddDecimal256Simple() {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2))); // 1.00
@@ -170,6 +186,14 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(9, 2)));
         args.add(new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
         createFunctionAndAssertNull(args, ColumnType.getDecimalType(10, 2));
+    }
+
+    @Test
+    public void testAddDecimal64Overflow() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal64Constant(Long.MAX_VALUE, ColumnType.getDecimalType(17, 0)));
+        args.add(new Decimal64Constant(1, ColumnType.getDecimalType(17, 0)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(18, 0));
     }
 
     @Test

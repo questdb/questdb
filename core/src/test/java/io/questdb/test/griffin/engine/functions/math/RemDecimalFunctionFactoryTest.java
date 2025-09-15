@@ -85,6 +85,14 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
+    public void testRemDecimal16DivideByZero() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
+        args.add(new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 2)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(4, 2));
+    }
+
+    @Test
     public void testRemDecimal16Simple() {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 500, ColumnType.getDecimalType(4, 2))); // 5.00
@@ -106,6 +114,14 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 0)));
         createFunctionAndAssertNull(args, ColumnType.getDecimalType(4, 2));
+    }
+
+    @Test
+    public void testRemDecimal256DivideByZero() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2)));
+        args.add(new Decimal256Constant(0, 0, 0, 0, ColumnType.getDecimalType(40, 2)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(40, 2));
     }
 
     @Test
@@ -155,6 +171,14 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
+    public void testRemDecimal32DivideByZero() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal32Constant(100, ColumnType.getDecimalType(8, 2)));
+        args.add(new Decimal32Constant(0, ColumnType.getDecimalType(8, 2)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(8, 2));
+    }
+
+    @Test
     public void testRemDecimal32Simple() {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(500, ColumnType.getDecimalType(8, 2))); // 5.00
@@ -179,6 +203,14 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
+    public void testRemDecimal64DivideByZero() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal64Constant(100, ColumnType.getDecimalType(10, 2)));
+        args.add(new Decimal64Constant(0, ColumnType.getDecimalType(10, 2)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(10, 2));
+    }
+
+    @Test
     public void testRemDecimal64Simple() {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(500, ColumnType.getDecimalType(10, 2))); // 5.00
@@ -200,6 +232,14 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(15, 2)));
         args.add(new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(15, 0)));
         createFunctionAndAssertNull(args, ColumnType.getDecimalType(15, 2));
+    }
+
+    @Test
+    public void testRemDecimal8DivideByZero() {
+        ObjList<Function> args = new ObjList<>();
+        args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
+        args.add(new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 1)));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(2, 1));
     }
 
     @Test
