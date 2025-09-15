@@ -55,22 +55,46 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
+public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
+    public static final LongComparator GREATER_THAN = (a, b) -> a > b;
     public static final ArrayColumnTypes MAX_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
     public static final String NAME = "max";
-    private static final String SIGNATURE = NAME + "(D)";
+    private static final String SIGNATURE = NAME + "(L)";
 
+    /**
+     * Returns the SQL function signature for this factory.
+     *
+     * @return the signature string ("max(N)")
+     */
     @Override
     public String getSignature() {
         return SIGNATURE;
     }
 
+    /**
+     * Create a window-function instance that computes the maximum long value for the current window
+     * specification held in the provided SqlExecutionContext.
+     *
+     * <p>The factory inspects the WindowContext (framing mode, partitioning, ORDER BY, frame bounds)
+     * and returns a specialized Function implementation optimized for that combination
+     * (examples: per-partition aggregation, ROWS/RANGE bounded/unbounded frames, current-row,
+     * whole-result-set two-pass, memory-backed ring buffers with optional deque for sliding frames,
+     * or a LongNullFunction for invalid bounds).</p>
+     *
+     * @param position            parser/position index used to report errors
+     * @param args                function argument list (expected to contain the long-valued expression)
+     * @param argPositions        positions of the arguments (used for diagnostics)
+     * @param configuration       execution configuration (used for allocating buffers) — not documented as a parameter per project convention
+     * @param sqlExecutionContext execution context containing the WindowContext and runtime state — not documented as a parameter per project convention
+     * @return a Function specialized for computing the MAX(long) over the configured window
+     * @throws SqlException if the requested RANGE frame is used without ordering by the designated timestamp
+     *                      or if the combination of window parameters is not implemented
+     */
     @Override
     public Function newInstance(
             int position,
@@ -88,12 +112,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
-            return new DoubleNullFunction(args.get(0),
+            return new LongNullFunction(args.get(0),
                     NAME,
                     rowsLo,
                     rowsHi,
                     framingMode == WindowColumn.FRAMING_RANGE,
-                    partitionByRecord);
+                    partitionByRecord,
+                    Numbers.LONG_NULL);
         }
 
         if (partitionByRecord != null) {
@@ -356,97 +381,188 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Avoid autoboxing by not using the Comparator functional interface with generic parameters.
     @FunctionalInterface
-    public interface DoubleComparator {
-        boolean compare(double a, double b);
+    public interface LongComparator {
+        /**
+         * Compare two primitive long values.
+         *
+         * @param a first value
+         * @param b second value
+         * @return {@code true} if {@code a} is greater than {@code b}; {@code false} otherwise
+         */
+        boolean compare(long a, long b);
     }
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
+    static class MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowLongFunction {
 
         private final String name;
-        private double value;
+        private long value;
 
+        /**
+         * Creates a window function that returns the argument's value from the current row.
+         * <p>
+         * This implementation does not perform any windowing beyond reading the current record's value.
+         *
+         * @param arg  the input value expression whose current-row value will be returned
+         * @param name the function name used in plan/output identification
+         */
         MaxMinOverCurrentRowFunction(Function arg, String name) {
             super(arg);
             this.name = name;
         }
 
+        /**
+         * Reads the long value from the given record and stores it as the current value.
+         *
+         * @param record source record to read the value from
+         */
         @Override
         public void computeNext(Record record) {
-            value = arg.getDouble(record);
+            value = arg.getLong(record);
         }
 
+        /**
+         * Return the previously computed value for the current row.
+         * <p>
+         * The provided Record is ignored; this method returns the value stored by the function
+         * (e.g., set during the preceding evaluation pass).
+         *
+         * @param rec ignored
+         * @return the stored long value for the current row
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return value;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return ZERO_PASS indicating this function requires no processing passes.
+         */
         @Override
         public int getPassCount() {
             return ZERO_PASS;
         }
 
-
+        /**
+         * Computes the next value for the current input record and writes it as a long
+         * into the function's output column for that row.
+         * <p>
+         * The method updates internal computation state by calling computeNext(record)
+         * and then stores the resulting long value at the output address obtained from
+         * the provided WindowSPI for the given record offset and this function's
+         * columnIndex.
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
     // handles max() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
-        private final DoubleComparator comparator;
+        private final LongComparator comparator;
         private final String name;
 
+        /**
+         * Constructs a partition-based max/min window function.
+         * <p>
+         * This instance evaluates the aggregate (max or min) over each partition using the
+         * provided comparator to determine the ordering and the supplied name for identification.
+         *
+         * @param comparator comparator used to choose the representative long (e.g., greater-than for max)
+         * @param name       human-readable name for the function instance (used in plan/output)
+         */
         public MaxMinOverPartitionFunction(Map map,
                                            VirtualRecord partitionByRecord,
                                            RecordSink partitionBySink,
                                            Function arg,
-                                           DoubleComparator comparator,
+                                           LongComparator comparator,
                                            String name) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.name = name;
             this.comparator = comparator;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Indicates the function requires two processing passes.
+         * <p>
+         * The first pass aggregates values (e.g., computes a partition or global maximum)
+         * and the second pass emits results for each row.
+         *
+         * @return WindowFunction.TWO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
 
-
+        /**
+         * First pass: updates the per-partition maximum with the value from the current record.
+         * <p>
+         * If the argument value is not NULL, this method obtains the partition key for the record,
+         * looks up or creates the per-partition MapValue and stores the larger of the existing
+         * stored value and the current value using the configured comparator.
+         * <p>
+         * Side effects:
+         * - Mutates the partition map backing store (inserting a new entry when needed or updating
+         * an existing entry's stored maximum).
+         * <p>
+         * Nulls are ignored (no map access or modification when the argument is `Numbers.LONG_NULL`).
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
+            long l = arg.getLong(record);
+            if (l != Numbers.LONG_NULL) {
                 partitionByRecord.of(record);
                 MapKey key = map.withKey();
                 key.put(partitionByRecord, partitionBySink);
                 MapValue value = key.createValue();
 
                 if (!value.isNew()) {
-                    if (comparator.compare(d, value.getDouble(0))) {
-                        value.putDouble(0, d);
+                    if (comparator.compare(l, value.getLong(0))) {
+                        value.putLong(0, l);
                     }
                 } else {
-                    value.putDouble(0, d);
+                    value.putLong(0, l);
                 }
             }
         }
 
+        /**
+         * Writes the precomputed maximum value for the current partition to the output column for the given record.
+         * <p>
+         * Looks up the partition key derived from {@code record} in the per-partition map; if a value is present,
+         * its stored long is written to the output address obtained from {@code spi} and {@code recordOffset},
+         * otherwise {@link Numbers#LONG_NULL} is written.
+         *
+         * @param record       the input record used to derive the partition key
+         * @param recordOffset the offset passed to WindowSPI used to obtain the output write address
+         */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
             partitionByRecord.of(record);
@@ -454,9 +570,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
 
-            double val = value != null ? value.getDouble(0) : Double.NaN;
+            long val = value != null ? value.getLong(0) : Numbers.LONG_NULL;
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -464,11 +580,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When the lower bound is unbounded, we only need to keep one maximum value in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
-    public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
-        private static final int DEQUE_RECORD_SIZE = Double.BYTES;
-        private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final DoubleComparator comparator;
+        private static final int DEQUE_RECORD_SIZE = Long.BYTES;
+        private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        private final LongComparator comparator;
         private final LongList dequeFreeList = new LongList();
         private final int dequeInitialBufferSize;
         // holds another resizable ring buffers as monotonically decreasing deque
@@ -486,8 +602,25 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final String name;
         private final int timestampIndex;
         // current max value
-        private double maxMin;
+        private long maxMin;
 
+        /**
+         * Constructs a partitioned RANGE-frame window function instance that computes the maximum
+         * over a timestamp-based frame for each partition.
+         * <p>
+         * The constructor initializes internal memory buffers, deque storage (optional), frame
+         * boundary flags and comparison behavior used by the implementation.
+         *
+         * @param rangeLo           lower bound of the RANGE frame in timestamp units; Long.MIN_VALUE indicates unbounded preceding
+         * @param rangeHi           upper bound of the RANGE frame in timestamp units; zero means the frame includes the current row's timestamp
+         * @param arg               function that provides the value to be aggregated (input column)
+         * @param memory            primary ring buffer storage for timestamp/value pairs for each partition
+         * @param dequeMemory       optional deque storage used to maintain candidate maxima within the frame; may be null when not needed
+         * @param initialBufferSize initial capacity (in rows) for the ring buffer(s)
+         * @param timestampIdx      index of the designated timestamp column within the stored records
+         * @param comparator        comparator used to determine the current maximum between two long values
+         * @param name              human-readable name for the window function instance (used in planning/output)
+         */
         public MaxMinOverPartitionRangeFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -499,7 +632,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 MemoryARW dequeMemory,
                 int initialBufferSize,
                 int timestampIdx,
-                DoubleComparator comparator,
+                LongComparator comparator,
                 String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -517,6 +650,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.name = name;
         }
 
+        /**
+         * Releases native resources and clears internal buffers used by the window function.
+         * <p>
+         * Closes the primary memory region, clears internal free-list trackers, and closes
+         * the optional deque memory if it was allocated. Also invokes the superclass {@code close()}
+         * to perform any additional cleanup.
+         */
         @Override
         public void close() {
             super.close();
@@ -528,6 +668,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Advances the per-partition RANGE frame state with the given record and computes the current maximum value
+         * for the frame.
+         *
+         * <p>This updates or creates the per-partition ring buffer and optional monotonic deque stored in the
+         * factory's map, handles NULL inputs, grows underlying memory buffers when full, expires/retains rows
+         * according to the configured RANGE bounds, and sets the instance's current max value (maxMin).
+         *
+         * @param record the input record whose timestamp and value are added to the partition frame;
+         *               may be used to create or update the partition's buffer and to compute the frame's max
+         */
         @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
@@ -545,7 +696,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long dequeStartIndex = 0;
             long dequeEndIndex = 0;
             long timestamp = record.getTimestamp(timestampIndex);
-            double d = arg.getDouble(record);
+            long l = arg.getLong(record);
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -557,27 +708,27 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
                 }
 
-                if (Numbers.isFinite(d)) {
+                if (l != Numbers.LONG_NULL) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDouble(startOffset + Long.BYTES, d);
+                    memory.putLong(startOffset + Long.BYTES, l);
 
                     if (frameIncludesCurrentValue) {
-                        this.maxMin = d;
+                        this.maxMin = l;
                         frameSize = 1;
                         size = frameLoBounded ? 1 : 0;
                     } else {
-                        this.maxMin = Double.NaN;
+                        this.maxMin = Numbers.LONG_NULL;
                         frameSize = 0;
                         size = 1;
                     }
 
                     if (frameLoBounded && frameIncludesCurrentValue) {
-                        dequeMemory.putDouble(dequeStartOffset, d);
+                        dequeMemory.putLong(dequeStartOffset, l);
                         dequeEndIndex++;
                     }
                 } else {
                     size = 0;
-                    this.maxMin = Double.NaN;
+                    this.maxMin = Numbers.LONG_NULL;
                     frameSize = 0;
                 }
             } else {
@@ -602,8 +753,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             // if rangeHi < 0, some elements from the window can be not in the frame
                             if (frameSize > 0) {
                                 if (dequeStartIndex != dequeEndIndex &&
-                                        dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE) ==
-                                                memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES)) {
+                                        dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE) ==
+                                                memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES)) {
                                     dequeStartIndex++;
                                 }
                                 frameSize--;
@@ -618,7 +769,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 firstIdx = newFirstIdx;
 
                 // add new element if not null
-                if (Numbers.isFinite(d)) {
+                if (l != Numbers.LONG_NULL) {
                     if (size == capacity) { //buffer full
                         memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
                         expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
@@ -629,7 +780,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     // add element to buffer
                     memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, l);
                     size++;
                 }
 
@@ -640,9 +791,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         long diff = Math.abs(ts - timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
-                            double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            long value = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             while (dequeStartIndex != dequeEndIndex &&
-                                    comparator.compare(value, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * DEQUE_RECORD_SIZE))) {
+                                    comparator.compare(value, dequeMemory.getLong(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * DEQUE_RECORD_SIZE))) {
                                 dequeEndIndex--;
                             }
 
@@ -655,7 +806,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 dequeEndIndex = dequeStartIndex + memoryDesc.size;
                             }
 
-                            dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value);
+                            dequeMemory.putLong(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value);
                             dequeEndIndex++;
                             frameSize++;
                         } else {
@@ -663,19 +814,19 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
                     }
                     if (dequeStartIndex == dequeEndIndex) {
-                        this.maxMin = Double.NaN;
+                        this.maxMin = Numbers.LONG_NULL;
                     } else {
-                        this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE);
+                        this.maxMin = dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE);
                     }
                 } else {
-                    double oldMax = mapValue.getDouble(5);
+                    long oldMax = mapValue.getLong(5);
                     newFirstIdx = firstIdx;
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
-                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            if (Numbers.isNull(oldMax) || comparator.compare(val, oldMax)) {
+                            long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            if (oldMax == Numbers.LONG_NULL || comparator.compare(val, oldMax)) {
                                 oldMax = val;
                             }
 
@@ -703,39 +854,70 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 mapValue.putLong(7, dequeStartIndex);
                 mapValue.putLong(8, dequeEndIndex);
             } else {
-                mapValue.putDouble(5, this.maxMin);
+                mapValue.putLong(5, this.maxMin);
             }
         }
 
+        /**
+         * Return the previously computed max value for the current row.
+         * <p>
+         * The provided Record parameter is ignored; this function returns the value
+         * cached in the instance (set during pass1).
+         *
+         * @param rec ignored
+         * @return the cached maximum long value (may be LONG_NULL if no non-null input was seen)
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return WindowFunction.ZERO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reopens the function instance for reuse.
+         * <p>
+         * Resets the cached maximum value to `LONG_NULL` and defers any memory
+         * allocation until the value is first needed.
+         */
         @Override
         public void reopen() {
             super.reopen();
             // memory will allocate on first use
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Reset internal state and release allocated native resources used by the function.
+         *
+         * <p>Performs superclass reset, closes and releases the primary memory buffer,
+         * clears internal free lists used for ring/deque element recycling, and closes
+         * the optional deque memory if it was allocated.</p>
+         */
         @Override
         public void reset() {
             super.reset();
@@ -747,6 +929,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Appends a textual plan fragment describing this window function to the provided PlanSink.
+         * <p>
+         * The produced fragment has the form:
+         * `max({arg}) over (partition by {partitionFunctions} range between {lower} preceding and {upper})`
+         * where `{lower}` is either the numeric `maxDiff` when the lower bound is bounded or `unbounded` otherwise,
+         * and `{upper}` is `current row` when `minDiff == 0` or `{minDiff} preceding` otherwise.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -769,6 +959,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(')');
         }
 
+        /**
+         * Reset this function instance to its initial, empty state for reuse.
+         * <p>
+         * Clears internal buffers and free lists and truncates associated off-heap memory
+         * so the instance can be reused without retaining prior frame data.
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -783,23 +979,46 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles max() over (partition by x {order by o} rows between y and z)
     // removable cumulative aggregation
-    public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
-        private final DoubleComparator comparator;
+        private final LongComparator comparator;
         private final int dequeBufferSize;
         // holds another resizable ring buffers as monotonically decreasing deque
         private final MemoryARW dequeMemory;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        // holds fixed-size ring buffers of double values
+        // holds fixed-size ring buffers of long values
         private final MemoryARW memory;
         private final String name;
-        private double maxMin;
+        private long maxMin;
 
+        /**
+         * Constructs a rows-framed, partition-aware max window function instance and initializes
+         * internal frame and buffer sizes derived from the provided rows bounds.
+         *
+         * <p>Computations performed:
+         * - If rowsLo is bounded (> Long.MIN_VALUE) the constructor treats the frame as having a
+         * bounded number of preceding rows and sets frameSize, bufferSize and dequeBufferSize
+         * accordingly.
+         * - If rowsLo is unbounded (Long.MIN_VALUE) the constructor treats the frame as having an
+         * unbounded preceding side and sets buffer sizing for a bounded following side.
+         * - Determines whether the frame includes the current row (rowsHi == 0).
+         * - Stores provided memory buffers and comparator for use by the frame implementation.</p>
+         *
+         * @param rowsLo      the lower rows bound (number of rows preceding current row). Use Long.MIN_VALUE
+         *                    to indicate "UNBOUNDED PRECEDING".
+         * @param rowsHi      the upper rows bound (number of rows following current row or 0 for current row).
+         * @param arg         the input function that produces the long values to aggregate (the value source).
+         * @param memory      a MemoryARW instance used as the primary ring buffer for timestamps/values.
+         * @param dequeMemory optional MemoryARW used to store the monotonic deque when needed;
+         *                    may be null if no deque is required.
+         * @param comparator  comparator used to compare long values for determining the max.
+         * @param name        descriptive name for the window function instance (used in plan/debug output).
+         */
         public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -809,7 +1028,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 MemoryARW memory,
                 MemoryARW dequeMemory,
-                DoubleComparator comparator,
+                LongComparator comparator,
                 String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -833,12 +1052,34 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.name = name;
         }
 
+        /**
+         * Closes the window function and releases internal resources.
+         * <p>
+         * Calls the superclass close implementation then closes the memory buffer used by this instance.
+         */
         @Override
         public void close() {
             super.close();
             memory.close();
         }
 
+        /**
+         * Advance the window by one record: update per-partition ring buffer and deque state and compute the current max.
+         *
+         * <p>This method:
+         * - Looks up or initializes per-partition state in the backing map.
+         * - Maintains a circular buffer of recent values in native memory and an optional monotonic deque (for bounded lower frames)
+         * to support O(1) retrieval of the frame maximum.
+         * - Handles null input values by preserving nulls in the buffer but ignoring them when computing the max.
+         * - Updates the partition map with the new buffer indices and deque metadata and writes the incoming value into memory.
+         * - Sets the instance field `maxMin` to the current frame maximum (or `Numbers.LONG_NULL` if no non-null values are present).
+         * <p>
+         * The implementation assumes `bufferSize`, `dequeBufferSize`, `frameSize`, `frameIncludesCurrentValue`, `frameLoBounded`,
+         * `memory`, `dequeMemory`, `map`, `partitionByRecord`, `partitionBySink`, `arg`, `comparator`, and related fields are valid
+         * and correctly configured by the surrounding class.
+         *
+         * @param record the input record to advance the window with; its long value is read via `arg.getLong(record)`
+         */
         @Override
         public void computeNext(Record record) {
             // map stores:
@@ -857,7 +1098,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             long loIdx; //current index of lo frame value ('oldest')
             long startOffset;
-            double d = arg.getDouble(record);
+            long l = arg.getLong(record);
 
             long dequeStartOffset = 0;
             long dequeStartIndex = 0;
@@ -865,56 +1106,56 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             if (value.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
-                if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
-                    this.maxMin = d;
+                startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+                if (frameIncludesCurrentValue && l != Numbers.LONG_NULL) {
+                    this.maxMin = l;
                 } else {
-                    this.maxMin = Double.NaN;
+                    this.maxMin = Numbers.LONG_NULL;
                 }
 
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
                 }
                 if (frameLoBounded) {
-                    dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Double.BYTES) - dequeMemory.getPageAddress(0);
-                    if (Numbers.isFinite(d) && frameIncludesCurrentValue) {
-                        dequeMemory.putDouble(dequeStartOffset, d);
+                    dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Long.BYTES) - dequeMemory.getPageAddress(0);
+                    if (l != Numbers.LONG_NULL && frameIncludesCurrentValue) {
+                        dequeMemory.putLong(dequeStartOffset, l);
                         dequeEndIndex++;
                     }
                 } else {
-                    value.putDouble(2, this.maxMin);
+                    value.putLong(2, this.maxMin);
                 }
             } else {
                 loIdx = value.getLong(0);
                 startOffset = value.getLong(1);
                 //compute value using top frame element (that could be current or previous row)
-                double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
+                long hiValue = frameIncludesCurrentValue ? l : memory.getLong(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Long.BYTES);
                 if (frameLoBounded) {
                     dequeStartOffset = value.getLong(2);
                     dequeStartIndex = value.getLong(3);
                     dequeEndIndex = value.getLong(4);
 
-                    if (Numbers.isFinite(hiValue)) {
+                    if (hiValue != Numbers.LONG_NULL) {
                         while (dequeStartIndex != dequeEndIndex &&
-                                comparator.compare(hiValue, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES))) {
+                                comparator.compare(hiValue, dequeMemory.getLong(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * Long.BYTES))) {
                             dequeEndIndex--;
                         }
-                        dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * Double.BYTES, hiValue);
+                        dequeMemory.putLong(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * Long.BYTES, hiValue);
                         dequeEndIndex++;
-                        this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
+                        this.maxMin = dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Long.BYTES);
                     } else {
                         if (dequeStartIndex != dequeEndIndex) {
-                            this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
+                            this.maxMin = dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Long.BYTES);
                         } else {
-                            this.maxMin = Double.NaN;
+                            this.maxMin = Numbers.LONG_NULL;
                         }
                     }
                 } else {
-                    double max = value.getDouble(2);
-                    if (Numbers.isFinite(hiValue)) {
-                        if (Numbers.isNull(max) || comparator.compare(hiValue, max)) {
+                    long max = value.getLong(2);
+                    if (hiValue != Numbers.LONG_NULL) {
+                        if (max == Numbers.LONG_NULL || comparator.compare(hiValue, max)) {
                             max = hiValue;
-                            value.putDouble(2, max);
+                            value.putLong(2, max);
                         }
                     }
                     this.maxMin = max;
@@ -922,8 +1163,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                 if (frameLoBounded) {
                     //remove the oldest element
-                    double loValue = memory.getDouble(startOffset + loIdx * Double.BYTES);
-                    if (Numbers.isFinite(loValue) && dequeStartIndex != dequeEndIndex && loValue == dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES)) {
+                    long loValue = memory.getLong(startOffset + loIdx * Long.BYTES);
+                    if (loValue != Numbers.LONG_NULL && dequeStartIndex != dequeEndIndex && loValue == dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Long.BYTES)) {
                         dequeStartIndex++;
                     }
                 }
@@ -936,36 +1177,73 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putLong(3, dequeStartIndex);
                 value.putLong(4, dequeEndIndex);
             }
-            memory.putDouble(startOffset + loIdx * Double.BYTES, d);
+            memory.putLong(startOffset + loIdx * Long.BYTES, l);
         }
 
+        /**
+         * Return the previously computed max value for the current row.
+         * <p>
+         * The provided Record parameter is ignored; this function returns the value
+         * cached in the instance (set during pass1).
+         *
+         * @param rec ignored
+         * @return the cached maximum long value (may be LONG_NULL if no non-null input was seen)
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return WindowFunction.ZERO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-
+        /**
+         * First-pass processing for the window function: computes the next value for the current
+         * input record and writes the current maximum value (as a long) to the output column
+         * slot addressed by {@code spi.getAddress(recordOffset, columnIndex)}.
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reopens resources for reuse by the planner.
+         * <p>
+         * Delegates to the superclass implementation. Called when the function instance is
+         * reopened (for example when a plan is reused) to ensure internal state or resources
+         * are reset or reinitialized as required by the parent class.
+         */
         @Override
         public void reopen() {
             super.reopen();
         }
 
+        /**
+         * Reset internal state and release native memory resources held by this instance.
+         *
+         * <p>Calls {@code super.reset()}, closes the primary {@code memory} buffer and, if present,
+         * the {@code dequeMemory} buffer. Safe to call multiple times; subsequent calls will attempt
+         * to close already-closed resources.</p>
+         */
         @Override
         public void reset() {
             super.reset();
@@ -975,6 +1253,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Appends a textual plan representation of this window function to the provided PlanSink.
+         * <p>
+         * The representation has the form:
+         * "{functionName}({arg}) over (partition by {partitionKeys} rows between {lower} preceding and {upper})"
+         * where {lower} is either the numeric lower bound or "unbounded", and {upper} is either
+         * "current row" or a numeric preceding bound computed from the frame size.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -998,6 +1284,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(')');
         }
 
+        /**
+         * Reset the function's transient state to the top of a new execution.
+         *
+         * <p>Performs superclass reset then truncates internal memory buffers used for
+         * storing rows and the optional monotonic deque so both are empty and ready
+         * for reuse within a new plan/scan. This does not close or free the backing
+         * memory, only clears stored contents.</p>
+         */
         @Override
         public void toTop() {
             super.toTop();
@@ -1013,10 +1307,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // between upper bound and current row's value.
     // When the lower bound is unbounded, we only need to keep one maximum value(max) in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
-    public static class MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    public static class MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowLongFunction {
 
-        private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final DoubleComparator comparator;
+        private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        private final LongComparator comparator;
         private final boolean frameLoBounded;
         private final long initialCapacity;
         private final long maxDiff;
@@ -1036,10 +1330,39 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private long dequeStartOffset;
         private long firstIdx;
         private long frameSize;
-        private double maxMin;
+        private long maxMin;
         private long size;
         private long startOffset;
 
+        /**
+         * Create a window function that computes the maximum long value over a RANGE frame.
+         *
+         * <p>Initializes in-memory structures and state needed to maintain a sliding RANGE window
+         * of timestamps and values. The constructor:
+         * - derives the initial buffer capacity from {@code configuration},
+         * - records whether the lower frame bound is bounded,
+         * - computes absolute distances used to evaluate frame membership,
+         * - reserves space in the provided {@code memory} buffer for the ring of (timestamp,value)
+         * records and, when the lower bound is bounded, reserves a parallel deque buffer in
+         * {@code dequeMemory} for maintaining candidate maxima in monotonic order,
+         * - initializes bookkeeping fields (start index/offset, current frame size and current max).
+         * <p>
+         * Note: If {@code rangeLo} is not Long.MIN_VALUE (bounded lower bound), a non-null
+         * {@code dequeMemory} must be supplied so the deque structure can be allocated.
+         *
+         * @param rangeLo       lower bound of the RANGE frame in timestamp units, or {@link Long#MIN_VALUE}
+         *                      to indicate an unbounded (unbounded preceding) lower bound
+         * @param rangeHi       upper bound of the RANGE frame in timestamp units (absolute distance
+         *                      used relative to the current row's timestamp)
+         * @param arg           input value expression whose long values are aggregated
+         * @param configuration used to determine initial buffer sizing (page-size)
+         * @param memory        memory area used to store the ring buffer of records (timestamps + values)
+         * @param dequeMemory   memory area used to store the deque when the lower bound is bounded;
+         *                      may be null if {@code rangeLo} is {@link Long#MIN_VALUE}
+         * @param timestampIdx  index of the designated timestamp column used for RANGE comparisons
+         * @param comparator    comparator used to select the max between two long values
+         * @param name          function instance name (used for diagnostics / plan text)
+         */
         public MaxMinOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
@@ -1048,7 +1371,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 int timestampIdx,
-                DoubleComparator comparator,
+                LongComparator comparator,
                 String name
         ) {
             super(arg);
@@ -1063,17 +1386,24 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
 
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
+                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
             }
             this.comparator = comparator;
             this.name = name;
         }
 
+        /**
+         * Releases resources held by this window function.
+         *
+         * <p>Delegates to {@code super.close()}, closes the primary memory buffer and, if present,
+         * the auxiliary deque memory buffer. After this call the function's native memory resources
+         * are released and should not be accessed.</p>
+         */
         @Override
         public void close() {
             super.close();
@@ -1083,10 +1413,26 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Advance the sliding RANGE frame with the given record, updating internal buffers and the current maximum.
+         *
+         * <p>Processes the input record's timestamp and long value, expires out-of-frame entries, appends the new
+         * non-null value to the ring buffer, updates the frame's deque of candidate maxima (resizing ring or deque
+         * memory if needed), and refreshes the current max value (stored in {@code maxMin}).</p>
+         *
+         * <p>Notes:
+         * - Timestamps are read from the record at {@code timestampIndex}; the value is read via {@code arg.getLong(record)}.
+         * - NULL long values are represented by {@link io.questdb.std.Numbers#LONG_NULL} and are not added to the deque.
+         * - This method mutates internal state: ring buffer (startOffset, capacity, firstIdx, size), deque
+         * (dequeStartOffset, dequeCapacity, dequeStartIndex, dequeEndIndex), frameSize and {@code maxMin}.
+         * - Ring buffer and deque may be reallocated and moved; indices are adjusted accordingly.</p>
+         *
+         * @param record input record whose timestamp and value are used to advance the frame
+         */
         @Override
         public void computeNext(Record record) {
             long timestamp = record.getTimestamp(timestampIndex);
-            double d = arg.getDouble(record);
+            long l = arg.getLong(record);
 
             long newFirstIdx = firstIdx;
             if (frameLoBounded) {
@@ -1097,9 +1443,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         // if rangeHi < 0, some elements from the window can be not in the frame
                         if (frameSize > 0) {
-                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            if (Numbers.isFinite(val) && dequeStartIndex != dequeEndIndex && val ==
-                                    dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Double.BYTES)) {
+                            long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            if (val != Numbers.LONG_NULL && dequeStartIndex != dequeEndIndex && val ==
+                                    dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Long.BYTES)) {
                                 dequeStartIndex++;
                             }
                             frameSize--;
@@ -1114,7 +1460,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             firstIdx = newFirstIdx;
 
             // add new element if not null
-            if (Numbers.isFinite(d)) {
+            if (l != Numbers.LONG_NULL) {
                 if (size == capacity) { //buffer full
                     long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
                     // call above can end up resizing and thus changing memory start address
@@ -1137,7 +1483,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                 // add element to buffer
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDouble(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, l);
                 size++;
             }
 
@@ -1149,26 +1495,26 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long diff = Math.abs(ts - timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
-                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        long value = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
 
                         while (dequeStartIndex != dequeEndIndex &&
-                                comparator.compare(value, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * Double.BYTES))) {
+                                comparator.compare(value, dequeMemory.getLong(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * Long.BYTES))) {
                             dequeEndIndex--;
                         }
 
                         if (dequeEndIndex - dequeStartIndex == dequeCapacity) { // deque full
-                            long newAddress = dequeMemory.appendAddressFor((dequeCapacity << 1) * Double.BYTES);
+                            long newAddress = dequeMemory.appendAddressFor((dequeCapacity << 1) * Long.BYTES);
                             // call above can end up resizing and thus changing deque memory start address
                             long oldAddress = dequeMemory.getPageAddress(0) + dequeStartOffset;
 
                             if (dequeStartIndex == 0) {
-                                Vect.memcpy(newAddress, oldAddress, dequeCapacity * Double.BYTES);
+                                Vect.memcpy(newAddress, oldAddress, dequeCapacity * Long.BYTES);
                             } else {
                                 dequeStartIndex %= dequeCapacity;
                                 //we can't simply copy because that'd leave a gap in the middle
-                                long firstPieceSize = (dequeCapacity - dequeStartIndex) * Double.BYTES;
-                                Vect.memcpy(newAddress, oldAddress + dequeStartIndex * Double.BYTES, firstPieceSize);
-                                Vect.memcpy(newAddress + firstPieceSize, oldAddress, dequeStartIndex * Double.BYTES);
+                                long firstPieceSize = (dequeCapacity - dequeStartIndex) * Long.BYTES;
+                                Vect.memcpy(newAddress, oldAddress + dequeStartIndex * Long.BYTES, firstPieceSize);
+                                Vect.memcpy(newAddress + firstPieceSize, oldAddress, dequeStartIndex * Long.BYTES);
                                 dequeStartIndex = 0;
                             }
 
@@ -1177,7 +1523,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             dequeCapacity <<= 1;
                         }
 
-                        dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeCapacity) * Double.BYTES, value);
+                        dequeMemory.putLong(dequeStartOffset + (dequeEndIndex % dequeCapacity) * Long.BYTES, value);
                         dequeEndIndex++;
                         frameSize++;
                     } else {
@@ -1185,9 +1531,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
                 }
                 if (dequeStartIndex == dequeEndIndex) {
-                    this.maxMin = Double.NaN;
+                    this.maxMin = Numbers.LONG_NULL;
                 } else {
-                    this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Double.BYTES);
+                    this.maxMin = dequeMemory.getLong(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Long.BYTES);
                 }
             } else {
                 newFirstIdx = firstIdx;
@@ -1195,8 +1541,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
-                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        if (Numbers.isNull(this.maxMin) || comparator.compare(val, this.maxMin)) {
+                        long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        if (this.maxMin == Numbers.LONG_NULL || comparator.compare(val, this.maxMin)) {
                             this.maxMin = val;
                         }
                         frameSize++;
@@ -1210,31 +1556,57 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Return the previously computed max value for the current row.
+         * <p>
+         * The provided Record parameter is ignored; this function returns the value
+         * cached in the instance (set during pass1).
+         *
+         * @param rec ignored
+         * @return the cached maximum long value (may be LONG_NULL if no non-null input was seen)
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return WindowFunction.ZERO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reinitializes internal state and allocates buffers to their initial capacities for reuse.
+         * <p>
+         * Resets the running maximum to NULL, clears counters and indices (start index, first index,
+         * frame size, and size), and (re)allocates the primary record buffer using the configured
+         * initial capacity. If a deque buffer is used, it is likewise (re)allocated to the initial
+         * capacity and its start/end indices are reset.
+         */
         @Override
         public void reopen() {
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
@@ -1242,12 +1614,19 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             size = 0;
             if (dequeMemory != null) {
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
+                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
                 dequeStartIndex = 0;
                 dequeEndIndex = 0;
             }
         }
 
+        /**
+         * Reset internal state and release native memory resources held by this instance.
+         *
+         * <p>Calls {@code super.reset()}, closes the primary {@code memory} buffer and, if present,
+         * the {@code dequeMemory} buffer. Safe to call multiple times; subsequent calls will attempt
+         * to close already-closed resources.</p>
+         */
         @Override
         public void reset() {
             super.reset();
@@ -1257,6 +1636,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Appends a textual representation of this window function's plan to the provided sink.
+         * <p>
+         * The emitted format is:
+         * `functionName(arg) over (range between {lower} preceding and {upper})`
+         * where `{lower}` is either the numeric `maxDiff` or the literal `unbounded`,
+         * and `{upper}` is either `current row` (when `minDiff == 0`) or the numeric `minDiff + " preceding"`.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1277,10 +1664,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(')');
         }
 
+        /**
+         * Reset this function's internal state and buffers to their initial "top" (clean) state.
+         * <p>
+         * This reinitializes the aggregated max value, frame/structure sizes and indices, and
+         * truncates and re-allocates the underlying ring and deque memories to the configured
+         * initial capacities so the instance can be reused for a new plan or partition.
+         */
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
             capacity = initialCapacity;
             memory.truncate();
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -1290,7 +1684,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.truncate();
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
+                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
                 dequeEndIndex = 0;
                 dequeStartIndex = 0;
             }
@@ -1299,11 +1693,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // Handles max() over ({order by o} rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    public static class MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    public static class MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowLongFunction {
 
         private final MemoryARW buffer;
         private final int bufferSize;
-        private final DoubleComparator comparator;
+        private final LongComparator comparator;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
@@ -1314,14 +1708,30 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private MemoryARW dequeMemory;
         private long dequeStartIndex = 0;
         private int loIdx = 0;
-        private double maxMin = Double.NaN;
+        private long maxMin = Numbers.LONG_NULL;
 
+        /**
+         * Constructs a rows-frame max window function backed by native memory buffers.
+         * <p>
+         * The constructor configures internal ring buffer and optional monotonic deque sizes from the
+         * rows-based frame bounds and wires provided memory regions and comparator. For frames with a
+         * bounded lower bound a deque buffer is used; for unbounded lower bounds no deque is allocated.
+         *
+         * @param arg         input function producing long values for each row
+         * @param rowsLo      lower bound of the ROWS frame (negative values indicate preceding;
+         *                    Long.MIN_VALUE denotes unbounded preceding)
+         * @param rowsHi      upper bound of the ROWS frame (0 typically indicates inclusion of the current row)
+         * @param memory      native memory region used as the circular buffer for timestamps/values
+         * @param dequeMemory native memory region used for the monotonic deque (only used when the lower bound is bounded)
+         * @param comparator  comparator used to determine the window aggregate (e.g., GREATER_THAN for max)
+         * @param name        name used for identification/plan output
+         */
         public MaxMinOverRowsFrameFunction(Function arg,
                                            long rowsLo,
                                            long rowsHi,
                                            MemoryARW memory,
                                            MemoryARW dequeMemory,
-                                           DoubleComparator comparator,
+                                           LongComparator comparator,
                                            String name) {
             super(arg);
 
@@ -1353,6 +1763,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.name = name;
         }
 
+        /**
+         * Release resources held by this instance.
+         * <p>
+         * Calls super.close(), closes the primary buffer, and closes the optional deque memory if it was allocated.
+         */
         @Override
         public void close() {
             super.close();
@@ -1362,72 +1777,118 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Advance the sliding-frame state by incorporating the given record.
+         * <p>
+         * Updates internal circular buffer, optional monotonic deque, and the current window maximum (maxMin)
+         * according to the configured frame semantics (bounded or unbounded lower bound and whether the
+         * frame includes the current row). NULL long values (Numbers.LONG_NULL) are ignored for aggregation;
+         * non-NULL values are compared using the configured comparator.
+         * <p>
+         * Side effects:
+         * - mutates the circular buffer storing recent row values,
+         * - updates dequeStartIndex/dequeEndIndex and dequeMemory when a bounded lower frame is used,
+         * - updates the running maxMin,
+         * - advances loIdx.
+         *
+         * @param record the input record whose long value (arg.getLong(record)) is incorporated into the window
+         */
         @Override
         public void computeNext(Record record) {
-            double d = arg.getDouble(record);
+            long l = arg.getLong(record);
 
             //compute value using top frame element (that could be current or previous row)
-            double hiValue = d;
+            long hiValue = l;
             if (frameLoBounded && !frameIncludesCurrentValue) {
-                hiValue = buffer.getDouble((long) ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
+                hiValue = buffer.getLong((long) ((loIdx + frameSize - 1) % bufferSize) * Long.BYTES);
             } else if (!frameLoBounded && !frameIncludesCurrentValue) {
-                hiValue = buffer.getDouble((long) (loIdx % bufferSize) * Double.BYTES);
+                hiValue = buffer.getLong((long) (loIdx % bufferSize) * Long.BYTES);
             }
-            if (Numbers.isFinite(hiValue)) {
+            if (hiValue != Numbers.LONG_NULL) {
                 if (frameLoBounded) {
                     while (dequeStartIndex != dequeEndIndex &&
-                            comparator.compare(hiValue, dequeMemory.getDouble(((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES))) {
+                            comparator.compare(hiValue, dequeMemory.getLong(((dequeEndIndex - 1) % dequeBufferSize) * Long.BYTES))) {
                         dequeEndIndex--;
                     }
-                    dequeMemory.putDouble(dequeEndIndex % dequeBufferSize * Double.BYTES, hiValue);
+                    dequeMemory.putLong(dequeEndIndex % dequeBufferSize * Long.BYTES, hiValue);
                     dequeEndIndex++;
                 } else {
-                    if (Numbers.isNull(maxMin) || comparator.compare(hiValue, maxMin)) {
+                    if (maxMin == Numbers.LONG_NULL || comparator.compare(hiValue, maxMin)) {
                         maxMin = hiValue;
                     }
                 }
             }
 
             if (frameLoBounded) {
-                this.maxMin = dequeEndIndex == dequeStartIndex ? Double.NaN : dequeMemory.getDouble(dequeStartIndex % dequeBufferSize * Double.BYTES);
+                this.maxMin = dequeEndIndex == dequeStartIndex ? Numbers.LONG_NULL : dequeMemory.getLong(dequeStartIndex % dequeBufferSize * Long.BYTES);
                 //remove the oldest element with newest
-                double loValue = buffer.getDouble((long) loIdx * Double.BYTES);
-                if (Numbers.isFinite(loValue) && dequeStartIndex != dequeEndIndex && loValue ==
-                        dequeMemory.getDouble(dequeStartIndex % dequeBufferSize * Double.BYTES)) {
+                long loValue = buffer.getLong((long) loIdx * Long.BYTES);
+                if (loValue != Numbers.LONG_NULL && dequeStartIndex != dequeEndIndex && loValue ==
+                        dequeMemory.getLong(dequeStartIndex % dequeBufferSize * Long.BYTES)) {
                     dequeStartIndex++;
                 }
             }
 
             //overwrite oldest element
-            buffer.putDouble((long) loIdx * Double.BYTES, d);
+            buffer.putLong((long) loIdx * Long.BYTES, l);
             loIdx = (loIdx + 1) % bufferSize;
         }
 
+        /**
+         * Return the previously computed max value for the current row.
+         * <p>
+         * The provided Record parameter is ignored; this function returns the value
+         * cached in the instance (set during pass1).
+         *
+         * @param rec ignored
+         * @return the cached maximum long value (may be LONG_NULL if no non-null input was seen)
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return WindowFunction.ZERO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-
+        /**
+         * First-pass processing for the window function: computes the next value for the current
+         * input record and writes the current maximum value (as a long) to the output column
+         * slot addressed by {@code spi.getAddress(recordOffset, columnIndex)}.
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reinitializes internal state so the function can be reused without reallocating.
+         * <p>
+         * Resets the cached max value to NULL, resets the low index pointer, reinitializes
+         * the underlying circular buffer, and clears the monotonic deque indices if a
+         * deque is in use.
+         */
         @Override
         public void reopen() {
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
             loIdx = 0;
             initBuffer();
             if (dequeMemory != null) {
@@ -1436,6 +1897,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Reset the function's runtime state to its initial, unused condition.
+         *
+         * <p>Performs a superclass reset, closes and releases the backing buffer and optional deque memory,
+         * and clears all internal indices and the cached maximum value so the instance can be reused.</p>
+         */
         @Override
         public void reset() {
             super.reset();
@@ -1446,9 +1913,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 dequeStartIndex = 0;
             }
             loIdx = 0;
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Appends a textual plan fragment for this window function to the provided PlanSink.
+         * <p>
+         * The produced text has the form `max(arg) over ( rows between {lower} preceding and {upper} )`,
+         * where `{lower}` is either the numeric lower bound (bufferSize) or `unbounded` when
+         * `frameLoBounded` is false, and `{upper}` is `current row` when `frameIncludesCurrentValue`
+         * is true or `N preceding` where `N = bufferSize - frameSize` otherwise.
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1469,10 +1944,16 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(')');
         }
 
+        /**
+         * Reset internal state to the top (start) so the function can be reused.
+         * <p>
+         * Clears the currently tracked maximum, resets index counters, reinitializes
+         * the circular buffer, and resets deque pointers when present.
+         */
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
             loIdx = 0;
             initBuffer();
             if (dequeMemory != null) {
@@ -1481,9 +1962,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
         }
 
+        /**
+         * Initialize the memory buffer by writing the sentinel LONG_NULL value into each slot.
+         * <p>
+         * Each slot is a 64-bit long at offset i * Long.BYTES for i in [0, bufferSize).
+         * This prepares the ring buffer/memory region so subsequent logic can treat empty slots as NULL.
+         */
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDouble((long) i * Double.BYTES, Double.NaN);
+                buffer.putLong((long) i * Long.BYTES, Numbers.LONG_NULL);
             }
         }
     }
@@ -1492,71 +1979,118 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - max(a) over (partition by x rows between unbounded preceding and current row)
     // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
-        private final DoubleComparator comparator;
+        private final LongComparator comparator;
         private final String name;
-        private double maxMin;
+        private long maxMin;
 
+        /**
+         * Create a function that computes the maximum long value for an unbounded-rows frame within a partition.
+         *
+         * <p>This constructor initializes a per-partition unbounded-rows window function using the provided
+         * partition map and expression that produces the values to aggregate.</p>
+         *
+         * @param arg        function that produces the long value evaluated for each row
+         * @param comparator comparator used to compare two long values when determining the maximum
+         * @param name       function name used in plan/output (e.g., "max")
+         */
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
                                                              VirtualRecord partitionByRecord,
                                                              RecordSink partitionBySink,
                                                              Function arg,
-                                                             DoubleComparator comparator,
+                                                             LongComparator comparator,
                                                              String name) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
         }
 
+        /**
+         * Advance aggregation for the current record: update and store the per-partition maximum.
+         * <p>
+         * If the input value is non-null, this method inserts or updates the partition map entry
+         * with the greater of the existing stored value and the current value, and sets the
+         * instance field `maxMin` to the partition's current maximum. If the input value is null,
+         * it loads the existing partition maximum into `maxMin` (or LONG_NULL if none).
+         */
         @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            double d = arg.getDouble(record);
+            long l = arg.getLong(record);
 
-            if (Numbers.isFinite(d)) {
+            if (l != Numbers.LONG_NULL) {
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    value.putDouble(0, d);
-                    this.maxMin = d;
+                    value.putLong(0, l);
+                    this.maxMin = l;
                 } else {
-                    double max = value.getDouble(0);
-                    if (comparator.compare(d, max)) {
-                        value.putDouble(0, d);
-                        max = d;
+                    long max = value.getLong(0);
+                    if (comparator.compare(l, max)) {
+                        value.putLong(0, l);
+                        max = l;
                     }
                     this.maxMin = max;
                 }
             } else {
                 MapValue value = key.findValue();
-                this.maxMin = value != null ? value.getDouble(0) : Double.NaN;
+                this.maxMin = value != null ? value.getLong(0) : Numbers.LONG_NULL;
             }
         }
 
+        /**
+         * Return the previously computed max value for the current row.
+         * <p>
+         * The provided Record parameter is ignored; this function returns the value
+         * cached in the instance (set during pass1).
+         *
+         * @param rec ignored
+         * @return the cached maximum long value (may be LONG_NULL if no non-null input was seen)
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return WindowFunction.ZERO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-
+        /**
+         * First-pass processing for the window function: computes the next value for the current
+         * input record and writes the current maximum value (as a long) to the output column
+         * slot addressed by {@code spi.getAddress(recordOffset, columnIndex)}.
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Appends this window function's plan representation to the provided PlanSink.
+         * <p>
+         * The output format is:
+         * "max(arg) over (partition by {partition-functions} rows between unbounded preceding and current row)"
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1569,53 +2103,108 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     }
 
     // Handles max() over (rows between unbounded preceding and current row); there's no partition by.
-    public static class MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
+    public static class MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowLongFunction {
 
-        private final DoubleComparator comparator;
+        private final LongComparator comparator;
         private final String name;
-        private double maxMin = Double.NaN;
+        private long maxMin = Numbers.LONG_NULL;
 
-        public MaxMinOverUnboundedRowsFrameFunction(Function arg, DoubleComparator comparator, String name) {
+        /**
+         * Create a MaxMinOverUnboundedRowsFrameFunction that computes a running extreme (max/min)
+         * over an unbounded-preceding ROWS frame.
+         *
+         * @param arg        function that produces the long value for each row
+         * @param comparator comparator used to compare two long values (defines max vs min behavior)
+         * @param name       output column name used by this function instance
+         */
+        public MaxMinOverUnboundedRowsFrameFunction(Function arg, LongComparator comparator, String name) {
             super(arg);
             this.comparator = comparator;
             this.name = name;
         }
 
+        /**
+         * Processes the given record and updates the running maximum value.
+         * <p>
+         * Reads a long value from {@code arg} for the provided {@code record}. If the value is
+         * not null and is greater (according to {@code comparator}) than the current
+         * stored value, updates the internal {@code maxMin} to that value.
+         *
+         * @param record the record to read the value from
+         */
         @Override
         public void computeNext(Record record) {
-            double d = arg.getDouble(record);
-            if (Numbers.isFinite(d) && (Numbers.isNull(maxMin) || comparator.compare(d, maxMin))) {
-                maxMin = d;
+            long l = arg.getLong(record);
+            if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
+                maxMin = l;
             }
         }
 
+        /**
+         * Return the previously computed max value for the current row.
+         * <p>
+         * The provided Record parameter is ignored; this function returns the value
+         * cached in the instance (set during pass1).
+         *
+         * @param rec ignored
+         * @return the cached maximum long value (may be LONG_NULL if no non-null input was seen)
+         */
         @Override
-        public double getDouble(Record rec) {
+        public long getLong(Record rec) {
             return maxMin;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Returns the number of processing passes required by this window function.
+         *
+         * @return WindowFunction.ZERO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * First-pass processing for the window function: computes the next value for the current
+         * input record and writes the current maximum value (as a long) to the output column
+         * slot addressed by {@code spi.getAddress(recordOffset, columnIndex)}.
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reset the function's internal state between uses.
+         * <p>
+         * Calls the superclass reset implementation and clears the current maximum
+         * by setting {@code maxMin} to {@link Numbers#LONG_NULL}, so subsequent
+         * passes start with no remembered value.
+         */
         @Override
         public void reset() {
             super.reset();
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Appends this window function's plan representation to the provided sink.
+         * <p>
+         * The produced plan looks like: `max(arg) over (rows between unbounded preceding and current row)`.
+         *
+         * @param sink destination for the textual plan output
+         */
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1623,66 +2212,120 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(" over (rows between unbounded preceding and current row)");
         }
 
+        /**
+         * Reset the function state for reuse at the top of a new processing cycle.
+         *
+         * <p>Calls {@code super.toTop()} and clears the running maximum by setting
+         * {@code maxMin} to {@link io.questdb.std.Numbers#LONG_NULL}.</p>
+         */
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
         }
     }
 
     // max() over () - empty clause, no partition by no order by, no frame == default frame
-    static class MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
+    static class MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowLongFunction {
 
-        private final DoubleComparator comparator;
+        private final LongComparator comparator;
         private final String name;
-        private double maxMin = Double.NaN;
+        private long maxMin = Numbers.LONG_NULL;
 
-        public MaxMinOverWholeResultSetFunction(Function arg, DoubleComparator comparator, String name) {
+        /**
+         * Create a window function that computes an aggregate (max/min) for the whole result set.
+         *
+         * @param arg        the input function that produces long values to aggregate
+         * @param comparator comparison used to decide the winning value (e.g. {@code GREATER_THAN} for max)
+         * @param name       human-readable function name returned by getName()/toPlan()
+         */
+        public MaxMinOverWholeResultSetFunction(Function arg, LongComparator comparator, String name) {
             super(arg);
             this.comparator = comparator;
             this.name = name;
         }
 
+        /**
+         * Returns the function instance name used for identification in plans and logs.
+         *
+         * @return the instance name
+         */
         @Override
         public String getName() {
             return name;
         }
 
+        /**
+         * Indicates the function requires two processing passes.
+         * <p>
+         * The first pass aggregates values (e.g., computes a partition or global maximum)
+         * and the second pass emits results for each row.
+         *
+         * @return WindowFunction.TWO_PASS
+         */
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
         }
 
-
+        /**
+         * First pass processing: update the running maximum with the current row's long value.
+         * <p>
+         * Examines the argument value from the provided record; if it is not LONG_NULL and
+         * compares greater (per the configured comparator) than the stored `maxMin` (or if
+         * `maxMin` is LONG_NULL), replaces `maxMin` with this value.
+         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            double d = arg.getDouble(record);
-            if (Numbers.isFinite(d) && (Numbers.isNull(maxMin) || comparator.compare(d, maxMin))) {
-                maxMin = d;
+            long l = arg.getLong(record);
+            if (l != Numbers.LONG_NULL && (maxMin == Numbers.LONG_NULL || comparator.compare(l, maxMin))) {
+                maxMin = l;
             }
         }
 
+        /**
+         * Write the current aggregated maximum value into the function's output column for the given row.
+         * <p>
+         * This implementation stores the precomputed `maxMin` long value at the memory address obtained
+         * from {@code spi.getAddress(recordOffset, columnIndex)}.
+         *
+         * @param record       input record (not used by this implementation)
+         * @param recordOffset byte offset identifying the target row in the SPI output memory
+         */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
+        /**
+         * Reset the function's internal state between uses.
+         * <p>
+         * Calls the superclass reset implementation and clears the current maximum
+         * by setting {@code maxMin} to {@link Numbers#LONG_NULL}, so subsequent
+         * passes start with no remembered value.
+         */
         @Override
         public void reset() {
             super.reset();
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
         }
 
+        /**
+         * Reset the function state for reuse at the top of a new processing cycle.
+         *
+         * <p>Calls {@code super.toTop()} and clears the running maximum by setting
+         * {@code maxMin} to {@link io.questdb.std.Numbers#LONG_NULL}.</p>
+         */
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            maxMin = Numbers.LONG_NULL;
         }
     }
 
     static {
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
-        MAX_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value
+        MAX_COLUMN_TYPES.add(ColumnType.LONG); // max value
 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // frame size
@@ -1690,7 +2333,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory size
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory capacity
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory firstIdx
-        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // max value case when unbounded preceding
 
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // frame size
@@ -1706,7 +2349,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
-        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // max value case when unbounded preceding
 
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
