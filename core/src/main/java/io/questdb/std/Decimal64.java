@@ -158,6 +158,13 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Returns whether the Decimal64 is null or not.
+     */
+    public static boolean isNull(long value) {
+        return value == Decimals.DECIMAL64_NULL;
+    }
+
+    /**
      * Calculate modulo of two Decimal64 numbers and store the result in sink (a % b -> sink)
      */
     public static void modulo(Decimal64 a, Decimal64 b, Decimal64 sink) {
@@ -399,11 +406,10 @@ public class Decimal64 implements Sinkable {
      * Negate this decimal (in-place)
      */
     public void negate() {
-        try {
-            this.value = Math.negateExact(this.value);
-        } catch (ArithmeticException ignored) {
-            throw NumericException.instance().put("Overflow in negation: cannot negate Long.MIN_VALUE");
+        if (isNull()) {
+            return;
         }
+        this.value = -this.value;
     }
 
     public void of(long value, int scale) {
