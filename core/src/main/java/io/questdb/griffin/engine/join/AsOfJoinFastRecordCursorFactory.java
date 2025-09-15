@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -161,7 +160,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             // reset the cursor to the frame corresponding to slaveRecB
             // (earlier nextSlave() call might have moved it)
             int slaveFrameIndex = Rows.toPartitionIndex(slaveRecB.getRowId());
-            TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             slaveTimeFrameCursor.jumpTo(slaveFrameIndex);
             slaveTimeFrameCursor.open();
 

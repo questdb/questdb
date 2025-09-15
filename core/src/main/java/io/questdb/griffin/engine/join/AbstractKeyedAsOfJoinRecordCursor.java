@@ -167,7 +167,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
-        final int cursorFrameIndex = timeFrame.getFrameIndex();
         slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
         slaveTimeFrameCursor.open();
 
