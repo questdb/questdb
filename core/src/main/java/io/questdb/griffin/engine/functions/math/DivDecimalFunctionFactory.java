@@ -63,7 +63,7 @@ public class DivDecimalFunctionFactory implements FunctionFactory {
         return new Func(left, right, ColumnType.getDecimalType(precision, scale));
     }
 
-    private static class Func extends ArithmeticDecimalFunction {
+    private static class Func extends ArithmeticDecimal256Function {
 
         public Func(Function left, Function right, int targetType) {
             super(left, right, targetType);

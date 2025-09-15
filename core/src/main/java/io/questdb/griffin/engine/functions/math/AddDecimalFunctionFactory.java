@@ -58,12 +58,83 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         final int rightType = right.getType();
         final int precision = Math.min(Math.max(ColumnType.getDecimalPrecision(leftType), ColumnType.getDecimalPrecision(rightType)) + 1, Decimals.MAX_PRECISION);
         final int scale = Math.max(ColumnType.getDecimalScale(leftType), ColumnType.getDecimalScale(rightType));
-        return new Func(left, right, ColumnType.getDecimalType(precision, scale));
+
+        switch (Decimals.getStorageSizePow2(precision)) {
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale));
+            case 4:
+                return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale));
+            default:
+                return new Decimal256Func(left, right, ColumnType.getDecimalType(precision, scale));
+        }
     }
 
-    private static class Func extends ArithmeticDecimalFunction {
+    private static class Decimal128Func extends ArithmeticDecimal128Function {
 
-        public Func(Function left, Function right, int targetType) {
+        public Decimal128Func(Function left, Function right, int targetType) {
+            super(left, right, targetType);
+        }
+
+        @Override
+        public String getName() {
+            return "+";
+        }
+
+        @Override
+        protected boolean calc(Record rec) {
+            DecimalUtil.load(leftDecimal, left, rec);
+            if (leftDecimal.isNull()) {
+                return false;
+            }
+            DecimalUtil.load(rightDecimal, right, rec);
+            if (rightDecimal.isNull()) {
+                return false;
+            }
+            try {
+                leftDecimal.add(rightDecimal);
+            } catch (NumericException ignore) {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    private static class Decimal256Func extends ArithmeticDecimal256Function {
+
+        public Decimal256Func(Function left, Function right, int targetType) {
+            super(left, right, targetType);
+        }
+
+        @Override
+        public String getName() {
+            return "+";
+        }
+
+        @Override
+        protected boolean calc(Record rec) {
+            DecimalUtil.load(leftDecimal, left, rec);
+            if (leftDecimal.isNull()) {
+                return false;
+            }
+            DecimalUtil.load(rightDecimal, right, rec);
+            if (rightDecimal.isNull()) {
+                return false;
+            }
+            try {
+                leftDecimal.add(rightDecimal);
+            } catch (NumericException ignore) {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    private static class Decimal64Func extends ArithmeticDecimal64Function {
+
+        public Decimal64Func(Function left, Function right, int targetType) {
             super(left, right, targetType);
         }
 

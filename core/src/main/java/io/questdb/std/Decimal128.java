@@ -547,6 +547,15 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Returns whether this is null or not.
+     *
+     * @return true if null, false otherwise
+     */
+    public boolean isNull() {
+        return high == Decimals.DECIMAL128_HI_NULL && low == Decimals.DECIMAL128_LO_NULL;
+    }
+
+    /**
      * Check if this number is zero
      */
     public boolean isZero() {
@@ -622,6 +631,20 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
+    }
+
+    /**
+     * Set this Decimal128 from a long value with the specified scale.
+     *
+     * @param value the long value
+     * @param scale the desired scale
+     */
+    public void ofLong(long value, int scale) {
+        validateScale(scale);
+
+        this.scale = scale;
+        this.low = value;
+        this.high = value < 0 ? -1L : 0L;
     }
 
     /**

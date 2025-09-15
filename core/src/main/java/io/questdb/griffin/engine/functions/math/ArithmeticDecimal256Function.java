@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
-public abstract class ArithmeticDecimalFunction extends DecimalFunction implements BinaryFunction {
+abstract class ArithmeticDecimal256Function extends DecimalFunction implements BinaryFunction {
     protected final Function left;
     protected final Decimal256 leftDecimal = new Decimal256();
     protected final int precision;
@@ -42,7 +42,7 @@ public abstract class ArithmeticDecimalFunction extends DecimalFunction implemen
     protected final int scale;
     private boolean isNull;
 
-    public ArithmeticDecimalFunction(Function left, Function right, int targetType) {
+    public ArithmeticDecimal256Function(Function left, Function right, int targetType) {
         super(targetType);
         this.left = left;
         this.right = right;

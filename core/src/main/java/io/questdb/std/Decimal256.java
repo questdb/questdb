@@ -996,8 +996,8 @@ public class Decimal256 implements Sinkable {
      * @return true if null, false otherwise
      */
     public boolean isNull() {
-        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
-                lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
+        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL
+                && lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
     }
 
     /**

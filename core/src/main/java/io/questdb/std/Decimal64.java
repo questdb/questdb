@@ -342,6 +342,15 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Returns whether this is null or not.
+     *
+     * @return true if null, false otherwise
+     */
+    public boolean isNull() {
+        return value == Decimals.DECIMAL64_NULL;
+    }
+
+    /**
      * Check if this decimal is zero
      */
     public boolean isZero() {
@@ -403,6 +412,14 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Set this Decimal64 to the null value.
+     */
+    public void ofNull() {
+        value = Decimals.DECIMAL64_NULL;
+        scale = 0;
+    }
+
+    /**
      * Round this Decimal128 to the specified scale using the given rounding mode.
      * This method performs in-place rounding without requiring a divisor.
      *
@@ -429,7 +446,6 @@ public class Decimal64 implements Sinkable {
             this.scale = targetScale;
             return;
         }
-
 
         if (this.scale < targetScale) {
             boolean isNegative = isNegative();

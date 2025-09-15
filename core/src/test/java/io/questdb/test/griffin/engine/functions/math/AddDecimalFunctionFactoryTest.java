@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -33,6 +34,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.math.AddDecimalFunctionFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractTest;
@@ -259,10 +261,12 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
 
     private void createFunctionAndAssert(ObjList<Function> args, long hh, long hl, long lh, long ll, int expectedType) {
         try (Function func = factory.newInstance(-1, args, null, null, null)) {
-            Assert.assertEquals(hh, func.getDecimal256HH(null));
-            Assert.assertEquals(hl, func.getDecimal256HL(null));
-            Assert.assertEquals(lh, func.getDecimal256LH(null));
-            Assert.assertEquals(ll, func.getDecimal256LL(null));
+            Decimal256 value = new Decimal256();
+            DecimalUtil.load(value, func, null);
+            Assert.assertEquals(hh, value.getHh());
+            Assert.assertEquals(hl, value.getHl());
+            Assert.assertEquals(lh, value.getLh());
+            Assert.assertEquals(ll, value.getLl());
             Assert.assertEquals(expectedType, func.getType());
         }
     }
