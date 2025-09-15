@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
@@ -64,7 +65,17 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
             case 1:
             case 2:
             case 3:
-                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale));
+                final int rightPrecision = ColumnType.getDecimalPrecision(rightType);
+                switch (Decimals.getStorageSizePow2(rightPrecision)) {
+                    case 0:
+                        return new Decimal8Func(left, right, ColumnType.getDecimalType(precision, scale));
+                    case 1:
+                        return new Decimal16Func(left, right, ColumnType.getDecimalType(precision, scale));
+                    case 2:
+                        return new Decimal32Func(left, right, ColumnType.getDecimalType(precision, scale));
+                    default:
+                        return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale));
+                }
             case 4:
                 return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale));
             default:
@@ -102,6 +113,36 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class Decimal16Func extends ArithmeticDecimal64Function {
+
+        public Decimal16Func(Function left, Function right, int targetType) {
+            super(left, right, targetType);
+        }
+
+        @Override
+        public String getName() {
+            return "%";
+        }
+
+        @Override
+        protected boolean calc(Record rec) {
+            DecimalUtil.load(decimal, left, rec);
+            if (decimal.isNull()) {
+                return false;
+            }
+            final short rightValue = right.getDecimal16(rec);
+            if (rightValue == Decimals.DECIMAL16_NULL) {
+                return false;
+            }
+            try {
+                decimal.modulo(rightValue, rightScale);
+            } catch (NumericException ignore) {
+                return false;
+            }
+            return true;
+        }
+    }
+
     private static class Decimal256Func extends ArithmeticDecimal256Function {
 
         public Decimal256Func(Function left, Function right, int targetType) {
@@ -132,6 +173,36 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class Decimal32Func extends ArithmeticDecimal64Function {
+
+        public Decimal32Func(Function left, Function right, int targetType) {
+            super(left, right, targetType);
+        }
+
+        @Override
+        public String getName() {
+            return "%";
+        }
+
+        @Override
+        protected boolean calc(Record rec) {
+            DecimalUtil.load(decimal, left, rec);
+            if (decimal.isNull()) {
+                return false;
+            }
+            final int rightValue = right.getDecimal32(rec);
+            if (rightValue == Decimals.DECIMAL32_NULL) {
+                return false;
+            }
+            try {
+                decimal.modulo(rightValue, rightScale);
+            } catch (NumericException ignore) {
+                return false;
+            }
+            return true;
+        }
+    }
+
     private static class Decimal64Func extends ArithmeticDecimal64Function {
 
         public Decimal64Func(Function left, Function right, int targetType) {
@@ -145,16 +216,46 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         protected boolean calc(Record rec) {
-            DecimalUtil.load(leftDecimal, left, rec);
-            if (leftDecimal.isNull()) {
+            DecimalUtil.load(decimal, left, rec);
+            if (decimal.isNull()) {
                 return false;
             }
-            DecimalUtil.load(rightDecimal, right, rec);
-            if (rightDecimal.isNull()) {
+            final long rightValue = right.getDecimal64(rec);
+            if (Decimal64.isNull(rightValue)) {
                 return false;
             }
             try {
-                leftDecimal.modulo(rightDecimal);
+                decimal.modulo(rightValue, rightScale);
+            } catch (NumericException ignore) {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    private static class Decimal8Func extends ArithmeticDecimal64Function {
+
+        public Decimal8Func(Function left, Function right, int targetType) {
+            super(left, right, targetType);
+        }
+
+        @Override
+        public String getName() {
+            return "%";
+        }
+
+        @Override
+        protected boolean calc(Record rec) {
+            DecimalUtil.load(decimal, left, rec);
+            if (decimal.isNull()) {
+                return false;
+            }
+            final byte rightValue = right.getDecimal8(rec);
+            if (rightValue == Decimals.DECIMAL8_NULL) {
+                return false;
+            }
+            try {
+                decimal.modulo(rightValue, rightScale);
             } catch (NumericException ignore) {
                 return false;
             }

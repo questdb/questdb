@@ -199,24 +199,31 @@ public class Decimal64 implements Sinkable {
     /**
      * Add another Decimal64 to this one (in-place)
      */
-    public void add(Decimal64 other) {
+    public void add(long otherValue, int otherScale) {
         try {
-            if (this.scale == other.scale) {
+            if (this.scale == otherScale) {
                 // Same scale - direct addition
-                this.value = Math.addExact(this.value, other.value);
-            } else if (this.scale < other.scale) {
+                this.value = Math.addExact(this.value, otherValue);
+            } else if (this.scale < otherScale) {
                 // Scale up this to match other's scale
-                int scaleDiff = other.scale - this.scale;
-                this.value = Math.addExact(scaleUp(this.value, scaleDiff), other.value);
-                this.scale = other.scale;
+                int scaleDiff = otherScale - this.scale;
+                this.value = Math.addExact(scaleUp(this.value, scaleDiff), otherValue);
+                this.scale = otherScale;
             } else {
                 // Scale up other to match this scale
-                int scaleDiff = this.scale - other.scale;
-                this.value = Math.addExact(this.value, scaleUp(other.value, scaleDiff));
+                int scaleDiff = this.scale - otherScale;
+                this.value = Math.addExact(this.value, scaleUp(otherValue, scaleDiff));
             }
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 64-bit capacity");
         }
+    }
+
+    /**
+     * Add another Decimal64 to this one (in-place)
+     */
+    public void add(Decimal64 other) {
+        add(other.value, other.scale);
     }
 
     /**
@@ -261,8 +268,8 @@ public class Decimal64 implements Sinkable {
     /**
      * Divide this by another Decimal64 (in-place)
      */
-    public void divide(long other, int otherScale, int resultScale, RoundingMode roundingMode) {
-        if (other == 0) {
+    public void divide(long otherValue, int otherScale, int resultScale, RoundingMode roundingMode) {
+        if (otherValue == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
@@ -273,7 +280,7 @@ public class Decimal64 implements Sinkable {
         int scaleAdjustment = resultScale + otherScale - this.scale;
 
         long dividend = this.value;
-        long divisor = other;
+        long divisor = otherValue;
         boolean isNegative = (dividend < 0) ^ (divisor < 0);
 
         // Make both values positive for division
@@ -368,34 +375,48 @@ public class Decimal64 implements Sinkable {
      * Calculate modulo of this by another Decimal64 (in-place)
      */
     public void modulo(Decimal64 other) {
-        if (other.value == 0) {
+        modulo(other.value, other.scale);
+    }
+
+    /**
+     * Calculate modulo of this by another Decimal64 (in-place)
+     */
+    public void modulo(long otherValue, int otherScale) {
+        if (otherValue == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
         long dividend = this.value;
-        long divisor = other.value;
+        long divisor = otherValue;
 
         // Convert to the same scale for modulo operation
-        if (this.scale < other.scale) {
-            dividend = scaleUp(dividend, other.scale - this.scale);
-        } else if (this.scale > other.scale) {
-            divisor = scaleUp(divisor, this.scale - other.scale);
+        if (this.scale < otherScale) {
+            dividend = scaleUp(dividend, otherScale - this.scale);
+        } else if (this.scale > otherScale) {
+            divisor = scaleUp(divisor, this.scale - otherScale);
         }
 
         this.value = dividend % divisor;
-        this.scale = Math.max(this.scale, other.scale);
+        this.scale = Math.max(this.scale, otherScale);
     }
 
     /**
      * Multiply this by another Decimal64 (in-place)
      */
     public void multiply(Decimal64 other) {
+        multiply(other.value, other.scale);
+    }
+
+    /**
+     * Multiply this by another Decimal64 (in-place)
+     */
+    public void multiply(long otherValue, int otherScale) {
         try {
-            this.value = Math.multiplyExact(this.value, other.value);
+            this.value = Math.multiplyExact(this.value, otherValue);
         } catch (ArithmeticException ignored) {
             throw NumericException.instance().put("Overflow in multiplication: product exceeds 64-bit capacity");
         }
-        this.scale += other.scale;
+        this.scale += otherScale;
 
         if (this.scale > MAX_SCALE) {
             throw NumericException.instance().put("Overflow in multiplication: resulting scale exceeds maximum (" + MAX_SCALE + ")");
@@ -477,19 +498,26 @@ public class Decimal64 implements Sinkable {
      * Subtract another Decimal64 from this one (in-place)
      */
     public void subtract(Decimal64 other) {
+        subtract(other.value, other.scale);
+    }
+
+    /**
+     * Subtract another Decimal64 from this one (in-place)
+     */
+    public void subtract(long otherValue, int otherScale) {
         try {
-            if (this.scale == other.scale) {
+            if (this.scale == otherScale) {
                 // Same scale - direct subtraction
-                this.value = Math.subtractExact(this.value, other.value);
-            } else if (this.scale < other.scale) {
+                this.value = Math.subtractExact(this.value, otherValue);
+            } else if (this.scale < otherScale) {
                 // Scale up this to match other's scale
-                int scaleDiff = other.scale - this.scale;
-                this.value = Math.subtractExact(scaleUp(this.value, scaleDiff), other.value);
-                this.scale = other.scale;
+                int scaleDiff = otherScale - this.scale;
+                this.value = Math.subtractExact(scaleUp(this.value, scaleDiff), otherValue);
+                this.scale = otherScale;
             } else {
                 // Scale up other to match this scale
-                int scaleDiff = this.scale - other.scale;
-                this.value = Math.subtractExact(this.value, scaleUp(other.value, scaleDiff));
+                int scaleDiff = this.scale - otherScale;
+                this.value = Math.subtractExact(this.value, scaleUp(otherValue, scaleDiff));
             }
         } catch (ArithmeticException ignored) {
             throw NumericException.instance().put("Overflow in subtraction: result exceeds 64-bit capacity");

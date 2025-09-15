@@ -34,13 +34,12 @@ import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 
 abstract class ArithmeticDecimal64Function extends DecimalFunction implements BinaryFunction {
+    protected final Decimal64 decimal = new Decimal64();
     protected final Function left;
-    protected final Decimal64 leftDecimal = new Decimal64();
     protected final int precision;
     protected final Function right;
-    protected final Decimal64 rightDecimal = new Decimal64();
+    protected final int rightScale;
     protected final int scale;
-    private boolean isNull;
 
     public ArithmeticDecimal64Function(Function left, Function right, int targetType) {
         super(targetType);
@@ -48,6 +47,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
         this.right = right;
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
+        this.rightScale = ColumnType.getDecimalScale(right.getType());
     }
 
     @Override
@@ -55,7 +55,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
         if (!calc(rec)) {
             return Decimals.DECIMAL16_NULL;
         }
-        return (short) leftDecimal.getValue();
+        return (short) decimal.getValue();
     }
 
     @Override
@@ -63,7 +63,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
         if (!calc(rec)) {
             return Decimals.DECIMAL32_NULL;
         }
-        return (int) leftDecimal.getValue();
+        return (int) decimal.getValue();
     }
 
     @Override
@@ -71,7 +71,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
         if (!calc(rec)) {
             return Decimals.DECIMAL64_NULL;
         }
-        return leftDecimal.getValue();
+        return decimal.getValue();
     }
 
     @Override
@@ -79,7 +79,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
         if (!calc(rec)) {
             return Decimals.DECIMAL8_NULL;
         }
-        return (byte) leftDecimal.getValue();
+        return (byte) decimal.getValue();
     }
 
     @Override
@@ -108,7 +108,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
     }
 
     /**
-     * The implementation must fill the leftDecimal with the arithmetic operation value following
+     * The implementation must fill the decimal with the arithmetic operation value following
      * the target scale and precision. If the value to cast is null, it must return false
      * without doing additional work.
      *
