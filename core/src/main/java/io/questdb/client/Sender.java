@@ -82,7 +82,20 @@ import java.util.concurrent.TimeUnit;
  * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
  * stronger transactional guarantees and better feedback in case of errors.
  * <p>
- * Error-handling: Most errors throw an instance of {@link LineSenderException}.
+ * Error handling: Most errors throw an instance of {@link LineSenderException}.
+ * <p>
+ * When an error occurs while sending data to a server, the Sender does NOT clear its internal buffers.
+ * This allows you to retry sending the same data by calling {@link #flush()} again.
+ * <br>
+ * Recovery strategies:
+ * - For transient errors (e.g., temporary network issues): Simply retry by calling {@link #flush()}
+ * - For permanent errors (e.g., invalid data format): You have two options:
+ *   1. Close the Sender and create a new instance, or
+ *   2. Call {@link #reset()} to clear the internal buffers and start building a new row
+ * <br>
+ * Note: If the underlying error is permanent, retrying {@link #flush()} will fail again.
+ * Use {@link #reset()} to discard the problematic data and continue with new data. See {@link LineSenderException#isRetryable()}
+ *
  */
 public interface Sender extends Closeable, ArraySender<Sender> {
 

@@ -56,7 +56,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -704,15 +703,13 @@ public abstract class AbstractLineHttpSender implements Sender {
                                     : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
                         // throw, but do not reset - a caller can try to flush later
-                        throwOnHttpErrorResponse(statusCode, response);
+                        throwOnHttpErrorResponse(statusCode, response, true);
                     }
                     client.disconnect(); // forces reconnect, just in case
                     retryBackoff = backoff(rnd, retryBackoff);
                     continue;
                 }
-                // not a retryable request -> reset(!) and throw
-                reset();
-                throwOnHttpErrorResponse(statusCode, response);
+                throwOnHttpErrorResponse(statusCode, response, false);
             } catch (HttpClientException e) {
                 // this is a network error, we can retry
                 lastFlushFailed = true;
@@ -725,7 +722,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up, but do not reset the sender
                     // a caller can try to flush later
-                    throw new LineSenderException("Could not flush buffer: ").put(url)
+                    throw new LineSenderException("Could not flush buffer: ", true).put(url)
                             .put(" Connection Failed").put(": ").put(e.getMessage()).errno(e.getErrno());
                 }
                 rotateAddress();
@@ -769,17 +766,17 @@ public abstract class AbstractLineHttpSender implements Sender {
         return pendingRows == autoFlushRows;
     }
 
-    private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
+    private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response, boolean retryable) {
         CharSequence statusAscii = statusCode.asAsciiCharSequence();
         if (Chars.equals("405", statusAscii)) {
             consumeChunkedResponse(response);
             client.disconnect();
-            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]");
+            throw new LineSenderException("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]", retryable);
         }
         if (Chars.equals("401", statusAscii) || Chars.equals("403", statusAscii)) {
             sink.clear();
             chunkedResponseToSink(response, sink);
-            LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error");
+            LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error", retryable);
             if (sink.length() > 0) {
                 ex = ex.put(": ").put(sink);
             }
@@ -793,7 +790,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 jsonErrorParser = new JsonErrorParser();
             }
             jsonErrorParser.reset();
-            LineSenderException ex = jsonErrorParser.toException(response.getResponse(), statusCode);
+            LineSenderException ex = jsonErrorParser.toException(response.getResponse(), statusCode, retryable);
             client.disconnect();
             throw ex;
         }
@@ -803,7 +800,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         chunkedResponseToSink(response, sink);
         sink.put(" [http-status=").put(statusCode).put(']');
         client.disconnect();
-        throw new LineSenderException(sink);
+        throw new LineSenderException(sink, retryable);
     }
 
     private void validateNotClosed() {
@@ -997,9 +994,9 @@ public abstract class AbstractLineHttpSender implements Sender {
             jsonSink.clear();
         }
 
-        LineSenderException toException(Response chunkedRsp, DirectUtf8Sequence httpStatus) {
+        LineSenderException toException(Response chunkedRsp, DirectUtf8Sequence httpStatus, boolean retryable) {
             Fragment fragment;
-            LineSenderException exception = new LineSenderException("Could not flush buffer: ");
+            LineSenderException exception = new LineSenderException("Could not flush buffer: ", retryable);
             while ((fragment = chunkedRsp.recv()) != null) {
                 try {
                     jsonSink.putNonAscii(fragment.lo(), fragment.hi());
