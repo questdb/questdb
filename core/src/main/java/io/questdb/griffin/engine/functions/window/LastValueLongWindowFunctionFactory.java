@@ -2427,16 +2427,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * This implementation does not support the first pass; calling it will always fail.
-         *
-         * @param record       current input record (unused)
-         * @param recordOffset offset of the current record (unused)
-         * @throws UnsupportedOperationException always thrown because pass1 is not applicable
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**

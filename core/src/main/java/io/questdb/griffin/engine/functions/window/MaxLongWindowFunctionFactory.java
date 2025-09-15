@@ -1590,11 +1590,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * This implementation does not support the first aggregation pass and always throws.
-         *
-         * @throws UnsupportedOperationException always thrown to indicate pass1 is not supported by this implementation
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);

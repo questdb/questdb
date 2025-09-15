@@ -2451,16 +2451,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return lastValue;
         }
 
-        /**
-         * Unsupported first-pass operation for this function variant.
-         * <p>
-         * This implementation does not perform a pass1 aggregation. Calling it will always
-         * throw an UnsupportedOperationException.
-         *
-         * @param record       the current record (unused)
-         * @param recordOffset the memory offset of the record (unused)
-         * @throws UnsupportedOperationException always thrown when invoked
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -2926,16 +2916,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return lastValue;
         }
 
-        /**
-         * Unsupported first-pass operation for this function variant.
-         * <p>
-         * This implementation does not perform a pass1 aggregation. Calling it will always
-         * throw an UnsupportedOperationException.
-         *
-         * @param record       the current record (unused)
-         * @param recordOffset the memory offset of the record (unused)
-         * @throws UnsupportedOperationException always thrown when invoked
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
