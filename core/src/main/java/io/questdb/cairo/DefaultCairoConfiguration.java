@@ -1330,6 +1330,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAcceptingWrites() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }

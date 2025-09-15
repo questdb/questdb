@@ -675,6 +675,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isAcceptingWrites();
+
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *

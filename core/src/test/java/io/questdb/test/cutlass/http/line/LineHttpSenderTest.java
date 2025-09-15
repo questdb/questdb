@@ -112,6 +112,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: u; cast error from protocol type: STRING to column type: UUID"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .doubleColumn("b", 1234)
@@ -122,6 +123,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .longColumn("b", 1024)
@@ -132,6 +134,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .doubleColumn("i", 1024.2)
@@ -142,6 +145,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .doubleColumn("str", 1024.2)
@@ -1413,6 +1417,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
@@ -1453,6 +1458,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
