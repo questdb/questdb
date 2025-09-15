@@ -91,56 +91,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public long getDecimal128Hi(long offset) {
-        return Decimals.DECIMAL128_HI_NULL;
-    }
-
-    @Override
-    public long getDecimal128Lo(long offset) {
-        return Decimals.DECIMAL128_LO_NULL;
-    }
-
-    @Override
-    public short getDecimal16(long offset) {
-        return Decimals.DECIMAL16_NULL;
-    }
-
-    @Override
-    public long getDecimal256HH(long offset) {
-        return Decimals.DECIMAL256_HH_NULL;
-    }
-
-    @Override
-    public long getDecimal256HL(long offset) {
-        return Decimals.DECIMAL256_HL_NULL;
-    }
-
-    @Override
-    public long getDecimal256LH(long offset) {
-        return Decimals.DECIMAL256_LH_NULL;
-    }
-
-    @Override
-    public long getDecimal256LL(long offset) {
-        return Decimals.DECIMAL256_LL_NULL;
-    }
-
-    @Override
-    public int getDecimal32(long offset) {
-        return Decimals.DECIMAL32_NULL;
-    }
-
-    @Override
-    public long getDecimal64(long offset) {
-        return Decimals.DECIMAL64_NULL;
-    }
-
-    @Override
-    public byte getDecimal8(long offset) {
-        return Decimals.DECIMAL8_NULL;
-    }
-
-    @Override
     public long getExtendSegmentSize() {
         throw new UnsupportedOperationException();
     }

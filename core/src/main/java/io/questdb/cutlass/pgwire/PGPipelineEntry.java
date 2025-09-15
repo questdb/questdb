@@ -64,6 +64,9 @@ import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
@@ -1942,6 +1945,75 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void outColTxtDecimal128(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        long hi = rec.getDecimal128Hi(col);
+        long lo = rec.getDecimal128Lo(col);
+        if (Decimal128.isNull(hi, lo)) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtDecimal16(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        short value = rec.getDecimal16(col);
+        if (value == Decimals.DECIMAL16_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimal256(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        long hh = rec.getDecimal256HH(col);
+        long hl = rec.getDecimal256HL(col);
+        long lh = rec.getDecimal256LH(col);
+        long ll = rec.getDecimal256LL(col);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type),
+                    ColumnType.getDecimalScale(type), utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtDecimal32(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        int value = rec.getDecimal32(col);
+        if (value == Decimals.DECIMAL32_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimal64(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        long value = rec.getDecimal64(col);
+        if (value == Decimals.DECIMAL64_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimal8(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        byte value = rec.getDecimal8(col);
+        if (value == Decimals.DECIMAL8_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimalLong(PGResponseSink utf8Sink, long value, int type) {
+        final long a = utf8Sink.skipInt();
+        Decimals.append(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), utf8Sink);
+        utf8Sink.putLenEx(a);
+    }
+
     private void outColTxtDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final double doubleValue = record.getDouble(columnIndex);
         if (Numbers.isNull(doubleValue)) {
@@ -2379,6 +2451,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case BINARY_TYPE_ARRAY:
                         outColBinArr(utf8Sink, record, colIndex, type);
+                        break;
+                    case ColumnType.DECIMAL8:
+                        outColTxtDecimal8(utf8Sink, record, colIndex, type);
+                        break;
+                    case ColumnType.DECIMAL16:
+                        outColTxtDecimal16(utf8Sink, record, colIndex, type);
+                        break;
+                    case ColumnType.DECIMAL32:
+                        outColTxtDecimal32(utf8Sink, record, colIndex, type);
+                        break;
+                    case ColumnType.DECIMAL64:
+                        outColTxtDecimal64(utf8Sink, record, colIndex, type);
+                        break;
+                    case ColumnType.DECIMAL128:
+                        outColTxtDecimal128(utf8Sink, record, colIndex, type);
+                        break;
+                    case ColumnType.DECIMAL256:
+                        outColTxtDecimal256(utf8Sink, record, colIndex, type);
                         break;
                     default:
                         assert false;
