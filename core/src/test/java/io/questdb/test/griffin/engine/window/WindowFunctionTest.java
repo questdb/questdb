@@ -2429,13 +2429,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t0\t0\t0\t0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t0\t0\t0\t0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t3.0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t0\t0\t0\t0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t1.0\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t0\t0\t0\t0\t2.0\t2.0\n",
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t3.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t1.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows current row), " +
                             "sum(d) over (order by ts desc rows current row), " +
