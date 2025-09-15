@@ -1134,4 +1134,426 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testMinNonDesignatedTimestampWithManyNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            execute("insert into tab select " +
+                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
+                    "case when x % 3 = 0 then null else dateadd('h', (x % 24)::int, '2021-01-01T00:00:00.000000Z') end as other_ts, " +
+                    "x as val, " +
+                    "case when x % 2 = 0 then 'A' else 'B' end as grp " +
+                    "from long_sequence(10000)");
+
+            assertQueryNoLeakCheck(
+                    "grp\tnon_null_count\tmin_other_ts\n" +
+                            "A\t3334\t2021-01-01T02:00:00.000000Z\n" +
+                            "B\t3333\t2021-01-01T01:00:00.000000Z\n",
+                    "SELECT grp, " +
+                            "count(other_ts) as non_null_count, " +
+                            "min(other_ts) as min_other_ts " +
+                            "FROM tab GROUP BY grp ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "grp\tmin_window_ts\n" +
+                            "A\t2021-01-01T02:00:00.000000Z\n" +
+                            "B\t2021-01-01T01:00:00.000000Z\n",
+                    "SELECT DISTINCT grp, min_window_ts FROM (" +
+                            "SELECT grp, min(other_ts) OVER (PARTITION BY grp) as min_window_ts FROM tab" +
+                            ") ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinNonDesignatedTimestampWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', null, 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T08:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', null, 4, 'A')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-05T16:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', null, 6, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tother_ts\tval\tgrp\tmin_other_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t2021-01-03T08:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-01T12:00:00.000000Z\n",
+                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\tother_ts\tval\tgrp\tmin_other_ts_running\n" +
+                            "2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t2021-01-03T08:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-01T12:00:00.000000Z\n",
+                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as min_other_ts_running FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampOnNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-05T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', '2021-01-04T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', '2021-01-02T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-01T00:00:00.000000Z', 5, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tother_ts\tval\tgrp\tmin_other_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z\n",
+                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER () as min_other_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\tother_ts\tval\tgrp\tmin_other_ts_by_grp\n" +
+                            "2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z\n",
+                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts_by_grp FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampOverWholeResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER () as min_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeFrameBufferOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            execute("insert into tab select " +
+                    "dateadd('s', ((x-1) * 10)::int, '2021-01-01T00:00:00.000000Z'::timestamp) as ts, " +
+                    "x as val, " +
+                    "'grp_' || ((x-1) % 100) as grp " +
+                    "from long_sequence(50000)");
+
+            assertQueryNoLeakCheck(
+                    "cnt\tpartitions\n" +
+                            "50000\t100\n",
+                    "SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
+                            "SELECT ts, val, grp, " +
+                            "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as min_ts_large_window " +
+                            "FROM tab" +
+                            ")",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeFrameDequeOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            execute("insert into tab select " +
+                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
+                    "x as val, " +
+                    "case when x % 5 = 0 then 'A' else 'B' end as grp " +
+                    "from long_sequence(50000)");
+
+            assertQueryNoLeakCheck(
+                    "cnt\tmax_val\n" +
+                            "50000\t50000\n",
+                    "SELECT count(*) as cnt, max(val) as max_val FROM (" +
+                            "SELECT ts, val, grp, " +
+                            "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded " +
+                            "FROM tab" +
+                            ")",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeFrameEdgeCases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            execute("insert into tab values " +
+                    "('2021-01-01T12:00:00.000000Z', 1, 'A'), " +
+                    "('2021-01-01T12:00:00.000000Z', 2, 'A'), " +
+                    "('2021-01-01T12:00:01.000000Z', 3, 'A'), " +
+                    "('2021-01-01T12:00:01.000000Z', 4, 'A'), " +
+                    "('2021-01-01T12:00:02.000000Z', 5, 'A'), " +
+                    "('2021-01-01T12:00:03.000000Z', 6, 'A'), " +
+                    "('2021-01-01T12:00:04.000000Z', 7, 'A'), " +
+                    "('2021-01-01T12:00:05.000000Z', 8, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tmin_ts_precise\n" +
+                            "2021-01-01T12:00:00.000000Z\t1\t\n" +
+                            "2021-01-01T12:00:00.000000Z\t2\t\n" +
+                            "2021-01-01T12:00:01.000000Z\t3\t\n" +
+                            "2021-01-01T12:00:01.000000Z\t4\t\n" +
+                            "2021-01-01T12:00:02.000000Z\t5\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T12:00:03.000000Z\t6\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T12:00:04.000000Z\t7\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T12:00:05.000000Z\t8\t2021-01-01T12:00:01.000000Z\n",
+                    "SELECT ts, val, min(ts) OVER (ORDER BY ts RANGE BETWEEN '4' SECOND preceding AND '2' SECOND preceding) as min_ts_precise FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeFrameWithManyPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            execute("insert into tab select " +
+                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
+                    "x as val, " +
+                    "'grp_' || (x % 1000) as grp " +
+                    "from long_sequence(25000)");
+
+            assertQueryNoLeakCheck(
+                    "partition_count\ttotal_rows\n" +
+                            "1000\t25000\n",
+                    "SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
+                            "SELECT ts, val, grp, " +
+                            "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as min_ts " +
+                            "FROM tab" +
+                            ")",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeOnNonDesignatedTimestampFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, other_ts timestamp, val int) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, other_ts, val, min(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab",
+                    49,
+                    "RANGE is supported only for queries ordered by designated timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeWithBoundedFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T01:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-01T02:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-01T03:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-01T04:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-01T05:00:00.000000Z', 6, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts_bounded\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t\n" +
+                            "2021-01-01T01:00:00.000000Z\t2\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T02:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T03:00:00.000000Z\t4\tA\t2021-01-01T01:00:00.000000Z\n" +
+                            "2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T02:00:00.000000Z\n" +
+                            "2021-01-01T05:00:00.000000Z\t6\tA\t2021-01-01T03:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRangeWithPartitionAndSpecificBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'B')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts_by_grp_6h\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T06:00:00.000000Z\t2\tB\t2021-01-01T06:00:00.000000Z\n" +
+                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T18:00:00.000000Z\t4\tB\t2021-01-01T18:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-02T06:00:00.000000Z\t6\tB\t2021-01-02T06:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as min_ts_by_grp_6h FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRowsCurrentRowOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts_current_only\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as min_ts_current_only FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRowsUnboundedPrecedingToCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts_unbounded_rows\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as min_ts_unbounded_rows FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampRowsWholePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts_whole_partition\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as min_ts_whole_partition FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMinTimestampWithPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmin_ts_by_grp\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp) as min_ts_by_grp FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
 }
