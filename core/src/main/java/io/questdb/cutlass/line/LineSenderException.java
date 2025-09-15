@@ -72,7 +72,7 @@ public class LineSenderException extends RuntimeException {
         super(t);
         this.retryable = false;
     }
-    
+
     public LineSenderException(String message, Throwable cause) {
         super(message, cause);
         this.message.put(message);
