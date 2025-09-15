@@ -304,17 +304,19 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                         // Linear scan must have found the row.
                         return;
                     }
+                    boolean foundRowIsntLastInFrame = foundRow < slaveTimeFrame.getRowHi() - 1;
                     slaveFrameRow = foundRow;
                     record.hasSlave(true);
                     slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
                     long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                    if (slaveFrameRow < slaveTimeFrame.getRowHi() - 1) {
+                    if (foundRowIsntLastInFrame) {
+                        // Set lookaheadTimestamp to the first one larger than masterTimestamp, and return
                         slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
                         lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                    } else {
-                        lookaheadTimestamp = slaveTimestamp;
+                        return;
                     }
-                    if (foundRow < slaveTimeFrame.getRowHi() - 1 || slaveTimestamp == masterTimestamp) {
+                    lookaheadTimestamp = slaveTimestamp;
+                    if (slaveTimestamp == masterTimestamp) {
                         // We've found the row, so there is no point in checking the next partition.
                         return;
                     }
