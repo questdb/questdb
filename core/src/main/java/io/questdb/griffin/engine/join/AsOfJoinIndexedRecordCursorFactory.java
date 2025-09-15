@@ -145,96 +145,78 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            // Extract the master symbol value we're looking for
-            masterSinkTarget.clear();
-            masterKeySink.copy(masterRecord, masterSinkTarget);
-
-            // Get the current time frame
-            TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
-            int partitionIndex = timeFrame.getFrameIndex();
-
-            // 1. Get the symbol value from the master record
-            CharSequence masterSymbolValue = masterRecord.getSymA(slaveSymbolColumnIndex);
-
-            // 2. Get the slave symbol table and convert the symbol to key
-            StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-            int symbolKey = symbolTable.keyOf(masterSymbolValue);
-
-            if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
-                record.hasSlave(false);
-                return;
-            }
-
+            // Search through frames backwards until we find a match or exhaust the search space
             try {
-                // Search through frames backwards until we find a match or exhaust search space
-                int cursorFrameIndex = timeFrame.getFrameIndex();
-                long currentSlaveRow = slaveFrameRow;
-
-                // slaveFrameRow may be either at the last row that is <= masterTimestamp, or one past that.
-                // This is because in nextSlave(), linearScan() finds the first row with timestamp > masterTimestamp.
-                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, currentSlaveRow));
-                if (slaveRecB.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                    currentSlaveRow--;
+                CharSequence masterSymbolValue = masterRecord.getSymA(slaveSymbolColumnIndex);
+                StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
+                int symbolKey = symbolTable.keyOf(masterSymbolValue);
+                if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
+                    record.hasSlave(false);
+                    return;
                 }
+                // No idea why we have to increment symbolKey here... but that's what works.
+                symbolKey++;
 
-                for (; ; ) {
-                    // 3. Access bitmap index for this partition and symbol column
-                    BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
-                            slaveSymbolColumnIndex,
-                            BitmapIndexReader.DIR_BACKWARD
-                    );
-
-                    // 4. Get cursor for rows matching this symbol in the current time frame
-                    timeFrame = slaveTimeFrameCursor.getTimeFrame();
-                    int currentPartitionIndex = timeFrame.getFrameIndex();
-                    long rowToCheck = currentPartitionIndex == cursorFrameIndex ?
-                            currentSlaveRow :
-                            timeFrame.getRowHi() - 1; // Last row in other frames
-
-                    if (rowToCheck < timeFrame.getRowLo()) {
-                        // No valid row in this frame, try previous frame
-                        if (!slaveTimeFrameCursor.prev()) {
-                            record.hasSlave(false);
-                            slaveTimeFrameCursor.jumpTo(cursorFrameIndex);
-                            slaveTimeFrameCursor.open();
-                            return;
-                        }
-                        slaveTimeFrameCursor.open();
-                        continue;
+                // nextSlave() generally finds the first row with timestamp > masterTimestamp.
+                // Ensure rowMax points to a row with timestamp <= masterTimestamp.
+                TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
+                slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
+                slaveTimeFrameCursor.open();
+                long rowMax = slaveFrameRow;
+                int partitionIndex = timeFrame.getFrameIndex();
+                if (rowMax == timeFrame.getRowHi()) {
+                    // slaveFrameRow points to one beyond the end of current frame
+                    rowMax--;
+                } else {
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowMax));
+                    if (slaveRecB.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                        // slaveFrameRow points to row one beyond the one with timestamp <= masterTimestamp
+                        rowMax--;
                     }
-
-                    RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowToCheck, rowToCheck);
-
-                    // 5. Check the single row for a match
-                    if (rowCursor.hasNext()) {
-                        long rowId = rowCursor.next();
-                        slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(currentPartitionIndex, rowId));
-                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                        if (slaveTimestamp <= masterTimestamp) {
-                            // Check tolerance if specified
-                            if (toleranceInterval == Numbers.LONG_NULL ||
-                                    slaveTimestamp >= masterTimestamp - toleranceInterval
-                            ) {
-                                // Found our match
-                                record.hasSlave(true);
-                                return;
-                            } else {
-                                // Past tolerance interval, no point continuing
-                                record.hasSlave(false);
-                                return;
-                            }
-                        }
-                    }
-
-                    // No match in this frame, try previous frame
+                }
+                if (rowMax < timeFrame.getRowLo()) {
+                    // Not a valid row in this frame, jump to the previous frame
                     if (!slaveTimeFrameCursor.prev()) {
                         record.hasSlave(false);
                         return;
                     }
                     slaveTimeFrameCursor.open();
                 }
+
+                BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
+                        slaveSymbolColumnIndex,
+                        BitmapIndexReader.DIR_BACKWARD
+                );
+                for (; ; ) {
+                    RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo(), rowMax);
+
+                    // 5. Check the single row for a match
+                    if (rowCursor.hasNext()) {
+                        long rowId = rowCursor.next();
+                        slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowId));
+                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        if (slaveTimestamp <= masterTimestamp) {
+                            // Enforce tolerance limit if specified
+                            boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
+                                    slaveTimestamp >= masterTimestamp - toleranceInterval;
+                            record.hasSlave(hasSlave);
+                            return;
+                        }
+                    }
+
+                    // No match in this frame, try the previous frame
+                    if (!slaveTimeFrameCursor.prev()) {
+                        record.hasSlave(false);
+                        return;
+                    }
+                    slaveTimeFrameCursor.open();
+                    timeFrame = slaveTimeFrameCursor.getTimeFrame();
+                    partitionIndex = timeFrame.getFrameIndex();
+                    rowMax = timeFrame.getRowHi() - 1;
+                }
             } catch (Exception e) {
-                // Fallback to linear search if bitmap index access fails
+//                throw e;
+                // Fall back to linear search if bitmap index access fails
                 AbstractKeyedAsOfJoinRecordCursor.findMatchingRowLinear(
                         slaveTimeFrameCursor,
                         slaveRecB,
