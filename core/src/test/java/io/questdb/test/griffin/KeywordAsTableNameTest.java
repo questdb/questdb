@@ -30,21 +30,22 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class KeywordAsTableNameTest extends AbstractCairoTest {
+
     @Test
     public void testAlterTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table \"table\" (a int)");
             assertExceptionNoLeakCheck("alter table table add column b float", 12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                            "a\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                     "table_columns('table')"
             );
             execute("alter table \"table\" add column b float");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                            "a\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                            "b\tFLOAT\tfalse\t256\tfalse\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
                     "table_columns('table')"
             );
         });
@@ -56,8 +57,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertException("create table from (a int)", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("create table \"from\" (a int)");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                            "a\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                     "table_columns('from')"
             );
         });
@@ -69,8 +70,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertException("create table a (from int)", 16, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("create table a (\"from\" int)");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                            "from\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                     "table_columns('a')"
             );
         });
