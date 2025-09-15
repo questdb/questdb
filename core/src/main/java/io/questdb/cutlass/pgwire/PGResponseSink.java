@@ -75,6 +75,8 @@ public interface PGResponseSink extends Utf8Sink {
 
     void putIntUnsafe(long offset, int value);
 
+    void putShortUnsafe(long offset, short value);
+
     void putLen(long start);
 
     void putLenEx(long start);

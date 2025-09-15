@@ -1723,6 +1723,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
+        public void putShortUnsafe(long offset, short value) {
+            Unsafe.getUnsafe().putShort(sendBufferPtr + offset, value);
+        }
+
+        @Override
         public void putLen(long start) {
             putInt(start, (int) (sendBufferPtr - start));
         }
