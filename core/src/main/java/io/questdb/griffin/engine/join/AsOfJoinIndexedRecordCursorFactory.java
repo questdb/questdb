@@ -52,6 +52,7 @@ import io.questdb.std.Rows;
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinIndexedRecordCursor cursor;
+    private final RecordSink slaveKeySink;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
 
@@ -60,6 +61,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
+            RecordSink slaveKeySink,
             int columnSplit,
             int slaveSymbolColumnIndex,
             JoinContext joinContext,
@@ -67,6 +69,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.slaveKeySink = slaveKeySink;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         this.cursor = new AsOfJoinIndexedRecordCursor(
