@@ -285,6 +285,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable String getDbLogName() {
+        return null;
+    }
+
+    @Override
     public @NotNull String getDbRoot() {
         return dbRoot;
     }
@@ -330,13 +335,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return 30;
+    public boolean getFileDescriptorCacheEnabled() {
+        return true;
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return true;
+    public int getFileOperationRetryCount() {
+        return 30;
     }
 
     @Override
@@ -868,6 +873,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlJitIRMemoryPageSize() {
         return 8192;
+    }
+
+    @Override
+    public int getSqlJitMaxInListSizeThreshold() {
+        return 10;
     }
 
     @Override

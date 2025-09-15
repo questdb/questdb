@@ -27,9 +27,18 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.*;
+import io.questdb.griffin.GeoHashUtil;
+import io.questdb.griffin.PostOrderTreeTraversalAlgo;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
@@ -37,7 +46,15 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 
@@ -807,6 +824,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         predicateContext.currentInSerialization = true;
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
+
+        if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
+            throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
+                    .put(executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold())
+                    .put(", actual=").put(args.size()).put(']');
+        }
 
         if (args.size() < 3) {
             inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);

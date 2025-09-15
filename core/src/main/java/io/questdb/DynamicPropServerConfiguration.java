@@ -88,7 +88,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES,
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD,
-            PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY
+            PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY,
+            PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
@@ -339,6 +340,22 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getSharedWorkerPoolNetworkConfiguration();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+        return serverConfig.get().getSharedWorkerPoolQueryConfiguration();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return serverConfig.get().getSharedWorkerPoolWriteConfiguration();
+    }
+
+    @Override
     public long getVersion() {
         return version;
     }
@@ -347,22 +364,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getWalApplyPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getNetworkWorkerPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
-        return serverConfig.get().getQueryWorkerPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
-        return serverConfig.get().getWriteWorkerPoolConfiguration();
     }
 
     @Override
