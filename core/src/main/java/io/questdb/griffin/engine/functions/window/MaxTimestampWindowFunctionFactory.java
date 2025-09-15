@@ -899,14 +899,10 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             return maxMin;
         }
 
-        /**
-         * Not applicable for this implementation; calling it always fails.
-         *
-         * @throws UnsupportedOperationException always thrown because this window function does not use a separate pass1 phase
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1603,7 +1599,8 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**

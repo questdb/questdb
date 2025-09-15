@@ -584,7 +584,6 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 

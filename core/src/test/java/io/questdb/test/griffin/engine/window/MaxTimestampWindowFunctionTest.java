@@ -30,380 +30,40 @@ import org.junit.Test;
 public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
 
     @Test
-    public void testMaxTimestampOverWholeResultSet() throws Exception {
+    public void testMaxNonDesignatedTimestampWithManyNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
+            execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
 
+            // Create large dataset with many nulls to test null handling in max()
+            execute("insert into tab select " +
+                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
+                    "case when x % 3 = 0 then null else dateadd('h', (x % 24)::int, '2021-01-01T00:00:00.000000Z') end as other_ts, " +
+                    "x as val, " +
+                    "case when x % 2 = 0 then 'A' else 'B' end as grp " +
+                    "from long_sequence(10000)");
+
+            // Verify max() correctly handles nulls in large dataset
             assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithPartitionBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_by_grp\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp) as max_ts_by_grp FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithOrderBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 7, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 9, 'C')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_cumulative\n" +
-                            "2021-01-01T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t3\tB\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t7\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t9\tC\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts) as max_ts_cumulative FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithPartitionByAndOrderBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'C')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_running\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-06T00:00:00.000000Z\t6\tC\t2021-01-06T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts) as max_ts_running FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithRowsBetween() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_window\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_window FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithRangeBetween() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 4, 'A')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 5, 'A')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_range\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-01T12:00:00.000000Z\t2\tA\t2021-01-01T12:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-02T12:00:00.000000Z\t4\tA\t2021-01-02T12:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t5\tA\t2021-01-03T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '1' DAY PRECEDING AND CURRENT ROW) as max_ts_range FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol, other_ts timestamp) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A', '2021-01-01T12:00:00.000000Z')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A', null)");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A', '2021-01-03T12:00:00.000000Z')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A', null)");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A', '2021-01-05T12:00:00.000000Z')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tother_ts\tmax_other_ts\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tA\t\t2021-01-05T12:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tA\t\t2021-01-05T12:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z\n",
-                    "SELECT ts, val, grp, other_ts, max(other_ts) OVER () as max_other_ts FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithMultiplePartitions() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp1 symbol, grp2 symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A', 'X')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A', 'Y')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'B', 'X')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B', 'Y')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A', 'X')");
-            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'B', 'X')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp1\tgrp2\tmax_ts_by_grps\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\tX\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tA\tY\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tB\tX\t2021-01-06T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\tY\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\tX\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-06T00:00:00.000000Z\t6\tB\tX\t2021-01-06T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp1, grp2, max(ts) OVER (PARTITION BY grp1, grp2) as max_ts_by_grps FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithUnboundedPreceding() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_unbounded\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithEmptyPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts\n",
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithSingleRow() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithDuplicateTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 5, 'C')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-01T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t5\tC\t2021-01-03T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithOrderByDesc() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_desc\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts DESC) as max_ts_desc FROM tab ORDER BY ts DESC",
-                    "ts###desc",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithComplexFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'B')");
-            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'B')");
-            execute("insert into tab values ('2021-01-07T00:00:00.000000Z', 7, 'C')");
-            execute("insert into tab values ('2021-01-08T00:00:00.000000Z', 8, 'C')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_complex\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tB\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-06T00:00:00.000000Z\t6\tB\t2021-01-06T00:00:00.000000Z\n" +
-                            "2021-01-07T00:00:00.000000Z\t7\tC\t2021-01-07T00:00:00.000000Z\n" +
-                            "2021-01-08T00:00:00.000000Z\t8\tC\t2021-01-08T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_complex FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithLargeDataset() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
-            execute("insert into tab select timestamp_sequence(0, 1000000), x, rnd_symbol('A','B','C','D','E') from long_sequence(100000)");
-
-            assertQueryNoLeakCheck(
-                    "cnt\n" +
-                            "100000\n",
-                    "SELECT count(*) as cnt FROM (SELECT ts, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab)",
+                    "grp\tnon_null_count\tmax_other_ts\n" +
+                            "A\t3334\t2021-01-01T22:00:00.000000Z\n" +
+                            "B\t3333\t2021-01-01T23:00:00.000000Z\n",
+                    "SELECT grp, " +
+                            "count(other_ts) as non_null_count, " +
+                            "max(other_ts) as max_other_ts " +
+                            "FROM tab GROUP BY grp ORDER BY grp",
                     null,
-                    false,
+                    true,
                     true
             );
-        });
-    }
 
-    @Test
-    public void testMaxTimestampWithSubquery() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
-
+            // Test window function with nulls
             assertQueryNoLeakCheck(
-                    "grp\tmax_ts\n" +
-                            "A\t2021-01-03T00:00:00.000000Z\n" +
-                            "B\t2021-01-04T00:00:00.000000Z\n" +
-                            "C\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT DISTINCT grp, max_ts FROM (SELECT grp, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab) ORDER BY grp",
+                    "grp\tmax_window_ts\n" +
+                            "A\t2021-01-01T22:00:00.000000Z\n" +
+                            "B\t2021-01-01T23:00:00.000000Z\n",
+                    "SELECT DISTINCT grp, max_window_ts FROM (" +
+                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
+                            ") ORDER BY grp",
                     null,
                     true,
                     true
@@ -412,97 +72,41 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxTimestampWithJoin() throws Exception {
+    public void testMaxNonDesignatedTimestampWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab1 (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("create table tab2 (ts timestamp, val int, grp symbol) timestamp(ts)");
-            
-            execute("insert into tab1 values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab1 values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab1 values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            
-            execute("insert into tab2 values ('2021-01-02T00:00:00.000000Z', 10, 'A')");
-            execute("insert into tab2 values ('2021-01-03T00:00:00.000000Z', 20, 'B')");
-            execute("insert into tab2 values ('2021-01-04T00:00:00.000000Z', 30, 'A')");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', null, 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T08:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', null, 4, 'A')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-05T16:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', null, 6, 'A')");
 
-            assertSql(
-                    "t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tttt\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\t20\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n",
-                    "SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
-                            "CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END as ttt " +
-                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts"
-            );
+            // Test max() on non-designated timestamp column containing nulls
             assertQueryNoLeakCheck(
-                            "t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tmax_ts\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\t20\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n",
-                    "SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
-                            "max(CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END) OVER (PARTITION BY t1.grp) as max_ts " +
-                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts",
-                    "t1_ts",
+                    "ts\tother_ts\tval\tgrp\tmax_other_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-05T16:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-05T16:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t2021-01-03T08:00:00.000000Z\t3\tA\t2021-01-05T16:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-05T16:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-05T16:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-05T16:00:00.000000Z\n",
+                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts FROM tab",
+                    "ts",
                     true,
                     false
             );
-        });
-    }
 
-    @Test
-    public void testMaxTimestampWithMixedFrames() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'A')");
-            execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 7, 'A')");
-
+            // Test with ORDER BY on non-designated timestamp with nulls
             assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_rows\tmax_range\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-01T06:00:00.000000Z\t2\tA\t2021-01-01T06:00:00.000000Z\t2021-01-01T06:00:00.000000Z\n" +
-                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\t2021-01-01T12:00:00.000000Z\n" +
-                            "2021-01-01T18:00:00.000000Z\t4\tA\t2021-01-01T18:00:00.000000Z\t2021-01-01T18:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-02T06:00:00.000000Z\t6\tA\t2021-01-02T06:00:00.000000Z\t2021-01-02T06:00:00.000000Z\n" +
-                            "2021-01-02T12:00:00.000000Z\t7\tA\t2021-01-02T12:00:00.000000Z\t2021-01-02T12:00:00.000000Z\n",
-                    "SELECT ts, val, grp, " +
-                            "max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_rows, " +
-                            "max(ts) OVER (ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_range " +
-                            "FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampWithRowsPrecedingOnly() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
-
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_preceding\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as max_ts_preceding FROM tab",
+                    "ts\tother_ts\tval\tgrp\tmax_other_ts_running\n" +
+                            "2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t2021-01-03T08:00:00.000000Z\t3\tA\t2021-01-03T08:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-03T08:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-05T16:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-05T16:00:00.000000Z\n",
+                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as max_other_ts_running FROM tab",
                     "ts",
                     false,
                     true
@@ -549,41 +153,180 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxTimestampRangeOnNonDesignatedTimestampFails() throws Exception {
+    public void testMaxTimestampOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, other_ts timestamp, val int) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
-            
-            // This should fail because we're using RANGE with ORDER BY on a non-designated timestamp
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, other_ts, val, max(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab",
-                    49,
-                    "RANGE is supported only for queries ordered by designated timestamp"
+            // Test similar to testFrameFunctionOverPartitionedRangeWithLargeFrame but for max(timestamp)
+            // This tests boundary conditions with large ranges that trigger buffer growth
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
+
+            // Trigger per-partition buffers growth and free list usage
+            execute("insert into tab select " +
+                    "x::timestamp, " +
+                    "x/10000, " +
+                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
+                    "'k' || (x%5) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(39999)");
+
+            // Trigger removal of rows below lo boundary AND resize of buffer
+            execute("insert into tab select " +
+                    "(100000+x)::timestamp, " +
+                    "(100000+x)%4, " +
+                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
+                    "'k' || (x%20) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(360000)");
+
+            // Test max(timestamp) with window function over partitioned data with large frame
+            // Test the last row of each partition to verify boundary conditions
+            assertSql(
+                    "i\tts\tmax_ts_window\n" +
+                            "0\t1970-01-01T00:00:00.460000Z\t1970-01-01T00:00:00.460000Z\n" +
+                            "1\t1970-01-01T00:00:00.459997Z\t1970-01-01T00:00:00.459997Z\n" +
+                            "2\t1970-01-01T00:00:00.459998Z\t1970-01-01T00:00:00.459998Z\n" +
+                            "3\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z\n",
+                    "select i, ts, max_ts_window from (" +
+                            "select i, ts, " +
+                            "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
+                            "row_number() over (partition by i order by ts desc) as rn " +
+                            "from tab " +
+                            "where i < 4" +
+                            ") where rn = 1 " +
+                            "order by i"
+            );
+
+            // Cross-check: aggregate query equivalent to the window function
+            assertSql(
+                    "max_ts\ti\n" +
+                            "1970-01-01T00:00:00.460000Z\t0\n" +
+                            "1970-01-01T00:00:00.459997Z\t1\n" +
+                            "1970-01-01T00:00:00.459998Z\t2\n" +
+                            "1970-01-01T00:00:00.459999Z\t3\n",
+                    "select max(ts) as max_ts, i " +
+                            "from ( " +
+                            "  select data.ts, data.i " +
+                            "  from (select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "where i in (0,1,2,3) " +
+                            "group by i " +
+                            "order by i"
             );
         });
     }
 
-    @Test 
-    public void testMaxTimestampRangeWithSpecificBounds() throws Exception {
+    @Test
+    public void testMaxTimestampOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'A')");
-            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            // Test range with 12 hours preceding to current row (not unbounded)
             assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_12h\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-01T06:00:00.000000Z\t2\tA\t2021-01-01T06:00:00.000000Z\n" +
-                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
-                            "2021-01-01T18:00:00.000000Z\t4\tA\t2021-01-01T18:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-02T06:00:00.000000Z\t6\tA\t2021-01-02T06:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '12' HOUR PRECEDING AND CURRENT ROW) as max_ts_12h FROM tab",
+                    "ts\tval\tgrp\tmax_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampRangeFrameBufferOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            // Create many partitions (>40) with dense timestamps to trigger deque resize
+            // Each partition will have many overlapping frames requiring deque growth
+            execute("insert into tab select " +
+                    "dateadd('s', ((x-1) * 10)::int, '2021-01-01T00:00:00.000000Z'::timestamp) as ts, " +
+                    "x as val, " +
+                    "'grp_' || ((x-1) % 100) as grp " +  // 100 different partitions
+                    "from long_sequence(50000)");
+
+            // Test with wide time window that will cause deque to hold many max values simultaneously
+            // With 10-second intervals and 1-hour window, each partition will have ~360 overlapping frames
+            assertQueryNoLeakCheck(
+                    "cnt\tpartitions\n" +
+                            "50000\t100\n",
+                    "SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
+                            "SELECT ts, val, grp, " +
+                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as max_ts_large_window " +
+                            "FROM tab" +
+                            ")",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampRangeFrameDequeOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            // Create scenario that will trigger deque overflow in bounded range frames
+            execute("insert into tab select " +
+                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
+                    "x as val, " +
+                    "case when x % 5 = 0 then 'A' else 'B' end as grp " +
+                    "from long_sequence(50000)");
+
+            // Test bounded range frame that exercises dequeMem overflow handling
+            assertQueryNoLeakCheck(
+                    "cnt\tmax_val\n" +
+                            "50000\t50000\n",
+                    "SELECT count(*) as cnt, max(val) as max_val FROM (" +
+                            "SELECT ts, val, grp, " +
+                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded " +
+                            "FROM tab" +
+                            ")",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampRangeFrameEdgeCases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
+
+            // Create edge case scenario: overlapping time ranges, identical timestamps
+            execute("insert into tab values " +
+                    "('2021-01-01T12:00:00.000000Z', 1, 'A'), " +
+                    "('2021-01-01T12:00:00.000000Z', 2, 'A'), " + // duplicate timestamp
+                    "('2021-01-01T12:00:01.000000Z', 3, 'A'), " +
+                    "('2021-01-01T12:00:01.000000Z', 4, 'A'), " + // duplicate timestamp
+                    "('2021-01-01T12:00:02.000000Z', 5, 'A'), " +
+                    "('2021-01-01T12:00:03.000000Z', 6, 'A'), " +
+                    "('2021-01-01T12:00:04.000000Z', 7, 'A'), " +
+                    "('2021-01-01T12:00:05.000000Z', 8, 'A')");
+
+            // Test precise boundary conditions in range frames
+            assertQueryNoLeakCheck(
+                    "ts\tval\tmax_ts_precise\n" +
+                            "2021-01-01T12:00:00.000000Z\t1\t\n" +
+                            "2021-01-01T12:00:00.000000Z\t2\t\n" +
+                            "2021-01-01T12:00:01.000000Z\t3\t\n" +
+                            "2021-01-01T12:00:01.000000Z\t4\t\n" +
+                            "2021-01-01T12:00:02.000000Z\t5\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T12:00:03.000000Z\t6\t2021-01-01T12:00:01.000000Z\n" +
+                            "2021-01-01T12:00:04.000000Z\t7\t2021-01-01T12:00:02.000000Z\n" +
+                            "2021-01-01T12:00:05.000000Z\t8\t2021-01-01T12:00:03.000000Z\n",
+                    "SELECT ts, val, max(ts) OVER (ORDER BY ts RANGE BETWEEN '4' SECOND preceding AND '2' SECOND preceding) as max_ts_precise FROM tab",
                     "ts",
                     false,
                     true
@@ -592,29 +335,44 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxTimestampRangeWithPartitionAndSpecificBounds() throws Exception {
+    public void testMaxTimestampRangeFrameWithManyPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'B')");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
-            // Test partitioned range with specific bounds - this exercises the MaxMinOverPartitionRangeFrameFunction
+            // Create many partitions to test Map resizing and partition management
+            execute("insert into tab select " +
+                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
+                    "x as val, " +
+                    "'grp_' || (x % 1000) as grp " +
+                    "from long_sequence(25000)");
+
+            // Test with many partitions to exercise Map operations in MaxMinOverPartitionRangeFrameFunction
             assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_by_grp_6h\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-01T06:00:00.000000Z\t2\tB\t2021-01-01T06:00:00.000000Z\n" +
-                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
-                            "2021-01-01T18:00:00.000000Z\t4\tB\t2021-01-01T18:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-02T06:00:00.000000Z\t6\tB\t2021-01-02T06:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_ts_by_grp_6h FROM tab",
-                    "ts",
+                    "partition_count\ttotal_rows\n" +
+                            "1000\t25000\n",
+                    "SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
+                            "SELECT ts, val, grp, " +
+                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as max_ts " +
+                            "FROM tab" +
+                            ")",
+                    null,
                     false,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampRangeOnNonDesignatedTimestampFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, other_ts timestamp, val int) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
+
+            // This should fail because we're using RANGE with ORDER BY on a non-designated timestamp
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, other_ts, val, max(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab",
+                    49,
+                    "RANGE is supported only for queries ordered by designated timestamp"
             );
         });
     }
@@ -640,34 +398,6 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
                             "2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T03:00:00.000000Z\n" +
                             "2021-01-01T05:00:00.000000Z\t6\tA\t2021-01-01T04:00:00.000000Z\n",
                     "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampRangeWithPartitionedBoundedFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-01T01:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-01T02:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-01T03:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-01T04:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-01T05:00:00.000000Z', 6, 'B')");
-
-            // Test partitioned range with bounded frame - this exercises the dequeMem path
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_part_bounded\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t\n" +
-                            "2021-01-01T01:00:00.000000Z\t2\tB\t\n" +
-                            "2021-01-01T02:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-01T03:00:00.000000Z\t4\tB\t2021-01-01T01:00:00.000000Z\n" +
-                            "2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T02:00:00.000000Z\n" +
-                            "2021-01-01T05:00:00.000000Z\t6\tB\t2021-01-01T03:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_part_bounded FROM tab",
                     "ts",
                     false,
                     true
@@ -732,24 +462,82 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxTimestampRowsUnboundedPrecedingToCurrentRow() throws Exception {
+    public void testMaxTimestampRangeWithPartitionAndSpecificBounds() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'B')");
 
-            // Test ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW - exercises MaxMinOverUnboundedPartitionRowsFrameFunction
+            // Test partitioned range with specific bounds - this exercises the MaxMinOverPartitionRangeFrameFunction
             assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_unbounded_rows\n" +
+                    "ts\tval\tgrp\tmax_ts_by_grp_6h\n" +
                             "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded_rows FROM tab",
+                            "2021-01-01T06:00:00.000000Z\t2\tB\t2021-01-01T06:00:00.000000Z\n" +
+                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T18:00:00.000000Z\t4\tB\t2021-01-01T18:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-02T06:00:00.000000Z\t6\tB\t2021-01-02T06:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_ts_by_grp_6h FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampRangeWithPartitionedBoundedFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T01:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-01T02:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-01T03:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-01T04:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-01T05:00:00.000000Z', 6, 'B')");
+
+            // Test partitioned range with bounded frame - this exercises the dequeMem path
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_part_bounded\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t\n" +
+                            "2021-01-01T01:00:00.000000Z\t2\tB\t\n" +
+                            "2021-01-01T02:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T03:00:00.000000Z\t4\tB\t2021-01-01T01:00:00.000000Z\n" +
+                            "2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T02:00:00.000000Z\n" +
+                            "2021-01-01T05:00:00.000000Z\t6\tB\t2021-01-01T03:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_part_bounded FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampRangeWithSpecificBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'A')");
+
+            // Test range with 12 hours preceding to current row (not unbounded)
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_12h\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T06:00:00.000000Z\t2\tA\t2021-01-01T06:00:00.000000Z\n" +
+                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T18:00:00.000000Z\t4\tA\t2021-01-01T18:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-02T06:00:00.000000Z\t6\tA\t2021-01-02T06:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '12' HOUR PRECEDING AND CURRENT ROW) as max_ts_12h FROM tab",
                     "ts",
                     false,
                     true
@@ -779,32 +567,6 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
                     "ts",
                     false,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testMaxTimestampRowsWholePartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
-
-            // Test ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING - exercises MaxMinOverPartitionFunction
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts_whole_partition\n" +
-                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as max_ts_whole_partition FROM tab",
-                    "ts",
-                    true,
-                    false
             );
         });
     }
@@ -840,6 +602,32 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxTimestampRowsUnboundedPrecedingToCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+
+            // Test ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW - exercises MaxMinOverUnboundedPartitionRowsFrameFunction
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_unbounded_rows\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded_rows FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMaxTimestampRowsUnboundedWithoutPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
@@ -866,41 +654,55 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxNonDesignatedTimestampWithNulls() throws Exception {
+    public void testMaxTimestampRowsWholePartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
-            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1, 'A')");
-            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', null, 2, 'A')");
-            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T08:00:00.000000Z', 3, 'A')");
-            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', null, 4, 'A')");
-            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-05T16:00:00.000000Z', 5, 'A')");
-            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', null, 6, 'A')");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            // Test max() on non-designated timestamp column containing nulls
+            // Test ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING - exercises MaxMinOverPartitionFunction
             assertQueryNoLeakCheck(
-                    "ts\tother_ts\tval\tgrp\tmax_other_ts\n" +
-                            "2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-05T16:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-05T16:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t2021-01-03T08:00:00.000000Z\t3\tA\t2021-01-05T16:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-05T16:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-05T16:00:00.000000Z\n" +
-                            "2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-05T16:00:00.000000Z\n",
-                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts FROM tab",
+                    "ts\tval\tgrp\tmax_ts_whole_partition\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as max_ts_whole_partition FROM tab",
                     "ts",
                     true,
                     false
             );
+        });
+    }
 
-            // Test with ORDER BY on non-designated timestamp with nulls
+    @Test
+    public void testMaxTimestampWithComplexFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'B')");
+            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'B')");
+            execute("insert into tab values ('2021-01-07T00:00:00.000000Z', 7, 'C')");
+            execute("insert into tab values ('2021-01-08T00:00:00.000000Z', 8, 'C')");
+
             assertQueryNoLeakCheck(
-                    "ts\tother_ts\tval\tgrp\tmax_other_ts_running\n" +
-                            "2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\n" +
-                            "2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z\n" +
-                            "2021-01-03T00:00:00.000000Z\t2021-01-03T08:00:00.000000Z\t3\tA\t2021-01-03T08:00:00.000000Z\n" +
-                            "2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-03T08:00:00.000000Z\n" +
-                            "2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-05T16:00:00.000000Z\n" +
-                            "2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-05T16:00:00.000000Z\n",
-                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as max_other_ts_running FROM tab",
+                    "ts\tval\tgrp\tmax_ts_complex\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tB\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t6\tB\t2021-01-06T00:00:00.000000Z\n" +
+                            "2021-01-07T00:00:00.000000Z\t7\tC\t2021-01-07T00:00:00.000000Z\n" +
+                            "2021-01-08T00:00:00.000000Z\t8\tC\t2021-01-08T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_complex FROM tab",
                     "ts",
                     false,
                     true
@@ -909,120 +711,97 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxTimestampRangeFrameBufferOverflow() throws Exception {
+    public void testMaxTimestampWithDuplicateTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
-            
-            // Create many partitions (>40) with dense timestamps to trigger deque resize
-            // Each partition will have many overlapping frames requiring deque growth
-            execute("insert into tab select " +
-                    "dateadd('s', ((x-1) * 10)::int, '2021-01-01T00:00:00.000000Z'::timestamp) as ts, " +
-                    "x as val, " +
-                    "'grp_' || ((x-1) % 100) as grp " +  // 100 different partitions
-                    "from long_sequence(50000)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 5, 'C')");
 
-            // Test with wide time window that will cause deque to hold many max values simultaneously
-            // With 10-second intervals and 1-hour window, each partition will have ~360 overlapping frames
             assertQueryNoLeakCheck(
-                    "cnt\tpartitions\n" +
-                            "50000\t100\n",
-                    "SELECT count(*) as cnt, count(distinct grp), count(max_ts_large_window)  as partitions FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as max_ts_large_window " +
-                            "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
+                    "ts\tval\tgrp\tmax_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-01T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t5\tC\t2021-01-03T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
+                    "ts",
+                    true,
+                    false
             );
         });
     }
 
     @Test
-    public void testMaxTimestampOverPartitionedRangeWithLargeFrame() throws Exception {
+    public void testMaxTimestampWithEmptyPartition() throws Exception {
         assertMemoryLeak(() -> {
-            // Test similar to testFrameFunctionOverPartitionedRangeWithLargeFrame but for max(timestamp)
-            // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
 
-            // Trigger per-partition buffers growth and free list usage
-            execute("insert into tab select " +
-                    "x::timestamp, " +
-                    "x/10000, " +
-                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
-                    "'k' || (x%5) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(39999)");
-            
-            // Trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select " +
-                    "(100000+x)::timestamp, " +
-                    "(100000+x)%4, " +
-                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
-                    "'k' || (x%20) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(360000)");
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts\n",
+                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
 
-            // Test max(timestamp) with window function over partitioned data with large frame
-            // Test the last row of each partition to verify boundary conditions
+    @Test
+    public void testMaxTimestampWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab1 (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("create table tab2 (ts timestamp, val int, grp symbol) timestamp(ts)");
+
+            execute("insert into tab1 values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab1 values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab1 values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+
+            execute("insert into tab2 values ('2021-01-02T00:00:00.000000Z', 10, 'A')");
+            execute("insert into tab2 values ('2021-01-03T00:00:00.000000Z', 20, 'B')");
+            execute("insert into tab2 values ('2021-01-04T00:00:00.000000Z', 30, 'A')");
+
             assertSql(
-                    "i\tts\tmax_ts_window\n" +
-                            "0\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z\n" +
-                            "1\t1970-01-01T00:00:00.459997Z\t1970-01-01T00:00:00.459997Z\n" +
-                            "2\t1970-01-01T00:00:00.459998Z\t1970-01-01T00:00:00.459998Z\n" +
-                            "3\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z\n",
-                    "select i, ts, max_ts_window from (" +
-                            "select i, ts, " +
-                            "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i"
+                    "t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tttt\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\t20\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n",
+                    "SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
+                            "CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END as ttt " +
+                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts"
             );
-
-            // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    "max_ts\ti\n" +
-                            "1970-01-01T00:00:00.459999Z\t0\n" +
-                            "1970-01-01T00:00:00.459997Z\t1\n" +
-                            "1970-01-01T00:00:00.459998Z\t2\n" +
-                            "1970-01-01T00:00:00.459999Z\t3\n",
-                    "select max(ts) as max_ts, i " +
-                            "from ( " +
-                            "  select data.ts, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i"
+            assertQueryNoLeakCheck(
+                    "t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tmax_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\t20\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z\n",
+                    "SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
+                            "max(CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END) OVER (PARTITION BY t1.grp) as max_ts " +
+                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts",
+                    "t1_ts",
+                    true,
+                    false
             );
         });
     }
 
     @Test
-    public void testMaxTimestampRangeFrameDequeOverflow() throws Exception {
+    public void testMaxTimestampWithLargeDataset() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
-            
-            // Create scenario that will trigger deque overflow in bounded range frames
-            execute("insert into tab select " +
-                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
-                    "x as val, " +
-                    "case when x % 5 = 0 then 'A' else 'B' end as grp " +
-                    "from long_sequence(50000)");
+            execute("insert into tab select timestamp_sequence(0, 1000000), x, rnd_symbol('A','B','C','D','E') from long_sequence(100000)");
 
-            // Test bounded range frame that exercises dequeMem overflow handling
             assertQueryNoLeakCheck(
-                    "cnt\tmax_val\n" +
-                            "50000\t50000\n",
-                    "SELECT count(*) as cnt, max(val) as max_val FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded " +
-                            "FROM tab" +
-                            ")",
+                    "cnt\n" +
+                            "100000\n",
+                    "SELECT count(*) as cnt FROM (SELECT ts, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab)",
                     null,
                     false,
                     true
@@ -1031,27 +810,31 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxTimestampRangeFrameWithManyPartitions() throws Exception {
+    public void testMaxTimestampWithMixedFrames() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
-            
-            // Create many partitions to test Map resizing and partition management
-            execute("insert into tab select " +
-                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
-                    "x as val, " +
-                    "'grp_' || (x % 1000) as grp " +
-                    "from long_sequence(25000)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-01T18:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'A')");
+            execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 7, 'A')");
 
-            // Test with many partitions to exercise Map operations in MaxMinOverPartitionRangeFrameFunction
             assertQueryNoLeakCheck(
-                    "partition_count\ttotal_rows\n" +
-                            "1000\t25000\n",
-                    "SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as max_ts " +
-                            "FROM tab" +
-                            ")",
-                    null,
+                    "ts\tval\tgrp\tmax_rows\tmax_range\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T06:00:00.000000Z\t2\tA\t2021-01-01T06:00:00.000000Z\t2021-01-01T06:00:00.000000Z\n" +
+                            "2021-01-01T12:00:00.000000Z\t3\tA\t2021-01-01T12:00:00.000000Z\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-01T18:00:00.000000Z\t4\tA\t2021-01-01T18:00:00.000000Z\t2021-01-01T18:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-02T06:00:00.000000Z\t6\tA\t2021-01-02T06:00:00.000000Z\t2021-01-02T06:00:00.000000Z\n" +
+                            "2021-01-02T12:00:00.000000Z\t7\tA\t2021-01-02T12:00:00.000000Z\t2021-01-02T12:00:00.000000Z\n",
+                    "SELECT ts, val, grp, " +
+                            "max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_rows, " +
+                            "max(ts) OVER (ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_range " +
+                            "FROM tab",
+                    "ts",
                     false,
                     true
             );
@@ -1059,75 +842,292 @@ public class MaxTimestampWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxNonDesignatedTimestampWithManyNulls() throws Exception {
+    public void testMaxTimestampWithMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
-            
-            // Create large dataset with many nulls to test null handling in max()
-            execute("insert into tab select " +
-                    "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
-                    "case when x % 3 = 0 then null else dateadd('h', (x % 24)::int, '2021-01-01T00:00:00.000000Z') end as other_ts, " +
-                    "x as val, " +
-                    "case when x % 2 = 0 then 'A' else 'B' end as grp " +
-                    "from long_sequence(10000)");
+            execute("create table tab (ts timestamp, val int, grp1 symbol, grp2 symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A', 'X')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A', 'Y')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'B', 'X')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B', 'Y')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A', 'X')");
+            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'B', 'X')");
 
-            // Verify max() correctly handles nulls in large dataset
             assertQueryNoLeakCheck(
-                    "grp\tnon_null_count\tmax_other_ts\n" +
-                            "A\t3334\t2021-01-01T22:00:00.000000Z\n" +
-                            "B\t3333\t2021-01-01T23:00:00.000000Z\n",
-                    "SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "max(other_ts) as max_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp",
+                    "ts\tval\tgrp1\tgrp2\tmax_ts_by_grps\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\tX\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\tY\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tB\tX\t2021-01-06T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\tY\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\tX\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t6\tB\tX\t2021-01-06T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp1, grp2, max(ts) OVER (PARTITION BY grp1, grp2) as max_ts_by_grps FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol, other_ts timestamp) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A', '2021-01-01T12:00:00.000000Z')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A', null)");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A', '2021-01-03T12:00:00.000000Z')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A', null)");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A', '2021-01-05T12:00:00.000000Z')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tother_ts\tmax_other_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\t\t2021-01-05T12:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tA\t\t2021-01-05T12:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z\n",
+                    "SELECT ts, val, grp, other_ts, max(other_ts) OVER () as max_other_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 7, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 9, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_cumulative\n" +
+                            "2021-01-01T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t3\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t7\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t9\tC\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts) as max_ts_cumulative FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithOrderByDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_desc\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts DESC) as max_ts_desc FROM tab ORDER BY ts DESC",
+                    "ts###desc",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_by_grp\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp) as max_ts_by_grp FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithPartitionByAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+            execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_running\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n" +
+                            "2021-01-06T00:00:00.000000Z\t6\tC\t2021-01-06T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts) as max_ts_running FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithRangeBetween() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 5, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_range\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-01T12:00:00.000000Z\t2\tA\t2021-01-01T12:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-02T12:00:00.000000Z\t4\tA\t2021-01-02T12:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t5\tA\t2021-01-03T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '1' DAY PRECEDING AND CURRENT ROW) as max_ts_range FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithRowsBetween() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_window\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_window FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithRowsPrecedingOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts_preceding\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as max_ts_preceding FROM tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+
+            assertQueryNoLeakCheck(
+                    "ts\tval\tgrp\tmax_ts\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMaxTimestampWithSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
+
+            assertQueryNoLeakCheck(
+                    "grp\tmax_ts\n" +
+                            "A\t2021-01-03T00:00:00.000000Z\n" +
+                            "B\t2021-01-04T00:00:00.000000Z\n" +
+                            "C\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT DISTINCT grp, max_ts FROM (SELECT grp, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab) ORDER BY grp",
                     null,
                     true,
                     true
             );
-
-            // Test window function with nulls
-            assertQueryNoLeakCheck(
-                    "grp\tmax_window_ts\n" +
-                            "A\t2021-01-01T22:00:00.000000Z\n" +
-                            "B\t2021-01-01T23:00:00.000000Z\n",
-                    "SELECT DISTINCT grp, max_window_ts FROM (" +
-                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
-                            ") ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
         });
     }
 
     @Test
-    public void testMaxTimestampRangeFrameEdgeCases() throws Exception {
+    public void testMaxTimestampWithUnboundedPreceding() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
-            
-            // Create edge case scenario: overlapping time ranges, identical timestamps
-            execute("insert into tab values " +
-                    "('2021-01-01T12:00:00.000000Z', 1, 'A'), " +
-                    "('2021-01-01T12:00:00.000000Z', 2, 'A'), " + // duplicate timestamp
-                    "('2021-01-01T12:00:01.000000Z', 3, 'A'), " +
-                    "('2021-01-01T12:00:01.000000Z', 4, 'A'), " + // duplicate timestamp
-                    "('2021-01-01T12:00:02.000000Z', 5, 'A'), " +
-                    "('2021-01-01T12:00:03.000000Z', 6, 'A'), " +
-                    "('2021-01-01T12:00:04.000000Z', 7, 'A'), " +
-                    "('2021-01-01T12:00:05.000000Z', 8, 'A')");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
+            execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
+            execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
+            execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
+            execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            // Test precise boundary conditions in range frames
             assertQueryNoLeakCheck(
-                    "ts\tval\tmax_ts_precise\n" +
-                            "2021-01-01T12:00:00.000000Z\t1\t2021-01-01T12:00:02.000000Z\n" +
-                            "2021-01-01T12:00:00.000000Z\t2\t2021-01-01T12:00:02.000000Z\n" +
-                            "2021-01-01T12:00:01.000000Z\t3\t2021-01-01T12:00:03.000000Z\n" +
-                            "2021-01-01T12:00:01.000000Z\t4\t2021-01-01T12:00:03.000000Z\n" +
-                            "2021-01-01T12:00:02.000000Z\t5\t2021-01-01T12:00:04.000000Z\n" +
-                            "2021-01-01T12:00:03.000000Z\t6\t2021-01-01T12:00:05.000000Z\n" +
-                            "2021-01-01T12:00:04.000000Z\t7\t2021-01-01T12:00:05.000000Z\n" +
-                            "2021-01-01T12:00:05.000000Z\t8\t2021-01-01T12:00:05.000000Z\n",
-                    "SELECT ts, val, max(ts) OVER (ORDER BY ts RANGE BETWEEN CURRENT ROW AND '2' SECOND FOLLOWING) as max_ts_precise FROM tab",
+                    "ts\tval\tgrp\tmax_ts_unbounded\n" +
+                            "2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\n" +
+                            "2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\n" +
+                            "2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\n" +
+                            "2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\n" +
+                            "2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\n",
+                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded FROM tab",
                     "ts",
                     false,
                     true

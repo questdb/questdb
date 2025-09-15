@@ -211,6 +211,95 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValueDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for first_value(double)
+            // This tests boundary conditions with large ranges that trigger buffer growth
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
+
+            // Trigger per-partition buffers growth and free list usage
+            execute("insert into tab select " +
+                    "x::timestamp, " +
+                    "x/10000, " +
+                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
+                    "'k' || (x%5) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(39999)");
+
+            // Trigger removal of rows below lo boundary AND resize of buffer
+            execute("insert into tab select " +
+                    "(100000+x)::timestamp, " +
+                    "(100000+x)%4, " +
+                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
+                    "'k' || (x%20) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(360000)");
+
+            // Test first_value(double) with window function over partitioned data with large frame
+            // Test the last row of each partition to verify boundary conditions
+            assertSql(
+                    "i\tts\tfirst_d_window\n" +
+                            "0\t1970-01-01T00:00:00.460000Z\t560000.0\n" +
+                            "1\t1970-01-01T00:00:00.459997Z\t559994.0\n" +
+                            "2\t1970-01-01T00:00:00.459998Z\t559996.0\n" +
+                            "3\t1970-01-01T00:00:00.459999Z\t559998.0\n",
+                    "select i, ts, first_d_window from (" +
+                            "select i, ts, " +
+                            "first_value(d) over (partition by i order by ts range between 80000 preceding and current row) as first_d_window, " +
+                            "row_number() over (partition by i order by ts desc) as rn " +
+                            "from tab " +
+                            "where i < 4" +
+                            ") where rn = 1 " +
+                            "order by i"
+            );
+
+            // Test with ignore nulls - should handle null values properly in large datasets
+            assertSql(
+                    "i\tts\tfirst_d_ignore_nulls\n" +
+                            "0\t1970-01-01T00:00:00.460000Z\t560000.0\n" +
+                            "1\t1970-01-01T00:00:00.459997Z\t559994.0\n" +
+                            "2\t1970-01-01T00:00:00.459998Z\t559996.0\n" +
+                            "3\t1970-01-01T00:00:00.459999Z\t559998.0\n",
+                    "select i, ts, first_d_ignore_nulls from (" +
+                            "select i, ts, " +
+                            "first_value(d) ignore nulls over (partition by i order by ts range between 80000 preceding and current row) as first_d_ignore_nulls, " +
+                            "row_number() over (partition by i order by ts desc) as rn " +
+                            "from tab " +
+                            "where i < 4" +
+                            ") where rn = 1 " +
+                            "order by i"
+            );
+
+            // Cross-check: verify the first value in the window range
+            assertSql(
+                    "i\tfirst_d\n" +
+                            "0\t560000.0\n" +
+                            "1\t559994.0\n" +
+                            "2\t559996.0\n" +
+                            "3\t559998.0\n",
+                    " select main_data.i, min(main_data.d) as first_d\n" +
+                            "  from (\n" +
+                            "    select data.d, data.i, data.ts\n" +
+                            "    from (select i, max(ts) as max_ts from tab group by i) cnt\n" +
+                            "    join tab data on cnt.i = data.i and data.ts >= (cnt.max_ts - 80000)\n" +
+                            "  ) main_data\n" +
+                            "  join (\n" +
+                            "    select wd.i, min(wd.d) as min_d\n" +
+                            "    from (\n" +
+                            "      select data.d, data.i\n" +
+                            "      from (select i, max(ts) as max_ts from tab group by i) cnt\n" +
+                            "      join tab data on cnt.i = data.i and data.ts >= (cnt.max_ts - 80000)\n" +
+                            "    ) wd\n" +
+                            "    group by wd.i\n" +
+                            "  ) min_values on main_data.i = min_values.i and main_data.d = min_values.min_d\n" +
+                            "  where main_data.i in (0,1,2,3)\n" +
+                            "  group by main_data.i\n" +
+                            "  order by main_data.i"
+            );
+        });
+    }
+
+    @Test
     public void testFrameFunctionDoesNotAcceptFollowingInNonDefaultFrameDefinition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
@@ -671,216 +760,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true,
                     true,
                     false
-            );
-        });
-    }
-
-    @Test
-    public void testMaxDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
-            // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
-
-            // Trigger per-partition buffers growth and free list usage
-            execute("insert into tab select " +
-                    "x::timestamp, " +
-                    "x/10000, " +
-                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
-                    "'k' || (x%5) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(39999)");
-            
-            // Trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select " +
-                    "(100000+x)::timestamp, " +
-                    "(100000+x)%4, " +
-                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
-                    "'k' || (x%20) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(360000)");
-
-            // Test max(double) with window function over partitioned data with large frame
-            // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    "i\tts\tmax_d_window\n" +
-                            "0\t1970-01-01T00:00:00.459999Z\t919998.0\n" +
-                            "1\t1970-01-01T00:00:00.459997Z\t919994.0\n" +
-                            "2\t1970-01-01T00:00:00.459998Z\t919996.0\n" +
-                            "3\t1970-01-01T00:00:00.459999Z\t919998.0\n",
-                    "select i, ts, max_d_window from (" +
-                            "select i, ts, " +
-                            "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i"
-            );
-
-            // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    "max_d\ti\n" +
-                            "919998.0\t0\n" +
-                            "919994.0\t1\n" +
-                            "919996.0\t2\n" +
-                            "919998.0\t3\n",
-                    "select max(d) as max_d, i " +
-                            "from ( " +
-                            "  select data.d, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i"
-            );
-        });
-    }
-
-    @Test
-    public void testMinDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for min(double)
-            // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
-
-            // Trigger per-partition buffers growth and free list usage
-            execute("insert into tab select " +
-                    "x::timestamp, " +
-                    "x/10000, " +
-                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
-                    "'k' || (x%5) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(39999)");
-            
-            // Trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select " +
-                    "(100000+x)::timestamp, " +
-                    "(100000+x)%4, " +
-                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
-                    "'k' || (x%20) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(360000)");
-
-            // Test min(double) with window function over partitioned data with large frame
-            // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    "i\tts\tmin_d_window\n" +
-                            "0\t1970-01-01T00:00:00.459999Z\t760000.0\n" +
-                            "1\t1970-01-01T00:00:00.459997Z\t759994.0\n" +
-                            "2\t1970-01-01T00:00:00.459998Z\t759996.0\n" +
-                            "3\t1970-01-01T00:00:00.459999Z\t759998.0\n",
-                    "select i, ts, min_d_window from (" +
-                            "select i, ts, " +
-                            "min(d) over (partition by i order by ts range between 80000 preceding and current row) as min_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i"
-            );
-
-            // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    "min_d\ti\n" +
-                            "760000.0\t0\n" +
-                            "759994.0\t1\n" +
-                            "759996.0\t2\n" +
-                            "759998.0\t3\n",
-                    "select min(d) as min_d, i " +
-                            "from ( " +
-                            "  select data.d, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i"
-            );
-        });
-    }
-
-    @Test
-    public void testFirstValueDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for first_value(double)
-            // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
-
-            // Trigger per-partition buffers growth and free list usage
-            execute("insert into tab select " +
-                    "x::timestamp, " +
-                    "x/10000, " +
-                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
-                    "'k' || (x%5) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(39999)");
-            
-            // Trigger removal of rows below lo boundary AND resize of buffer
-            execute("insert into tab select " +
-                    "(100000+x)::timestamp, " +
-                    "(100000+x)%4, " +
-                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
-                    "'k' || (x%20) ::symbol, " +
-                    "x*2::double " +
-                    "from long_sequence(360000)");
-
-            // Test first_value(double) with window function over partitioned data with large frame
-            // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    "i\tts\tfirst_d_window\n" +
-                            "0\t1970-01-01T00:00:00.459999Z\t760000.0\n" +
-                            "1\t1970-01-01T00:00:00.459997Z\t759994.0\n" +
-                            "2\t1970-01-01T00:00:00.459998Z\t759996.0\n" +
-                            "3\t1970-01-01T00:00:00.459999Z\t759998.0\n",
-                    "select i, ts, first_d_window from (" +
-                            "select i, ts, " +
-                            "first_value(d) over (partition by i order by ts range between 80000 preceding and current row) as first_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i"
-            );
-
-            // Test with ignore nulls - should handle null values properly in large datasets
-            assertSql(
-                    "i\tts\tfirst_d_ignore_nulls\n" +
-                            "0\t1970-01-01T00:00:00.459999Z\t760000.0\n" +
-                            "1\t1970-01-01T00:00:00.459997Z\t759994.0\n" +
-                            "2\t1970-01-01T00:00:00.459998Z\t759996.0\n" +
-                            "3\t1970-01-01T00:00:00.459999Z\t759998.0\n",
-                    "select i, ts, first_d_ignore_nulls from (" +
-                            "select i, ts, " +
-                            "first_value(d) ignore nulls over (partition by i order by ts range between 80000 preceding and current row) as first_d_ignore_nulls, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i"
-            );
-
-            // Cross-check: verify the first value in the window range
-            assertSql(
-                    "i\tfirst_d\n" +
-                            "0\t760000.0\n" +
-                            "1\t759994.0\n" +
-                            "2\t759996.0\n" +
-                            "3\t759998.0\n",
-                    "select i, min(d) as first_d " +
-                            "from ( " +
-                            "  select data.d, data.i, data.ts " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) and d = (select min(d) from tab t2 " +
-                            "  where t2.i = i and t2.ts >= (select max(ts) - 80000 from tab t3 where t3.i = i)) " +
-                            "group by i " +
-                            "order by i"
             );
         });
     }
@@ -4189,6 +4068,132 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 18,
                 "'nulls' or 'from' expected"
         );
+    }
+
+    @Test
+    public void testMaxDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
+            // This tests boundary conditions with large ranges that trigger buffer growth
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
+
+            // Trigger per-partition buffers growth and free list usage
+            execute("insert into tab select " +
+                    "x::timestamp, " +
+                    "x/10000, " +
+                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
+                    "'k' || (x%5) ::symbol, " +
+                    "(40000-x)*2::double " +
+                    "from long_sequence(39999)");
+
+            // Trigger removal of rows below lo boundary AND resize of buffer
+            execute("insert into tab select " +
+                    "(100000+x)::timestamp, " +
+                    "(100000+x)%4, " +
+                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
+                    "'k' || (x%20) ::symbol, " +
+                    "(360000-x)*2::double " +
+                    "from long_sequence(360000)");
+
+            assertSql(
+                    "i\tts\td\tmax_d_window\n" +
+                            "0\t1970-01-01T00:00:00.460000Z\t0.0\t160000.0\n" +
+                            "1\t1970-01-01T00:00:00.459997Z\t6.0\t160006.0\n" +
+                            "2\t1970-01-01T00:00:00.459998Z\t4.0\t160004.0\n" +
+                            "3\t1970-01-01T00:00:00.459999Z\t2.0\t160002.0\n",
+                    "select i, ts, d, max_d_window from (" +
+                            "select i, ts, d, " +
+                            "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
+                            "row_number() over (partition by i order by ts desc) as rn " +
+                            "from tab " +
+                            "where i < 4" +
+                            ") where rn = 1 " +
+                            "order by i"
+            );
+
+            // Cross-check: aggregate query equivalent to the window function
+            assertSql(
+                    "max_d\ti\n" +
+                            "160000.0\t0\n" +
+                            "160006.0\t1\n" +
+                            "160004.0\t2\n" +
+                            "160002.0\t3\n",
+                    "select max(d) as max_d, i " +
+                            "from ( " +
+                            "  select data.d, data.i " +
+                            "  from (select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "where i in (0,1,2,3) " +
+                            "group by i " +
+                            "order by i"
+            );
+        });
+    }
+
+    @Test
+    public void testMinDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for min(double)
+            // This tests boundary conditions with large ranges that trigger buffer growth
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
+
+            // Trigger per-partition buffers growth and free list usage
+            execute("insert into tab select " +
+                    "x::timestamp, " +
+                    "x/10000, " +
+                    "case when x % 3 = 0 THEN NULL ELSE x END, " +
+                    "'k' || (x%5) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(39999)");
+
+            // Trigger removal of rows below lo boundary AND resize of buffer
+            execute("insert into tab select " +
+                    "(100000+x)::timestamp, " +
+                    "(100000+x)%4, " +
+                    "case when x % 3 = 0 THEN NULL ELSE 100000 + x END, " +
+                    "'k' || (x%20) ::symbol, " +
+                    "x*2::double " +
+                    "from long_sequence(360000)");
+
+            // Test min(double) with window function over partitioned data with large frame
+            // Test the last row of each partition to verify boundary conditions
+            assertSql(
+                    "i\tts\tmin_d_window\n" +
+                            "0\t1970-01-01T00:00:00.460000Z\t560000.0\n" +
+                            "1\t1970-01-01T00:00:00.459997Z\t559994.0\n" +
+                            "2\t1970-01-01T00:00:00.459998Z\t559996.0\n" +
+                            "3\t1970-01-01T00:00:00.459999Z\t559998.0\n",
+                    "select i, ts, min_d_window from (" +
+                            "select i, ts, " +
+                            "min(d) over (partition by i order by ts range between 80000 preceding and current row) as min_d_window, " +
+                            "row_number() over (partition by i order by ts desc) as rn " +
+                            "from tab " +
+                            "where i < 4" +
+                            ") where rn = 1 " +
+                            "order by i"
+            );
+
+            // Cross-check: aggregate query equivalent to the window function
+            assertSql(
+                    "min_d\ti\n" +
+                            "560000.0\t0\n" +
+                            "559994.0\t1\n" +
+                            "559996.0\t2\n" +
+                            "559998.0\t3\n",
+                    "select min(d) as min_d, i " +
+                            "from ( " +
+                            "  select data.d, data.i " +
+                            "  from (select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "where i in (0,1,2,3) " +
+                            "group by i " +
+                            "order by i"
+            );
+        });
     }
 
     @Test

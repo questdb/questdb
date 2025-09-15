@@ -1334,7 +1334,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1691,7 +1692,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override

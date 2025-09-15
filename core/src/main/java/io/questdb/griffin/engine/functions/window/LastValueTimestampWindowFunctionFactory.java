@@ -2463,7 +2463,8 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**
@@ -2937,7 +2938,8 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         /**

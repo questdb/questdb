@@ -725,7 +725,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1227,7 +1228,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1601,7 +1603,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
-
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {

@@ -1859,16 +1859,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return firstValue;
         }
 
-        /**
-         * pass1 is not supported for this implementation and always fails.
-         *
-         * @param record       the current record (input row)
-         * @param recordOffset the record's offset within the window/frame
-         * @throws UnsupportedOperationException always thrown to indicate pass1 is not implemented
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         /**
@@ -2407,16 +2401,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return firstValue;
         }
 
-        /**
-         * pass1 is not supported for this implementation and always fails.
-         *
-         * @param record       the current record (input row)
-         * @param recordOffset the record's offset within the window/frame
-         * @throws UnsupportedOperationException always thrown to indicate pass1 is not implemented
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         /**

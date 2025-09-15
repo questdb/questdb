@@ -1826,16 +1826,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * pass1 is not supported by this implementation.
-         * <p>
-         * This method always throws UnsupportedOperationException.
-         *
-         * @throws UnsupportedOperationException always
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         /**
@@ -2354,16 +2348,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * pass1 is not supported by this implementation.
-         * <p>
-         * This method always throws UnsupportedOperationException.
-         *
-         * @throws UnsupportedOperationException always
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         /**

@@ -290,7 +290,6 @@ public class CountFunctionFactoryHelper {
         private static final long VALUE_ONE = 1L;
         private static final long VALUE_ZERO = 0L;
         private final IsRecordNotNull isNotNullFunc;
-        private long value;
 
         CountOverCurrentRowFunction(Function arg, IsRecordNotNull isNotNullFunc) {
             super(arg);
@@ -299,8 +298,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public long getLong(Record rec) {
-            value = isNotNullFunc.isNotNull(arg, rec) ? VALUE_ONE : VALUE_ZERO;
-            return value;
+            return isNotNullFunc.isNotNull(arg, rec) ? VALUE_ONE : VALUE_ZERO;
         }
 
         @Override
@@ -313,10 +311,9 @@ public class CountFunctionFactoryHelper {
             return ZERO_PASS;
         }
 
-
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), isNotNullFunc.isNotNull(arg, record) ? VALUE_ONE : VALUE_ZERO);
         }
     }
 
@@ -554,7 +551,8 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -919,7 +917,8 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
