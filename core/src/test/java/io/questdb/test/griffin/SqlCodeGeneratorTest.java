@@ -8125,7 +8125,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnionCastTypeSymmetry() {
+    public void testUnionCastTypeSymmetry() throws Exception {
         for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
                 if (ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB)) {

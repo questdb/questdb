@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -49,24 +50,32 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arrayArg = args.getQuick(0);
+        final int arrayArgPos = argPositions.getQuick(0);
+        final Function valueArg = args.getQuick(1);
+        final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        if (dims > 0 && dims != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
 
-        Function valueArg = args.getQuick(1);
         if (valueArg.isConstant()) {
-            double value = valueArg.getDouble(null);
+            final double value = valueArg.getDouble(null);
             valueArg.close();
             return Numbers.isNull(value)
-                    ? new ArrayPositionConstNullFunction(arrayArg)
-                    : new ArrayPositionConstFunction(arrayArg, value);
+                    ? new ArrayPositionConstNullFunc(arrayArg, arrayArgPos)
+                    : new ArrayPositionConstFunc(arrayArg, arrayArgPos, value);
         }
-        return new ArrayIndexOfFunction(arrayArg, valueArg);
+        return new ArrayIndexOfFunc(arrayArg, arrayArgPos, valueArg);
     }
 
-    static int linearSearchNan(ArrayView array) {
+    private static int linearSearchNaN(ArrayView array) {
         if (array.isNull() || array.isEmpty()) {
             return Numbers.INT_NULL;
         }
@@ -78,7 +87,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         return Numbers.INT_NULL;
     }
 
-    static int linearSearchValue(ArrayView array, double value) {
+    private static int linearSearchValue(ArrayView array, double value) {
         if (array.isNull() || array.isEmpty()) {
             return Numbers.INT_NULL;
         }
@@ -99,13 +108,14 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         return Numbers.INT_NULL;
     }
 
-    static class ArrayIndexOfFunction extends IntFunction implements BinaryFunction {
-
+    private static class ArrayIndexOfFunc extends IntFunction implements BinaryFunction {
         private final Function arrayArg;
+        private final int arrayArgPos;
         private final Function valueArg;
 
-        ArrayIndexOfFunction(Function arrayArg, Function valueArg) {
+        ArrayIndexOfFunc(Function arrayArg, int arrayArgPos, Function valueArg) {
             this.arrayArg = arrayArg;
+            this.arrayArgPos = arrayArgPos;
             this.valueArg = valueArg;
         }
 
@@ -116,7 +126,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             double value = valueArg.getDouble(rec);
-            int index = Numbers.isNull(value) ? linearSearchNan(array) : linearSearchValue(array, value);
+            int index = Numbers.isNull(value) ? linearSearchNaN(array) : linearSearchValue(array, value);
             return Numbers.INT_NULL == index ? Numbers.INT_NULL : index + 1;
         }
 
@@ -131,18 +141,27 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+                throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(valueArg).val(')');
         }
     }
 
-    static class ArrayPositionConstFunction extends IntFunction implements UnaryFunction {
-
+    private static class ArrayPositionConstFunc extends IntFunction implements UnaryFunction {
         private final Function arrayArg;
+        private final int arrayArgPos;
         private final double value;
 
-        ArrayPositionConstFunction(Function arrayArg, double value) {
+        ArrayPositionConstFunc(Function arrayArg, int arrayArgPos, double value) {
             this.arrayArg = arrayArg;
+            this.arrayArgPos = arrayArgPos;
             this.value = value;
         }
 
@@ -165,14 +184,23 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         public String getName() {
             return FUNCTION_NAME;
         }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+                throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
+            }
+        }
     }
 
-    static class ArrayPositionConstNullFunction extends IntFunction implements UnaryFunction {
-
+    private static class ArrayPositionConstNullFunc extends IntFunction implements UnaryFunction {
         private final Function arrayArg;
+        private final int arrayArgPos;
 
-        ArrayPositionConstNullFunction(Function arrayArg) {
+        ArrayPositionConstNullFunc(Function arrayArg, int arrayArgPos) {
             this.arrayArg = arrayArg;
+            this.arrayArgPos = arrayArgPos;
         }
 
         @Override
@@ -186,7 +214,15 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return linearSearchNan(arr) + 1;
+            return linearSearchNaN(arr) + 1;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+                throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
+            }
         }
 
         @Override
