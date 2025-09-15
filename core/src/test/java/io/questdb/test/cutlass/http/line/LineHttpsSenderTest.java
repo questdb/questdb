@@ -241,6 +241,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         TestUtils.assertContains(e.getMessage(), "http-status=400");
                         TestUtils.assertContains(e.getMessage(), "error in line 1: table: testRecoveryAfterStructuralError, column: value; cast error from protocol type: STRING to column type: LONG");
                     }
+                    sender.reset();
 
                     // assert that we can still send new rows after a structural error
                     sender.table(tableName).longColumn("value", 42).atNow();
