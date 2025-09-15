@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.RecordFunction;
-import io.questdb.std.Interval;
-import org.jetbrains.annotations.NotNull;
 
 public class RecordColumn extends RecordFunction implements FunctionExtension {
     private final int columnIndex;
@@ -48,11 +46,6 @@ public class RecordColumn extends RecordFunction implements FunctionExtension {
 
     @Override
     public int getArrayLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

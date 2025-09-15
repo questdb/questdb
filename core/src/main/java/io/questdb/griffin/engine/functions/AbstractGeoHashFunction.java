@@ -36,7 +36,6 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractGeoHashFunction implements Function {
-
     protected int type; // +number bits
 
     protected AbstractGeoHashFunction(int type) {
