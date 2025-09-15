@@ -331,9 +331,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ik\tSYMBOL\ttrue\t256\tfalse\t512\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
-
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\n",
+                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
+            );
 
             execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
 
@@ -344,8 +346,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ik\tSYMBOL\ttrue\t256\tfalse\t1024\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\n",
+                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
+            );
         });
     }
 
