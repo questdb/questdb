@@ -32,6 +32,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -137,6 +138,7 @@ public class SerialParquetExporter implements Closeable {
                 } else {
                     int fromParquetBaseLen = 0;
                     final int toParquetBaseLen = toParquet.trimTo(0).concat(copyExportRoot).concat(fileName).size();
+                    CopyExportResult exportResult = task.getResult();
 
                     try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -161,6 +163,10 @@ public class SerialParquetExporter implements Closeable {
                                 PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                         .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, fromParquet.slash());
                                 fromParquet.concat("data.parquet");
+                                if (exportResult != null) {
+                                    exportResult.addFilePath(fromParquet, false);
+                                    continue;
+                                }
 
                                 toParquet.trimTo(toParquetBaseLen);
                                 PartitionBy.getPartitionDirFormatMethod(partitionBy)
@@ -199,7 +205,6 @@ public class SerialParquetExporter implements Closeable {
                             LOG.info().$("converting partition to parquet [table=").$(tableToken)
                                     .$(", partition=").$(partitionName)
                                     .$(", path=").$(toParquetCs).$(']').$();
-                            statusReporter.report(phase, CopyExportRequestTask.Status.PENDING, task, toParquetCs, 0);
 
                             createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
                             PartitionEncoder.encodeWithOptions(
@@ -212,12 +217,14 @@ public class SerialParquetExporter implements Closeable {
                                     dataPageSize,
                                     parquetVersion
                             );
-
                             long parquetFileSize = ff.length(toParquet.$());
                             LOG.info().$("converted partition to parquet [table=").$(tableToken)
                                     .$(", partition=").$(partitionName)
                                     .$(", size=").$(parquetFileSize).$(']')
                                     .$();
+                            if (exportResult != null) {
+                                exportResult.addFilePath(toParquet, true);
+                            }
                         }
                     } catch (CairoException e) {
                         LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
@@ -243,7 +250,7 @@ public class SerialParquetExporter implements Closeable {
         } finally {
             if (tableToken != null && task.getCreateOp() != null) {
                 phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
-                statusReporter.report(phase, CopyExportRequestTask.Status.PENDING, task, null, 0);
+                statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, 0);
                 try {
                     fromParquet.trimTo(0);
                     cairoEngine.dropTableOrMatView(fromParquet, tableToken);

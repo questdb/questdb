@@ -30,14 +30,16 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
@@ -74,6 +76,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private int compressionCodec;
     private int compressionLevel;
     private CopyExportContext copyContext;
+    private CopyExportResult copyExportResult;
     private int dataPageSize;
     private String fileName;
     private MessageBus messageBus;
@@ -100,20 +103,21 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             CharSequence sqlText
     ) throws SqlException {
         super(METADATA);
-        this.of(messageBus, copyContext, model, securityContext, sqlText);
+        this.of(messageBus, copyContext, model, null, securityContext, sqlText);
     }
 
     public CopyExportFactory(
             MessageBus messageBus,
             CopyExportContext copyContext,
             CopyModel model,
+            CopyExportResult copyExportResult,
             SecurityContext securityContext,
             @Nullable SuspendEvent suspendEvent,
             CharSequence sqlText
     ) throws SqlException {
         super(METADATA);
         this.suspendEvent = suspendEvent;
-        this.of(messageBus, copyContext, model, securityContext, sqlText);
+        this.of(messageBus, copyContext, model, copyExportResult, securityContext, sqlText);
     }
 
     @Override
@@ -129,6 +133,19 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 assert processingCursor > -1;
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 CreateTableOperationImpl createOp = null;
+                if (this.tableName != null) {
+                    TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+                    if (tableToken == null) {
+                        throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
+                    }
+                    try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                        int tablePartitionBy = meta.getPartitionBy();
+                        if (tablePartitionBy != partitionBy) {
+                            this.sqlText = this.tableName;
+                        }
+                    }
+                }
+
                 if (this.selectText != null) {
                     // prepare to create a temp table
                     exportIdSink.clear();
@@ -136,21 +153,19 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     Numbers.appendHex(exportIdSink, copyID, true);
                     this.tableName = exportIdSink.toString();
                     createOp = validAndCreateTableOp(executionContext);
-                } else {
-                    if (executionContext.getTableTokenIfExists(tableName) == null) {
-                        throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
-                    }
-                    if (partitionBy != PartitionBy.NONE) {
-                        throw SqlException.$(partitionByPos, "PARTITION BY cannot be used when exporting from a table");
-                    }
                 }
+
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 record.setValue(exportIdSink);
+                if (copyExportResult != null) {
+                    copyExportResult.setCopyID(copyID);
+                }
                 task.of(
                         securityContext,
                         copyID,
                         createOp,
+                        copyExportResult,
                         tableName,
                         fileName,
                         sizeLimit,
@@ -164,7 +179,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         rawArrayEncoding,
                         userSpecifiedExportOptions
                 );
-                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.PENDING, task, "queued", 0);
+                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, "queued", 0);
                 cursor.toTop();
                 return cursor;
             } catch (SqlException ex) {
@@ -212,6 +227,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private void of(MessageBus messageBus,
                     CopyExportContext copyImportContext,
                     CopyModel model,
+                    CopyExportResult result,
                     SecurityContext securityContext,
                     CharSequence sqlText) throws SqlException {
         this.messageBus = messageBus;
@@ -241,6 +257,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.rawArrayEncoding = model.isRawArrayEncoding();
         this.userSpecifiedExportOptions = model.isUserSpecifiedExportOptions();
         this.sqlText = sqlText;
+        this.copyExportResult = result;
     }
 
     private CreateTableOperationImpl validAndCreateTableOp(SqlExecutionContext executionContext) throws SqlException {

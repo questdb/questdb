@@ -26,6 +26,7 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
@@ -41,6 +42,7 @@ public class CopyExportRequestTask implements Mutable {
     private String fileName;
     private int parquetVersion;
     private boolean rawArrayEncoding;
+    private CopyExportResult result;
     private int rowGroupSize;
     private SecurityContext securityContext;
     private int sizeLimit;
@@ -65,6 +67,7 @@ public class CopyExportRequestTask implements Mutable {
         this.suspendEvent = null;
         this.createOp = Misc.free(createOp);
         userSpecifiedExportOptions = false;
+        result = null;
     }
 
     public int getCompressionCodec() {
@@ -93,6 +96,10 @@ public class CopyExportRequestTask implements Mutable {
 
     public int getParquetVersion() {
         return parquetVersion;
+    }
+
+    public CopyExportResult getResult() {
+        return result;
     }
 
     public int getRowGroupSize() {
@@ -131,6 +138,7 @@ public class CopyExportRequestTask implements Mutable {
             SecurityContext securityContext,
             long copyID,
             CreateTableOperation createOp,
+            CopyExportResult result,
             String tableName,
             String fileName,
             int sizeLimit,
@@ -146,6 +154,7 @@ public class CopyExportRequestTask implements Mutable {
     ) {
         this.clear();
         this.securityContext = securityContext;
+        this.result = result;
         this.copyID = copyID;
         this.tableName = tableName;
         this.fileName = fileName;
@@ -168,7 +177,7 @@ public class CopyExportRequestTask implements Mutable {
         POPULATING_TEMP_TABLE("populating_data_to_temp_table"),
         CONVERTING_PARTITIONS("converting_partitions"),
         DROPPING_TEMP_TABLE("dropping_temp_table"),
-        SIGNALLING_EXP("signalling_exp"),
+        SENDING_DATA("sending_data"),
         SUCCESS("success");
 
         private final String name;
@@ -187,8 +196,7 @@ public class CopyExportRequestTask implements Mutable {
         STARTED("started"),
         FINISHED("finished"),
         FAILED("failed"),
-        CANCELLED("cancelled"),
-        PENDING("pending");
+        CANCELLED("cancelled");
 
         private final String name;
 
@@ -200,5 +208,6 @@ public class CopyExportRequestTask implements Mutable {
             return name;
         }
     }
+
 
 }

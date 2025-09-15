@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
+import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.MemoryTag;
@@ -44,6 +45,7 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     private static final long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
+    private final CopyExportResult copyExportResult = new CopyExportResult();
     private final CopyModel copyModel = new CopyModel();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -63,7 +65,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long parquetFileBuffer = 0;
     long parquetFileFd = -1;
     long parquetFileOffset = 0;
-    String parquetFilePath;
     long parquetFileSize = 0;
     boolean pausedQuery = false;
     int queryState;
@@ -116,7 +117,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         parquetFileFd = -1;
         parquetFileSize = 0;
         parquetFileOffset = 0;
-        parquetFilePath = null;
         if (parquetFileBuffer != 0) {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
@@ -126,6 +126,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             parquetFileFd = -1;
         }
         copyModel.clear();
+        copyExportResult.clear();
     }
 
     @Override
@@ -137,10 +138,15 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
         }
+        Misc.free(copyExportResult);
     }
 
     public CopyModel getCopyModel() {
         return copyModel;
+    }
+
+    public CopyExportResult getExportResult() {
+        return copyExportResult;
     }
 
     public long getFd() {

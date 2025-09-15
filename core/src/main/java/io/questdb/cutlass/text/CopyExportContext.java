@@ -28,12 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.SerialParquetExporter;
-import io.questdb.std.BoolList;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
@@ -43,7 +39,6 @@ public class CopyExportContext implements Mutable {
     private final AtomicLong activeExportID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     private final LongSupplier copyIDSupplier;
-    private CopyExportResult copyExportResult = new CopyExportResult();
     private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     private SerialParquetExporter.PhaseStatusReporter reporter;
 
@@ -55,7 +50,6 @@ public class CopyExportContext implements Mutable {
         final long id = copyIDSupplier.getAsLong();
         if (activeExportID.compareAndSet(INACTIVE_COPY_ID, id)) {
             this.exportOriginatorSecurityContext = securityContext;
-            copyExportResult.copyID = id;
             return id;
         }
         return INACTIVE_COPY_ID;
@@ -65,7 +59,6 @@ public class CopyExportContext implements Mutable {
     public void clear() {
         activeExportID.set(INACTIVE_COPY_ID);
         exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
-        copyExportResult.clear();
     }
 
     public long getActiveExportID() {
@@ -86,27 +79,6 @@ public class CopyExportContext implements Mutable {
 
     public void setReporter(SerialParquetExporter.PhaseStatusReporter reporter) {
         this.reporter = reporter;
-    }
-
-    static class CopyExportResult {
-        long copyID = INACTIVE_COPY_ID;
-        BoolList needCleanUps = new BoolList();
-        ObjList<String> paths = new ObjList<>();
-        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
-        CopyExportRequestTask.Status status = CopyExportRequestTask.Status.NONE;
-
-        public void addFilePath(Path path, boolean needCleanUp) {
-            paths.add(path.toString());
-            needCleanUps.add(needCleanUp);
-        }
-
-        public void clear() {
-            copyID = INACTIVE_COPY_ID;
-            needCleanUps.clear();
-            paths.clear();
-            phase = CopyExportRequestTask.Phase.NONE;
-            status = CopyExportRequestTask.Status.NONE;
-        }
     }
 }
 

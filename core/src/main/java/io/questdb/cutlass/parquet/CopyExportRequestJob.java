@@ -53,10 +53,10 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private final CairoEngine engine;
     private final RingQueue<CopyExportRequestTask> requestQueue;
     private final Sequence requestSubSeq;
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final TableToken statusTableToken;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private SerialParquetExporter serialExporter;
-    private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
 
     public CopyExportRequestJob(final CairoEngine engine) throws SqlException {
@@ -156,6 +156,9 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                             .I$();
                 }
             }
+            if (task.getResult() != null) {
+                task.getResult().report(phase, status, msg);
+            }
         }
     }
 
@@ -164,19 +167,24 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         long cursor = requestSubSeq.next();
         if (cursor > -1) {
             CopyExportRequestTask task = requestQueue.get(cursor);
-            sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, copyContext.getCircuitBreaker());
-            serialExporter.of(
-                    task,
-                    copyContext.getCircuitBreaker(),
-                    this::updateStatus
-            );
-
-            CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
+            CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
             try {
+                if (copyContext.getCircuitBreaker().checkIfTripped()) {
+                    LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
+                    throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                }
+                this.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, task, "queued", 0);
+                sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, copyContext.getCircuitBreaker());
+                serialExporter.of(
+                        task,
+                        copyContext.getCircuitBreaker(),
+                        this::updateStatus
+                );
+
                 phase = serialExporter.process(sqlExecutionContext); // throws CopyExportException
 
                 if (task.getSuspendEvent() != null) {
-                    phase = CopyExportRequestTask.Phase.SIGNALLING_EXP;
+                    phase = CopyExportRequestTask.Phase.SENDING_DATA;
                     updateStatus(phase, CopyExportRequestTask.Status.STARTED, task,
                             "sending signal to waiting thread [fd=" + task.getSuspendEvent().getFd() + ']', 0);
                     task.getSuspendEvent().trigger();

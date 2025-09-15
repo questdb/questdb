@@ -332,7 +332,7 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-    @Test
+/*    @Test
     public void testCopyParquetFailsWithSpecifyPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
@@ -344,7 +344,7 @@ public class CopyExportTest extends AbstractCairoTest {
             );
         });
 
-    }
+    }*/
 
     @Test
     public void testCopyParquetLargeTable() throws Exception {

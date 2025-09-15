@@ -33,7 +33,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -50,6 +49,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -78,6 +78,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -322,34 +323,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private CopyExportRequestTask.Status checkForParquetExportCompletion(CharSequence copyID) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            String statusSQL = "SELECT phase, status FROM 'sys.copy_export_log' WHERE id = '" + copyID + "' ORDER BY ts DESC LIMIT 1";
-            final CompiledQuery cc = compiler.compile(statusSQL, sqlExecutionContext);
-
-            try (RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-                if (cursor.hasNext()) {
-                    CharSequence phase = cursor.getRecord().getSymA(0);
-                    CharSequence status = cursor.getRecord().getSymA(1);
-                    LOG.info().$("Parquet export status check [copyID=").$(copyID).$(", phase=").$(phase).$(", status=").$(status).$(']').I$();
-
-                    if (phase == null) {
-                        if (SqlKeywords.isFinishedKeyword(status)) {
-                            return CopyExportRequestTask.Status.FINISHED;
-                        } else if (SqlKeywords.isFailedKeyword(status)) {
-                            return CopyExportRequestTask.Status.FAILED;
-                        } else if (SqlKeywords.isCancelledKeyword(status)) {
-                            return CopyExportRequestTask.Status.CANCELLED;
-                        } else {
-                            return CopyExportRequestTask.Status.PENDING;
-                        }
-                    }
-                } else {
-                    LOG.info().$("No export status found for copyID: ").$(copyID).I$();
-                }
+    private void cleanupParquetFile(ExportQueryProcessorState state) {
+        if (state.getExportResult().getNeedCleanUp()) {
+            LPSZ file = state.getExportResult().getPath().$();
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            if (file.size() > 0 && ff.exists(file)) {
+                engine.getConfiguration().getFilesFacade().remove(file);
             }
         }
-        return CopyExportRequestTask.Status.PENDING;
     }
 
     private void cleanupParquetState(ExportQueryProcessorState state) {
@@ -373,14 +354,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         // Handle partition_by option
         DirectUtf8Sequence partitionBy = request.getUrlParam(EXPORT_PARQUET_OPTION_PARTITION_BY);
         if (partitionBy != null && partitionBy.size() > 0) {
-            int partitionByValue = PartitionBy.fromString(partitionBy.asAsciiCharSequence());
-            if (partitionByValue < 0) {
-                errSink.clear();
-                errSink.put("invalid partition_by value:").put(partitionBy);
-                sendException(response, 0, errSink, state);
-                return false;
-            }
-            copyModel.setPartitionBy(partitionByValue, 0);
+            errSink.clear();
+            errSink.put("partitionBy is temporarily not supported:").put(partitionBy);
+            sendException(response, 0, errSink, state);
+            return false;
         }
 
         // Handle compression_codec option
@@ -512,35 +489,24 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         // fall through
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT:
                         CopyExportRequestTask.Status completion;
-                        try {
-                            completion = checkForParquetExportCompletion(state.copyID);
-                        } catch (SqlException e) {
-                            sendException(response, 0, e.getFlyweightMessage(), state);
-                            break OUT;
-                        }
+                        CopyExportResult result = state.getExportResult();
 
-                        if (completion == CopyExportRequestTask.Status.PENDING) {
+                        if (!result.isFinished()) {
                             throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker());
                         }
 
                         // Handle non-pending completion statuses
-                        switch (completion) {
-                            case FAILED:
-                                sendException(response, 0, "copy task failed [id=" + state.copyID + ']', state);
-                                break OUT;
-                            case CANCELLED:
-                                sendException(response, 0, "copy task was cancelled [id=" + state.copyID + ']', state);
-                                break OUT;
-                            case FINISHED:
-                                String exportPath = findParquetExportFile(state.copyID);
-                                if (exportPath == null) {
-                                    sendException(response, 0, "exported parquet files not found [id=" + state.copyID + ']', state);
-                                    break OUT;
-                                } else {
-                                    state.parquetFilePath = exportPath;
-                                    state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
-                                }
-                                break;
+                        if (result.getPhase() == CopyExportRequestTask.Phase.SUCCESS) {
+                            state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
+                        } else {
+                            errSink.clear();
+                            errSink.put("copy task failed [id=").put(result.getCopyID())
+                                    .put(", phase=").put(result.getPhase().getName())
+                                    .put(", status=").put(result.getStatus().getName())
+                                    .put(", message=").put(result.getMessage() != null ? result.getMessage() : "null")
+                                    .put("]");
+                            sendException(response, 0, errSink, state);
+                            break OUT;
                         }
                         // fall through
 
@@ -574,6 +540,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 response.sendChunk(false);
+            } finally {
+                cleanupParquetFile(state);
             }
         }
 
@@ -746,6 +714,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     engine.getMessageBus(),
                     engine.getCopyExportContext(),
                     state.getCopyModel(),
+                    state.getExportResult(),
                     context.getSecurityContext(),
                     state.suspendEvent,
                     state.query
@@ -768,38 +737,32 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        Path path = state.getExportResult().getPath();
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        Path path = new Path(); // todo: allocation
-
-        try {
-            path.of(state.parquetFilePath);
-            state.parquetFileFd = ff.openRO(path.$());
-            if (state.parquetFileFd < 0) {
-                throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
-                        .put("could not find parquet file: [path=").put(state.parquetFilePath)
-                        .put(", copyId=").put(state.copyID).put(']');
-            }
-
-            state.parquetFileSize = ff.length(state.parquetFileFd);
-            state.parquetFileOffset = 0;
-            state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-
-            // Send headers
-            HttpChunkedResponse response = context.getChunkedResponse();
-            response.status(200, CONTENT_TYPE_PARQUET);
-
-            String fileName = state.fileName != null ? state.fileName : "questdb-query-" + clock.getTicks();
-            if (!fileName.endsWith(".parquet")) {
-                fileName += ".parquet";
-            }
-
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(fileName).putAscii("\"").putEOL();
-            response.headers().putAscii("Content-Length: ").put(state.parquetFileSize).putEOL();
-            response.headers().setKeepAlive(configuration.getKeepAliveHeader());
-            response.sendHeader();
-        } finally {
-            Misc.free(path);
+        state.parquetFileFd = ff.openRO(path.$());
+        if (state.parquetFileFd < 0) {
+            throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
+                    .put("could not find parquet file: [path=").put(path)
+                    .put(", copyId=").put(state.copyID).put(']');
         }
+
+        state.parquetFileSize = ff.length(state.parquetFileFd);
+        state.parquetFileOffset = 0;
+        state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
+
+        // Send headers
+        HttpChunkedResponse response = context.getChunkedResponse();
+        response.status(200, CONTENT_TYPE_PARQUET);
+
+        String fileName = state.fileName != null ? state.fileName : "questdb-query-" + clock.getTicks();
+        if (!fileName.endsWith(".parquet")) {
+            fileName += ".parquet";
+        }
+
+        response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(fileName).putAscii("\"").putEOL();
+        response.headers().putAscii("Content-Length: ").put(state.parquetFileSize).putEOL();
+        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        response.sendHeader();
     }
 
     private void internalError(
@@ -1104,7 +1067,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, (int) (state.parquetFileSize - state.parquetFileOffset));
         response.bookmark();
 
-        // Close file descriptor when done
         if (state.parquetFileOffset >= state.parquetFileSize) {
             ff.close(state.parquetFileFd);
             state.parquetFileFd = -1;
