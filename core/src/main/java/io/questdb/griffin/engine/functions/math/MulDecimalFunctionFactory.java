@@ -27,13 +27,10 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -73,21 +70,8 @@ public class MulDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(leftDecimal, left, rec);
-            if (leftDecimal.isNull()) {
-                return false;
-            }
-            DecimalUtil.load(rightDecimal, right, rec);
-            if (rightDecimal.isNull()) {
-                return false;
-            }
-            try {
-                leftDecimal.multiply(rightDecimal);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
+        protected void exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
+            decimal.multiply(rightHH, rightHL, rightLH, rightLL, rightScale);
         }
     }
 }

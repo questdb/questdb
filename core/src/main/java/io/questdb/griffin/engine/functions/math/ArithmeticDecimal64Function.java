@@ -27,19 +27,22 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
+import io.questdb.std.NumericException;
 
 abstract class ArithmeticDecimal64Function extends DecimalFunction implements BinaryFunction {
     protected final Decimal64 decimal = new Decimal64();
     protected final Function left;
     protected final int precision;
     protected final Function right;
-    protected final int rightScale;
     protected final int scale;
+    private final int rightScale;
+    private final int rightStorageSizePow2;
 
     public ArithmeticDecimal64Function(Function left, Function right, int targetType) {
         super(targetType);
@@ -48,6 +51,7 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
         this.rightScale = ColumnType.getDecimalScale(right.getType());
+        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(right.getType()));
     }
 
     @Override
@@ -108,11 +112,53 @@ abstract class ArithmeticDecimal64Function extends DecimalFunction implements Bi
     }
 
     /**
-     * The implementation must fill the decimal with the arithmetic operation value following
-     * the target scale and precision. If the value to cast is null, it must return false
-     * without doing additional work.
-     *
      * @return whether the result is not null.
      */
-    protected abstract boolean calc(Record rec);
+    private boolean calc(Record rec) {
+        DecimalUtil.load(decimal, left, rec);
+        if (decimal.isNull()) {
+            return false;
+        }
+
+        final long rightValue;
+        switch (rightStorageSizePow2) {
+            case 0:
+                rightValue = right.getDecimal8(rec);
+                if (rightValue == Decimals.DECIMAL8_NULL) {
+                    return false;
+                }
+                break;
+            case 1:
+                rightValue = right.getDecimal16(rec);
+                if (rightValue == Decimals.DECIMAL16_NULL) {
+                    return false;
+                }
+                break;
+            case 2:
+                rightValue = right.getDecimal32(rec);
+                if (rightValue == Decimals.DECIMAL32_NULL) {
+                    return false;
+                }
+                break;
+            default:
+                rightValue = right.getDecimal64(rec);
+                if (Decimal64.isNull(rightValue)) {
+                    return false;
+                }
+                break;
+        }
+
+        try {
+            exec(rightValue, rightScale);
+        } catch (NumericException ignore) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * The implementation must execute the operation against the decimal here.
+     * The right-hand value is given as inputs to this method.
+     */
+    protected abstract void exec(long rightValue, int rightScale);
 }

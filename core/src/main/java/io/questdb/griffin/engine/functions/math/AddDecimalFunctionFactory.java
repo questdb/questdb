@@ -27,14 +27,10 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -57,7 +53,10 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         final int leftType = left.getType();
         final int rightType = right.getType();
-        final int precision = Math.min(Math.max(ColumnType.getDecimalPrecision(leftType), ColumnType.getDecimalPrecision(rightType)) + 1, Decimals.MAX_PRECISION);
+        final int precision = Math.min(
+                Math.max(ColumnType.getDecimalPrecision(leftType), ColumnType.getDecimalPrecision(rightType)) + 1,
+                Decimals.MAX_PRECISION
+        );
         final int scale = Math.max(ColumnType.getDecimalScale(leftType), ColumnType.getDecimalScale(rightType));
 
         switch (Decimals.getStorageSizePow2(precision)) {
@@ -65,17 +64,7 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
             case 1:
             case 2:
             case 3:
-                final int rightPrecision = ColumnType.getDecimalPrecision(rightType);
-                switch (Decimals.getStorageSizePow2(rightPrecision)) {
-                    case 0:
-                        return new Decimal8Func(left, right, ColumnType.getDecimalType(precision, scale));
-                    case 1:
-                        return new Decimal16Func(left, right, ColumnType.getDecimalType(precision, scale));
-                    case 2:
-                        return new Decimal32Func(left, right, ColumnType.getDecimalType(precision, scale));
-                    default:
-                        return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale));
-                }
+                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale));
             case 4:
                 return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale));
             default:
@@ -95,51 +84,8 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(leftDecimal, left, rec);
-            if (leftDecimal.isNull()) {
-                return false;
-            }
-            DecimalUtil.load(rightDecimal, right, rec);
-            if (rightDecimal.isNull()) {
-                return false;
-            }
-            try {
-                leftDecimal.add(rightDecimal);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
-        }
-    }
-
-    private static class Decimal16Func extends ArithmeticDecimal64Function {
-
-        public Decimal16Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
-        }
-
-        @Override
-        public String getName() {
-            return "+";
-        }
-
-        @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(decimal, left, rec);
-            if (decimal.isNull()) {
-                return false;
-            }
-            final short rightValue = right.getDecimal16(rec);
-            if (rightValue == Decimals.DECIMAL16_NULL) {
-                return false;
-            }
-            try {
-                decimal.add(rightValue, rightScale);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
+        protected void exec(long rightHigh, long rightLow, int rightScale) {
+            decimal.add(rightHigh, rightLow, rightScale);
         }
     }
 
@@ -155,51 +101,8 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(leftDecimal, left, rec);
-            if (leftDecimal.isNull()) {
-                return false;
-            }
-            DecimalUtil.load(rightDecimal, right, rec);
-            if (rightDecimal.isNull()) {
-                return false;
-            }
-            try {
-                leftDecimal.add(rightDecimal);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
-        }
-    }
-
-    private static class Decimal32Func extends ArithmeticDecimal64Function {
-
-        public Decimal32Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
-        }
-
-        @Override
-        public String getName() {
-            return "+";
-        }
-
-        @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(decimal, left, rec);
-            if (decimal.isNull()) {
-                return false;
-            }
-            final int rightValue = right.getDecimal32(rec);
-            if (rightValue == Decimals.DECIMAL32_NULL) {
-                return false;
-            }
-            try {
-                decimal.add(rightValue, rightScale);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
+        protected void exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
+            decimal.add(rightHH, rightHL, rightLH, rightLL, rightScale);
         }
     }
 
@@ -215,51 +118,8 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(decimal, left, rec);
-            if (decimal.isNull()) {
-                return false;
-            }
-            final long rightValue = right.getDecimal64(rec);
-            if (Decimal64.isNull(rightValue)) {
-                return false;
-            }
-            try {
-                decimal.add(rightValue, rightScale);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
-        }
-    }
-
-    private static class Decimal8Func extends ArithmeticDecimal64Function {
-
-        public Decimal8Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
-        }
-
-        @Override
-        public String getName() {
-            return "+";
-        }
-
-        @Override
-        protected boolean calc(Record rec) {
-            DecimalUtil.load(decimal, left, rec);
-            if (decimal.isNull()) {
-                return false;
-            }
-            final byte rightValue = right.getDecimal8(rec);
-            if (rightValue == Decimals.DECIMAL8_NULL) {
-                return false;
-            }
-            try {
-                decimal.add(rightValue, rightScale);
-            } catch (NumericException ignore) {
-                return false;
-            }
-            return true;
+        protected void exec(long rightValue, int rightScale) {
+            decimal.add(rightValue, rightScale);
         }
     }
 }

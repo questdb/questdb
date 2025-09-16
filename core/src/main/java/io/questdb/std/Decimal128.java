@@ -341,10 +341,17 @@ public class Decimal128 implements Sinkable {
     /**
      * Add another Decimal128 to this one (in-place)
      *
-     * @param other The Decimal128 to add
+     * @param other the Decimal128 to add
      */
     public void add(Decimal128 other) {
         add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
+    }
+
+    /**
+     * Add another Decimal128 to this one (in-place)
+     */
+    public void add(long otherHigh, long otherLow, int otherScale) {
+        add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
     public int compareTo(long otherHi, long otherLo) {
@@ -490,7 +497,6 @@ public class Decimal128 implements Sinkable {
         if (negResult) {
             negate();
         }
-
     }
 
     @Override
@@ -569,12 +575,21 @@ public class Decimal128 implements Sinkable {
      * @throws NumericException if divisor is zero
      */
     public void modulo(Decimal128 divisor) {
-        if (divisor.isZero()) {
+        modulo(divisor.high, divisor.low, divisor.scale);
+    }
+
+    /**
+     * Calculate modulo in-place.
+     *
+     * @throws NumericException if divisor is zero
+     */
+    public void modulo(long divisorHigh, long divisorLow, int divisorScale) {
+        if (divisorHigh == 0 && divisorLow == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
         // Result scale should be the larger of the two scales
-        int resultScale = Math.max(this.scale, divisor.scale);
+        int resultScale = Math.max(this.scale, divisorScale);
 
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
@@ -583,10 +598,10 @@ public class Decimal128 implements Sinkable {
         long thisL = this.low;
         int thisScale = this.scale;
 
-        this.divide(divisor, 0, RoundingMode.DOWN);
+        this.divide(divisorHigh, divisorLow, divisorScale, 0, RoundingMode.DOWN);
 
         // Now compute this * divisor
-        this.multiply(divisor);
+        this.multiply(divisorHigh, divisorLow, divisorScale);
 
         long qH = this.high;
         long qL = this.low;
