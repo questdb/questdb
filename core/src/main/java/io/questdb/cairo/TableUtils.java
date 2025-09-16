@@ -842,7 +842,7 @@ public final class TableUtils {
     }
 
     public static void handleMetadataLoadException(
-            CharSequence tableName,
+            TableToken tableToken,
             long deadline,
             CairoException ex,
             MillisecondClock millisecondClock,
@@ -851,7 +851,7 @@ public final class TableUtils {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (ex.isFileCannotRead()) {
             if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$safe(tableName)
+                LOG.info().$("error reloading metadata [table=").$(tableToken)
                         .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();

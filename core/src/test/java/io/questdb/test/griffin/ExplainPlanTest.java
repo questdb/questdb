@@ -708,9 +708,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertSql(
                     "i\trow_number\tavg\tsum\tfirst_value\n" +
-                            "1\t1\t50.5\t5050.0\t1.0\n" +
-                            "2\t2\t50.5\t5050.0\t1.0\n" +
-                            "3\t1\t50.5\t5050.0\t1.0\n",
+                            "1\t1\t50.5\t5050.0\t1\n" +
+                            "2\t2\t50.5\t5050.0\t1\n" +
+                            "3\t1\t50.5\t5050.0\t1\n",
                     sql
             );
         });
@@ -11837,10 +11837,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
-                    "1\t1\t1.0\t1.0\t1.0\n" +
-                    "2\t2\t2.0\t2.0\t2.0\n" +
-                    "3\t1\t3.0\t3.0\t3.0\n", sql);
+            assertSql(
+                    "i\trow_number\tavg\tsum\tfirst_value\n" +
+                            "1\t1\t1.0\t1.0\t1\n" +
+                            "2\t2\t2.0\t2.0\t2\n" +
+                            "3\t1\t3.0\t3.0\t3\n",
+                    sql
+            );
         });
     }
 

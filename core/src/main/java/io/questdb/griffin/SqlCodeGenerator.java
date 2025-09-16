@@ -5406,7 +5406,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            chainMetadata.getTimestampIndex(),
+                            baseMetadata.getTimestampIndex(),
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()
                     );
