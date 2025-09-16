@@ -241,6 +241,11 @@ public class CopyExportTest extends AbstractCairoTest {
                 96,
                 "Brotli compression level must be between 0 and 11"
         );
+        assertException(
+                "copy test_table to 'test_table'  with format parquet parquet_version 3;",
+                69,
+                "invalid parquet version: 3, expected 1 or 2"
+        );
     }
 
     @Test

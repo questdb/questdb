@@ -178,7 +178,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         rawArrayEncoding,
                         userSpecifiedExportOptions
                 );
-                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, "queued", 0);
+                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, "queued", 0);
                 cursor.toTop();
                 return cursor;
             } catch (SqlException ex) {
