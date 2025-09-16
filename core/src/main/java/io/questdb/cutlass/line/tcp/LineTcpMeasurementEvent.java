@@ -580,12 +580,15 @@ public class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_ARRAY:
-                    BorrowedArray array = entity.getArray();
-                    if (array.getType() != colType && !array.isNull()) {
-                        throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
+                    if (ColumnType.isArray(colType)) {
+                        BorrowedArray array = entity.getArray();
+                        if (array.getType() != colType && !array.isNull()) {
+                            throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
+                        }
+                        offset = buffer.addArray(offset, array);
+                        break;
                     }
-                    offset = buffer.addArray(offset, array);
-                    break;
+                    throw castError(tud.getTableNameUtf16(), "array", colType, entity.getName());
                 case ENTITY_TYPE_NULL:
                     offset = buffer.addNull(offset);
                     break;
