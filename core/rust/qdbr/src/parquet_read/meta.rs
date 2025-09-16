@@ -190,7 +190,10 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
             }
             (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
-            (PhysicalType::Int96, _, None) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
+            (PhysicalType::Int96, _, None) => Some(ColumnType::new(
+                ColumnTypeTag::Timestamp,
+                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+            )),
             (_, _, _) => None,
         }
     }

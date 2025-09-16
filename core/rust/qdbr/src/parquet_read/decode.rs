@@ -30,9 +30,7 @@ use parquet2::page::DataPageHeader;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{decompress, get_page_iterator};
-use parquet2::schema::types::{
-    PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
-};
+use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
@@ -697,44 +695,6 @@ pub fn decode_page(
         }
         (PhysicalType::Int64, logical_type, _) => {
             match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Timestamp {
-                        is_adjusted_to_utc: _,
-                        unit: TimeUnit::Nanoseconds | TimeUnit::Milliseconds,
-                    }),
-                    ColumnTypeTag::Timestamp,
-                ) => {
-                    if let Some(PrimitiveLogicalType::Timestamp {
-                        is_adjusted_to_utc: _,
-                        unit: ts_unit,
-                    }) = logical_type
-                    {
-                        let mut slicer = ValueConvertSlicer::<8, _, _>::new(
-                            DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            |nano_ts, out_buff| {
-                                let ts =
-                                    unsafe { ptr::read_unaligned(nano_ts.as_ptr() as *const i64) };
-                                let ts = match ts_unit {
-                                    TimeUnit::Nanoseconds | TimeUnit::Microseconds => ts,
-                                    TimeUnit::Milliseconds => ts * 1000,
-                                };
-                                out_buff.copy_from_slice(&ts.to_le_bytes());
-                            },
-                        );
-
-                        decode_page0(
-                            page,
-                            row_lo,
-                            row_hi,
-                            &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
-                        )?;
-                    } else {
-                        unreachable!("Timestamp logical type must be set");
-                    }
-                    Ok(())
-                }
                 (
                     Encoding::Plain,
                     _,
