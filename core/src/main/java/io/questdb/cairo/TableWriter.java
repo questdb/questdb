@@ -33,6 +33,7 @@ import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
@@ -1017,7 +1018,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
-                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, columnIndex);
             } else {
                 // maintain a sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
@@ -3238,7 +3239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (replaceColumnIndex < 0) {
             if (ColumnType.isSymbol(columnType)) {
                 try {
-                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, metadata.getColumnCount() - 1);
                 } catch (CairoException e) {
                     try {
                         recoverFromSymbolMapWriterFailure(columnName);
@@ -4025,16 +4026,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (type > -1) {
                 if (ColumnType.isSymbol(type)) {
-                    final int symbolIndex = denseSymbolMapWriters.size();
+                    final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
                     long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
                     SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                             configuration,
                             path.trimTo(pathSize),
                             metadata.getColumnName(i),
                             columnNameTxn,
-                            txWriter.getSymbolValueCount(symbolIndex),
-                            symbolIndex,
-                            txWriter
+                            txWriter.getSymbolValueCount(symbolIndexInTxWriter),
+                            symbolIndexInTxWriter,
+                            txWriter,
+                            i
                     );
 
                     symbolMapWriters.extendAndSet(i, symbolMapWriter);
@@ -4196,7 +4198,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void createSymbolMapWriter(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
+    private void createSymbolMapWriter(
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            int columnIndex
+    ) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
@@ -4205,7 +4213,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnNameTxn,
                 0,
                 denseSymbolMapWriters.size(),
-                txWriter
+                txWriter,
+                columnIndex
         );
 
         try {
@@ -5507,6 +5516,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
             enforceTtl();
+            scaleSymbolCapacities();
         } catch (Throwable e) {
             // Log the exception stack.
             LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
@@ -9424,6 +9434,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         processPartitionRemoveCandidates();
+    }
+
+    private void scaleSymbolCapacities() {
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            var w = denseSymbolMapWriters.getQuick(i);
+            var columnIndex = w.getColumnIndex();
+            // ignore null writers, if they are present in the list
+            if (columnIndex > -1) {
+                int symbolCount = w.getSymbolCount();
+                int symbolCapacity = w.getSymbolCapacity();
+                if (symbolCount * 0.8 > symbolCapacity) {
+                    changeSymbolCapacity(
+                            metadata.getColumnName(w.getColumnIndex()),
+                            symbolCapacity * 2, // symbol capacity is power of 2
+                            AllowAllSecurityContext.INSTANCE // this is internal housekeeping task, triggered by WAL apply job
+                    );
+                }
+            }
+        }
     }
 
     private void scheduleRemoveAllPartitions() {

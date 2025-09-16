@@ -55,6 +55,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public static final int HEADER_SIZE = 64;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     private final MemoryMARW charMem;
+    private final int columnIndex; // column index in the table writer metadata
     private final BitmapIndexWriter indexWriter;
     private final SymbolValueCountCollector valueCountCollector;
     private CharSequenceIntHashMap cache;
@@ -72,7 +73,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             long columnNameTxn,
             int symbolCount,
             int symbolIndexInTxWriter,
-            @NotNull SymbolValueCountCollector valueCountCollector
+            @NotNull SymbolValueCountCollector valueCountCollector,
+            int columnIndex
     ) {
         final int plen = path.size();
         try {
@@ -135,6 +137,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             this.symbolIndexInTxWriter = symbolIndexInTxWriter;
             this.valueCountCollector = valueCountCollector;
+            this.columnIndex = columnIndex;
             LOG.debug()
                     .$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
@@ -187,6 +190,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -268,6 +276,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // init key files, use offsetMem for that
             this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+            // we must close this file (key file), before it is re-opened by the indexWriter, not after
+            // the after will be spurious close, initiated by offsetMem object reuse
+            this.offsetMem.close();
+
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
             this.indexWriter.of(path.trimTo(plen), columnName, columnNameTxn);
 

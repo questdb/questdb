@@ -541,7 +541,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
