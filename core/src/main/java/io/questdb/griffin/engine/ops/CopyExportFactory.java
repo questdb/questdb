@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -132,7 +133,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 assert processingCursor > -1;
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 CreateTableOperationImpl createOp = null;
-                if (this.tableName != null) {
+                if (this.tableName != null && partitionBy != -1) {
                     TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                     if (tableToken == null) {
                         throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
@@ -178,6 +179,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         rawArrayEncoding,
                         userSpecifiedExportOptions
                 );
+                copyRequestPubSeq.done(processingCursor);
                 copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, "queued", 0);
                 cursor.toTop();
                 return cursor;
@@ -199,8 +201,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 Numbers.appendHex(exportIdSink, copyID, true);
                 LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getMessage()).I$();
                 throw ex;
-            } finally {
-                copyRequestPubSeq.done(processingCursor);
             }
         } else {
             long activeCopyID = copyContext.getActiveExportID();
@@ -264,6 +264,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery selectQuery = compiler.compile(selectText, executionContext);
             try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
+                if (partitionBy == -1) {
+                    partitionBy = PartitionBy.NONE;
+                }
                 createOp = new CreateTableOperationImpl(
                         selectText,
                         tableName,

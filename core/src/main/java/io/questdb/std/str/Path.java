@@ -133,6 +133,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         return asciiCharSequence.of(this);
     }
 
+    public @NotNull CharSequence asAsciiCharSequence(int start, int end) {
+        return asciiCharSequence.of(this, start, end);
+    }
+
     public int capacity() {
         return capacity;
     }

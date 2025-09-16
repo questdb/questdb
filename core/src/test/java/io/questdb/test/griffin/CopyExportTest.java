@@ -260,7 +260,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table\tfinished\n",
+                                    "test_table/default.parquet\tfinished\n",
                             "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
 
@@ -280,7 +280,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table\tfinished\n",
+                                    "test_table/default.parquet\tfinished\n",
                             "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
@@ -299,7 +299,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table\tfinished\n",
+                                    "test_table/default.parquet\tfinished\n",
                             "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
@@ -588,7 +588,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output_all_types\tfinished\n",
+                                        "output_all_types/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify all data types are preserved correctly
                         assertSql("bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tts\n" +
@@ -718,7 +718,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output_complex\tfinished\n",
+                                        "output_complex/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify complex query results
                         assertSql("id\tname\tamount\torder_date\n" +
@@ -743,7 +743,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output_nulls\tfinished\n",
+                                        "output_large/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify null values are handled correctly
                         assertSql("x\ty\tz\n" +
@@ -769,7 +769,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output_special\tfinished\n",
+                                        "output_special/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify special characters are preserved
                         assertSql("x\ty\n" +
@@ -794,7 +794,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                                 assertSql("file\tstatus\n" +
-                                                "output3\tfinished\n",
+                                                "output3/default.parquet\tfinished\n",
                                         "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                                 // Verify only filtered data was exported
                                 assertSql("id\tvalue\n" +
@@ -869,7 +869,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output2\tfinished\n",
+                                        "output2/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify exported data
                         assertSql("x\ty\n" +
@@ -894,7 +894,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output14\tfinished\n",
+                                        "output14/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify case-insensitive options work
                         assertSql("x\ty\n1\ttest\n",
@@ -940,7 +940,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output5\tfinished\n",
+                                        "output5/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with compression level
                         assertSql("x\ty\n1\ttest\n",
@@ -1013,7 +1013,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output10\tfinished\n",
+                                        "output10/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with specific Parquet version
                         assertSql("x\ty\n1\ttest\n",
@@ -1036,7 +1036,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output11\tfinished\n",
+                                        "output11/2023-01-01.parquet,output11/2023-01-02.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify partitioned data
                         assertSql("ts\tx\n" +
@@ -1048,6 +1048,27 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithPartitionByWithoutTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int)");
+            execute("insert into test_table values (1), (2)");
+            try {
+                runAndFetchCopyExportID("copy test_table to 'output12' with format parquet partition_by DAY", sqlExecutionContext);
+                Assert.fail("Expected failure due to missing timestamp column");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "partitioning is possible only on tables with designated timestamps");
+            }
+
+            try {
+                runAndFetchCopyExportID("copy (select * from test_table) to 'output12' with format parquet partition_by DAY", sqlExecutionContext);
+                Assert.fail("Expected failure due to missing timestamp column");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "partitioning is possible only on tables with designated timestamps");
+            }
         });
     }
 
@@ -1064,7 +1085,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output6\tfinished\n",
+                                        "output6/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with custom row group size
                         assertSql("x\ty\n1\ttest\n",
@@ -1101,7 +1122,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "test_table\tfinished\n",
+                                        "test_table/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with statistics disabled
                         assertSql("x\ty\n1\ttest\n",
@@ -1124,7 +1145,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("file\tstatus\n" +
-                                        "output8\tfinished\n",
+                                        "output8/default.parquet\tfinished\n",
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with statistics enabled
                         assertSql("x\ty\n1\ttest\n",

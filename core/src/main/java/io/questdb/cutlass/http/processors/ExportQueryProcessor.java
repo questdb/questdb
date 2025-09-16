@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -350,6 +351,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         copyModel.clear();
         copyModel.setParquetDefaults(engine.getConfiguration());
         copyModel.setFormat(CopyModel.COPY_FORMAT_PARQUET);
+        copyModel.setPartitionBy(PartitionBy.NONE);
 
         // Handle partition_by option
         DirectUtf8Sequence partitionBy = request.getUrlParam(EXPORT_PARQUET_OPTION_PARTITION_BY);

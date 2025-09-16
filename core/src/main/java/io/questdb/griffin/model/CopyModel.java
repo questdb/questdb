@@ -25,7 +25,6 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
@@ -267,7 +266,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
         parquetVersion = configuration.getPartitionEncoderParquetVersion();
         rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
-        partitionBy = PartitionBy.NONE;
+        partitionBy = -1;
     }
 
     public void setParquetVersion(int parquetVersion) {
@@ -275,11 +274,9 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.userSpecifiedExportOptions = true;
     }
 
-    public void setPartitionBy(int partitionBy, int pos) {
+    public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
-        if (partitionBy != -1) {
-            this.userSpecifiedExportOptions = true;
-        }
+        this.userSpecifiedExportOptions = true;
     }
 
     public void setRawArrayEncoding(boolean rawArrayEncoding) {

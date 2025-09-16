@@ -40,7 +40,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -144,7 +143,7 @@ public class SerialParquetExporter implements Closeable {
                     throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
                 } else {
                     int fromParquetBaseLen = 0;
-                    final int toParquetBaseLen = toParquet.trimTo(0).concat(copyExportRoot).concat(fileName).size();
+                    final int toParquetBaseLen = toParquet.trimTo(0).concat(copyExportRoot).size();
                     CopyExportResult exportResult = task.getResult();
 
                     try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
@@ -163,16 +162,17 @@ public class SerialParquetExporter implements Closeable {
                                             .$(", using direct file copy instead]").$();
                                 }
                                 if (fromParquetBaseLen == 0) {
-                                    fromParquetBaseLen = fromParquet.trimTo(0).concat(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
+                                    fromParquetBaseLen = fromParquet.trimTo(0).concat(configuration.getDbRoot()).size();
                                 } else {
                                     fromParquet.trimTo(fromParquetBaseLen);
                                 }
+                                fromParquet.concat(tableToken.getDirName());
                                 PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                         .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, fromParquet.slash());
                                 fromParquet.concat("data.parquet");
                                 if (exportResult != null) {
                                     exportResult.addFilePath(fromParquet, false);
-                                    files.put(fromParquet);
+                                    files.put(fromParquet.asAsciiCharSequence(fromParquetBaseLen + 1, fromParquet.size() - fromParquetBaseLen - 1));
                                     if (partitionIndex < partitionCount - 1) {
                                         files.put(',');
                                     }
@@ -180,6 +180,7 @@ public class SerialParquetExporter implements Closeable {
                                 }
 
                                 toParquet.trimTo(toParquetBaseLen);
+                                toParquet.concat(fileName);
                                 PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                         .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
                                 toParquet.put(".parquet");
@@ -192,7 +193,7 @@ public class SerialParquetExporter implements Closeable {
                                             .put("failed to copy parquet file [from=").put(fromParquet)
                                             .put(", to=").put(toParquet).put(']');
                                 }
-                                files.put(toParquet);
+                                files.put(toParquet.asAsciiCharSequence(toParquetBaseLen + 1, toParquet.size() - toParquetBaseLen - 1));
                                 if (partitionIndex < partitionCount - 1) {
                                     files.put(',');
                                 }
@@ -208,12 +209,12 @@ public class SerialParquetExporter implements Closeable {
                             reader.openPartition(partitionIndex);
                             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                             toParquet.trimTo(toParquetBaseLen);
+                            toParquet.concat(fileName);
                             PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                     .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
                             toParquet.put(".parquet");
                             toParquetCs = toParquet.asAsciiCharSequence();
-                            lastSlash = Chars.lastIndexOf(toParquetCs, 0, toParquetCs.length() - 1, '/');
-                            CharSequence partitionName = toParquetCs.subSequence(lastSlash + 1, toParquetCs.length() - 8);
+                            CharSequence partitionName = toParquetCs.subSequence(toParquetBaseLen + fileName.length() + 2, toParquetCs.length() - 8);
 
                             // log start
                             LOG.info().$("converting partition to parquet [table=").$(tableToken)
@@ -236,7 +237,7 @@ public class SerialParquetExporter implements Closeable {
                                     .$(", partition=").$(partitionName)
                                     .$(", size=").$(parquetFileSize).$(']')
                                     .$();
-                            files.put(toParquet);
+                            files.put(toParquet.asAsciiCharSequence(toParquetBaseLen + 1, toParquet.size() - toParquetBaseLen - 1));
                             if (partitionIndex < partitionCount - 1) {
                                 files.put(',');
                             }
