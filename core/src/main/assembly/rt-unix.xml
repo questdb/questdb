@@ -39,6 +39,7 @@
         </file>
     </files>
     <fileSets>
+        <!-- questdb native libs -->
         <fileSet>
             <directory>src/main/resources/io/questdb/bin/${platform.dir.name}</directory>
             <includes>
@@ -46,6 +47,16 @@
             </includes>
             <outputDirectory>${runtime.name}/lib</outputDirectory>
         </fileSet>
+
+        <!-- async profiler agent -->
+        <fileSet>
+            <directory>src/main/bin/${platform.dir.name}/</directory>
+            <includes>
+                <include>libasyncProfiler.so</include>
+            </includes>
+            <outputDirectory>${runtime.name}/lib</outputDirectory>
+        </fileSet>
+
         <fileSet>
             <directory>src/main/bin</directory>
             <includes>
