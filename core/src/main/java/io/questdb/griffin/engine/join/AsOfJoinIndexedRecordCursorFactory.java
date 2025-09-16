@@ -184,16 +184,16 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     slaveTimeFrameCursor.open();
                 }
 
-                BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
-                        slaveSymbolColumnIndex,
-                        BitmapIndexReader.DIR_BACKWARD
-                );
                 // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
                 // the first row within the BETWEEN ... AND ... range selected by the query.
                 PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
                 pfmRec.setRowIndex(0);
                 long rowOffset = Rows.toLocalRowID(pfmRec.getUpdateRowId());
                 for (; ; ) {
+                    BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
+                            slaveSymbolColumnIndex,
+                            BitmapIndexReader.DIR_BACKWARD
+                    );
                     RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo() + rowOffset, rowMax + rowOffset);
 
                     // Check the first entry only. They are sorted by timestamp, so other entries are older
