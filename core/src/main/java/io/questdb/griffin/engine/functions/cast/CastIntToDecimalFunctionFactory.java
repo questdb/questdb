@@ -34,7 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -129,7 +129,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal128UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimal128UnscaledFunc extends DecimalFunction implements UnaryFunction {
         private final Function value;
         private long lo;
 
@@ -168,7 +168,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal256UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimal256UnscaledFunc extends DecimalFunction implements UnaryFunction {
         private final Function value;
         private long hl;
         private long lh;
@@ -224,7 +224,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal64UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimal64UnscaledFunc extends DecimalFunction implements UnaryFunction {
         private final int maxValue;
         private final int minValue;
         private final int position;
@@ -300,7 +300,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimalScaledFunc extends AbstractCastToDecimalFunction {
+    private static class CastDecimalScaledFunc extends CastToDecimalFunction {
         private final int maxUnscaledValue;
         private final int minUnscaledValue;
 
