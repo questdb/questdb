@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Numbers;
@@ -44,5 +45,10 @@ public interface WindowTimestampFunction extends WindowFunction {
     @Override
     default long getLong(Record rec) {
         return getTimestamp(rec);
+    }
+
+    @Override
+    default int getType() {
+        return ColumnType.TIMESTAMP;
     }
 }
