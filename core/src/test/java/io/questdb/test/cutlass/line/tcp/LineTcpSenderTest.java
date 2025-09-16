@@ -452,7 +452,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("a1", ColumnType.DOUBLE)
                     .timestamp();
             AbstractCairoTest.create(model);
-            CountDownLatch released = createTableCommitNotifier("mytable");
+            CountDownLatch released = createTableCommitNotifier("mytable", walEnabled ? 2 : 1);
             // send text double to symbol column
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -465,7 +465,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleColumn("a1", 1)
                         .at(100000000000L, ChronoUnit.MICROS);
                 sender.flush();
-                waitTableWriterFinish(released);
             }
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -474,11 +473,13 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()) {
                 // insert binary double to symbol column
                 sender.table("mytable")
+                        .doubleColumn("x", 10000.0)
                         .stringColumn("y", "ystr")
-                        .doubleColumn("x", 9999.0)
                         .doubleColumn("a1", 1)
-                        .at(100000000000L, ChronoUnit.MICROS);
+                        .at(100000000001L, ChronoUnit.MICROS);
                 sender.flush();
+                waitTableWriterFinish(released);
+
                 // insert binary double to string column
                 sender.table("mytable")
                         .symbol("x", "x1")
@@ -502,10 +503,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
 
-            assertTableSizeEventually(engine, "mytable", 1);
+            assertTableSizeEventually(engine, "mytable", 2);
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("x\ty\ta1\ttimestamp\n" +
-                        "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n", reader, new StringSink());
+                        "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
+                        "10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n", reader, new StringSink());
             }
 
         });

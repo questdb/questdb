@@ -1014,17 +1014,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .build()
                 ) {
                     // insert binary double to symbol column
-                    try {
-                        sender.table(tableName)
-                                .stringColumn("y", "ystr")
-                                .doubleColumn("x", 9999.0)
-                                .doubleColumn("a1", 1)
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        sender.flush();
-                        Assert.fail();
-                    } catch (Throwable e) {
-                        TestUtils.assertContains(e.getMessage(), "cast error from protocol type: FLOAT to column type: SYMBOL");
-                    }
+                    sender.table(tableName)
+                            .stringColumn("y", "ystr")
+                            .doubleColumn("x", 9991.0)
+                            .doubleColumn("a1", 1)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTxn(tableName, 1);
+                    serverMain.assertSql("select * from " + tableName,
+                            "x\ty\ta1\tts\n" +
+                                    "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n");
 
                     // insert binary double to string column
                     try {
@@ -1078,13 +1077,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .stringColumn("y", "ystr")
                             .doubleColumn("x", 9999.0)
                             .doubleColumn("a1", 1)
-                            .at(100000000000L, ChronoUnit.MICROS);
+                            .at(100000000001L, ChronoUnit.MICROS);
                     sender.flush();
-                    serverMain.awaitTxn(tableName, 1);
+                    serverMain.awaitTxn(tableName, 2);
 
                     serverMain.assertSql("select * from " + tableName,
                             "x\ty\ta1\tts\n" +
-                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n");
+                                    "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
+                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n");
                 }
             }
         });

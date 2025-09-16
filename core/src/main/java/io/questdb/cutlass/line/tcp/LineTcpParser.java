@@ -755,8 +755,8 @@ public class LineTcpParser implements QuietCloseable {
             return value;
         }
 
-        public boolean isTextFormat() {
-            return !binaryFormat;
+        public boolean isBinaryFormat() {
+            return binaryFormat;
         }
 
         public void shl(long shl) {
