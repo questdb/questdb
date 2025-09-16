@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -54,7 +53,6 @@ import io.questdb.std.Rows;
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinIndexedRecordCursor cursor;
     private final int masterSymbolColumnIndex;
-    private final RecordSink slaveKeySink;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
 
@@ -63,7 +61,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            RecordSink slaveKeySink,
             int columnSplit,
             int masterSymbolColumnIndex,
             int slaveSymbolColumnIndex,
@@ -72,7 +69,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.slaveKeySink = slaveKeySink;
         this.masterSymbolColumnIndex = masterSymbolColumnIndex;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
@@ -223,21 +219,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     partitionIndex = timeFrame.getFrameIndex();
                     rowMax = timeFrame.getRowHi() - 1;
                 }
-            } catch (Exception e) {
-//                throw e;
-                // Fall back to linear search if bitmap index access fails
-                AbstractKeyedAsOfJoinRecordCursor.findMatchingRowLinear(
-                        slaveTimeFrameCursor,
-                        slaveRecB,
-                        masterTimestamp,
-                        toleranceInterval,
-                        slaveTimestampIndex,
-                        masterSinkTarget,
-                        slaveSinkTarget,
-                        slaveKeySink,
-                        record,
-                        circuitBreaker
-                );
+                slaveTimeFrameCursor.open();
+                timeFrame = slaveTimeFrameCursor.getTimeFrame();
+                partitionIndex = timeFrame.getFrameIndex();
+                rowMax = timeFrame.getRowHi() - 1;
             }
         }
     }
