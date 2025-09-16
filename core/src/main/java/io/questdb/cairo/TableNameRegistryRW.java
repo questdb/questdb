@@ -77,14 +77,14 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isMatView, boolean isWal) {
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
             String dbLogName = engine.getConfiguration().getDbLogName();
-            return new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+            return new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }
