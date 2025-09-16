@@ -603,7 +603,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").$safe(getTableToken().getTableName())
+            LOG.error().$("could not change o3MaxLag [table=").$(getTableToken())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();

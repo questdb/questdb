@@ -355,7 +355,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             tableId = Math.abs(tableId);
                             tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
-                            if (e.errnoFileCannotRead()) {
+                            if (e.isFileCannotRead()) {
                                 // table is being removed.
                                 continue;
                             } else {
@@ -376,7 +376,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
                             boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
                             boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                            String dbLogName = configuration.getDbLogName();
+                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -430,7 +431,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 }
             } catch (CairoException e) {
                 if (!isLocked()) {
-                    if (e.errnoFileCannotRead()) {
+                    if (e.isFileCannotRead()) {
                         if (lastFileVersion == 0) {
                             // This is RO mode and file and tables.d.0 does not exist.
                             return false;
@@ -476,7 +477,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isView = tableType == TABLE_TYPE_VIEW;
                         boolean isMatView = tableType == TABLE_TYPE_MAT;
                         boolean isWal = tableType == TABLE_TYPE_WAL || isView || isMatView;
-                        token = new TableToken(tableName, dirName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                        String dbLogName = configuration.getDbLogName();
+                        token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -505,7 +507,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isView = tableType == TABLE_TYPE_VIEW;
                     boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
                     boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isView || isMatView;
-                    final TableToken token = new TableToken(tableName, dirName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                    String dbLogName = configuration.getDbLogName();
+                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping

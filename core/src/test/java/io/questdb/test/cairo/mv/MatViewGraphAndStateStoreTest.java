@@ -238,13 +238,13 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     }
 
     private TableToken newMatViewToken(String tableName) {
-        TableToken v = new TableToken(tableName, tableName, 0, false, true, true, false, false, true);
+        TableToken v = new TableToken(tableName, tableName, null, 0, false, true, true, false, false, true);
         tableTokens.add(v);
         return v;
     }
 
     private TableToken newTableToken(String tableName) {
-        TableToken t = new TableToken(tableName, tableName, 0, false, false, true, false, false, true);
+        TableToken t = new TableToken(tableName, tableName, null, 0, false, false, true, false, false, true);
         tableTokens.add(t);
         return t;
     }

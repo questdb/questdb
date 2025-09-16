@@ -83,7 +83,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
-            return new TableToken(tableName, dirName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+            String dbLogName = engine.getConfiguration().getDbLogName();
+            return new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }

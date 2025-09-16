@@ -64,8 +64,6 @@ public interface ServerConfiguration {
 
     HttpFullFatServerConfiguration getHttpServerConfiguration();
 
-    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
-
     LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
@@ -82,11 +80,15 @@ public interface ServerConfiguration {
 
     PublicPassthroughConfiguration getPublicPassthroughConfiguration();
 
-    WorkerPoolConfiguration getQueryWorkerPoolConfiguration();
-
     default String getReleaseType() {
         return OSS;
     }
+
+    WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration();
+
+    WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration();
+
+    WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration();
 
     // used to detect configuration reloads
     default long getVersion() {
@@ -96,8 +98,6 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getViewCompilerPoolConfiguration();
 
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
-
-    WorkerPoolConfiguration getWriteWorkerPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }

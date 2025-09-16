@@ -11606,7 +11606,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(engine), false, false, false);
+            TableToken tableToken = new TableToken("tab", dirName, null, 1 + getSystemTablesCount(engine), false, false, false);
             CharSequence lockedReason = engine.lockAll(tableToken, "testing", true);
             Assert.assertNull(lockedReason);
             try {

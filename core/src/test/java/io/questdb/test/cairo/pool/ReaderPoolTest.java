@@ -1106,7 +1106,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
             CountDownLatch stopLatch = new CountDownLatch(2);
 
-            TableToken xTableToken = new TableToken("x", "x", 123, false, false, false);
+            TableToken xTableToken = new TableToken("x", "x", null, 123, false, false, false);
 
             final Runnable runnable = () -> {
                 try {
@@ -1300,7 +1300,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testUnlockByAnotherThread() throws Exception {
         assertWithPool(pool -> {
-            TableToken tableToken = new TableToken("Ургант", "Ургант", 123, false, false, false);
+            TableToken tableToken = new TableToken("Ургант", "Ургант", null, 123, false, false, false);
             Assert.assertTrue(pool.lock(tableToken));
             AtomicInteger errors = new AtomicInteger();
 
@@ -1343,7 +1343,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
             });
 
-            TableToken tableToken = new TableToken("xyz", "xyz", 123, false, false, false);
+            TableToken tableToken = new TableToken("xyz", "xyz", null, 123, false, false, false);
             pool.unlock(tableToken);
             Assert.assertEquals(1, counter.get());
         });

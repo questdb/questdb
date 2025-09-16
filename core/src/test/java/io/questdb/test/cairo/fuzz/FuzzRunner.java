@@ -852,17 +852,25 @@ public class FuzzRunner {
 
             try {
                 Rnd tempRnd = new Rnd();
-                while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
+                while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
 
                     // wait until structure version, truncate, replace commit is applied
                     while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.isEmpty()) {
                         Os.sleep(1);
+                        if (!errors.isEmpty()) {
+                            LOG.errorW().$("waiting for barrier version interrupted due to errors [table=").$(tableName).I$();
+                            return;
+                        }
                     }
 
                     if (transaction.waitAllDone) {
                         while (doneCount.get() != opIndex) {
                             Os.sleep(1);
+                            if (!errors.isEmpty()) {
+                                LOG.errorW().$("waiting for all done interrupted due to errors [table=").$(tableName).I$();
+                                return;
+                            }
                         }
                     }
 
@@ -925,6 +933,7 @@ public class FuzzRunner {
                     engine.releaseInactiveTableSequencers();
                 }
             } catch (Throwable e) {
+                e.printStackTrace();
                 errors.add(e);
             } finally {
                 Path.clearThreadLocals();

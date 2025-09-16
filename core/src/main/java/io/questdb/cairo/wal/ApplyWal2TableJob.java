@@ -517,7 +517,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             logRecord.$(", error=").$(throwable).I$();
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
-            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName())
+            LOG.critical().$("could not suspend table [table=").$(tableToken)
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
         }
