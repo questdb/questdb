@@ -270,17 +270,15 @@ function start {
         AGENT_PARAMS="${AGENT_PARAMS},jfr"  # Enable JFR format output
         AGENT_PARAMS="${AGENT_PARAMS},loop=${PROFILER_LOOP}"
 
-        case "$PROFILER_EVENT" in
-            cpu|wall|itimer)
-                AGENT_PARAMS="${AGENT_PARAMS},interval=${PROFILER_INTERVAL}"
-                ;;
-            alloc)
-                AGENT_PARAMS="${AGENT_PARAMS},alloc=${PROFILER_ALLOC_INTERVAL}"
-                ;;
-            lock)
-                AGENT_PARAMS="${AGENT_PARAMS},lock=${PROFILER_LOCK_THRESHOLD}"
-                ;;
-        esac
+        if [[ ",$PROFILER_EVENT," == *",cpu,"* ]] || [[ ",$PROFILER_EVENT," == *",wall,"* ]] || [[ ",$PROFILER_EVENT," == *",itimer,"* ]]; then
+            AGENT_PARAMS="${AGENT_PARAMS},interval=${PROFILER_INTERVAL}"
+        fi
+        if [[ ",$PROFILER_EVENT," == *",alloc,"* ]]; then
+            AGENT_PARAMS="${AGENT_PARAMS},alloc=${PROFILER_ALLOC_INTERVAL}"
+        fi
+        if [[ ",$PROFILER_EVENT," == *",lock,"* ]]; then
+            AGENT_PARAMS="${AGENT_PARAMS},lock=${PROFILER_LOCK_THRESHOLD}"
+        fi
 
         if [ "$PROFILER_EXTRA_OPTS" != "" ]; then
             AGENT_PARAMS="${AGENT_PARAMS},${PROFILER_EXTRA_OPTS}"
