@@ -53,6 +53,7 @@ import io.questdb.std.Rows;
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinIndexedRecordCursor cursor;
+    private final int masterSymbolColumnIndex;
     private final RecordSink slaveKeySink;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
@@ -64,6 +65,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
+            int masterSymbolColumnIndex,
             int slaveSymbolColumnIndex,
             JoinContext joinContext,
             long toleranceInterval
@@ -71,6 +73,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveKeySink = slaveKeySink;
+        this.masterSymbolColumnIndex = masterSymbolColumnIndex;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         this.cursor = new AsOfJoinIndexedRecordCursor(
@@ -148,7 +151,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         protected void performKeyMatching(long masterTimestamp) {
             // Look through per-frame symbol indexes backwards, until we find a match or exhaust the search space
             try {
-                CharSequence masterSymbolValue = masterRecord.getSymA(slaveSymbolColumnIndex);
+                CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
                 StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
                 int symbolKey = symbolTable.keyOf(masterSymbolValue);
                 if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {

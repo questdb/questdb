@@ -2665,6 +2665,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (!asOfAvoidBinarySearch) {
                                             if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
                                                 if (isSingleSymbolJoinWithIndex(slaveMetadata)) {
+                                                    int masterSymbolColumnIndex = listColumnFilterB.getColumnIndexFactored(0);
                                                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
@@ -2673,6 +2674,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slave,
                                                             slaveSink,
                                                             masterMetadata.getColumnCount(),
+                                                            masterSymbolColumnIndex,
                                                             slaveSymbolColumnIndex,
                                                             slaveModel.getContext(),
                                                             asOfToleranceInterval
