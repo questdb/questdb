@@ -59,7 +59,7 @@ export PROFILER_EVENT="cpu,wall"              # Event to profile: cpu, alloc, lo
 export PROFILER_INTERVAL="5ms"          # Sampling interval
 export PROFILER_ALLOC_INTERVAL="512k"    # Allocation profiling interval (for alloc event)
 export PROFILER_LOCK_THRESHOLD="10ms"     # Lock profiling threshold (for lock event)
-export PROFILER_FILE_PREFIX="profile"     # Profile file name prefix
+export PROFILE_NAME="profile-%n{48}.jfr"     # Profile file name; %n{MAX} is expanded as a sequence number
 export PROFILER_LOOP="30m"                # Loop duration for continuous profiling (e.g., 1h, 30m, 86400s)
 export PROFILER_EXTRA_OPTS=""             # Additional profiler options
 
@@ -263,8 +263,7 @@ function start {
 
     PROFILER_AGENT=""
     if [ "$QDB_PROFILING_ENABLED" = "true" ]; then
-        # Use %t pattern for timestamp in continuous mode
-        PROFILE_FILE="${QDB_PROFILES}/${PROFILER_FILE_PREFIX}-%t.jfr"
+        PROFILE_FILE="${QDB_PROFILES}/${PROFILE_NAME}"
 
         AGENT_PARAMS="start,event=${PROFILER_EVENT}"
         AGENT_PARAMS="${AGENT_PARAMS},file=${PROFILE_FILE}"
