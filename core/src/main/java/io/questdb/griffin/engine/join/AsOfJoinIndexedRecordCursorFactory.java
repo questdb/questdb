@@ -192,7 +192,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 // the first row within the BETWEEN ... AND ... range selected by the query.
                 PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
                 pfmRec.setRowIndex(0);
-                long rowOffset = pfmRec.getUpdateRowId();
+                long rowOffset = Rows.toLocalRowID(pfmRec.getUpdateRowId());
                 for (; ; ) {
                     RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo() + rowOffset, rowMax + rowOffset);
 
