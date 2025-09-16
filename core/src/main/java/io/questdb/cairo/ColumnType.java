@@ -253,11 +253,6 @@ public final class ColumnType {
         return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
     }
 
-    public static boolean isDecimal(int type) {
-        final short tag = tagOf(type);
-        return tag >= DECIMAL8 && tag <= DECIMAL;
-    }
-
     public static ColumnTypeDriver getDriver(int columnType) {
         switch (tagOf(columnType)) {
             case STRING:
@@ -318,7 +313,7 @@ public final class ColumnType {
         return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
                 // char can be short and short can be char for symmetry
                 || (fromType == CHAR && toType == SHORT)
-                // Same with bytes and bools
+                // Same with bytes and booleans
                 || (fromType == BYTE && toType == BOOLEAN)
                 || (fromType == TIMESTAMP && toType == LONG)
                 || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
@@ -342,6 +337,15 @@ public final class ColumnType {
 
     public static boolean isCursor(int columnType) {
         return columnType == CURSOR;
+    }
+
+    public static boolean isDecimal(int type) {
+        final short tag = tagOf(type);
+        return tag >= DECIMAL8 && tag <= DECIMAL;
+    }
+
+    public static boolean isDecimalType(int colType) {
+        return colType >= DECIMAL8 && colType <= DECIMAL256;
     }
 
     public static boolean isDesignatedTimestamp(int columnType) {
@@ -395,10 +399,6 @@ public final class ColumnType {
 
     public static boolean isGeoType(int colType) {
         return colType >= GEOBYTE && colType <= GEOLONG;
-    }
-
-    public static boolean isDecimalType(int colType) {
-        return colType >= DECIMAL8 && colType <= DECIMAL256;
     }
 
     public static boolean isInt(int columnType) {

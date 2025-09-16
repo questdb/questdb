@@ -34,7 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -130,7 +130,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         return DecimalUtil.createDecimalConstant(d, targetPrecision, targetScale);
     }
 
-    private static class CastDecimal128UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimal128UnscaledFunc extends DecimalFunction implements UnaryFunction {
         private final Function value;
         private long lo;
 
@@ -169,7 +169,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal256UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimal256UnscaledFunc extends DecimalFunction implements UnaryFunction {
         private final Function value;
         private long hl;
         private long lh;
@@ -225,7 +225,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal64UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
+    private static class CastDecimal64UnscaledFunc extends DecimalFunction implements UnaryFunction {
         private final long maxValue;
         private final long minValue;
         private final int position;
@@ -300,7 +300,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimalScaledFunc extends AbstractCastToDecimalFunction {
+    private static class CastDecimalScaledFunc extends CastToDecimalFunction {
         private final long maxUnscaledValue;
         private final long minUnscaledValue;
 
@@ -311,7 +311,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            long value = this.arg.getLong(rec);
+            long value = arg.getLong(rec);
             if (value == Numbers.LONG_NULL) {
                 return false;
             }

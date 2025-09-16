@@ -123,6 +123,48 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getDate(Record rec);
 
+    // must be called before getDecimal128Lo method!!!
+    default long getDecimal128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getDecimal128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    // must be called before any other getDecimal256XY method!!!
+    default long getDecimal256HH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getDecimal256HL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getDecimal256LH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getDecimal256LL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    default byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     double getDouble(Record rec);
 
     float getFloat(Record rec);
@@ -153,46 +195,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     Long256 getLong256A(Record rec);
 
     Long256 getLong256B(Record rec);
-
-    default byte getDecimal8(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default short getDecimal16(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default int getDecimal32(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal64(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal128Lo(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getDecimal256LL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
 
     default RecordMetadata getMetadata() {
         return null;

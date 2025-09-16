@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal256;
 
-public class Decimal256Constant extends AbstractDecimalFunction implements ConstantFunction {
+public class Decimal256Constant extends DecimalFunction implements ConstantFunction {
     private final long hh;
     private final long hl;
     private final long lh;

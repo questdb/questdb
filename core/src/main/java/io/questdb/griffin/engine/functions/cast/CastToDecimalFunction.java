@@ -28,23 +28,21 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.AbstractDecimalFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
-public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunction implements UnaryFunction {
+public abstract class CastToDecimalFunction extends DecimalFunction implements UnaryFunction {
     protected final Function arg;
-    protected final Decimal256 decimal;
+    protected final Decimal256 decimal = new Decimal256();
     protected final int position;
     protected final int precision;
     protected final int scale;
-    private boolean is_null;
+    private boolean isNull;
 
-    public AbstractCastToDecimalFunction(Function arg, int targetType, int position) {
+    public CastToDecimalFunction(Function arg, int targetType, int position) {
         super(targetType);
-        this.decimal = new Decimal256();
-        this.is_null = false;
         this.arg = arg;
         this.position = position;
         this.precision = ColumnType.getDecimalPrecision(targetType);
@@ -59,16 +57,16 @@ public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunct
     @Override
     public long getDecimal128Hi(Record rec) {
         if (!cast(rec)) {
-            is_null = true;
+            isNull = true;
             return Decimals.DECIMAL128_HI_NULL;
         }
-        is_null = false;
+        isNull = false;
         return decimal.getLh();
     }
 
     @Override
     public long getDecimal128Lo(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL128_LO_NULL;
         }
         return decimal.getLl();
@@ -85,16 +83,16 @@ public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunct
     @Override
     public long getDecimal256HH(Record rec) {
         if (!cast(rec)) {
-            is_null = true;
+            isNull = true;
             return Decimals.DECIMAL256_HH_NULL;
         }
-        is_null = false;
+        isNull = false;
         return decimal.getHh();
     }
 
     @Override
     public long getDecimal256HL(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL256_HL_NULL;
         }
         return decimal.getHl();
@@ -102,7 +100,7 @@ public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunct
 
     @Override
     public long getDecimal256LH(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL256_LH_NULL;
         }
         return decimal.getLh();
@@ -110,7 +108,7 @@ public abstract class AbstractCastToDecimalFunction extends AbstractDecimalFunct
 
     @Override
     public long getDecimal256LL(Record rec) {
-        if (is_null) {
+        if (isNull) {
             return Decimals.DECIMAL256_LL_NULL;
         }
         return decimal.getLl();

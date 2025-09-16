@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -102,58 +103,6 @@ public final class DecimalUtil {
     }
 
     /**
-     * Parses a decimal from a literal to the most adapted decimal type as a constant.
-     * The literal may end with [m/M] but not necessarily.
-     *
-     * @param position  the position in the SQL query for error reporting
-     * @param tok       token containing the literal
-     * @param decimal   to parse and store the resulting value
-     * @param precision of the decimal (or -1 to infer from literal)
-     * @param scale     of the decimal (or -1 to infer from literal)
-     * @return a ConstantFunction containing the value parsed
-     * @throws SqlException if the value couldn't be parsed with detailed error message
-     */
-    public static @NotNull ConstantFunction parseDecimalConstant(int position, Decimal256 decimal, final CharSequence tok, int precision, int scale) throws SqlException {
-        try {
-            precision = decimal.ofString(tok, precision, scale);
-        } catch (NumericException ex) {
-            throw SqlException.position(position).put(ex);
-        }
-
-        return createDecimalConstant(decimal, precision, decimal.getScale());
-    }
-
-    /**
-     * Parses the precision from a CharSequence and returns its value, it doesn't validate whether
-     * the value is in the correct range.
-     *
-     * @throws SqlException if the value couldn't be parsed
-     */
-    public static int parsePrecision(int position, @NotNull CharSequence cs, int lo, int hi) throws SqlException {
-        try {
-            return Numbers.parseInt(cs, lo, hi);
-        } catch (NumericException e) {
-            throw SqlException.position(position)
-                    .put("invalid DECIMAL type, precision must be a number");
-        }
-    }
-
-    /**
-     * Parses the scale from a CharSequence and returns its value, it doesn't validate whether
-     * the value is in the correct range.
-     *
-     * @throws SqlException if the value couldn't be parsed
-     */
-    public static int parseScale(int position, @NotNull CharSequence cs, int lo, int hi) throws SqlException {
-        try {
-            return Numbers.parseInt(cs, lo, hi);
-        } catch (NumericException e) {
-            throw SqlException.position(position)
-                    .put("invalid DECIMAL type, scale must be a number");
-        }
-    }
-
-    /**
      * Load any decimal value from a Function into a Decimal256
      */
     public static void load(Decimal256 decimal, Function value, @Nullable Record rec) {
@@ -215,7 +164,7 @@ public final class DecimalUtil {
     }
 
     /**
-     * Load any decimal value from a Function into a Decimal256
+     * Load a decimal value from a Record into a Decimal256
      */
     public static void load(Decimal256 decimal, @NotNull Record rec, int col, int fromType) {
         final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
@@ -271,6 +220,159 @@ public final class DecimalUtil {
                 long ll = rec.getDecimal256LL(col);
                 decimal.of(hh, hl, lh, ll, fromScale);
                 break;
+        }
+    }
+
+    /**
+     * Load a decimal value from a Function into a Decimal64
+     */
+    public static void load(Decimal64 decimal, Function value, @Nullable Record rec) {
+        final int fromType = value.getType();
+        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+
+        switch (Decimals.getStorageSizePow2(fromPrecision)) {
+            case 0:
+                byte b = value.getDecimal8(rec);
+                if (b == Decimals.DECIMAL8_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(b, fromScale);
+                }
+                break;
+            case 1:
+                short s = value.getDecimal16(rec);
+                if (s == Decimals.DECIMAL16_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(s, fromScale);
+                }
+                break;
+            case 2:
+                int i = value.getDecimal32(rec);
+                if (i == Decimals.DECIMAL32_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(i, fromScale);
+                }
+                break;
+            case 3:
+                long l = value.getDecimal64(rec);
+                if (l == Decimals.DECIMAL64_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(l, fromScale);
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException("Too large precision for Decimal64:" + fromPrecision);
+        }
+    }
+
+    /**
+     * Load a decimal value from a Function into a Decimal128
+     */
+    public static void load(Decimal128 decimal, Function value, @Nullable Record rec) {
+        final int fromType = value.getType();
+        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+
+        switch (Decimals.getStorageSizePow2(fromPrecision)) {
+            case 0:
+                byte b = value.getDecimal8(rec);
+                if (b == Decimals.DECIMAL8_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(b, fromScale);
+                }
+                break;
+            case 1:
+                short s = value.getDecimal16(rec);
+                if (s == Decimals.DECIMAL16_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(s, fromScale);
+                }
+                break;
+            case 2:
+                int i = value.getDecimal32(rec);
+                if (i == Decimals.DECIMAL32_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(i, fromScale);
+                }
+                break;
+            case 3:
+                long l = value.getDecimal64(rec);
+                if (l == Decimals.DECIMAL64_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(l, fromScale);
+                }
+                break;
+            case 4:
+                long hi = value.getDecimal128Hi(rec);
+                long lo = value.getDecimal128Lo(rec);
+                if (Decimal128.isNull(hi, lo)) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(hi, lo, fromScale);
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException("Too large precision for Decimal128:" + fromPrecision);
+        }
+    }
+
+    /**
+     * Parses a decimal from a literal to the most adapted decimal type as a constant.
+     * The literal may end with [m/M] but not necessarily.
+     *
+     * @param position  the position in the SQL query for error reporting
+     * @param tok       token containing the literal
+     * @param decimal   to parse and store the resulting value
+     * @param precision of the decimal (or -1 to infer from literal)
+     * @param scale     of the decimal (or -1 to infer from literal)
+     * @return a ConstantFunction containing the value parsed
+     * @throws SqlException if the value couldn't be parsed with detailed error message
+     */
+    public static @NotNull ConstantFunction parseDecimalConstant(int position, Decimal256 decimal, final CharSequence tok, int precision, int scale) throws SqlException {
+        try {
+            precision = decimal.ofString(tok, precision, scale);
+        } catch (NumericException ex) {
+            throw SqlException.position(position).put(ex);
+        }
+
+        return createDecimalConstant(decimal, precision, decimal.getScale());
+    }
+
+    /**
+     * Parses the precision from a CharSequence and returns its value, it doesn't validate whether
+     * the value is in the correct range.
+     *
+     * @throws SqlException if the value couldn't be parsed
+     */
+    public static int parsePrecision(int position, @NotNull CharSequence cs, int lo, int hi) throws SqlException {
+        try {
+            return Numbers.parseInt(cs, lo, hi);
+        } catch (NumericException e) {
+            throw SqlException.position(position)
+                    .put("invalid DECIMAL type, precision must be a number");
+        }
+    }
+
+    /**
+     * Parses the scale from a CharSequence and returns its value, it doesn't validate whether
+     * the value is in the correct range.
+     *
+     * @throws SqlException if the value couldn't be parsed
+     */
+    public static int parseScale(int position, @NotNull CharSequence cs, int lo, int hi) throws SqlException {
+        try {
+            return Numbers.parseInt(cs, lo, hi);
+        } catch (NumericException e) {
+            throw SqlException.position(position)
+                    .put("invalid DECIMAL type, scale must be a number");
         }
     }
 }

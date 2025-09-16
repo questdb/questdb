@@ -9,7 +9,8 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal128 - A mutable decimal number implementation.
+ * Decimal128 - a mutable decimal number implementation. The value is a signed number with
+ * two's complement representation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
  * using 128-bit integer arithmetic for precise calculations. All operations are
@@ -340,10 +341,17 @@ public class Decimal128 implements Sinkable {
     /**
      * Add another Decimal128 to this one (in-place)
      *
-     * @param other The Decimal128 to add
+     * @param other the Decimal128 to add
      */
     public void add(Decimal128 other) {
         add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
+    }
+
+    /**
+     * Add another Decimal128 to this one (in-place)
+     */
+    public void add(long otherHigh, long otherLow, int otherScale) {
+        add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
     public int compareTo(long otherHi, long otherLo) {
@@ -489,7 +497,6 @@ public class Decimal128 implements Sinkable {
         if (negResult) {
             negate();
         }
-
     }
 
     @Override
@@ -546,6 +553,15 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Returns whether this is null or not.
+     *
+     * @return true if null, false otherwise
+     */
+    public boolean isNull() {
+        return high == Decimals.DECIMAL128_HI_NULL && low == Decimals.DECIMAL128_LO_NULL;
+    }
+
+    /**
      * Check if this number is zero
      */
     public boolean isZero() {
@@ -559,12 +575,21 @@ public class Decimal128 implements Sinkable {
      * @throws NumericException if divisor is zero
      */
     public void modulo(Decimal128 divisor) {
-        if (divisor.isZero()) {
+        modulo(divisor.high, divisor.low, divisor.scale);
+    }
+
+    /**
+     * Calculate modulo in-place.
+     *
+     * @throws NumericException if divisor is zero
+     */
+    public void modulo(long divisorHigh, long divisorLow, int divisorScale) {
+        if (divisorHigh == 0 && divisorLow == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
         // Result scale should be the larger of the two scales
-        int resultScale = Math.max(this.scale, divisor.scale);
+        int resultScale = Math.max(this.scale, divisorScale);
 
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
@@ -573,10 +598,10 @@ public class Decimal128 implements Sinkable {
         long thisL = this.low;
         int thisScale = this.scale;
 
-        this.divide(divisor, 0, RoundingMode.DOWN);
+        this.divide(divisorHigh, divisorLow, divisorScale, 0, RoundingMode.DOWN);
 
         // Now compute this * divisor
-        this.multiply(divisor);
+        this.multiply(divisorHigh, divisorLow, divisorScale);
 
         long qH = this.high;
         long qL = this.low;
@@ -624,6 +649,29 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Set this Decimal128 from a long value with the specified scale.
+     *
+     * @param value the long value
+     * @param scale the desired scale
+     */
+    public void ofLong(long value, int scale) {
+        validateScale(scale);
+
+        this.scale = scale;
+        this.low = value;
+        this.high = value < 0 ? -1L : 0L;
+    }
+
+    /**
+     * Set this Decimal128 to the null value.
+     */
+    public void ofNull() {
+        high = Decimals.DECIMAL128_HI_NULL;
+        low = Decimals.DECIMAL128_LO_NULL;
+        scale = 0;
+    }
+
+    /**
      * Rescale this Decimal128 in place
      *
      * @param newScale The new scale (must be >= current scale)
@@ -663,7 +711,6 @@ public class Decimal128 implements Sinkable {
             this.scale = targetScale;
             return;
         }
-
 
         if (this.scale < targetScale) {
             boolean isNegative = isNegative();
@@ -802,14 +849,14 @@ public class Decimal128 implements Sinkable {
     private static void add(Decimal128 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
         result.scale = aScale;
         if (aScale < bScale) {
-            // We need to rescale a to the same scale as b
+            // We need to rescale A to the same scale as B
             result.high = aH;
             result.low = aL;
             result.rescale0(bScale);
             aH = result.high;
             aL = result.low;
         } else if (aScale > bScale) {
-            // We need to rescale b to the same scale as a
+            // We need to rescale B to the same scale as A
             result.high = bH;
             result.low = bL;
             result.scale = bScale;

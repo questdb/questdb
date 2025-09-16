@@ -11,7 +11,8 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal256 - A mutable decimal number implementation.
+ * Decimal256 - a mutable decimal number implementation. The value is a signed number with
+ * two's complement representation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
  * using 256-bit integer arithmetic for precise calculations. All operations are
@@ -444,6 +445,19 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Check if addition resulted in a carry
+     * When adding two unsigned numbers a + b = sum, carry occurs iff sum &lt; a (or sum &lt; b)
+     * This works because:
+     * - No carry: sum = a + b, so sum &gt;= a and sum &gt;= b
+     * - Carry: sum = a + b - 2^64, so sum &lt; a and sum &lt; b
+     */
+    public static boolean hasCarry(long a, long sum) {
+        // We can check against either a or b - both work
+        // Using a for consistency, b parameter kept for clarity
+        return Long.compareUnsigned(sum, a) < 0;
+    }
+
+    /**
      * Returns whether the Decimal256 is null or not.
      *
      * @param hh the highest 64 bits (bits 192-255)
@@ -453,8 +467,8 @@ public class Decimal256 implements Sinkable {
      * @return true if null, false otherwise
      */
     public static boolean isNull(long hh, long hl, long lh, long ll) {
-        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
-                lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
+        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL
+                && lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
     }
 
     /**
@@ -720,20 +734,29 @@ public class Decimal256 implements Sinkable {
     /**
      * In-place addition.
      *
-     * @param other the Decimal256 to add
      * @throws NumericException if overflow occurs
      */
-    public void add(Decimal256 other) {
+    public void add(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
         if (isNull()) {
             return;
         }
 
-        if (other.isNull()) {
+        if (isNull(otherHH, otherHL, otherLH, otherLL)) {
             ofNull();
             return;
         }
 
-        add(this, hh, hl, lh, ll, scale, other.hh, other.hl, other.lh, other.ll, other.scale);
+        add(this, hh, hl, lh, ll, scale, otherHH, otherHL, otherLH, otherLL, otherScale);
+    }
+
+    /**
+     * In-place addition.
+     *
+     * @param other the Decimal256 to add
+     * @throws NumericException if overflow occurs
+     */
+    public void add(Decimal256 other) {
+        add(other.hh, other.hl, other.lh, other.ll, other.scale);
     }
 
     /**
@@ -880,6 +903,22 @@ public class Decimal256 implements Sinkable {
      */
     public void divide(Decimal256 divisor, int targetScale, RoundingMode roundingMode) {
         divide(this, divisor, this, targetScale, roundingMode);
+    }
+
+    /**
+     * In-place division.
+     *
+     * @param targetScale  the desired scale of the result
+     * @param roundingMode the rounding mode
+     * @throws NumericException if division by zero or overflow occurs
+     */
+    public void divide(long divisorHH, long divisorHL, long divisorLH, long divisorLL, int divisorScale, int targetScale, RoundingMode roundingMode) {
+        divide(
+                this.divider,
+                this.hh, this.hl, this.lh, this.ll, this.scale,
+                divisorHH, divisorHL, divisorLH, divisorLL, divisorScale,
+                this, targetScale, roundingMode
+        );
     }
 
     /**
@@ -1069,8 +1108,8 @@ public class Decimal256 implements Sinkable {
      * @return true if null, false otherwise
      */
     public boolean isNull() {
-        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
-                lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
+        return hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL
+                && lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL;
     }
 
     /**
@@ -1089,21 +1128,25 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if division by zero occurs
      */
     public void modulo(Decimal256 divisor) {
+        modulo(divisor.hh, divisor.hl, divisor.lh, divisor.ll, divisor.scale);
+    }
+
+    public void modulo(long divisorHH, long divisorHL, long divisorLH, long divisorLL, int divisorScale) {
         if (isNull()) {
             return;
         }
 
-        if (divisor.isNull()) {
+        if (isNull(divisorHH, divisorHL, divisorLH, divisorLL)) {
             ofNull();
             return;
         }
 
-        if (divisor.isZero()) {
+        if (divisorHH == 0 && divisorHL == 0 && divisorLH == 0 && divisorLL == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
         // Result scale should be the larger of the two scales
-        int resultScale = Math.max(this.scale, divisor.scale);
+        int resultScale = Math.max(this.scale, divisorScale);
 
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
@@ -1114,10 +1157,10 @@ public class Decimal256 implements Sinkable {
         long thisLL = this.ll;
         int thisScale = this.scale;
 
-        this.divide(divisor, 0, RoundingMode.DOWN);
+        this.divide(divisorHH, divisorHL, divisorLH, divisorLL, divisorScale, 0, RoundingMode.DOWN);
 
         // Now compute this * divisor
-        this.multiply(divisor);
+        this.multiply(divisorHH, divisorHL, divisorLH, divisorLL, divisorScale);
 
         long qHH = this.hh;
         long qHL = this.hl;
@@ -1152,25 +1195,31 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs or resulting scale exceeds MAX_SCALE
      */
     public void multiply(Decimal256 other) {
+        multiply(other.hh, other.hl, other.lh, other.ll, other.scale);
+    }
+
+    /**
+     * Multiplies this Decimal256 by another Decimal256 in-place.
+     * The result scale is the sum of both operands' scales.
+     *
+     * @throws NumericException if overflow occurs or resulting scale exceeds MAX_SCALE
+     */
+    public void multiply(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
         if (isNull()) {
             return;
         }
 
-        if (other.isNull()) {
+        if (isNull(otherHH, otherHL, otherLH, otherLL)) {
             ofNull();
             return;
         }
 
-        int finalScale = scale + other.scale;
+        int finalScale = scale + otherScale;
         validateScale(finalScale);
 
-        boolean isNegative = isNegative() ^ other.isNegative();
+        boolean isNegative = isNegative() ^ (otherHH < 0);
 
-        long otherHH = other.hh;
-        long otherHL = other.hl;
-        long otherLH = other.lh;
-        long otherLL = other.ll;
-        if (other.isNegative()) {
+        if (otherHH < 0) {
             otherLL = ~otherLL + 1;
             long c = otherLL == 0L ? 1L : 0L;
             otherLH = ~otherLH + c;
@@ -1535,7 +1584,7 @@ public class Decimal256 implements Sinkable {
                             long bHH, long bHL, long bLH, long bLL, int bScale) {
         result.scale = aScale;
         if (aScale < bScale) {
-            // We need to rescale a to the same scale as b
+            // We need to rescale A to the same scale as B
             result.of(aHH, aHL, aLH, aLL, aScale);
             result.rescale0(bScale);
             aHH = result.hh;
@@ -1543,7 +1592,7 @@ public class Decimal256 implements Sinkable {
             aLH = result.lh;
             aLL = result.ll;
         } else if (aScale > bScale) {
-            // We need to rescale b to the same scale as a
+            // We need to rescale B to the same scale as A
             result.of(bHH, bHL, bLH, bLL, bScale);
             result.rescale0(aScale);
             bHH = result.hh;
@@ -2641,19 +2690,6 @@ public class Decimal256 implements Sinkable {
         if (hasUnsignOverflowed()) {
             throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
         }
-    }
-
-    /**
-     * Check if addition resulted in a carry
-     * When adding two unsigned numbers a + b = sum, carry occurs iff sum &lt; a (or sum &lt; b)
-     * This works because:
-     * - No carry: sum = a + b, so sum &gt;= a and sum &gt;= b
-     * - Carry: sum = a + b - 2^64, so sum &lt; a and sum &lt; b
-     */
-    public static boolean hasCarry(long a, long sum) {
-        // We can check against either a or b - both work
-        // Using a for consistency, b parameter kept for clarity
-        return Long.compareUnsigned(sum, a) < 0;
     }
 
     static {

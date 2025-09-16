@@ -201,7 +201,6 @@ public final class Decimals {
             throw new IllegalArgumentException("Invalid decimal precision: " + precision +
                     ". Must be between 1 and " + MAX_PRECISION);
         }
-
         return PRECISION_SIZE_POW2[precision];
     }
 }

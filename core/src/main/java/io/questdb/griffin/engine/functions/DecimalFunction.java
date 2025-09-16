@@ -35,10 +35,10 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractDecimalFunction implements Function {
+public abstract class DecimalFunction implements Function {
     protected int type;
 
-    protected AbstractDecimalFunction(int type) {
+    protected DecimalFunction(int type) {
         this.type = type;
     }
 
@@ -68,26 +68,6 @@ public abstract class AbstractDecimalFunction implements Function {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -104,6 +84,26 @@ public abstract class AbstractDecimalFunction implements Function {
 
     @Override
     public float getFloat(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
