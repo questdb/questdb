@@ -37,7 +37,6 @@ import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
@@ -368,6 +367,11 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         @Override
         public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
             Assert.fail("Unexpected call to putDecimal256");
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence cs, Decimal256 decimal) {
+            Assert.fail("Unexpected call to putDecimalStr");
         }
 
         @Override

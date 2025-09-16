@@ -56,26 +56,23 @@ public class WriterRowUtils {
         if (!value.fitsInStorageSizePow2(tag - ColumnType.DECIMAL8)) {
             throw CairoException.nonCritical().put("value does not fit in column type ").put(ColumnType.nameOf(columnType));
         }
-        switch (tag) {
-            case ColumnType.DECIMAL8:
-                row.putByte(index, (byte) value.getLl());
-                break;
-            case ColumnType.DECIMAL16:
-                row.putShort(index, (short) value.getLl());
-                break;
-            case ColumnType.DECIMAL32:
-                row.putInt(index, (int) value.getLl());
-                break;
-            case ColumnType.DECIMAL64:
-                row.putLong(index, value.getLl());
-                break;
-            case ColumnType.DECIMAL128:
-                row.putDecimal128(index, value.getLh(), value.getLl());
-                break;
-            default:
-                row.putDecimal256(index, value.getHh(), value.getHl(), value.getLh(), value.getLl());
-                break;
+        putDecimal0(index, value, tag, row);
+    }
+
+    public static void putDecimalStr(int index, Decimal256 decimal, CharSequence cs, int type, TableWriter.Row row) {
+        if (cs == null) {
+            putNullDecimal(row, index, type);
+            return;
         }
+
+        final int precision = ColumnType.getDecimalPrecision(type);
+        final int scale = ColumnType.getDecimalScale(type);
+        try {
+            decimal.ofString(cs, precision, scale);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type);
+        }
+        putDecimal0(index, decimal, ColumnType.tagOf(type), row);
     }
 
     public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
@@ -164,6 +161,29 @@ public class WriterRowUtils {
                 break;
             case ColumnType.DECIMAL256:
                 row.putDecimal256(col, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+                break;
+        }
+    }
+
+    private static void putDecimal0(int index, Decimal256 value, int tag, TableWriter.Row row) {
+        switch (tag) {
+            case ColumnType.DECIMAL8:
+                row.putByte(index, (byte) value.getLl());
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(index, (short) value.getLl());
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(index, (int) value.getLl());
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(index, value.getLl());
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(index, value.getLh(), value.getLl());
+                break;
+            default:
+                row.putDecimal256(index, value.getHh(), value.getHl(), value.getLh(), value.getLl());
                 break;
         }
     }

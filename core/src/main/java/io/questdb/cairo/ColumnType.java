@@ -631,7 +631,8 @@ public final class ColumnType {
                         toType == DOUBLE ||
                         toType == CHAR ||
                         toType == UUID ||
-                        ColumnType.isArray(toType));
+                        ColumnType.isArray(toType) ||
+                        isDecimalType(tagOf(toType)));
     }
 
     private static boolean isStringCast(int fromType, int toType) {

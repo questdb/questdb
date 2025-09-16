@@ -137,6 +137,25 @@ public final class Decimals {
     }
 
     /**
+     * Returns the precision for a specific int decimal.
+     *
+     * @param value of the decimal
+     * @return the required precision to store the long.
+     */
+    public static int getIntPrecision(int value) {
+        if (value == Numbers.INT_NULL) return 0;
+        if (value < 0) {
+            value = -value;
+        }
+        for (int i = 0; i < 9; i++) {
+            if (value <= POW10_PRECISION[i]) {
+                return i + 1;
+            }
+        }
+        return 10;
+    }
+
+    /**
      * Returns the maximum long value for a specific precision.
      *
      * @param precision to be used as reference
@@ -147,6 +166,19 @@ public final class Decimals {
             return Long.MAX_VALUE;
         }
         return POW10_PRECISION[precision - 1];
+    }
+
+    /**
+     * Returns the maximum int value for a specific precision.
+     *
+     * @param precision to be used as reference
+     */
+    public static int getMaxInt(int precision) {
+        assert precision > 0;
+        if (precision >= 10) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) POW10_PRECISION[precision - 1];
     }
 
     /**

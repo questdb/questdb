@@ -171,6 +171,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final CharacterStore sqlTextCharacterStore;
     private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
+    private final AssociativeCache<TypesAndSelect> tasCache;
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
@@ -192,7 +193,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private int sendBufferSize;
     private SuspendEvent suspendEvent;
-    private final AssociativeCache<TypesAndSelect> tasCache;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
@@ -1723,11 +1723,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void putShortUnsafe(long offset, short value) {
-            Unsafe.getUnsafe().putShort(sendBufferPtr + offset, value);
-        }
-
-        @Override
         public void putLen(long start) {
             putInt(start, (int) (sendBufferPtr - start));
         }
@@ -1759,6 +1754,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
+        public void putNetworkInt(long address, int value) {
+            checkCapacity(address, Integer.BYTES);
+            putInt(address, value);
+        }
+
+        @Override
         public void putNetworkLong(long value) {
             checkCapacity(Long.BYTES);
             putLong(sendBufferPtr, value);
@@ -1770,6 +1771,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             checkCapacity(Short.BYTES);
             putShort(sendBufferPtr, value);
             sendBufferPtr += Short.BYTES;
+        }
+
+        @Override
+        public void putNetworkShort(long address, short value) {
+            checkCapacity(address, Short.BYTES);
+            putShort(address, value);
         }
 
         @Override
@@ -1828,6 +1835,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long checkpoint = sendBufferPtr;
             sendBufferPtr += Integer.BYTES;
             return checkpoint;
+        }
+
+        private void checkCapacity(long address, long size) {
+            if (address + size < sendBufferLimit) {
+                return;
+            }
+            throw NoSpaceLeftInResponseBufferException.instance(size);
         }
     }
 }

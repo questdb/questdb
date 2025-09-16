@@ -42,12 +42,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastLongToDecimalFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Lξ)";
-    }
-
+public class CastIntToDecimalFunctionFactory implements FunctionFactory {
     public static Function newInstance(
             int position,
             Function arg,
@@ -55,7 +50,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (arg.isConstant()) {
-            long value = arg.getLong(null);
+            int value = arg.getInt(null);
             return newConstantInstance(sqlExecutionContext, position, targetType, value);
         }
 
@@ -65,10 +60,14 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
 
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        long maxUnscaledValue = targetScale >= targetPrecision ? 0L : Decimals.getMaxLong(targetPrecision - targetScale);
+        int maxUnscaledValue = targetScale >= targetPrecision ? 0 : Decimals.getMaxInt(targetPrecision - targetScale);
         return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
+    @Override
+    public String getSignature() {
+        return "cast(Iξ)";
+    }
 
     @Override
     public Function newInstance(
@@ -81,40 +80,25 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         return newInstance(argPositions.getQuick(0), args.getQuick(0), args.getQuick(1).getType(), sqlExecutionContext);
     }
 
-    private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
-        int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        switch (ColumnType.tagOf(targetType)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Decimals.getMaxLong(targetPrecision), value);
-            case ColumnType.DECIMAL128:
-                return new CastDecimal128UnscaledFunc(targetType, value);
-            default:
-                return new CastDecimal256UnscaledFunc(targetType, value);
-        }
-    }
-
     private static Function newConstantInstance(
             SqlExecutionContext sqlExecutionContext,
             int valuePosition,
             int targetType,
-            long value
+            int value
     ) {
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         final int targetScale = ColumnType.getDecimalScale(targetType);
 
         // Ensures that the value fits in the decimal target
-        if (value != 0 && Decimals.getLongPrecision(value) + targetScale > ColumnType.getDecimalPrecision(targetType)) {
+        if (value != 0 && Decimals.getIntPrecision(value) + targetScale > ColumnType.getDecimalPrecision(targetType)) {
             throw ImplicitCastException.inconvertibleValue(
                     value,
-                    ColumnType.LONG,
+                    ColumnType.INT,
                     targetType
             ).position(valuePosition);
         }
 
-        if (value == Numbers.LONG_NULL) {
+        if (value == Numbers.INT_NULL) {
             return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
         }
 
@@ -128,6 +112,21 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         // We don't try to narrow the type on its actual precision so that the user may pre-widen the constant decimal
         // to avoid doing it at query execution.
         return DecimalUtil.createDecimalConstant(d, targetPrecision, targetScale);
+    }
+
+    private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
+        int targetPrecision = ColumnType.getDecimalPrecision(targetType);
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Decimals.getMaxInt(targetPrecision), value);
+            case ColumnType.DECIMAL128:
+                return new CastDecimal128UnscaledFunc(targetType, value);
+            default:
+                return new CastDecimal256UnscaledFunc(targetType, value);
+        }
     }
 
     private static class CastDecimal128UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
@@ -147,8 +146,8 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDecimal128Hi(Record rec) {
-            final long value = this.value.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final int value = this.value.getInt(rec);
+            if (value == Numbers.INT_NULL) {
                 lo = Decimals.DECIMAL128_LO_NULL;
                 return Decimals.DECIMAL128_HI_NULL;
             }
@@ -190,15 +189,15 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDecimal256HH(Record rec) {
-            final long value = this.value.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final int value = this.value.getInt(rec);
+            if (value == Numbers.INT_NULL) {
                 ll = Decimals.DECIMAL256_LL_NULL;
                 lh = Decimals.DECIMAL256_LH_NULL;
                 hl = Decimals.DECIMAL256_HL_NULL;
                 return Decimals.DECIMAL256_HH_NULL;
             }
             // No need for overflow check, if the precision was lower than
-            // 19 it wouldn't be a Decimal256, otherwise, any long can fit.
+            // 19 it wouldn't be a Decimal256, otherwise, any int can fit.
             ll = value;
             hl = lh = value < 0 ? -1 : 0;
             return lh;
@@ -226,12 +225,12 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class CastDecimal64UnscaledFunc extends AbstractDecimalFunction implements UnaryFunction {
-        private final long maxValue;
-        private final long minValue;
+        private final int maxValue;
+        private final int minValue;
         private final int position;
         private final Function value;
 
-        public CastDecimal64UnscaledFunc(int position, int targetType, long maxValue, Function value) {
+        public CastDecimal64UnscaledFunc(int position, int targetType, int maxValue, Function value) {
             super(targetType);
             this.position = position;
             this.maxValue = maxValue;
@@ -246,8 +245,8 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public short getDecimal16(Record rec) {
-            final long value = this.value.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final int value = this.value.getInt(rec);
+            if (value == Numbers.INT_NULL) {
                 return Decimals.DECIMAL16_NULL;
             }
             overflowCheck(value);
@@ -256,28 +255,29 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public int getDecimal32(Record rec) {
-            final long value = this.value.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final int value = this.value.getInt(rec);
+            if (value == Numbers.INT_NULL) {
                 return Decimals.DECIMAL32_NULL;
-            }
-            overflowCheck(value);
-            return (int) value;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            final long value = this.value.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
-                return Decimals.DECIMAL64_NULL;
             }
             overflowCheck(value);
             return value;
         }
 
         @Override
+        public long getDecimal64(Record rec) {
+            final int value = this.value.getInt(rec);
+            if (value == Numbers.INT_NULL) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            // No overflow check needed here, if we're using this type we know that
+            // we have enough space to store Integer.MAX_VALUE.
+            return value;
+        }
+
+        @Override
         public byte getDecimal8(Record rec) {
-            final long value = this.value.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final int value = this.value.getInt(rec);
+            if (value == Numbers.INT_NULL) {
                 return Decimals.DECIMAL8_NULL;
             }
             overflowCheck(value);
@@ -289,11 +289,11 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
 
-        private void overflowCheck(long value) {
+        private void overflowCheck(int value) {
             if (value < minValue || value > maxValue) {
                 throw ImplicitCastException.inconvertibleValue(
                         value,
-                        ColumnType.LONG,
+                        ColumnType.INT,
                         type
                 ).position(position);
             }
@@ -301,24 +301,24 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class CastDecimalScaledFunc extends AbstractCastToDecimalFunction {
-        private final long maxUnscaledValue;
-        private final long minUnscaledValue;
+        private final int maxUnscaledValue;
+        private final int minUnscaledValue;
 
-        public CastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
+        public CastDecimalScaledFunc(int position, int targetType, int maxUnscaledValue, Function value) {
             super(value, targetType, position);
             this.maxUnscaledValue = maxUnscaledValue;
             this.minUnscaledValue = -maxUnscaledValue;
         }
 
         protected boolean cast(Record rec) {
-            long value = this.arg.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            int value = this.arg.getInt(rec);
+            if (value == Numbers.INT_NULL) {
                 return false;
             }
             if (value < minUnscaledValue || value > maxUnscaledValue) {
                 throw ImplicitCastException.inconvertibleValue(
                         value,
-                        ColumnType.LONG,
+                        ColumnType.INT,
                         type
                 ).position(position);
             }

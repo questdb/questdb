@@ -317,6 +317,42 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testDigitExtractionLoop() {
+        // Test extracting all digits from 12345 using the two methods together
+        Decimal256 value = new Decimal256(0, 0, 0, 12345, 0);
+
+        // Extract ten thousands digit (1)
+        int digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 4);
+        Assert.assertEquals(1, digit);
+        value.subtractPowerOfTenMultiple(4, digit);
+        Assert.assertEquals(2345, value.getLl());
+
+        // Extract thousands digit (2)
+        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 3);
+        Assert.assertEquals(2, digit);
+        value.subtractPowerOfTenMultiple(3, digit);
+        Assert.assertEquals(345, value.getLl());
+
+        // Extract hundreds digit (3)
+        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 2);
+        Assert.assertEquals(3, digit);
+        value.subtractPowerOfTenMultiple(2, digit);
+        Assert.assertEquals(45, value.getLl());
+
+        // Extract tens digit (4)
+        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 1);
+        Assert.assertEquals(4, digit);
+        value.subtractPowerOfTenMultiple(1, digit);
+        Assert.assertEquals(5, value.getLl());
+
+        // Extract ones digit (5)
+        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 0);
+        Assert.assertEquals(5, digit);
+        value.subtractPowerOfTenMultiple(0, digit);
+        Assert.assertEquals(0, value.getLl());
+    }
+
+    @Test
     public void testDivide() {
         Decimal256 a = new Decimal256(0, 0, 0, 1000, 2);
         Decimal256 b = new Decimal256(0, 0, 0, 3, 0);
@@ -703,6 +739,53 @@ public class Decimal256Test {
         Assert.assertEquals(12345, decimal.getLl());
         Assert.assertEquals(2, decimal.getScale());
         Assert.assertEquals(123.45, decimal.toDouble(), 0.001);
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenBoundaryValues() {
+        Assert.assertEquals(9, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 9, 0));
+        Assert.assertEquals(9, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 99, 1));
+        Assert.assertEquals(9, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 999, 2));
+        Assert.assertEquals(9, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 9999, 3));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenHundredsPlace() {
+        Assert.assertEquals(5, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 523, 2));
+        Assert.assertEquals(9, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 999, 2));
+        Assert.assertEquals(1, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 100, 2));
+        Assert.assertEquals(0, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 99, 2));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenLargeNumbers() {
+        // 2^64 = 18,446,744,073,709,551,616
+        Assert.assertEquals(1, Decimal256.getDigitAtPowerOfTen(0, 0, 1, 0, 19));
+
+        // 2^128 = 340,282,366,920,938,463,463,374,607,431,768,211,456
+        Assert.assertEquals(3, Decimal256.getDigitAtPowerOfTen(0, 1, 0, 0, 38));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenSingleDigits() {
+        for (int i = 0; i <= 9; i++) {
+            Assert.assertEquals(i, Decimal256.getDigitAtPowerOfTen(0, 0, 0, i, 0));
+        }
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenTensPlace() {
+        Assert.assertEquals(9, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 95, 1));
+        Assert.assertEquals(5, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 50, 1));
+        Assert.assertEquals(1, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 19, 1));
+        Assert.assertEquals(0, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 9, 1));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenZero() {
+        Assert.assertEquals(0, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 0, 0));
+        Assert.assertEquals(0, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 0, 5));
+        Assert.assertEquals(0, Decimal256.getDigitAtPowerOfTen(0, 0, 0, 0, 10));
     }
 
     @Test
@@ -1877,6 +1960,30 @@ public class Decimal256Test {
             // Negated values have the storage size as the positive one
             Assert.assertEquals(String.format("Test failed with decimal %s", decimal), expectedStorageSize, decimal.getStorageSize());
         }
+    }
+
+    @Test
+    public void testSubtractPowerOfTenMultiple() {
+        // Test subtracting 500 from 523
+        Decimal256 value = new Decimal256(0, 0, 0, 523, 0);
+        value.subtractPowerOfTenMultiple(2, 5);
+        Assert.assertEquals(23, value.getLl());
+
+        // Test subtracting 20 from 23
+        value.subtractPowerOfTenMultiple(1, 2);
+        Assert.assertEquals(3, value.getLl());
+
+        // Test subtracting 3 from 3
+        value.subtractPowerOfTenMultiple(0, 3);
+        Assert.assertEquals(0, value.getLl());
+    }
+
+    @Test
+    public void testSubtractPowerOfTenMultipleZero() {
+        // Test that multiplier 0 leaves value unchanged
+        Decimal256 value = new Decimal256(0, 0, 0, 123, 0);
+        value.subtractPowerOfTenMultiple(1, 0);
+        Assert.assertEquals(123, value.getLl());
     }
 
     @Test

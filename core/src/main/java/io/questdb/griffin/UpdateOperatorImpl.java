@@ -462,6 +462,29 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 case ColumnType.ARRAY:
                     ArrayTypeDriver.appendValue(dstFixMem, dstVarMem, masterRecord.getArray(i, toType));
                     break;
+                case ColumnType.DECIMAL8:
+                    dstFixMem.putByte(masterRecord.getDecimal8(i));
+                    break;
+                case ColumnType.DECIMAL16:
+                    dstFixMem.putShort(masterRecord.getDecimal16(i));
+                    break;
+                case ColumnType.DECIMAL32:
+                    dstFixMem.putInt(masterRecord.getDecimal32(i));
+                    break;
+                case ColumnType.DECIMAL64:
+                    dstFixMem.putLong(masterRecord.getDecimal64(i));
+                    break;
+                case ColumnType.DECIMAL128:
+                    dstFixMem.putDecimal128(masterRecord.getDecimal128Hi(i), masterRecord.getDecimal128Lo(i));
+                    break;
+                case ColumnType.DECIMAL256:
+                    dstFixMem.putDecimal256(
+                            masterRecord.getDecimal256HH(i),
+                            masterRecord.getDecimal256HL(i),
+                            masterRecord.getDecimal256LH(i),
+                            masterRecord.getDecimal256LL(i)
+                    );
+                    break;
                 default:
                     throw CairoException.nonCritical()
                             .put("Column type ").put(ColumnType.nameOf(toType))

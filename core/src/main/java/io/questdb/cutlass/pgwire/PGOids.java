@@ -50,6 +50,12 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
+    public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
+    public static final int BINARY_TYPE_DECIMAL16 = (1 << 31) | ColumnType.DECIMAL16;
+    public static final int BINARY_TYPE_DECIMAL32 = (1 << 31) | ColumnType.DECIMAL32;
+    public static final int BINARY_TYPE_DECIMAL64 = (1 << 31) | ColumnType.DECIMAL64;
+    public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
+    public static final int BINARY_TYPE_DECIMAL256 = (1 << 31) | ColumnType.DECIMAL256;
     public static final int PG_ARR_FLOAT8 = 1022;
     public static final int PG_ARR_INT8 = 1016;
     public static final int PG_BOOL = 16;

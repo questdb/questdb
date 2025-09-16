@@ -213,4 +213,64 @@ public final class DecimalUtil {
                 break;
         }
     }
+
+    /**
+     * Load any decimal value from a Function into a Decimal256
+     */
+    public static void load(Decimal256 decimal, @NotNull Record rec, int col, int fromType) {
+        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+
+        switch (Decimals.getStorageSizePow2(fromPrecision)) {
+            case 0:
+                byte b = rec.getDecimal8(col);
+                if (b == Decimals.DECIMAL8_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(b, fromScale);
+                }
+                break;
+            case 1:
+                short s = rec.getDecimal16(col);
+                if (s == Decimals.DECIMAL16_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(s, fromScale);
+                }
+                break;
+            case 2:
+                int i = rec.getDecimal32(col);
+                if (i == Decimals.DECIMAL32_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(i, fromScale);
+                }
+                break;
+            case 3:
+                long l = rec.getDecimal64(col);
+                if (l == Decimals.DECIMAL64_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(l, fromScale);
+                }
+                break;
+            case 4:
+                long hi = rec.getDecimal128Hi(col);
+                long lo = rec.getDecimal128Lo(col);
+                if (Decimal128.isNull(hi, lo)) {
+                    decimal.ofNull();
+                } else {
+                    long v = hi < 0 ? -1 : 0;
+                    decimal.of(v, v, hi, lo, fromScale);
+                }
+                break;
+            default:
+                long hh = rec.getDecimal256HH(col);
+                long hl = rec.getDecimal256HL(col);
+                long lh = rec.getDecimal256LH(col);
+                long ll = rec.getDecimal256LL(col);
+                decimal.of(hh, hl, lh, ll, fromScale);
+                break;
+        }
+    }
 }

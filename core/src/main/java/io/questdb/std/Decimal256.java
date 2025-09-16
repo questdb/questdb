@@ -560,39 +560,7 @@ public class Decimal256 implements Sinkable {
                 continue;
             }
 
-            // We do a binary search to retrieve the digit we need to display at a specific power
-            int mul;
-            if (compareToPowerOfTen(hh, hl, lh, ll, i, 5) >= 0) {
-                if (compareToPowerOfTen(hh, hl, lh, ll, i, 7) >= 0) {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 9) >= 0) {
-                        mul = 9;
-                    } else if (compareToPowerOfTen(hh, hl, lh, ll, i, 8) >= 0) {
-                        mul = 8;
-                    } else {
-                        mul = 7;
-                    }
-                } else {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 6) >= 0) {
-                        mul = 6;
-                    } else {
-                        mul = 5;
-                    }
-                }
-            } else {
-                if (compareToPowerOfTen(hh, hl, lh, ll, i, 3) >= 0) {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 4) >= 0) {
-                        mul = 4;
-                    } else {
-                        mul = 3;
-                    }
-                } else {
-                    if (compareToPowerOfTen(hh, hl, lh, ll, i, 2) >= 0) {
-                        mul = 2;
-                    } else {
-                        mul = 1;
-                    }
-                }
-            }
+            int mul = getDigitAtPowerOfTen(hh, hl, lh, ll, i);
             sink.putAscii((char) ('0' + mul));
             printed = true;
 
@@ -628,6 +596,125 @@ public class Decimal256 implements Sinkable {
         if (!printed && !afterDot) {
             sink.put('0');
         }
+    }
+
+    /**
+     * Extracts the digit at a specific power-of-ten position from a 256-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
+     *
+     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public int getDigitAtPowerOfTen(int pow) {
+        return getDigitAtPowerOfTen(hh, hl, lh, ll, pow);
+    }
+
+    /**
+     * Extracts the digit at a specific power-of-ten position from a 256-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the 
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
+     * 
+     * @param hh highest 64 bits of the 256-bit decimal
+     * @param hl high-middle 64 bits of the 256-bit decimal  
+     * @param lh low-middle 64 bits of the 256-bit decimal
+     * @param ll lowest 64 bits of the 256-bit decimal
+     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public static int getDigitAtPowerOfTen(long hh, long hl, long lh, long ll, int pow) {
+        // We do a binary search to retrieve the digit we need to display at a specific power
+        if (compareToPowerOfTen(hh, hl, lh, ll, pow, 5) >= 0) {
+            if (compareToPowerOfTen(hh, hl, lh, ll, pow, 7) >= 0) {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 9) >= 0) {
+                    return 9;
+                } else if (compareToPowerOfTen(hh, hl, lh, ll, pow, 8) >= 0) {
+                    return 8;
+                } else {
+                    return 7;
+                }
+            } else {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 6) >= 0) {
+                    return 6;
+                } else {
+                    return 5;
+                }
+            }
+        } else {
+            if (compareToPowerOfTen(hh, hl, lh, ll, pow, 3) >= 0) {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 4) >= 0) {
+                    return 4;
+                } else {
+                    return 3;
+                }
+            } else {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 2) >= 0) {
+                    return 2;
+                } else if (compareToPowerOfTen(hh, hl, lh, ll, pow, 1) >= 0) {
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Subtracts a specific multiplier of a power of ten from the current 256-bit value.
+     * This method modifies the value in-place by subtracting (multiplier * 10^pow).
+     * 
+     * Used in conjunction with getDigitAtPowerOfTen to extract individual digits:
+     * 1. Call getDigitAtPowerOfTen to get the digit at a specific power
+     * 2. Call this method to subtract that digit's contribution
+     * 3. Repeat for the next lower power
+     *
+     * @param pow the power of ten position
+     * @param multiplier the digit to subtract (1-9, or 0 for no-op)
+     */
+    public void subtractPowerOfTenMultiple(int pow, int multiplier) {
+        if (multiplier == 0 || multiplier > 9) {
+            return;
+        }
+        
+        // Get the value to subtract from POWERS_TEN_TABLE
+        // Each power has 9 entries (for multipliers 1-9), each entry has 4 longs
+        int offset = (multiplier - 1) * 4;
+        
+        // Perform 256-bit subtraction using two's complement
+        // First, negate the value to subtract (two's complement)
+        long bLL = ~POWERS_TEN_TABLE[pow][offset + 3] + 1;
+        long c = bLL == 0L ? 1L : 0L;
+        long r = ll + bLL;
+        long carry = hasCarry(ll, r) ? 1L : 0L;
+        ll = r;
+        
+        long bLH = ~POWERS_TEN_TABLE[pow][offset + 2] + c;
+        c = (c == 1L && bLH == 0L) ? 1L : 0L;
+        long t = lh + carry;
+        carry = hasCarry(lh, t) ? 1L : 0L;
+        r = t + bLH;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        lh = r;
+        
+        long bHL = ~POWERS_TEN_TABLE[pow][offset + 1] + c;
+        c = (c == 1L && bHL == 0L) ? 1L : 0L;
+        t = hl + carry;
+        carry = hasCarry(hl, t) ? 1L : 0L;
+        r = t + bHL;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        hl = r;
+        
+        long bHH = ~POWERS_TEN_TABLE[pow][offset] + c;
+        hh = hh + carry + bHH;
     }
 
     /**

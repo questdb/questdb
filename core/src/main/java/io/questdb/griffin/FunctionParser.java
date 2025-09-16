@@ -40,7 +40,9 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
@@ -1203,6 +1205,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
                     return new CastCharToSymbolFunctionFactory.Func(function);
+                }
+                break;
+            case ColumnType.LONG:
+                if (ColumnType.isDecimal(toType)) {
+                    return CastLongToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
+                }
+                break;
+            case ColumnType.INT:
+                if (ColumnType.isDecimal(toType)) {
+                    return CastIntToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
                 }
                 break;
             default:

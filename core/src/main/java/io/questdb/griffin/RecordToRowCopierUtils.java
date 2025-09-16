@@ -135,6 +135,7 @@ public class RecordToRowCopierUtils {
         int wPutGeoVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
+        int wPutDecimalStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalStr", "(ILjava/lang/CharSequence;Lio/questdb/std/Decimal256;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
@@ -924,6 +925,22 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsLong256);
                             asm.invokeInterface(wPutLong256, 2);
+                            break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            // Initial stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
+                            asm.invokeInterface(rGetStrA);
+                            // Stack: [rowWriter, toColumnIndex, string]
+                            asm.aload(1);
+                            // stack: [rowWriter, toColumnIndex, string, sqlExecutionContext]
+                            asm.invokeInterface(sGetDecimal256, 0);
+                            // Stack: [RowWriter, toColumnIndex, string, Decimal256]
+                            asm.invokeInterface(wPutDecimalStr, 3);
+                            // Stack: []
                             break;
                         default:
                             assert false;
