@@ -147,7 +147,6 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.model.CopyModel.COPY_FORMAT_PARQUET;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -2309,7 +2308,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             authorizeSelectForCopy(securityContext, model);
         }
 
-        assert model.getFormat() == COPY_FORMAT_PARQUET;
+        if (model.getFormat() == CopyModel.COPY_FORMAT_UNKNOWN) {
+            throw SqlException.$(0, "export format must be specified, supported formats:, 'parquet'");
+        }
         model.validCompressOptions();
         return new CopyExportFactory(
                 messageBus,

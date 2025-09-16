@@ -82,7 +82,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private MessageBus messageBus;
     private int parquetVersion;
     private int partitionBy;
-    private int partitionByPos;
     private boolean rawArrayEncoding = false;
     private int rowGroupSize;
     private SecurityContext securityContext;
@@ -141,7 +140,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         int tablePartitionBy = meta.getPartitionBy();
                         if (tablePartitionBy != partitionBy) {
-                            this.sqlText = this.tableName;
+                            this.selectText = this.tableName;
                         }
                     }
                 }
@@ -246,7 +245,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.securityContext = securityContext;
         this.selectText = model.getSelectText();
         this.partitionBy = model.getPartitionBy();
-        this.partitionByPos = model.getPartitionByPos();
         this.sizeLimit = model.getSizeLimit();
         this.compressionCodec = model.getCompressionCodec();
         this.compressionLevel = model.getCompressionLevel();

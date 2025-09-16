@@ -88,7 +88,6 @@ public class CopyExportTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, exportRoot);
     }
 
-
     @Test
     public void testCopyCancelSyntaxError() throws Exception {
         assertException(
@@ -168,6 +167,80 @@ public class CopyExportTest extends AbstractCairoTest {
             };
             testCopyExport(stmt, test, false);
         });
+    }
+
+    @Test
+    public void testCopyOptionError() throws Exception {
+        assertException(
+                "copy test_table to 'test_table'  with format parquet1;",
+                45,
+                "unsupported format, only 'parquet' is supported"
+        );
+        assertException(
+                "copy test_table to 'test_table'  with format parquet1;",
+                45,
+                "unsupported format, only 'parquet' is supported"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with partition_by Day;",
+                0,
+                "export format must be specified, supported formats:, 'parquet'"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with partition_by Day1;",
+                51,
+                "invalid partition by option: Day1"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with partition_by1 Day1;",
+                38,
+                "unrecognised option [option=partition_by1]"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with partition_by1 Day1;",
+                38,
+                "unrecognised option [option=partition_by1]"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with size_limit aa;",
+                38,
+                "size limit is not yet supported"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with compression_codec aa;",
+                56,
+                "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet compression_codec uncompressed compression_level aa;",
+                102,
+                "found [tok='aa', len=2] bad integer"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet compression_codec zstd compression_level 120;",
+                94,
+                "ZSTD compression level must be between 1 and 22"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet compression_codec GZIP compression_level 120;",
+                94,
+                "GZIP compression level must be between 0 and 9"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet compression_codec BROTLI compression_level 120;",
+                96,
+                "Brotli compression level must be between 0 and 11"
+        );
     }
 
     @Test
@@ -332,19 +405,42 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-/*    @Test
+    @Test
     public void testCopyParquetFailsWithSpecifyPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
-            execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
-            assertException(
-                    "copy test_table to 'export' with format parquet partition_by MONTH",
-                    61,
-                    "PARTITION BY cannot be used when exporting from a table"
-            );
+            execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2), ('2023-02-01T10:00:00.000Z', 3), ('2023-02-02T10:00:00.000Z', 4)");
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet partition_by MONTH", sqlExecutionContext);
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("file\tphase\tstatus\tmessage\terrors\n" +
+                                        "test_table\twait_to_run\tstarted\tqueued\t0\n" +
+                                        "test_table\twait_to_run\tfinished\t\t0\n" +
+                                        "test_table\tpopulating_data_to_temp_table\tstarted\t\t0\n" +
+                                        "test_table\tpopulating_data_to_temp_table\tfinished\t\t0\n" +
+                                        "test_table\tconverting_partitions\tstarted\t\t0\n" +
+                                        "test_table\tconverting_partitions\tfinished\t\t0\n" +
+                                        "test_table\tdropping_temp_table\tstarted\t\t0\n" +
+                                        "test_table\tdropping_temp_table\tfinished\t\t0\n" +
+                                        "test_table\tsuccess\tfinished\t\t0\n",
+                                "SELECT file,phase,status,message,errors FROM sys.copy_export_log");
+                        // Verify count and sample data
+                        assertSql("ts\tx\n" +
+                                        "2023-01-01T10:00:00.000000Z\t1\n" +
+                                        "2023-01-02T10:00:00.000000Z\t2\n",
+                                "select * from read_parquet('" + exportRoot + "/test_table/2023-01.parquet')");
+                        assertSql("ts\tx\n" +
+                                        "2023-02-01T10:00:00.000000Z\t3\n" +
+                                        "2023-02-02T10:00:00.000000Z\t4\n",
+                                "select * from read_parquet('" + exportRoot + "/test_table/2023-02.parquet')");
+                    });
+            testCopyExport(stmt, test);
         });
 
-    }*/
+    }
 
     @Test
     public void testCopyParquetLargeTable() throws Exception {
