@@ -282,6 +282,37 @@ public class IntListTest {
         }
     }
 
+    @Test
+    public void testSortGroupsStackOverflowScenario() {
+        // Create a scenario that would trigger deep recursion in quicksort
+        // by creating reverse sorted data which causes worst-case O(n) recursion depth
+        int groupSize = 3;
+        int numGroups = 50000; // Large size to ensure stack overflow with recursive implementation
+
+        IntList list = new IntList(numGroups * groupSize);
+
+        // Add groups in REVERSE sorted order to trigger worst-case quicksort behavior
+        // This will cause the pivot (last element) to always be the smallest, leading to maximum recursion
+        for (int i = numGroups - 1; i >= 0; i--) {
+            list.add(i);           // First element of group (descending)
+            list.add(i * 2);       // Second element
+            list.add(i * 3);       // Third element
+        }
+
+        // This should not throw StackOverflowError with the fixed implementation
+        list.sortGroups(groupSize);
+
+        // Verify the result is correctly sorted
+        for (int i = 0; i < numGroups - 1; i++) {
+            int baseIndex = i * groupSize;
+            int nextBaseIndex = (i + 1) * groupSize;
+
+            // Compare first elements of consecutive groups - should be in ascending order
+            Assert.assertTrue("Groups should be sorted in ascending order",
+                    list.getQuick(baseIndex) <= list.getQuick(nextBaseIndex));
+        }
+    }
+
     private static void checkSortGroupsEqualElements(int n, int elements, Rnd rnd) {
         IntList list = new IntList(elements * n);
         int[][] arrays = new int[elements][];
