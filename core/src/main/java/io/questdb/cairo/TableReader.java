@@ -642,7 +642,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private static int getColumnBits(int columnCount) {
-        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
+        return Math.max(Numbers.msb(Numbers.ceilPow2(columnCount) * 2), 0);
     }
 
     private static boolean growColumn(MemoryCMRDetachedImpl mem1, MemoryCMRDetachedImpl mem2, int columnType, long rowCount) {

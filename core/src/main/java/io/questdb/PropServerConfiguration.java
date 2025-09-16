@@ -875,17 +875,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
-        int cpuMvRefreshWorkers = 2;
+        int cpuWalApplyWorkers = 2;
         int cpuSpare = 0;
 
         if (cpuAvailable > 32) {
-            cpuMvRefreshWorkers = 4;
+            cpuWalApplyWorkers = 4;
             cpuSpare = 2;
         } else if (cpuAvailable > 16) {
-            cpuMvRefreshWorkers = 3;
+            cpuWalApplyWorkers = 3;
             cpuSpare = 1;
         } else if (cpuAvailable > 8) {
-            cpuMvRefreshWorkers = 3;
+            cpuWalApplyWorkers = 3;
         }
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
@@ -1282,7 +1282,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
-            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0); // Use shared write pool by default;
+            // Do not use shared write pool by default for wal-apply
+            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerNapThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
@@ -1294,7 +1295,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
-            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuMvRefreshWorkers);
+            // Do not use shared write pool by default for mat-view-refresh, use same worker count as wal-apply
+            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
             this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);

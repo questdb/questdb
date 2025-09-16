@@ -462,11 +462,10 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n"
-                ,
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
