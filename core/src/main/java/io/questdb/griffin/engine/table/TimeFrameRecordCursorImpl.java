@@ -94,6 +94,10 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         return reader.getBitmapIndexReader(timeFrame.frameIndex, columnIndex, direction);
     }
 
+    public PageFrameCursor getPageFrameCursor() {
+        return frameCursor;
+    }
+
     @Override
     public Record getRecord() {
         return recordA;

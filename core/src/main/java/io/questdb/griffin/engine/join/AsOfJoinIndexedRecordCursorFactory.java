@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.TimeFrameRecordCursorImpl;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -146,78 +147,74 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         @Override
         protected void performKeyMatching(long masterTimestamp) {
             // Look through per-frame symbol indexes backwards, until we find a match or exhaust the search space
-            try {
-                CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
-                StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-                int symbolKey = symbolTable.keyOf(masterSymbolValue);
-                if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
+            CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
+            StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
+            int symbolKey = symbolTable.keyOf(masterSymbolValue);
+            if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
+                record.hasSlave(false);
+                return;
+            }
+            // No idea why we have to increment symbolKey here... but that's what works.
+            symbolKey++;
+
+            // nextSlave() generally finds the first row with timestamp > masterTimestamp.
+            // Ensure rowMax points to a row with timestamp <= masterTimestamp.
+            TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
+            slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
+            slaveTimeFrameCursor.open();
+            long rowMax = slaveFrameRow;
+            int partitionIndex = timeFrame.getFrameIndex();
+            if (rowMax == timeFrame.getRowHi()) {
+                // slaveFrameRow points to one beyond the end of current frame
+                rowMax--;
+            } else {
+                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowMax));
+                if (slaveRecB.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                    // slaveFrameRow points to row one beyond the one with timestamp <= masterTimestamp
+                    rowMax--;
+                }
+            }
+            if (rowMax < timeFrame.getRowLo()) {
+                // Not a valid row in this frame, jump to the previous frame
+                if (!slaveTimeFrameCursor.prev()) {
                     record.hasSlave(false);
                     return;
                 }
-                // No idea why we have to increment symbolKey here... but that's what works.
-                symbolKey++;
-
-                // nextSlave() generally finds the first row with timestamp > masterTimestamp.
-                // Ensure rowMax points to a row with timestamp <= masterTimestamp.
-                TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
-                slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
                 slaveTimeFrameCursor.open();
-                long rowMax = slaveFrameRow;
-                int partitionIndex = timeFrame.getFrameIndex();
-                if (rowMax == timeFrame.getRowHi()) {
-                    // slaveFrameRow points to one beyond the end of current frame
-                    rowMax--;
-                } else {
-                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowMax));
-                    if (slaveRecB.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                        // slaveFrameRow points to row one beyond the one with timestamp <= masterTimestamp
-                        rowMax--;
-                    }
-                }
-                if (rowMax < timeFrame.getRowLo()) {
-                    // Not a valid row in this frame, jump to the previous frame
-                    if (!slaveTimeFrameCursor.prev()) {
-                        record.hasSlave(false);
+            }
+
+            // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
+            // the first row within the BETWEEN ... AND ... range selected by the query.
+            PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
+            pfmRec.setRowIndex(0);
+            final long rowOffset = Rows.toLocalRowID(pfmRec.getUpdateRowId());
+            final int physicalSlaveSymbolColumnIndex = ((TimeFrameRecordCursorImpl) slaveTimeFrameCursor)
+                    .getPageFrameCursor().getColumnIndexes().getQuick(slaveSymbolColumnIndex);
+            for (; ; ) {
+                BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
+                        physicalSlaveSymbolColumnIndex,
+                        BitmapIndexReader.DIR_BACKWARD
+                );
+                RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo() + rowOffset, rowMax + rowOffset);
+
+                // Check the first entry only. They are sorted by timestamp, so other entries are older
+                if (rowCursor.hasNext()) {
+                    long rowId = rowCursor.next();
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowId));
+                    long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    if (slaveTimestamp <= masterTimestamp) {
+                        // Enforce tolerance limit if specified
+                        boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
+                                slaveTimestamp >= masterTimestamp - toleranceInterval;
+                        record.hasSlave(hasSlave);
                         return;
                     }
-                    slaveTimeFrameCursor.open();
                 }
 
-                // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
-                // the first row within the BETWEEN ... AND ... range selected by the query.
-                PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
-                pfmRec.setRowIndex(0);
-                long rowOffset = Rows.toLocalRowID(pfmRec.getUpdateRowId());
-                for (; ; ) {
-                    BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
-                            slaveSymbolColumnIndex,
-                            BitmapIndexReader.DIR_BACKWARD
-                    );
-                    RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo() + rowOffset, rowMax + rowOffset);
-
-                    // Check the first entry only. They are sorted by timestamp, so other entries are older
-                    if (rowCursor.hasNext()) {
-                        long rowId = rowCursor.next();
-                        slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowId));
-                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                        if (slaveTimestamp <= masterTimestamp) {
-                            // Enforce tolerance limit if specified
-                            boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
-                                    slaveTimestamp >= masterTimestamp - toleranceInterval;
-                            record.hasSlave(hasSlave);
-                            return;
-                        }
-                    }
-
-                    // No match in this frame, try the previous frame
-                    if (!slaveTimeFrameCursor.prev()) {
-                        record.hasSlave(false);
-                        return;
-                    }
-                    slaveTimeFrameCursor.open();
-                    timeFrame = slaveTimeFrameCursor.getTimeFrame();
-                    partitionIndex = timeFrame.getFrameIndex();
-                    rowMax = timeFrame.getRowHi() - 1;
+                // No match in this frame, try the previous frame
+                if (!slaveTimeFrameCursor.prev()) {
+                    record.hasSlave(false);
+                    return;
                 }
                 slaveTimeFrameCursor.open();
                 timeFrame = slaveTimeFrameCursor.getTimeFrame();
