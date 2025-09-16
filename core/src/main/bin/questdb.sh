@@ -55,7 +55,7 @@ export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
 
 # Async profiler configuration
-export PROFILER_EVENT="cpu"              # Event to profile: cpu, alloc, lock, wall, itimer
+export PROFILER_EVENT="cpu,wall"              # Event to profile: cpu, alloc, lock, wall, itimer
 export PROFILER_INTERVAL="5ms"          # Sampling interval
 export PROFILER_ALLOC_INTERVAL="512k"    # Allocation profiling interval (for alloc event)
 export PROFILER_LOCK_THRESHOLD="10ms"     # Lock profiling threshold (for lock event)
