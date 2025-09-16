@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -145,7 +146,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            // Search through frames backwards until we find a match or exhaust the search space
+            // Look through per-frame symbol indexes backwards, until we find a match or exhaust the search space
             try {
                 CharSequence masterSymbolValue = masterRecord.getSymA(slaveSymbolColumnIndex);
                 StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
@@ -187,10 +188,15 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                         slaveSymbolColumnIndex,
                         BitmapIndexReader.DIR_BACKWARD
                 );
+                // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
+                // the first row within the BETWEEN ... AND ... range selected by the query.
+                PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
+                pfmRec.setRowIndex(0);
+                long rowOffset = pfmRec.getUpdateRowId();
                 for (; ; ) {
-                    RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo(), rowMax);
+                    RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo() + rowOffset, rowMax + rowOffset);
 
-                    // 5. Check the single row for a match
+                    // Check the first entry only. They are sorted by timestamp, so other entries are older
                     if (rowCursor.hasNext()) {
                         long rowId = rowCursor.next();
                         slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowId));
