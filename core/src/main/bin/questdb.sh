@@ -55,7 +55,6 @@ export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
 
 # Async profiler configuration
-# These can be modified to change profiler behavior
 export PROFILER_EVENT="cpu"              # Event to profile: cpu, alloc, lock, wall, itimer
 export PROFILER_INTERVAL="5ms"          # Sampling interval
 export PROFILER_ALLOC_INTERVAL="512k"    # Allocation profiling interval (for alloc event)
@@ -262,21 +261,16 @@ function start {
         fi
     fi
 
-    # Build profiler agent options if enabled
     PROFILER_AGENT=""
     if [ "$QDB_PROFILING_ENABLED" = "true" ]; then
         # Use %t pattern for timestamp in continuous mode
         PROFILE_FILE="${QDB_PROFILES}/${PROFILER_FILE_PREFIX}-%t.jfr"
 
-        # Build agent parameters for continuous profiling
         AGENT_PARAMS="start,event=${PROFILER_EVENT}"
         AGENT_PARAMS="${AGENT_PARAMS},file=${PROFILE_FILE}"
         AGENT_PARAMS="${AGENT_PARAMS},jfr"  # Enable JFR format output
-
-        # Add loop parameter for continuous profiling
         AGENT_PARAMS="${AGENT_PARAMS},loop=${PROFILER_LOOP}"
 
-        # Add interval based on event type
         case "$PROFILER_EVENT" in
             cpu|wall|itimer)
                 AGENT_PARAMS="${AGENT_PARAMS},interval=${PROFILER_INTERVAL}"
@@ -289,7 +283,6 @@ function start {
                 ;;
         esac
 
-        # Add any extra options
         if [ "$PROFILER_EXTRA_OPTS" != "" ]; then
             AGENT_PARAMS="${AGENT_PARAMS},${PROFILER_EXTRA_OPTS}"
         fi
