@@ -298,8 +298,11 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
-                                break;
+                                if (ent.isTextFormat()) {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                    break;
+                                }
+                                // fall through
                             default:
                                 throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
                         }
@@ -437,11 +440,15 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_ARRAY:
-                        ArrayView array = ent.getArray();
-                        if (array.getType() != colType && !array.isNull()) {
-                            throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, ent.getName());
+                        if (colType == ColumnType.ARRAY) {
+                            ArrayView array = ent.getArray();
+                            if (array.getType() != colType && !array.isNull()) {
+                                throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, ent.getName());
+                            }
+                            r.putArray(columnIndex, array);
+                        } else {
+                            throw castError(tud.getTableNameUtf16(), "ARRAY", colType, ent.getName());
                         }
-                        r.putArray(columnIndex, array);
                         break;
                     default:
                         break; // unsupported types are ignored

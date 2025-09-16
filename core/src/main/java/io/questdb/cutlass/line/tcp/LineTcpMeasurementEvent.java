@@ -414,12 +414,15 @@ public class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addFloat(offset, (float) entity.getFloatValue());
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
-                            break;
+                            if (entity.isTextFormat()) {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                                break;
+                            }
+                            // fall through
                         default:
                             throw castError(tud.getTableNameUtf16(), "float", colType, entity.getName());
                     }

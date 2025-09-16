@@ -59,6 +59,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
@@ -989,6 +990,102 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.awaitTxn(tableName, 2);
                 serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
                 serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertBinaryToOtherColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                String tableName = "binary_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y varchar, a1 DOUBLE," +
+                        " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V2)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // insert binary double to symbol column
+                    try {
+                        sender.table(tableName)
+                                .stringColumn("y", "ystr")
+                                .doubleColumn("x", 9999.0)
+                                .doubleColumn("a1", 1)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), "cast error from protocol type: FLOAT to column type: SYMBOL");
+                    }
+
+                    // insert binary double to string column
+                    try {
+                        sender.table(tableName)
+                                .symbol("x", "x1")
+                                .doubleColumn("y", 9999.0)
+                                .doubleColumn("a1", 1)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), " cast error from protocol type: FLOAT to column type: VARCHAR");
+                    }
+
+                    // insert string column to double
+                    try {
+                        sender.table(tableName)
+                                .symbol("x", "x1")
+                                .stringColumn("y", "ystr")
+                                .stringColumn("a1", "11.u")
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), " cast error from protocol type: STRING to column type: DOUBLE");
+                    }
+
+                    // insert array column to double
+                    try {
+                        sender.table(tableName)
+                                .symbol("x", "x1")
+                                .stringColumn("y", "ystr")
+                                .doubleArray("a1", new double[]{1.0, 2.0})
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), " cast error from protocol type: ARRAY to column type: DOUBLE");
+                    }
+                }
+
+                // send text double to symbol column
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V1)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .stringColumn("y", "ystr")
+                            .doubleColumn("x", 9999.0)
+                            .doubleColumn("a1", 1)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTxn(tableName, 1);
+
+                    serverMain.assertSql("select * from " + tableName,
+                            "x\ty\ta1\tts\n" +
+                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n");
+                }
             }
         });
     }
