@@ -165,8 +165,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 // slaveFrameRow points to one beyond the end of current frame
                 rowMax--;
             } else {
-                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowMax));
-                if (slaveRecB.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
+                if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
                     // slaveFrameRow points to row one beyond the one with timestamp <= masterTimestamp
                     rowMax--;
                 }
@@ -180,6 +180,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 slaveTimeFrameCursor.open();
             }
 
+            slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
             final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
