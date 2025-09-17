@@ -70,18 +70,6 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
     TimeFrame getTimeFrame();
 
     /**
-     * Checks if the specified column has a bitmap index in the current partition.
-     * This method enables efficient symbol-based lookups in ASOF JOIN operations.
-     *
-     * @param columnIndex the column index to check
-     * @return true if the column has a bitmap index, false otherwise
-     */
-    default boolean isColumnIndexed(int columnIndex) {
-        // Default implementation returns false - no indexed access
-        return false;
-    }
-
-    /**
      * Rewinds cursor to the beginning of the given frame. The frame must have been previously opened.
      *
      * @param frameIndex index of the frame to rewind to

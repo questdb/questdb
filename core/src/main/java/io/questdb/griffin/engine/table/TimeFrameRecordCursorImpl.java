@@ -119,19 +119,6 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
-    public boolean isColumnIndexed(int columnIndex) {
-        if (reader == null) {
-            return false;
-        }
-
-        try {
-            return reader.getMetadata().isColumnIndexed(columnIndex);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    @Override
     public void jumpTo(int frameIndex) {
         buildFrameCache();
 
