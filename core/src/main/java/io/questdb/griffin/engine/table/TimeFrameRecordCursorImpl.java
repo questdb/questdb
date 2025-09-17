@@ -101,6 +101,11 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
+    public int getPhysicalColumnIndex(int logicalColumnIndex) {
+        return frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
+    }
+
+    @Override
     public Record getRecord() {
         return recordA;
     }
