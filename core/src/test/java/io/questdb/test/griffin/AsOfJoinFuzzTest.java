@@ -141,10 +141,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 join = " ASOF";
                 onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
                 break;
-            case ASOF_NONKEYD:
+            case ASOF_NONKEYED:
                 join = " ASOF";
                 break;
-            case LT_NONKEYD:
+            case LT_NONKEYED:
                 join = " LT";
                 break;
             case LT:
@@ -241,12 +241,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             switch (joinType) {
                 case ASOF:
                     // intentional fallthrough
-                case ASOF_NONKEYD:
+                case ASOF_NONKEYED:
                     hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
                     break;
                 case LT:
                     // intentional fallthrough
-                case LT_NONKEYD:
+                case LT_NONKEYED:
                     hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
                     break;
                 default:
@@ -278,8 +278,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         if (avoidBinarySearchHint) {
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
-        } else if (joinType == JoinType.ASOF_NONKEYD || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+        } else if (joinType == JoinType.ASOF_NONKEYED || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
         }
 
         final StringSink actualSink = new StringSink();
@@ -378,7 +378,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
     }
 
     private enum JoinType {
-        ASOF, ASOF_NONKEYD, LT_NONKEYD, LT
+        ASOF, ASOF_NONKEYED, LT_NONKEYED, LT
     }
 
     private enum LimitType {
