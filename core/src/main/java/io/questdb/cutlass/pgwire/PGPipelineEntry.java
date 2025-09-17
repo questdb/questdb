@@ -2536,22 +2536,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColBinArr(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL8:
-                        outColTxtDecimal8(utf8Sink, record, colIndex, type);
+                        outColTxtDecimal8(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL16:
-                        outColTxtDecimal16(utf8Sink, record, colIndex, type);
+                        outColTxtDecimal16(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL32:
-                        outColTxtDecimal32(utf8Sink, record, colIndex, type);
+                        outColTxtDecimal32(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL64:
-                        outColTxtDecimal64(utf8Sink, record, colIndex, type);
+                        outColTxtDecimal64(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL128:
-                        outColTxtDecimal128(utf8Sink, record, colIndex, type);
+                        outColTxtDecimal128(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL256:
-                        outColTxtDecimal256(utf8Sink, record, colIndex, type);
+                        outColTxtDecimal256(utf8Sink, record, colIndex, columnType);
                         break;
                     case BINARY_TYPE_DECIMAL8:
                     case BINARY_TYPE_DECIMAL16:
@@ -2560,8 +2560,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_DECIMAL128:
                     case BINARY_TYPE_DECIMAL256:
                         Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
-                        DecimalUtil.load(decimal256, record, colIndex, type);
-                        outColBinDecimal(utf8Sink, decimal256, type);
+                        DecimalUtil.load(decimal256, record, colIndex, columnType);
+                        outColBinDecimal(utf8Sink, decimal256, columnType);
                         break;
                     default:
                         assert false;
