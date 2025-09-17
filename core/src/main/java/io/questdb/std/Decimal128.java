@@ -354,13 +354,6 @@ public class Decimal128 implements Sinkable {
         add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
-    public int compareTo(long otherHi, long otherLo) {
-        if (this.high != otherHi) {
-            return Long.compare(this.high, otherHi);
-        }
-        return Long.compareUnsigned(this.low, otherLo);
-    }
-
     /**
      * Compare this to another Decimal128 (handles different scales).
      *
@@ -368,8 +361,12 @@ public class Decimal128 implements Sinkable {
      * @return -1 if this decimal is less than other, 0 if equal, 1 if greater than other
      */
     public int compareTo(Decimal128 other) {
+        return compareTo(other.high, other.low, other.scale);
+    }
+
+    public int compareTo(long otherHigh, long otherLow, int otherScale) {
         boolean aNeg = isNegative();
-        boolean bNeg = other.isNegative();
+        boolean bNeg = otherHigh < 0;
         if (aNeg != bNeg) {
             return aNeg ? -1 : 1;
         }
@@ -378,19 +375,19 @@ public class Decimal128 implements Sinkable {
         // we have to reverse the result
         int diffQ = aNeg ? -1 : 1;
 
-        if (this.scale == other.scale) {
+        if (this.scale == otherScale) {
             // Same scale - direct comparison
-            if (this.high != other.high) {
-                return Long.compare(this.high, other.high);
+            if (this.high != otherHigh) {
+                return Long.compare(this.high, otherHigh);
             }
-            return Long.compareUnsigned(this.low, other.low);
+            return Long.compareUnsigned(this.low, otherLow);
         }
 
         // We need to make both operands positive to detect overflows when scaling them
         long aH = this.high;
         long aL = this.low;
-        long bH = other.high;
-        long bL = other.low;
+        long bH = otherHigh;
+        long bL = otherLow;
         if (aNeg) {
             aL = ~aL + 1;
             aH = ~aH + (aL == 0 ? 1L : 0L);
@@ -403,14 +400,14 @@ public class Decimal128 implements Sinkable {
         // Different scales - need to align for comparison
         // We'll scale up the one with smaller scale
         Decimal128 holder = tl.get();
-        if (this.scale < other.scale) {
+        if (this.scale < otherScale) {
             holder.of(aH, aL, this.scale);
-            holder.multiplyByPowerOf10InPlace(other.scale - this.scale);
+            holder.multiplyByPowerOf10InPlace(otherScale - this.scale);
             aH = holder.high;
             aL = holder.low;
         } else {
-            holder.of(bH, bL, other.scale);
-            holder.multiplyByPowerOf10InPlace(this.scale - other.scale);
+            holder.of(bH, bL, otherScale);
+            holder.multiplyByPowerOf10InPlace(this.scale - otherScale);
             bH = holder.high;
             bL = holder.low;
         }
@@ -928,13 +925,20 @@ public class Decimal128 implements Sinkable {
         }
     }
 
+    private int compareTo0(long otherHi, long otherLo) {
+        if (this.high != otherHi) {
+            return Long.compare(this.high, otherHi);
+        }
+        return Long.compareUnsigned(this.low, otherLo);
+    }
+
     private boolean hasOverflowed() {
-        return compareTo(MAX_VALUE.high, MAX_VALUE.low) > 0 ||
-                compareTo(MIN_VALUE.high, MIN_VALUE.low) < 0;
+        return compareTo0(MAX_VALUE.high, MAX_VALUE.low) > 0
+                || compareTo0(MIN_VALUE.high, MIN_VALUE.low) < 0;
     }
 
     private boolean hasUnsignOverflowed() {
-        return compareTo(MAX_VALUE.high, MAX_VALUE.low) > 0;
+        return compareTo0(MAX_VALUE.high, MAX_VALUE.low) > 0;
     }
 
     /**

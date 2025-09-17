@@ -37,24 +37,30 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractTest {
+    private final ObjList<Function> args = new ObjList<>();
+    private final Decimal256 decimal256 = new Decimal256();
 
-    protected void createFunctionAndAssert(ObjList<Function> args, long hh, long hl, long lh, long ll, int expectedType) throws SqlException {
+    protected void createFunctionAndAssert(Function left, Function right, long hh, long hl, long lh, long ll, int expectedType) throws SqlException {
+        args.clear();
+        args.add(left);
+        args.add(right);
         try (Function func = getFactory().newInstance(-1, args, null, null, null)) {
-            Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
-            Assert.assertEquals(hh, value.getHh());
-            Assert.assertEquals(hl, value.getHl());
-            Assert.assertEquals(lh, value.getLh());
-            Assert.assertEquals(ll, value.getLl());
+            DecimalUtil.load(decimal256, func, null);
+            Assert.assertEquals(hh, decimal256.getHh());
+            Assert.assertEquals(hl, decimal256.getHl());
+            Assert.assertEquals(lh, decimal256.getLh());
+            Assert.assertEquals(ll, decimal256.getLl());
             Assert.assertEquals(expectedType, func.getType());
         }
     }
 
-    protected void createFunctionAndAssertFails(ObjList<Function> args, String expectedMessage) throws SqlException {
+    protected void createFunctionAndAssertFails(Function left, Function right, String expectedMessage) throws SqlException {
+        args.clear();
+        args.add(left);
+        args.add(right);
         try {
             try (Function func = getFactory().newInstance(-1, args, null, null, null)) {
-                Decimal256 value = new Decimal256();
-                DecimalUtil.load(value, func, null);
+                DecimalUtil.load(decimal256, func, null);
                 Assert.fail();
             }
         } catch (CairoException e) {
@@ -62,9 +68,10 @@ public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractTest 
         }
     }
 
-    protected void createFunctionAndAssertNull(ObjList<Function> args, int expectedType) throws SqlException {
+    protected void createFunctionAndAssertNull(Function left, Function right, int expectedType) throws SqlException {
         createFunctionAndAssert(
-                args,
+                left,
+                right,
                 Decimals.DECIMAL256_HH_NULL,
                 Decimals.DECIMAL256_HL_NULL,
                 Decimals.DECIMAL256_LH_NULL,
