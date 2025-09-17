@@ -38,12 +38,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -1078,13 +1080,51 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .doubleColumn("x", 9999.0)
                             .doubleColumn("a1", 1)
                             .at(100000000001L, ChronoUnit.MICROS);
+
+                    try (DirectUtf8Sink sink = new DirectUtf8Sink(128);) {
+                        for (int i = 0; i < 10; i++) {
+                            sink.clear();
+                            double v = 10000 + i;
+                            sink.put(tableName).put(' ').put("x=");
+                            if (i % 2 == 0) {
+                                Numbers.append(sink, v);
+                            } else {
+                                sink.put('=');
+                                sink.putAny((byte) 16);
+                                sink.putDouble(v);
+                            }
+                            double a2 = 2 + i;
+                            sink.put(",y=\"ystr\",a1=");
+                            if (i % 2 != 0) {
+                                Numbers.append(sink, a2);
+                            } else {
+                                sink.put('=');
+                                sink.putAny((byte) 16);
+                                sink.putDouble(a2);
+                            }
+                            long ts = 100000000002000L + i * 1000;
+                            sink.put(" ").put(ts).put('\n');
+                            ((AbstractLineHttpSender) sender).putRawMessage(sink);
+                        }
+                    }
+
                     sender.flush();
                     serverMain.awaitTxn(tableName, 2);
 
                     serverMain.assertSql("select * from " + tableName,
                             "x\ty\ta1\tts\n" +
                                     "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
-                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n");
+                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n" +
+                                    "10000.0\tystr\t2.0\t1970-01-02T03:46:40.000002Z\n" +
+                                    "10001.0\tystr\t3.0\t1970-01-02T03:46:40.000003Z\n" +
+                                    "10002.0\tystr\t4.0\t1970-01-02T03:46:40.000004Z\n" +
+                                    "10003.0\tystr\t5.0\t1970-01-02T03:46:40.000005Z\n" +
+                                    "10004.0\tystr\t6.0\t1970-01-02T03:46:40.000006Z\n" +
+                                    "10005.0\tystr\t7.0\t1970-01-02T03:46:40.000007Z\n" +
+                                    "10006.0\tystr\t8.0\t1970-01-02T03:46:40.000008Z\n" +
+                                    "10007.0\tystr\t9.0\t1970-01-02T03:46:40.000009Z\n" +
+                                    "10008.0\tystr\t10.0\t1970-01-02T03:46:40.000010Z\n" +
+                                    "10009.0\tystr\t11.0\t1970-01-02T03:46:40.000011Z\n");
                 }
             }
         });
