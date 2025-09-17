@@ -686,7 +686,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.copy.export.root\tQDB_CAIRO_SQL_COPY_EXPORT_ROOT\texport\tdefault\tfalse\tfalse\n"
+                                    "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue\n" +
+                                    "cairo.sql.copy.export.root\tQDB_CAIRO_SQL_COPY_EXPORT_ROOT\texport\tdefault\tfalse\tfalse"
                     )
                             .split("\n");
 

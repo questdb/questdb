@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -36,6 +37,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
@@ -49,11 +51,13 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private static final boolean PARANOIA_MODE = false;
-    public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
-    public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
+    private static final AtomicInteger threadLocalInstanceCounter = new AtomicInteger();
+    public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::newTLPath);
+    public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::newTLPath);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final Exception creationStackTrace;
     private final int initialCapacity;
     private final LPSZ lpsz = new PathLPSZ();
     private final int memoryTag;
@@ -71,6 +75,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     }
 
     public Path(int capacity, int memoryTag) {
+        this(capacity, memoryTag, null);
+    }
+
+    public Path(int capacity, int memoryTag, Exception stackTrace) {
         assert capacity > 0;
         this.capacity = capacity;
         this.initialCapacity = capacity;
@@ -80,7 +88,9 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
             randomSeed();
         }
         ascii = true;
+        creationStackTrace = stackTrace;
     }
+
 
     public static void clearThreadLocals() {
         // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
@@ -144,6 +154,12 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     @Override
     public void close() {
         if (headPtr != 0L) {
+            if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE && creationStackTrace != null) {
+                synchronized (System.err) {
+                    System.err.print("Closing ");
+                    creationStackTrace.printStackTrace(System.err);
+                }
+            }
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
         }
@@ -189,7 +205,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public void extend(int newCapacity) {
         assert newCapacity > capacity;
         int size = size();
-        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
+        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, memoryTag);
         tailPtr = headPtr + size;
         capacity = newCapacity;
     }
@@ -234,7 +250,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         // Copy binary array representation instead of trying to UTF8 encode it
         int len = other.size();
         if (headPtr == 0L) {
-            headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
+            headPtr = Unsafe.malloc(len + 1, memoryTag);
             capacity = len;
         } else if (capacity < len) {
             extend(len);
@@ -388,7 +404,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     public void resetCapacity() {
         if (headPtr != 0L) {
-            headPtr = Unsafe.realloc(headPtr, capacity + 1, initialCapacity + 1, MemoryTag.NATIVE_PATH);
+            headPtr = Unsafe.realloc(headPtr, capacity + 1, initialCapacity + 1, memoryTag);
             tailPtr = headPtr;
             capacity = initialCapacity;
         }
@@ -451,9 +467,22 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         Vect.memset(tailPtr, len, 0);
     }
 
+    private static Path newTLPath() {
+        if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
+            Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet());
+            synchronized (System.err) {
+                System.err.print("Creating ");
+                ex.printStackTrace(System.err);
+            }
+            return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
+        } else {
+            return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL);
+        }
+    }
+
     private void checkClosed() {
         if (headPtr == 0L) {
-            headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+            headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
         }
     }
 
