@@ -53,11 +53,13 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         final int leftType = left.getType();
         final int rightType = right.getType();
+        final int leftScale = ColumnType.getDecimalScale(leftType);
+        final int rightScale = ColumnType.getDecimalScale(rightType);
+        final int scale = Math.max(leftScale, rightScale);
         final int precision = Math.min(
-                Math.max(ColumnType.getDecimalPrecision(leftType), ColumnType.getDecimalPrecision(rightType)) + 1,
+                Math.max(ColumnType.getDecimalPrecision(leftType) - leftScale, ColumnType.getDecimalPrecision(rightType) - rightScale) + scale + 1,
                 Decimals.MAX_PRECISION
         );
-        final int scale = Math.max(ColumnType.getDecimalScale(leftType), ColumnType.getDecimalScale(rightType));
 
         switch (Decimals.getStorageSizePow2(precision)) {
             case 0:

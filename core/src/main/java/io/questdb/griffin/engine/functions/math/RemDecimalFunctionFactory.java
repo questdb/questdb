@@ -53,8 +53,13 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         final int leftType = left.getType();
         final int rightType = right.getType();
-        final int precision = Math.max(ColumnType.getDecimalPrecision(leftType), ColumnType.getDecimalPrecision(rightType));
-        final int scale = Math.max(ColumnType.getDecimalScale(leftType), ColumnType.getDecimalScale(rightType));
+        final int leftScale = ColumnType.getDecimalScale(leftType);
+        final int rightScale = ColumnType.getDecimalScale(rightType);
+        final int scale = Math.max(leftScale, rightScale);
+        final int precision = Math.min(
+                Math.max(ColumnType.getDecimalPrecision(leftType) - leftScale, ColumnType.getDecimalPrecision(rightType) - rightScale) + scale,
+                Decimals.MAX_PRECISION
+        );
 
         switch (Decimals.getStorageSizePow2(precision)) {
             case 0:

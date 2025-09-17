@@ -72,7 +72,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 200, ColumnType.getDecimalType(19, 2))); // 2.00
         args.add(new Decimal128Constant(0, 5, ColumnType.getDecimalType(19, 1))); // 0.5
-        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(20, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(21, 2));
     }
 
     @Test
@@ -80,7 +80,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(21, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(23, 2));
     }
 
     @Test
@@ -96,7 +96,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 200, ColumnType.getDecimalType(4, 2))); // 2.00
         args.add(new Decimal16Constant((short) 5, ColumnType.getDecimalType(4, 1))); // 0.5
-        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(5, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(6, 2));
     }
 
     @Test
@@ -104,7 +104,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(5, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(7, 2));
     }
 
     @Test
@@ -159,7 +159,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
                 ColumnType.getDecimalType(40, 0))
         );
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(41, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(43, 2));
     }
 
     @Test
@@ -175,7 +175,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(200, ColumnType.getDecimalType(9, 2))); // 2.00
         args.add(new Decimal32Constant(5, ColumnType.getDecimalType(9, 1))); // 0.5
-        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(10, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(11, 2));
     }
 
     @Test
@@ -183,7 +183,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(9, 2)));
         args.add(new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(10, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(12, 2));
     }
 
     @Test
@@ -207,7 +207,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(200, ColumnType.getDecimalType(14, 2))); // 2.00
         args.add(new Decimal64Constant(5, ColumnType.getDecimalType(14, 1))); // 0.5
-        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(15, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 150, ColumnType.getDecimalType(16, 2));
     }
 
     @Test
@@ -215,7 +215,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(15, 2)));
         args.add(new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(15, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(16, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(18, 2));
     }
 
     @Test
@@ -231,7 +231,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 65, ColumnType.getDecimalType(2, 2))); // 0.65
         args.add(new Decimal8Constant((byte) 5, ColumnType.getDecimalType(2, 1))); // 0.5
-        createFunctionAndAssert(args, 0, 0, 0, 15, ColumnType.getDecimalType(3, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 15, ColumnType.getDecimalType(4, 2));
     }
 
     @Test
@@ -239,7 +239,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(3, 1));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(4, 1));
     }
 
     @Test
@@ -278,7 +278,7 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         args.add(new Decimal128Constant(0, 6904, ColumnType.getDecimalType(22, 2)));
         args.add(new Decimal128Constant(0, 567, ColumnType.getDecimalType(22, 1)));
         // 69.04 - 56.7 = 12.34
-        createFunctionAndAssert(args, 0, 0, 0, 1234, ColumnType.getDecimalType(23, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 1234, ColumnType.getDecimalType(24, 2));
     }
 
     @Override

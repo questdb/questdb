@@ -71,7 +71,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 500, ColumnType.getDecimalType(19, 2))); // 5.00
         args.add(new Decimal128Constant(0, 15, ColumnType.getDecimalType(19, 1))); // 1.5
-        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(19, 2)); // 0.50
+        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(20, 2)); // 0.50
     }
 
     @Test
@@ -79,7 +79,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(20, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(22, 2));
     }
 
     @Test
@@ -103,7 +103,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 500, ColumnType.getDecimalType(4, 2))); // 5.00
         args.add(new Decimal16Constant((short) 15, ColumnType.getDecimalType(4, 1))); // 1.5
-        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(4, 2)); // 0.50
+        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(5, 2)); // 0.50
     }
 
     @Test
@@ -111,7 +111,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(4, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(6, 2));
     }
 
     @Test
@@ -165,7 +165,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
                 ColumnType.getDecimalType(40, 0))
         );
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(40, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(42, 2));
     }
 
     @Test
@@ -189,7 +189,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(500, ColumnType.getDecimalType(9, 2))); // 5.00
         args.add(new Decimal32Constant(15, ColumnType.getDecimalType(9, 1))); // 1.5
-        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(9, 2)); // 0.50
+        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(10, 2)); // 0.50
     }
 
     @Test
@@ -197,7 +197,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(9, 2)));
         args.add(new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(9, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(11, 2));
     }
 
     @Test
@@ -221,7 +221,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(500, ColumnType.getDecimalType(14, 2))); // 5.00
         args.add(new Decimal64Constant(15, ColumnType.getDecimalType(14, 1))); // 1.5
-        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(14, 2)); // 0.50
+        createFunctionAndAssert(args, 0, 0, 0, 50, ColumnType.getDecimalType(15, 2)); // 0.50
     }
 
     @Test
@@ -229,7 +229,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(15, 2)));
         args.add(new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(15, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(15, 2));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(17, 2));
     }
 
     @Test
@@ -253,7 +253,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 50, ColumnType.getDecimalType(2, 2))); // 0.50
         args.add(new Decimal8Constant((byte) 3, ColumnType.getDecimalType(2, 1))); // 0.3
-        createFunctionAndAssert(args, 0, 0, 0, 20, ColumnType.getDecimalType(2, 2)); // 0.20
+        createFunctionAndAssert(args, 0, 0, 0, 20, ColumnType.getDecimalType(3, 2)); // 0.20
     }
 
     @Test
@@ -261,7 +261,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(2, 1));
+        createFunctionAndAssertNull(args, ColumnType.getDecimalType(3, 1));
     }
 
     @Test
@@ -298,7 +298,7 @@ public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
         args.add(new Decimal128Constant(0, 1234, ColumnType.getDecimalType(22, 2))); // 12.34
         args.add(new Decimal128Constant(0, 567, ColumnType.getDecimalType(22, 1))); // 56.7
         // 12.34 % 56.7 = 12.34
-        createFunctionAndAssert(args, 0, 0, 0, 1234, ColumnType.getDecimalType(22, 2));
+        createFunctionAndAssert(args, 0, 0, 0, 1234, ColumnType.getDecimalType(23, 2));
     }
 
     @Override
