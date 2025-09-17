@@ -88,10 +88,12 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     @Override
     public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-        if (timeFrame.frameIndex == -1) {
+        int frameIndex = timeFrame.frameIndex;
+        if (frameIndex == -1) {
             return null;
         }
-        return reader.getBitmapIndexReader(timeFrame.frameIndex, columnIndex, direction);
+        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        return reader.getBitmapIndexReader(partitionIndex, columnIndex, direction);
     }
 
     public PageFrameCursor getPageFrameCursor() {
