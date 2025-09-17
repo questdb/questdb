@@ -3981,7 +3981,8 @@ public class SqlParser {
             return ColumnType.encodeArrayType(columnType, nDims);
         }
 
-        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
+        final short typeTag = ColumnType.tagOf(columnType);
+        if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
