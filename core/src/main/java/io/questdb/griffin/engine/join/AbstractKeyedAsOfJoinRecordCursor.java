@@ -24,14 +24,11 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 /**
@@ -136,79 +133,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         origSlaveFrameIndex = -1;
         origSlaveRowId = -1;
         origHasSlave = false;
-    }
-
-    /**
-     * Performs linear backward search to find a matching key within the tolerance interval.
-     * This method scans backwards from the current position through time-ordered records,
-     * comparing keys until a match is found or the search space is exhausted.
-     *
-     * @param slaveTimeFrameCursor the slave time frame cursor
-     * @param slaveRecB            the slave record (B) to use for comparisons
-     * @param masterTimestamp      the master record timestamp
-     * @param toleranceInterval    the tolerance interval (Numbers.LONG_NULL for no tolerance)
-     * @param slaveTimestampIndex  the index of the timestamp column in slave records
-     * @param masterSinkTarget     the sink containing the master key to match
-     * @param slaveSinkTarget      the sink to use for slave key extraction
-     * @param slaveKeySink         the sink for extracting slave keys
-     * @param record               the join record to update with results
-     * @param circuitBreaker       the circuit breaker for cancellation
-     */
-    static void findMatchingRowLinear(
-            TimeFrameRecordCursor slaveTimeFrameCursor,
-            Record slaveRecB,
-            long masterTimestamp,
-            long toleranceInterval,
-            int slaveTimestampIndex,
-            SingleRecordSink masterSinkTarget,
-            SingleRecordSink slaveSinkTarget,
-            RecordSink slaveKeySink,
-            OuterJoinRecord record,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
-        slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
-        slaveTimeFrameCursor.open();
-
-        long rowLo = timeFrame.getRowLo();
-        int keyedFrameIndex = timeFrame.getFrameIndex();
-        long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
-
-        for (; ; ) {
-            long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-            if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
-                // we are past the tolerance interval, no need to traverse the slave cursor any further
-                record.hasSlave(false);
-                break;
-            }
-
-            slaveSinkTarget.clear();
-            slaveKeySink.copy(slaveRecB, slaveSinkTarget);
-            if (masterSinkTarget.memeq(slaveSinkTarget)) {
-                record.hasSlave(true);
-                break;
-            }
-
-            // let's try to move backwards in the slave cursor until we have a match
-            keyedRowId--;
-            if (keyedRowId < rowLo) {
-                // ops, we exhausted this frame, let's try the previous one
-                if (!slaveTimeFrameCursor.prev()) {
-                    // there is no previous frame, we are done, no match :(
-                    // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
-                    // until we either exhaust the cursor or find a matching key.
-                    record.hasSlave(false);
-                    break;
-                }
-                slaveTimeFrameCursor.open();
-
-                keyedFrameIndex = timeFrame.getFrameIndex();
-                keyedRowId = timeFrame.getRowHi() - 1;
-                rowLo = timeFrame.getRowLo();
-            }
-            slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
-            circuitBreaker.statefulThrowExceptionIfTripped();
-        }
     }
 
     /**

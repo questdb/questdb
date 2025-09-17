@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -39,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -163,18 +165,49 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             slaveTimeFrameCursor.jumpTo(slaveFrameIndex);
             slaveTimeFrameCursor.open();
 
-            AbstractKeyedAsOfJoinRecordCursor.findMatchingRowLinear(
-                    slaveTimeFrameCursor,
-                    slaveRecB,
-                    masterTimestamp,
-                    toleranceInterval,
-                    slaveTimestampIndex,
-                    masterSinkTarget,
-                    slaveSinkTarget,
-                    slaveKeySink,
-                    record,
-                    circuitBreaker
-            );
+            TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
+            slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
+            slaveTimeFrameCursor.open();
+
+            long rowLo = timeFrame.getRowLo();
+            int keyedFrameIndex = timeFrame.getFrameIndex();
+            long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
+
+            for (; ; ) {
+                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
+                    // we are past the tolerance interval, no need to traverse the slave cursor any further
+                    record.hasSlave(false);
+                    break;
+                }
+
+                slaveSinkTarget.clear();
+                slaveKeySink.copy(slaveRecB, slaveSinkTarget);
+                if (masterSinkTarget.memeq(slaveSinkTarget)) {
+                    record.hasSlave(true);
+                    break;
+                }
+
+                // let's try to move backwards in the slave cursor until we have a match
+                keyedRowId--;
+                if (keyedRowId < rowLo) {
+                    // ops, we exhausted this frame, let's try the previous one
+                    if (!slaveTimeFrameCursor.prev()) {
+                        // there is no previous frame, we are done, no match :(
+                        // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
+                        // until we either exhaust the cursor or find a matching key.
+                        record.hasSlave(false);
+                        break;
+                    }
+                    slaveTimeFrameCursor.open();
+
+                    keyedFrameIndex = timeFrame.getFrameIndex();
+                    keyedRowId = timeFrame.getRowHi() - 1;
+                    rowLo = timeFrame.getRowLo();
+                }
+                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
         }
     }
 }
