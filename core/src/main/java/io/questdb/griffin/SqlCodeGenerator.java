@@ -2680,7 +2680,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     );
                                                     created = true;
                                                 } else {
-                                                    // Fallback to original fast join with symbol short-circuit
+                                                    // Fall back to original fast join with symbol short-circuit
                                                     SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,

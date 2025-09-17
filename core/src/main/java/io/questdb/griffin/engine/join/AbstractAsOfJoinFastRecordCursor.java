@@ -296,7 +296,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     return;
                 }
                 if (slaveFrameRow < slaveTimeFrame.getRowHi()) {
-                    // Fallback to binary search.
+                    // Fall back to binary search.
                     // Find the last value less or equal to the master timestamp.
                     long foundRow = binarySearch(masterTimestamp, slaveFrameRow, slaveTimeFrame.getRowHi() - 1);
                     if (foundRow < slaveFrameRow) {
@@ -304,12 +304,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                         // Linear scan must have found the row.
                         return;
                     }
-                    boolean foundRowIsntLastInFrame = foundRow < slaveTimeFrame.getRowHi() - 1;
                     slaveFrameRow = foundRow;
                     record.hasSlave(true);
                     slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
                     long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                    if (foundRowIsntLastInFrame) {
+                    if (foundRow < slaveTimeFrame.getRowHi() - 1) {
                         // Set lookaheadTimestamp to the first one larger than masterTimestamp, and return
                         slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
                         lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);

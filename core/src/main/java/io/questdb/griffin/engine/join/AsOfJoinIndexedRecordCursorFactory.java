@@ -143,7 +143,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            // Look through per-frame symbol indexes backwards, until we find a match or exhaust the search space
+            // 1. Determine the integer key of the symbol to find in the slave table
             CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
             StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             int symbolKey = symbolTable.keyOf(masterSymbolValue);
@@ -154,19 +154,19 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // No idea why we have to increment symbolKey here... but that's what works.
             symbolKey++;
 
-            // nextSlave() generally finds the first row with timestamp > masterTimestamp.
+            // 2. nextSlave() generally (but not always) finds the first row with timestamp > masterTimestamp.
             // Ensure rowMax points to a row with timestamp <= masterTimestamp.
             int frameIndex = slaveFrameIndex;
             slaveTimeFrameCursor.jumpTo(frameIndex);
             slaveTimeFrameCursor.open();
             long rowMax = slaveFrameRow;
             if (rowMax == slaveTimeFrame.getRowHi()) {
-                // slaveFrameRow points to one beyond the end of current frame
+                // slaveFrameRow points to just beyond the end of current frame
                 rowMax--;
             } else {
                 slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
                 if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                    // slaveFrameRow points to row one beyond the one with timestamp <= masterTimestamp
+                    // slaveFrameRow points to row just beyond the one with timestamp <= masterTimestamp
                     rowMax--;
                 }
             }
@@ -179,14 +179,15 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 slaveTimeFrameCursor.open();
                 rowMax = slaveTimeFrame.getRowHi() - 1;
             }
-            slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
+
+            // 3. Go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
             final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
                         physicalSlaveSymbolColumnIndex,
                         BitmapIndexReader.DIR_BACKWARD
                 );
-                // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
+                // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
                 // the first row within the BETWEEN ... AND ... range selected by the query.
                 slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, 0));
                 final long rowOffset = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
@@ -197,7 +198,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                         rowMax + rowOffset
                 );
 
-                // Check the first entry only. They are sorted by timestamp, so other entries are older
+                // Check the first entry only. They are sorted descending by timestamp, so other entries are older.
                 if (rowCursor.hasNext()) {
                     long rowId = rowCursor.next();
                     slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
