@@ -183,18 +183,22 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 slaveTimeFrameCursor.open();
             }
 
-            // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
-            // the first row within the BETWEEN ... AND ... range selected by the query.
-            PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
-            pfmRec.setRowIndex(0);
-            final long rowOffset = Rows.toLocalRowID(pfmRec.getUpdateRowId());
             final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
                         physicalSlaveSymbolColumnIndex,
                         BitmapIndexReader.DIR_BACKWARD
                 );
-                RowCursor rowCursor = indexReader.getCursor(false, symbolKey, timeFrame.getRowLo() + rowOffset, rowMax + rowOffset);
+                // indexReader.getCursor() takes absolute row IDs, but slaveRecB uses numbering relative to
+                // the first row within the BETWEEN ... AND ... range selected by the query.
+                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, 0));
+                final long rowOffset = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
+                RowCursor rowCursor = indexReader.getCursor(
+                        false,
+                        symbolKey,
+                        slaveTimeFrame.getRowLo() + rowOffset,
+                        rowMax + rowOffset
+                );
 
                 // Check the first entry only. They are sorted by timestamp, so other entries are older
                 if (rowCursor.hasNext()) {
