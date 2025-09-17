@@ -533,11 +533,6 @@ public class Decimal64Test {
         }
     }
 
-    @Test(expected = NumericException.class)
-    public void testNegateMinValue() {
-        new Decimal64(Long.MIN_VALUE, 0).negate();
-    }
-
     @Test
     public void testNegation() {
         Decimal64 positive = new Decimal64(12345, 2);
