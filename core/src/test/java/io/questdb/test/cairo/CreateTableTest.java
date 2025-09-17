@@ -54,35 +54,6 @@ import static org.junit.Assert.*;
 public class CreateTableTest extends AbstractCairoTest {
 
     @Test
-    public void testCreateTableWithInvalidArrayType() throws Exception {
-        assertMemoryLeak(() -> assertException("create table x (ts timestamp, arr varchar[]);", 34, "unsupported array element type [type=VARCHAR]"));
-    }
-
-    @Test
-    public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
-        assertMemoryLeak(() -> {
-            assertException("create table x (arr double[);", 26, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double[)'");
-            assertException("create table x (arr double[][);", 28, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[][)'");
-            assertException("create table x (arr double]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
-            assertException("create table x (arr double[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
-        });
-    }
-
-    @Test
-    public void testCreateTableWithArrayColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (arr double[]);");
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'x' ( \n" +
-                            "\tarr DOUBLE[]\n" +
-                            ")\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
-                    "show create table x;");
-        });
-    }
-
-
-    @Test
     public void testCreateNaNColumn() throws Exception {
         assertException(
                 "create table a as (select NaN x)",
@@ -98,6 +69,16 @@ public class CreateTableTest extends AbstractCairoTest {
                 0,
                 "cannot create NULL-type column, please use type cast, e.g. x::type"
         );
+    }
+
+    @Test
+    public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table x (arr double[);", 26, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double[)'");
+            assertException("create table x (arr double[][);", 28, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[][)'");
+            assertException("create table x (arr double]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("create table x (arr double[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+        });
     }
 
     @Test
@@ -481,11 +462,10 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n"
-                ,
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
@@ -628,10 +608,28 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr double[]);");
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'x' ( \n" +
+                            "\tarr DOUBLE[]\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
+        });
+    }
+
+    @Test
     public void testCreateTableWithIndex() throws Exception {
         execute("create table tab (s symbol), index(s)");
         assertSql("s\n", "select * from tab");
         assertColumnsIndexed("tab", "s");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidArrayType() throws Exception {
+        assertMemoryLeak(() -> assertException("create table x (ts timestamp, arr varchar[]);", 34, "unsupported array element type [type=VARCHAR]"));
     }
 
     @Test
