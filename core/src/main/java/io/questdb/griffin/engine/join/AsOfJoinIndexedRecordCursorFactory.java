@@ -188,8 +188,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             PageFrameMemoryRecord pfmRec = (PageFrameMemoryRecord) slaveRecB;
             pfmRec.setRowIndex(0);
             final long rowOffset = Rows.toLocalRowID(pfmRec.getUpdateRowId());
-            final int physicalSlaveSymbolColumnIndex = ((TimeFrameRecordCursorImpl) slaveTimeFrameCursor)
-                    .getPageFrameCursor().getColumnIndexes().getQuick(slaveSymbolColumnIndex);
+            final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
                         physicalSlaveSymbolColumnIndex,
