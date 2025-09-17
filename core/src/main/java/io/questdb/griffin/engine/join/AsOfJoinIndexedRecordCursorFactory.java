@@ -27,19 +27,16 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SingleRecordSink;
-import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.TimeFrameRecordCursorImpl;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -159,6 +156,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
             // nextSlave() generally finds the first row with timestamp > masterTimestamp.
             // Ensure rowMax points to a row with timestamp <= masterTimestamp.
+            int frameIndex = slaveFrameIndex;
+            slaveTimeFrameCursor.jumpTo(frameIndex);
             slaveTimeFrameCursor.open();
             long rowMax = slaveFrameRow;
             if (rowMax == slaveTimeFrame.getRowHi()) {
@@ -178,8 +177,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     return;
                 }
                 slaveTimeFrameCursor.open();
+                rowMax = slaveTimeFrame.getRowHi() - 1;
             }
-
             slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
             final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
             for (; ; ) {
@@ -218,6 +217,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     return;
                 }
                 slaveTimeFrameCursor.open();
+                frameIndex = slaveTimeFrame.getFrameIndex();
                 rowMax = slaveTimeFrame.getRowHi() - 1;
             }
         }
