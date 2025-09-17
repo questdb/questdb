@@ -44,6 +44,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakClosableObjectPool;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -70,6 +71,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
+    private DirectUtf8Sink sink = new DirectUtf8Sink(16);
 
     public LineHttpProcessorState(
             int initRecvBufSize,
@@ -81,15 +83,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.parser = new LineTcpParser(configuration.getCairoConfiguration());
+        this.parser = new LineTcpParser();
         recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_HTTP_CONN)
                 .of(initRecvBufSize, configuration.getMaxRecvBufferSize());
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
-                configuration.getTimestampAdapter(),
-                engine.getConfiguration().getMaxFileNameLength(),
-                configuration.getMicrosecondClock()
+                configuration.getTimestampUnit(),
+                sink,
+                engine.getConfiguration().getMaxFileNameLength()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
@@ -122,6 +124,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
         Misc.free(parser);
+        Misc.free(sink);
     }
 
     public void commit() {

@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -1592,7 +1592,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval2() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
                         "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n",
@@ -1609,7 +1609,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval3() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\ta1\n" +
                         "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\n" +
@@ -1635,7 +1635,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval4() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
                         "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
@@ -2292,6 +2292,46 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))",
                 12
+        );
+    }
+
+    @Test
+    public void testTimestampMicrosTimestampNanos() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n" +
+                        "1970-01-01T00:00:00.000003000Z\n" +
+                        "1970-01-01T00:00:00.000004000Z\n" +
+                        "1970-01-01T00:00:00.000005000Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000005Z\n",
+                "create table x as (select cast(x as timestamp) a from long_sequence(5))",
+                "create table y as (select cast(x as timestamp_ns) a from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNanosTimestampMicros() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000005Z\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n" +
+                        "1970-01-01T00:00:00.000003000Z\n" +
+                        "1970-01-01T00:00:00.000004000Z\n" +
+                        "1970-01-01T00:00:00.000005000Z\n",
+                "create table x as (select cast(x as timestamp_ns) a from long_sequence(5))",
+                "create table y as (select cast(x as timestamp) a from long_sequence(5))",
+                true
         );
     }
 

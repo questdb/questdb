@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDateFormatFactory;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -35,11 +36,13 @@ import io.questdb.std.str.DirectUtf8Sequence;
 public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     protected DateFormat format;
     protected DateLocale locale;
+    protected String pattern;
 
     @Override
     public void clear() {
         this.format = null;
         this.locale = null;
+        this.pattern = null;
     }
 
     public long getTimestamp(DirectUtf8Sequence value) throws Exception {
@@ -48,12 +51,15 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public int getType() {
-        return ColumnType.TIMESTAMP;
+        assert format != null;
+        return format.getColumnType();
     }
 
-    public TimestampAdapter of(DateFormat format, DateLocale locale) {
+    public TimestampAdapter of(DateFormat format, DateLocale locale, String pattern) {
+        assert ColumnType.isTimestamp(format.getColumnType());
         this.format = format;
         this.locale = locale;
+        this.pattern = pattern;
         return this;
     }
 
@@ -67,8 +73,13 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
         }
     }
 
+    public void reCompileDateFormat(TimestampDateFormatFactory factory) {
+        assert this.pattern != null;
+        this.format = factory.get(pattern);
+    }
+
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        row.putDate(column, format.parse(value.asAsciiCharSequence(), locale));
+        row.putTimestamp(column, format.parse(value.asAsciiCharSequence(), locale));
     }
 }

@@ -65,9 +65,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -180,7 +180,7 @@ public class PGJobContextTest extends BasePGTest {
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
-    private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final long DAY_MICROS = Micros.HOUR_MICROS * 24L;
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
@@ -205,7 +205,7 @@ public class PGJobContextTest extends BasePGTest {
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
-                .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
+                .map(i -> i * Micros.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
         stringTypeName = ColumnType.nameOf(ColumnType.STRING);
@@ -4984,7 +4984,7 @@ if __name__ == "__main__":
 
 
             try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?)")) {
-                long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                long micros = MicrosFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
                 for (int i = 0; i < 90; i++) {
                     insert.setInt(1, i);
                     // DATE as jdbc's DATE
@@ -5347,7 +5347,7 @@ if __name__ == "__main__":
             String[] values = {"TrUE", null, "", "false", "true", "banana", "22"};
 
             try (PreparedStatement insert = connection.prepareStatement("insert into booleans values (cast(? as boolean), ?)")) {
-                long micros = TimestampFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
+                long micros = MicrosFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
                 for (int i = 0; i < 30; i++) {
                     insert.setString(1, values[rand.nextInt(values.length)]);
                     insert.setTimestamp(2, new Timestamp(micros / 1000L));
@@ -5480,7 +5480,7 @@ if __name__ == "__main__":
                     "INSERT INTO x VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             String date = "2011-04-11";
             String time = "14:40:54.998821";
-            long micros = TimestampFormatUtils.parseTimestamp(date + "T" + time + "Z");
+            long micros = MicrosFormatUtils.parseTimestamp(date + "T" + time + "Z");
             for (int i = 0; i < 10_000; i++) {
                 insert.setInt(1, i);
                 // DATE as jdbc's DATE
@@ -6932,7 +6932,7 @@ nodejs code:
                     "2019-02-11 13:48:11.124016\n" +
                     "2019-02-11 13:48:11.124017\n";
 
-            long ts = TimestampFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
+            long ts = MicrosFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
             for (int i = 0; i < 20; i++) {
                 statement.setLong(1, ts + i);
                 statement.execute();
@@ -7904,7 +7904,7 @@ nodejs code:
                     statement.executeQuery();
                 } catch (PSQLException ex) {
                     caught = true;
-                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
+                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP_NS");
                 }
             }
 
@@ -7939,7 +7939,7 @@ nodejs code:
                 statement.executeQuery();
             } catch (PSQLException ex) {
                 caught = true;
-                TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
+                TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP_NS]");
             }
 
             if (isEnabledForWalRun()) {
@@ -7978,7 +7978,7 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(now())")) {
-                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS) {
                     setCurrentMicros(micros);
                     statement.execute();
                 }
@@ -8002,7 +8002,7 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
-                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS) {
                     setCurrentMicros(micros);
                     statement.execute();
                 }
@@ -9663,7 +9663,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] < Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -9679,7 +9679,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] >= Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -9752,7 +9752,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] < Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -9768,7 +9768,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] >= Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -10005,7 +10005,7 @@ create table tab as (
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1782]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1788]");
                         }
                     }
                 },
@@ -10533,7 +10533,7 @@ create table tab as (
                 // timestamp WITH microsecond precision, and we massage it to extract two
                 // numbers that can be used to create a java.sql.Timestamp.
                 // -> microsecond precision is kept
-                long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
+                long questdbTs = MicrosFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
                 long time = questdbTs / 1000;
                 int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
                 assertEquals(1632761103202345L, questdbTs);
@@ -11758,7 +11758,7 @@ create table tab as (
                 "select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")
         ) {
             ResultSet rs = null;
-            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
+            for (long micros = 0; micros < count * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS * 7) {
                 sink.clear();
                 // constructor requires millis
                 Timestamp ts = new Timestamp(micros / 1000L);
@@ -12514,7 +12514,7 @@ create table tab as (
                             }
                         }).start();
 
-                        MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                        Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                         long startTimeMicro = microsecondClock.getTicks();
                         // Wait 1 min max for completion
                         while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
