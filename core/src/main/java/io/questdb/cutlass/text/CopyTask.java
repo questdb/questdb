@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EmptyTxnScoreboardPool;
 import io.questdb.cairo.ImplicitCastException;
@@ -227,8 +228,9 @@ public class CopyTask {
             TableWriter writer,
             TableToken tableToken,
             CharSequence column,
-            int columnIndex,
-            int symbolColumnIndex,
+            int commonWriterIndex,
+            int tempTableDenseSymbolIndex,
+            int tempTableColumnIndex,
             int tmpTableCount,
             int partitionBy,
             int timestampType
@@ -240,8 +242,9 @@ public class CopyTask {
                 writer,
                 tableToken,
                 column,
-                columnIndex,
-                symbolColumnIndex,
+                commonWriterIndex,
+                tempTableDenseSymbolIndex,
+                tempTableColumnIndex,
                 tmpTableCount,
                 partitionBy,
                 timestampType
@@ -250,8 +253,8 @@ public class CopyTask {
 
     public void ofPhaseUpdateSymbolKeys(
             CairoEngine cairoEngine,
-            TableStructure tableStructure,
-            int index,
+            ParallelCsvFileImporter.TableStructureAdapter tableStructure,
+            int tempTableIndex,
             long partitionSize,
             long partitionTimestamp,
             CharSequence root,
@@ -262,7 +265,7 @@ public class CopyTask {
         this.phaseUpdateSymbolKeys.of(
                 cairoEngine,
                 tableStructure,
-                index,
+                tempTableIndex,
                 partitionSize,
                 partitionTimestamp,
                 root,
@@ -559,12 +562,13 @@ public class CopyTask {
     public static class PhaseSymbolTableMerge {
         private CairoConfiguration cfg;
         private CharSequence column;
-        private int columnIndex;
+        private int commonWriterIndex;
         private CharSequence importRoot;
-        private int timestampType;
         private int partitionBy;
-        private int symbolColumnIndex;
         private TableToken tableToken;
+        private int tempTableColumnIndex;
+        private int tempTableDenseSymbolIndex;
+        private int timestampType;
         private int tmpTableCount;
         private TableWriter writer;
 
@@ -574,8 +578,8 @@ public class CopyTask {
             this.writer = null;
             this.tableToken = null;
             this.column = null;
-            this.columnIndex = -1;
-            this.symbolColumnIndex = -1;
+            this.commonWriterIndex = -1;
+            this.tempTableDenseSymbolIndex = -1;
             this.tmpTableCount = -1;
             this.partitionBy = -1;
             this.timestampType = ColumnType.NULL;
@@ -587,8 +591,9 @@ public class CopyTask {
                 TableWriter writer,
                 TableToken tableToken,
                 CharSequence column,
-                int columnIndex,
-                int symbolColumnIndex,
+                int commonWriterIndex,
+                int tempTableDenseSymbolIndex,
+                int tempTableColumnIndex,
                 int tmpTableCount,
                 int partitionBy,
                 int timestampType
@@ -598,8 +603,9 @@ public class CopyTask {
             this.writer = writer;
             this.tableToken = tableToken;
             this.column = column;
-            this.columnIndex = columnIndex;
-            this.symbolColumnIndex = symbolColumnIndex;
+            this.commonWriterIndex = commonWriterIndex;
+            this.tempTableDenseSymbolIndex = tempTableDenseSymbolIndex;
+            this.tempTableColumnIndex = tempTableColumnIndex;
             this.tmpTableCount = tmpTableCount;
             this.partitionBy = partitionBy;
             this.timestampType = timestampType;
@@ -613,16 +619,21 @@ public class CopyTask {
                 path.trimTo(plen);
                 path.putAscii('_').put(i);
                 int tableLen = path.size();
-                try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy)) {
+                try (
+                        TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
+                        ColumnVersionReader cvReader = new ColumnVersionReader().ofRO(ff, path.trimTo(tableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$())
+                ) {
                     path.trimTo(tableLen);
                     txFile.unsafeLoadAll();
-                    int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
+                    cvReader.readUnsafe();
+                    int symbolCount = txFile.getSymbolValueCount(tempTableDenseSymbolIndex);
                     try (
                             SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
                                     cfg,
                                     path,
                                     column,
-                                    TableUtils.COLUMN_NAME_TXN_NONE, symbolCount
+                                    cvReader.getDefaultColumnNameTxn(tempTableColumnIndex),
+                                    symbolCount
                             );
                             MemoryCMARW mem = Vm.getSmallCMARWInstance(
                                     ff,
@@ -634,7 +645,7 @@ public class CopyTask {
                         // It is possible to skip symbol rewrite when symbols do not clash.
                         // From our benchmarks rewriting symbols take a tiny fraction of time compared to everything else
                         // so that we don't need to optimise this yet.
-                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
+                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(commonWriterIndex), reader, mem);
                     }
                 }
             }
@@ -643,18 +654,18 @@ public class CopyTask {
 
     public static class PhaseUpdateSymbolKeys {
         CharSequence columnName;
-        int index;
+        int tempTableIndex;
         long partitionSize;
         long partitionTimestamp;
         CharSequence root;
         int symbolCount;
         private CairoEngine cairoEngine;
-        private TableStructure tableStructure;
+        private ParallelCsvFileImporter.TableStructureAdapter tableStructure;
 
         public void clear() {
             this.cairoEngine = null;
             this.tableStructure = null;
-            this.index = -1;
+            this.tempTableIndex = -1;
             this.partitionSize = -1;
             this.partitionTimestamp = -1;
             this.root = null;
@@ -664,8 +675,8 @@ public class CopyTask {
 
         public void of(
                 CairoEngine cairoEngine,
-                TableStructure tableStructure,
-                int index,
+                ParallelCsvFileImporter.TableStructureAdapter tableStructure,
+                int tempTableIndex,
                 long partitionSize,
                 long partitionTimestamp,
                 CharSequence root,
@@ -674,7 +685,7 @@ public class CopyTask {
         ) {
             this.cairoEngine = cairoEngine;
             this.tableStructure = tableStructure;
-            this.index = index;
+            this.tempTableIndex = tempTableIndex;
             this.partitionSize = partitionSize;
             this.partitionTimestamp = partitionTimestamp;
             this.root = root;
@@ -686,16 +697,8 @@ public class CopyTask {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
 
             TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
-            path.of(root).concat(tableToken.getTableName()).put('_').put(index);
+            path.of(root).concat(tableToken.getTableName()).put('_').put(tempTableIndex);
             int plen = path.size();
-            TableUtils.setPathForNativePartition(
-                    path.slash(),
-                    TableUtils.getTimestampType(tableStructure),
-                    tableStructure.getPartitionBy(),
-                    partitionTimestamp,
-                    -1
-            );
-            path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
             long columnMemory = 0;
             long columnMemorySize = 0;
@@ -703,14 +706,35 @@ public class CopyTask {
             long remapTableMemorySize = 0;
             long columnFd = -1;
             long remapFd = -1;
-            try {
+            try (
+                    ColumnVersionReader cvReader = new ColumnVersionReader().ofRO(ff, path.trimTo(plen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$())
+            ) {
+                cvReader.readUnsafe();
+                path.trimTo(plen);
+
+                int tempTableColumnIndex = tableStructure.getColumnIndex(columnName);
+                long columnNameTxn = cvReader.getColumnNameTxn(partitionTimestamp, tempTableColumnIndex);
+
+                TableUtils.setPathForNativePartition(
+                        path.slash(),
+                        TableUtils.getTimestampType(tableStructure),
+                        tableStructure.getPartitionBy(),
+                        partitionTimestamp,
+                        -1
+                );
+                path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
+                if (columnNameTxn != -1) {
+                    path.put('.').put(columnNameTxn);
+                }
                 columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
                 columnMemorySize = ff.length(columnFd);
+                assert columnMemorySize > 0;
 
                 path.trimTo(plen);
                 path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
                 remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
                 remapTableMemorySize = ff.length(remapFd);
+                assert remapTableMemorySize > 0;
 
                 if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
                     columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_IMPORT);
@@ -748,8 +772,8 @@ public class CopyTask {
         private long lineCount;
         private long lineNumber;
         private int partitionBy;
-        private int timestampType;
         private int timestampIndex;
+        private int timestampType;
 
         public void clear() {
             this.chunkStart = -1;
@@ -929,8 +953,25 @@ public class CopyTask {
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
             String dbLogName = engine.getConfiguration().getDbLogName();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, dbLogName, engine.getNextTableId(), false, false, false);
-            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
+            TableToken tableToken = new TableToken(
+                    publicTableName,
+                    publicTableName,
+                    dbLogName,
+                    engine.getNextTableId(),
+                    false,
+                    false,
+                    false
+            );
+            createTable(
+                    ff,
+                    configuration.getMkDirMode(),
+                    importRoot,
+                    tableToken.getDirName(),
+                    publicTableName,
+                    targetTableStructure,
+                    0,
+                    AllowAllSecurityContext.INSTANCE
+            );
 
             try (
                     TableWriter writer = new TableWriter(

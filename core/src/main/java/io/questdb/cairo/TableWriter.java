@@ -114,9 +114,11 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -887,6 +889,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         return AttachDetachStatus.ATTACH_ERR_RENAME;
                     }
                 }
+
+                DirectUtf8StringZ name = new DirectUtf8StringZ();
+                StringSink sink = new StringSink();
+
+                // pin column versions
+                ff.iterateDir(path.$(), new FindVisitor() {
+                    @Override
+                    public void onFind(long pUtf8NameZ, int type) {
+                        if (Files.notDots(pUtf8NameZ) && type == DT_FILE) {
+                            name.of(pUtf8NameZ);
+                            int firstDot = Utf8s.indexOfAscii(name, '.');
+                            if (firstDot != -1) {
+                                sink.clear();
+                                sink.put(name, 0, firstDot);
+                                // all our column files have .d (or such) extensions
+                                int columnIndex = metadata.getColumnIndexQuiet(sink);
+                                if (columnIndex != -1) {
+                                    // not a random file, we have column by this name
+                                    int lastDot = Utf8s.lastIndexOfAscii(name, '.');
+                                    int len = Utf8s.length(name);
+                                    if (lastDot > 1 && lastDot < len - 1) {
+                                        // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
+                                        try {
+                                            long nameTxn = Numbers.parseLong(name, lastDot + 1, len);
+                                            if (nameTxn > 0) {
+                                                // column tops are not supported (this is to make sure "copy" command can attach partitions
+                                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                                                System.out.println("nametxn: " + name.asAsciiCharSequence() + ", ver: " + nameTxn);
+                                            }
+                                        } catch (NumericException ignore) {
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
 
                 checkPassed = true;
             } else {

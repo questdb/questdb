@@ -1163,7 +1163,9 @@ public class CopyTest extends AbstractCairoTest {
                 "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
                 "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
                 "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n" +
-                "line1001\t1972-09-28T00:00:00.000000Z\t0.918270255022\tdesc 1001\n", "select line,ts,d,description from x limit -10");
+                "line1001\t1972-09-28T00:00:00.000000Z\t0.918270255022\tdesc 1001\n",
+                "select line,ts,d,description from x limit -10"
+        );
 
         assertSql("cnt\n1001\n", "select count(*) cnt from x");
     }

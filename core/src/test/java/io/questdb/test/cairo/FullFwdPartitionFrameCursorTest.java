@@ -156,47 +156,47 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByDay1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByDay2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByDay3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByMonth1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByMonth2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByMonth3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByNone1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v", 1);
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v.1", 1);
     }
 
     @Test
     public void testIndexFailAtRuntimeByNone2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v", 1);
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v.2", 1);
     }
 
     @Test
     public void testIndexFailAtRuntimeByNone3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 1);
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v.3", 1);
     }
 
     @Test
@@ -216,32 +216,32 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByWeek1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByWeek2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByWeek3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
@@ -261,22 +261,22 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailInConstructorByDay1k() throws Exception {
-        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "a.k");
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "a.k.1");
     }
 
     @Test
     public void testIndexFailInConstructorByDay1v() throws Exception {
-        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "a.v");
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "a.v.1");
     }
 
     @Test
     public void testIndexFailInConstructorByDay2k() throws Exception {
-        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.k");
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.k.2");
     }
 
     @Test
     public void testIndexFailInConstructorByDay2v() throws Exception {
-        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.v");
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.v.2");
     }
 
     @Test
@@ -311,7 +311,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailInConstructorByNoneFull() throws Exception {
-        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v");
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v.1");
     }
 
     @Test
@@ -421,17 +421,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByDay1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByDay2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByDay3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
@@ -451,17 +451,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByMonth1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByMonth2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByMonth3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
@@ -481,17 +481,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByNone1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v", 1);
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v.1", 1);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByNone2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v", 1);
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v.2", 1);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByNone3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 1);
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v.3", 1);
     }
 
     @Test
@@ -511,17 +511,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v.1", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 1000000L * 65, false, "1970-W02" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
@@ -546,12 +546,12 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "b.v.2", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "c.v.3", 2);
     }
 
     @Test
