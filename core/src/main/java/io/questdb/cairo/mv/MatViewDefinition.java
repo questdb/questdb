@@ -510,20 +510,10 @@ public class MatViewDefinition implements Mutable {
                     .put(']');
         }
 
-        // todo: Replica does not have the mat view metadata at the time of registering the mat view.
-        //  Save timestampType into mat view definition and load it from there.
-        //  timestampType should go into a new block, and we should default to ColumnType.TIMESTAMP if
-        //  the block is not present, this will keep view def format backwards compatible
         // Mat view's and base table's timestamp types must always match.
         final int timestampType;
-        if (engine.getTableTokenIfExists(matViewToken.getTableName()) != null) {
-            try (TableMetadata metadata = engine.getTableMetadata(matViewToken)) {
-                timestampType = metadata.getTimestampType();
-            }
-        } else {
-            // this makes current ent tests pass, but not a good fix
-            // we will need tests with nanos too which would fail
-            timestampType = ColumnType.TIMESTAMP;
+        try (TableMetadata metadata = engine.getTableMetadata(matViewToken)) {
+            timestampType = metadata.getTimestampType();
         }
 
         destDefinition.initDefinition(
