@@ -109,7 +109,7 @@ public class TableConverter {
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
-                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$(), ColumnType.UNDEFINED, PartitionBy.DAY);
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {

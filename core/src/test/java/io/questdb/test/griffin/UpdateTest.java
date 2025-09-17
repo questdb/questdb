@@ -50,7 +50,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -474,7 +474,11 @@ public class UpdateTest extends AbstractCairoTest {
 
                 try (TxReader txReader = new TxReader(ff)) {
                     TableToken tableToken = engine.verifyTableName("up");
-                    txReader.ofRO(Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                    txReader.ofRO(
+                            Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                            writer.getMetadata().getTimestampType(),
+                            PartitionBy.DAY
+                    );
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
@@ -2990,6 +2994,205 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateWithTimestampMicrosArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table metrics (id int, ts timestamp, value double, adjusted_ts timestamp) timestamp(ts) partition by day");
+
+            long baseMicros = 1_704_067_200_000_000L; // 2024-01-01T00:00:00.000000
+
+            execute("insert into metrics values " +
+                    "(1, " + baseMicros + ", 10.0, null), " +
+                    "(2, " + (baseMicros + 500_000L) + ", 20.0, null), " + // +500ms
+                    "(3, " + (baseMicros + 1_000_000L) + ", 30.0, null)"); // +1s
+
+            update("update metrics set adjusted_ts = ts + 2_000_000"); // +2 seconds in microseconds
+
+            assertQueryNoLeakCheck("id\tts\tvalue\tadjusted_ts\n" +
+                            "1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000Z\n" +
+                            "2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000Z\n" +
+                            "3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000Z\n",
+                    "select * from metrics", "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampMixedArithmetic_microsToNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table metrics (id int, ts timestamp, value double, adjusted_ts_ns timestamp_ns) timestamp(ts) partition by day");
+
+            long baseMicros = 1_704_067_200_000_000L; // 2024-01-01T00:00:00.000000
+
+            execute("insert into metrics values " +
+                    "(1, " + baseMicros + ", 10.0, null), " +
+                    "(2, " + (baseMicros + 500_000L) + ", 20.0, null), " + // +500ms
+                    "(3, " + (baseMicros + 1_000_000L) + ", 30.0, null)"); // +1s
+
+
+            // +2 seconds in microseconds
+            update("update metrics set adjusted_ts_ns = ts + 2_000_000");
+
+            assertQueryNoLeakCheck("id\tts\tvalue\tadjusted_ts_ns\n" +
+                            "1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000000Z\n" +
+                            "2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000000Z\n" +
+                            "3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000000Z\n",
+                    "select * from metrics", "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampMixedArithmetic_nanosToMicros() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table metrics (id int, ts_ns timestamp_ns, value double, adjusted_ts timestamp) timestamp(ts_ns) partition by day");
+
+            long baseNanos = 1_704_067_200_000_000_000L; // 2024-01-01T00:00:00.000000000
+
+            execute("insert into metrics values " +
+                    "(1, " + baseNanos + ", 10.0, null), " +
+                    "(2, " + (baseNanos + 500_000_000L) + ", 20.0, null), " + // +500ms
+                    "(3, " + (baseNanos + 1_000_000_000L) + ", 30.0, null)"); // +1s
+
+
+            // +2 seconds in nanoseconds
+            update("update metrics set adjusted_ts = ts_ns + 2_000_000_000");
+
+            assertQueryNoLeakCheck("id\tts_ns\tvalue\tadjusted_ts\n" +
+                            "1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000Z\n" +
+                            "2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000Z\n" +
+                            "3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000Z\n",
+                    "select * from metrics", "ts_ns", true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampNsArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table metrics (id int, ts timestamp_ns, value double, adjusted_ts timestamp_ns) timestamp(ts) partition by day");
+
+            long baseNanos = 1_704_067_200_000_000_000L; // 2024-01-01T00:00:00.000000000
+
+            execute("insert into metrics values " +
+                    "(1, " + baseNanos + ", 10.0, null), " +
+                    "(2, " + (baseNanos + 500_000_000L) + ", 20.0, null), " + // +500ms
+                    "(3, " + (baseNanos + 1_000_000_000L) + ", 30.0, null)"); // +1s
+
+            update("update metrics set adjusted_ts = ts + 2_000_000_000"); // +2 seconds in nanoseconds
+
+            assertQueryNoLeakCheck("id\tts\tvalue\tadjusted_ts\n" +
+                            "1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000000Z\n" +
+                            "2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000000Z\n" +
+                            "3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000000Z\n",
+                    "select * from metrics", "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampNsComparisons() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sensors (sensor_id int, ts_nano timestamp_ns, reading double, status symbol) timestamp(ts_nano) partition by day");
+
+            long baseNanos = 1_640_995_200_000_000_000L; // 2022-01-01T00:00:00.000000000
+
+            execute("insert into sensors values " +
+                    "(1, " + baseNanos + ", 25.5, 'active'), " +
+                    "(2, " + (baseNanos + 1_111_111L) + ", 26.0, 'active'), " + // +1.111111ms
+                    "(3, " + (baseNanos + 999_999_999L) + ", 27.0, 'active'), " + // +999.999999ms
+                    "(4, " + (baseNanos + 1_000_000_000L) + ", 28.0, 'inactive'), " + // +1s exactly
+                    "(5, " + (baseNanos + 1_000_000_123L) + ", 29.0, 'active')"); // +1.000000123s
+
+            long result = update("update sensors set status = 'calibrated' " +
+                    "where ts_nano < " + (baseNanos + 1_000_000_000L));
+
+            Assert.assertEquals(3, result);
+
+            assertQueryNoLeakCheck("sensor_id\tts_nano\treading\tstatus\n" +
+                            "1\t2022-01-01T00:00:00.000000000Z\t25.5\tcalibrated\n" +
+                            "2\t2022-01-01T00:00:00.001111111Z\t26.0\tcalibrated\n" +
+                            "3\t2022-01-01T00:00:00.999999999Z\t27.0\tcalibrated\n" +
+                            "4\t2022-01-01T00:00:01.000000000Z\t28.0\tinactive\n" +
+                            "5\t2022-01-01T00:00:01.000000123Z\t29.0\tactive\n",
+                    "select * from sensors", "ts_nano", true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampNsMixedPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table events (id int, ts_nano timestamp_ns, ts_micro timestamp, type symbol) timestamp(ts_nano) partition by day");
+
+            long baseMicros = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long baseNanos = baseMicros * 1000;
+
+            execute("insert into events values " +
+                    "(1, " + baseNanos + ", " + baseMicros + ", 'A'), " +
+                    "(2, " + (baseNanos + 789L) + ", " + baseMicros + ", 'B'), " + // +789ns (same microsecond)
+                    "(3, " + ((baseMicros + 1000) * 1000) + ", " + (baseMicros + 1000) + ", 'C')"); // +1ms
+
+            update("update events set type = 'precise' " +
+                    "where ts_nano != ts_micro::timestamp_ns");
+
+            assertQueryNoLeakCheck("id\tts_nano\tts_micro\ttype\n" +
+                            "1\t2020-01-01T00:00:00.123456000Z\t2020-01-01T00:00:00.123456Z\tA\n" +
+                            "2\t2020-01-01T00:00:00.123456789Z\t2020-01-01T00:00:00.123456Z\tprecise\n" +
+                            "3\t2020-01-01T00:00:00.124456000Z\t2020-01-01T00:00:00.124456Z\tC\n",
+                    "select * from events", "ts_nano", true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampNsNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            long baseNanos = 1_672_531_200_000_000_000L; // 2023-01-01T00:00:00.000000000
+
+            execute("create table logs (id int, ts_nano timestamp_ns, message string, level symbol)");
+
+            execute("insert into logs values " +
+                    "(1, " + baseNanos + ", 'Started', 'INFO'), " +
+                    "(2, null, 'Error occurred', 'ERROR'), " +
+                    "(3, " + (baseNanos + 1_000_000_000L) + ", 'Processing', 'DEBUG'), " +
+                    "(4, null, 'Warning issued', 'WARN')");
+
+            long result = update("update logs set level = 'UNKNOWN', ts_nano = " + (baseNanos + 5_000_000_000L) +
+                    " where ts_nano is null");
+
+            Assert.assertEquals(2, result);
+
+            assertQueryNoLeakCheck("id\tts_nano\tmessage\tlevel\n" +
+                            "1\t2023-01-01T00:00:00.000000000Z\tStarted\tINFO\n" +
+                            "2\t2023-01-01T00:00:05.000000000Z\tError occurred\tUNKNOWN\n" +
+                            "3\t2023-01-01T00:00:01.000000000Z\tProcessing\tDEBUG\n" +
+                            "4\t2023-01-01T00:00:05.000000000Z\tWarning issued\tUNKNOWN\n",
+                    "select * from logs", null, true, true);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTimestampNsWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table events (id int, ts_nano timestamp_ns, status symbol, value double) timestamp(ts_nano) partition by day");
+
+            long baseNanos = 1_577_836_800_000_000_000L; // 2020-01-01T00:00:00.000000000
+
+            execute("insert into events values " +
+                    "(1, " + baseNanos + ", 'pending', 100.0), " +
+                    "(2, " + (baseNanos + 123_456_789L) + ", 'pending', 200.0), " + // +123.456789ms
+                    "(3, " + (baseNanos + 500_000_000L) + ", 'completed', 300.0), " + // +500ms
+                    "(4, " + (baseNanos + 1_000_000_000L) + ", 'pending', 400.0), " + // +1s
+                    "(5, " + (baseNanos + 1_500_000_123L) + ", 'failed', 500.0)"); // +1.500000123s
+
+            update("update events set status = 'processed' " +
+                    "where ts_nano between " + baseNanos + " and " + (baseNanos + 600_000_000L));
+
+            assertQueryNoLeakCheck("id\tts_nano\tstatus\tvalue\n" +
+                            "1\t2020-01-01T00:00:00.000000000Z\tprocessed\t100.0\n" +
+                            "2\t2020-01-01T00:00:00.123456789Z\tprocessed\t200.0\n" +
+                            "3\t2020-01-01T00:00:00.500000000Z\tprocessed\t300.0\n" +
+                            "4\t2020-01-01T00:00:01.000000000Z\tpending\t400.0\n" +
+                            "5\t2020-01-01T00:00:01.500000123Z\tfailed\t500.0\n",
+                    "select * from events", "ts_nano", true, true);
+        });
+    }
+
+    @Test
     public void testVarcharToIpv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table up as" +
@@ -3302,12 +3505,12 @@ public class UpdateTest extends AbstractCairoTest {
                         updateFlag.set(true); // update is on writer async cmd queue
 
                         if (errorMsg == null) {
-                            fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
+                            fut.await(10 * Micros.SECOND_MILLIS); // 10 seconds timeout
                             Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                             Assert.assertEquals(2, fut.getAffectedRowsCount());
                         } else {
                             try {
-                                fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
+                                fut.await(10 * Micros.SECOND_MILLIS); // 10 seconds timeout
                                 Assert.fail("Expected exception missing");
                             } catch (TableReferenceOutOfDateException | SqlException e) {
                                 Assert.assertEquals(errorMsg, e.getMessage());

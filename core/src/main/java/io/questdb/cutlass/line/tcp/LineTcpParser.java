@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
@@ -37,6 +36,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import org.jetbrains.annotations.NotNull;
@@ -68,12 +68,6 @@ public class LineTcpParser implements QuietCloseable {
     public static final byte ENTITY_TYPE_UUID = 21;
     public static final byte ENTITY_TYPE_VARCHAR = 22;
     public static final byte ENTITY_UNIT_NONE = 0;
-    public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
-    public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
-    public static final byte ENTITY_UNIT_MILLI = ENTITY_UNIT_MICRO + 1;
-    public static final byte ENTITY_UNIT_SECOND = ENTITY_UNIT_MILLI + 1;
-    public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
-    public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_ARRAY + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
@@ -86,7 +80,6 @@ public class LineTcpParser implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
     private static final IntHashSet binaryFormatSupportType = new IntHashSet();
     private static final boolean[] controlBytes;
-    private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
@@ -107,8 +100,7 @@ public class LineTcpParser implements QuietCloseable {
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser(CairoConfiguration configuration) {
-        this.cairoConfiguration = configuration;
+    public LineTcpParser() {
     }
 
     @Override
@@ -558,15 +550,15 @@ public class LineTcpParser implements QuietCloseable {
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
                         case 'n':
-                            timestampUnit = ENTITY_UNIT_NANO;
+                            timestampUnit = CommonUtils.TIMESTAMP_UNIT_NANOS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         case 't':
-                            timestampUnit = ENTITY_UNIT_MICRO;
+                            timestampUnit = CommonUtils.TIMESTAMP_UNIT_MICROS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         case 'm':
-                            timestampUnit = ENTITY_UNIT_MILLI;
+                            timestampUnit = CommonUtils.TIMESTAMP_UNIT_MILLIS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         // fall through
@@ -783,12 +775,12 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 case 'n':
                     if (valueLen > 1) {
-                        unit = ENTITY_UNIT_NANO;
+                        unit = CommonUtils.TIMESTAMP_UNIT_NANOS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                 case 'm':
                     if (valueLen > 1) {
-                        unit = ENTITY_UNIT_MILLI;
+                        unit = CommonUtils.TIMESTAMP_UNIT_MILLIS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
@@ -796,7 +788,7 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 case 't':
                     if (valueLen > 1) {
-                        unit = ENTITY_UNIT_MICRO;
+                        unit = CommonUtils.TIMESTAMP_UNIT_MICROS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through

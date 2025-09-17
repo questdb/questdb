@@ -24,15 +24,15 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public final class IntervalUtils {
@@ -42,7 +42,53 @@ public final class IntervalUtils {
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
 
-    public static void addHiLoInterval(
+    public static void applyLastEncodedInterval(TimestampDriver timestampDriver, LongList intervals) {
+        int index = intervals.size() - 4;
+        long lo = decodeIntervalLo(intervals, index);
+        long hi = decodeIntervalHi(intervals, index);
+        int period = decodePeriod(intervals, index);
+        char periodType = decodePeriodType(intervals, index);
+        int count = decodePeriodCount(intervals, index);
+
+        intervals.setPos(index);
+        if (periodType == PeriodType.NONE) {
+            intervals.extendAndSet(index + 1, hi);
+            intervals.setQuick(index, lo);
+            return;
+        }
+        apply(timestampDriver, intervals, lo, hi, period, periodType, count);
+    }
+
+    public static long decodeIntervalHi(LongList out, int index) {
+        return out.getQuick(index + HI_INDEX);
+    }
+
+    public static long decodeIntervalLo(LongList out, int index) {
+        return out.getQuick(index + LO_INDEX);
+    }
+
+    public static int decodePeriod(LongList intervals, int index) {
+        return Numbers.decodeLowInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
+    }
+
+    public static int decodePeriodCount(LongList intervals, int index) {
+        return Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
+    }
+
+    public static char decodePeriodType(LongList intervals, int index) {
+        int pts = Numbers.decodeHighShort(
+                Numbers.decodeLowInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
+        return (char) (pts - (int) Short.MIN_VALUE);
+    }
+
+    public static void encodeInterval(Interval interval, short operation, LongList out) {
+        encodeInterval(interval.getLo(), interval.getHi(), operation, out);
+    }
+
+    public static void encodeInterval(
             long lo,
             long hi,
             int period,
@@ -51,10 +97,20 @@ public final class IntervalUtils {
             short operation,
             LongList out
     ) {
-        addHiLoInterval(lo, hi, period, periodType, periodCount, IntervalDynamicIndicator.NONE, IntervalOperation.NONE, operation, out);
+        encodeInterval(
+                lo,
+                hi,
+                period,
+                periodType,
+                periodCount,
+                IntervalDynamicIndicator.NONE,
+                IntervalOperation.NONE,
+                operation,
+                out
+        );
     }
 
-    public static void addHiLoInterval(
+    public static void encodeInterval(
             long lo,
             long hi,
             int period,
@@ -76,7 +132,7 @@ public final class IntervalUtils {
         );
     }
 
-    public static void addHiLoInterval(
+    public static void encodeInterval(
             long lo,
             long hi,
             short adjustment,
@@ -84,58 +140,11 @@ public final class IntervalUtils {
             short operation,
             LongList out
     ) {
-        addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, adjustment, dynamicIndicator, operation, out);
+        encodeInterval(lo, hi, 0, PeriodType.NONE, 1, adjustment, dynamicIndicator, operation, out);
     }
 
-    public static void addHiLoInterval(long lo, long hi, short operation, LongList out) {
-        addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, operation, out);
-    }
-
-    public static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
-        temp.add(lo, hi);
-        if (count > 1) {
-            switch (periodType) {
-                case PeriodType.YEAR:
-                    addYearIntervals(period, count, temp);
-                    break;
-                case PeriodType.MONTH:
-                    addMonthInterval(period, count, temp);
-                    break;
-                case PeriodType.HOUR:
-                    addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);
-                    break;
-                case PeriodType.MINUTE:
-                    addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);
-                    break;
-                case PeriodType.SECOND:
-                    addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);
-                    break;
-                case PeriodType.DAY:
-                    addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);
-                    break;
-            }
-        }
-    }
-
-    public static void applyInterval(Interval interval, LongList outIntervals, short intersect) {
-        addHiLoInterval(interval.getLo(), interval.getHi(), intersect, outIntervals);
-    }
-
-    public static void applyLastEncodedIntervalEx(LongList intervals) {
-        int index = intervals.size() - 4;
-        long lo = getEncodedPeriodLo(intervals, index);
-        long hi = getEncodedPeriodHi(intervals, index);
-        int period = getEncodedPeriod(intervals, index);
-        char periodType = getEncodedPeriodType(intervals, index);
-        int count = getEncodedPeriodCount(intervals, index);
-
-        intervals.setPos(index);
-        if (periodType == PeriodType.NONE) {
-            intervals.extendAndSet(index + 1, hi);
-            intervals.setQuick(index, lo);
-            return;
-        }
-        apply(intervals, lo, hi, period, periodType, count);
+    public static void encodeInterval(long lo, long hi, short operation, LongList out) {
+        encodeInterval(lo, hi, 0, PeriodType.NONE, 1, operation, out);
     }
 
     public static int findInterval(LongList intervals, long timestamp) {
@@ -144,8 +153,8 @@ public final class IntervalUtils {
         int right = (intervals.size() >>> 1) - 1;
         while (left <= right) {
             int mid = (left + right) >>> 1;
-            long lo = getEncodedPeriodLo(intervals, mid << 1);
-            long hi = getEncodedPeriodHi(intervals, mid << 1);
+            long lo = decodeIntervalLo(intervals, mid << 1);
+            long hi = decodeIntervalHi(intervals, mid << 1);
             if (lo > timestamp) {
                 right = mid - 1;
             } else if (hi < timestamp) {
@@ -158,13 +167,19 @@ public final class IntervalUtils {
     }
 
     public static short getEncodedAdjustment(LongList intervals, int index) {
-        return Numbers.decodeLowShort(Numbers.decodeHighInt(
-                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
+        return Numbers.decodeLowShort(
+                Numbers.decodeHighInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
     }
 
     public static short getEncodedDynamicIndicator(LongList intervals, int index) {
-        return Numbers.decodeHighShort(Numbers.decodeHighInt(
-                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
+        return Numbers.decodeHighShort(
+                Numbers.decodeHighInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
     }
 
     public static short getEncodedOperation(LongList intervals, int index) {
@@ -175,29 +190,37 @@ public final class IntervalUtils {
         );
     }
 
-    public static int getEncodedPeriod(LongList intervals, int index) {
-        return Numbers.decodeLowInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
+    public static int getIntervalType(int timestampType) {
+        assert ColumnType.isTimestamp(timestampType);
+        switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO:
+                return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+            case ColumnType.TIMESTAMP_NANO:
+                return ColumnType.INTERVAL_TIMESTAMP_NANO;
+            default:
+                return ColumnType.UNDEFINED;
+        }
     }
 
-    public static int getEncodedPeriodCount(LongList intervals, int index) {
-        return Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
+    public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
+            return NanosTimestampDriver.INSTANCE;
+        }
+        return MicrosTimestampDriver.INSTANCE;
     }
 
-    public static long getEncodedPeriodHi(LongList out, int index) {
-        return out.getQuick(index + HI_INDEX);
-    }
-
-    public static long getEncodedPeriodLo(LongList out, int index) {
-        return out.getQuick(index + LO_INDEX);
-    }
-
-    public static char getEncodedPeriodType(LongList intervals, int index) {
-        int pts = Numbers.decodeHighShort(
-                Numbers.decodeLowInt(
-                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
-                )
-        );
-        return (char) (pts - (int) Short.MIN_VALUE);
+    public static int getTimestampTypeByIntervalType(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        switch (intervalType) {
+            case ColumnType.INTERVAL_RAW:
+            case ColumnType.INTERVAL_TIMESTAMP_MICRO:
+                return ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO:
+                return ColumnType.TIMESTAMP_NANO;
+            default:
+                return ColumnType.UNDEFINED;
+        }
     }
 
     /**
@@ -276,18 +299,40 @@ public final class IntervalUtils {
     }
 
     /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1.
      *
      * @param intervals collection of intervals
+     * @see #invert(LongList, int)
      */
     public static void invert(LongList intervals) {
         invert(intervals, 0);
     }
 
     /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     * Calculates the complement for a list of sorted, non-overlapping intervals. This operation
+     * finds all the "gaps" between the given intervals, covering the full range from
+     * {@code Long.MIN_VALUE} to {@code Long.MAX_VALUE}.
+     * <p>
+     * The calculation is performed <strong>in-place</strong>, overwriting the original list
+     * content starting from {@code startIndex} with the resulting inverted intervals. The list's
+     * logical size is adjusted to reflect the result.
+     * <p>
+     * <strong>Precondition:</strong> For the result to be correct, the source intervals in the list must be
+     * sorted in ascending order and must not overlap.
+     * <p>
+     * <b>Example:</b>
+     * <pre>
+     * // Source intervals: [100, 200], [500, 600]
+     * LongList list = new LongList(new long[]{100, 200, 500, 600});
+     * invert(list, 0);
+     * // After inversion, list contains: [Long.MIN_VALUE, 99, 201, 499, 601, Long.MAX_VALUE]
+     * </pre>
      *
-     * @param intervals collection of intervals
+     * @param intervals  A {@code LongList} containing a flat sequence of sorted, non-overlapping,
+     *                   inclusive intervals (e.g., {@code [start1, end1, start2, end2, ...]}).
+     *                   This list will be modified directly.
+     * @param startIndex The index in the list from which to start processing. Elements
+     *                   before this index are ignored and preserved.
      */
     public static void invert(LongList intervals, int startIndex) {
         long last = Long.MIN_VALUE;
@@ -319,465 +364,24 @@ public final class IntervalUtils {
         return findInterval(intervals, timestamp) != -1;
     }
 
-    public static void parseAndApplyIntervalEx(@Nullable CharSequence seq, LongList out, int position) throws SqlException {
+    public static void parseAndApplyInterval(TimestampDriver timestampDriver, @Nullable CharSequence seq, LongList out, int position) throws SqlException {
         if (seq != null) {
-            parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+            parseInterval(timestampDriver, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
         } else {
-            addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
+            encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
         }
-        applyLastEncodedIntervalEx(out);
+        applyLastEncodedInterval(timestampDriver, out);
     }
 
-    public static long parseCCPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
-        long ts;
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(seq, p++, lim, '-');
-            int month = Numbers.parseInt(seq, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(seq, p++, lim, '-');
-                int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T', ' ');
-                    int hour = Numbers.parseInt(seq, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(seq, p++, lim, ':');
-                        int min = Numbers.parseInt(seq, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(seq, p++, lim, ':');
-                            int sec = Numbers.parseInt(seq, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (lim - p > 3 && seq.charAt(p) == '.') {
-                                p++;
-                                int ms = Numbers.parseInt(seq, p, p += 3);
-                                if (lim - p > 2 && Character.isDigit(seq.charAt(p))) {
-                                    // micros
-                                    int micr = Numbers.parseInt(seq, p, p += 3);
-                                    ts = Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + sec * Timestamps.SECOND_MICROS
-                                            + ms * Timestamps.MILLI_MICROS
-                                            + micr
-                                            + checkTimezoneTail(seq, p, lim)
-                                            + 1;
-                                } else {
-                                    // millis
-                                    ts = Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + sec * Timestamps.SECOND_MICROS
-                                            + (ms + 1) * Timestamps.MILLI_MICROS
-                                            + checkTimezoneTail(seq, p, lim);
-                                }
-                            } else {
-                                // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + (sec + 1) * Timestamps.SECOND_MICROS
-                                        + checkTimezoneTail(seq, p, lim);
-                            }
-                        } else {
-                            // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + (min + 1) * Timestamps.MINUTE_MICROS;
-
-                        }
-                    } else {
-                        // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + (hour + 1) * Timestamps.HOUR_MICROS;
-
-                    }
-                } else {
-                    // year + month + day
-                    ts = Timestamps.addDays(Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS, 1);
-                }
-            } else {
-                // year + month
-                ts = Timestamps.addMonths(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l), 1);
-            }
-        } else {
-            // year
-            ts = Timestamps.yearMicros(year + 1, Timestamps.isLeapYear(year + 1));
-        }
-        return ts;
-    }
-
-    public static long parseCCPartialDate(CharSequence seq) throws NumericException {
-        return parseCCPartialDate(seq, 0, seq.length());
-    }
-
-    public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
-        long ts;
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(seq, p++, lim, '-');
-            int month = Numbers.parseInt(seq, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(seq, p++, lim, '-');
-                int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T', ' ');
-                    int hour = Numbers.parseInt(seq, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(seq, p++, lim, ':');
-                        int min = Numbers.parseInt(seq, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(seq, p++, lim, ':');
-                            int sec = Numbers.parseInt(seq, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (p < lim && seq.charAt(p) == '.') {
-                                p++;
-                                // varlen milli and micros
-                                int micrLim = p + 6;
-                                int mlim = Math.min(lim, micrLim);
-                                int micr = 0;
-                                for (; p < mlim; p++) {
-                                    char c = seq.charAt(p);
-                                    if (Numbers.notDigit(c)) {
-                                        // Timezone
-                                        break;
-                                    }
-                                    micr *= 10;
-                                    micr += c - '0';
-                                }
-                                micr *= tenPow(micrLim - p);
-
-                                // truncate remaining nanos if any
-                                for (int nlim = Math.min(lim, p + 3); p < nlim; p++) {
-                                    char c = seq.charAt(p);
-                                    if (Numbers.notDigit(c)) {
-                                        // Timezone
-                                        break;
-                                    }
-                                }
-
-                                // micros
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + micr
-                                        + checkTimezoneTail(seq, p, lim);
-                            } else {
-                                // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + checkTimezoneTail(seq, p, lim);
-                            }
-                        } else {
-                            // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS;
-
-                        }
-                    } else {
-                        // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS;
-
-                    }
-                } else {
-                    // year + month + day
-                    ts = Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS;
-                }
-            } else {
-                // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
-            }
-        } else {
-            // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
-        }
-        return ts;
-    }
-
-    public static long parseFloorPartialTimestamp(Utf8Sequence seq, final int pos, int lim) throws NumericException {
-        long ts;
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(seq, p++, lim, '-');
-            int month = Numbers.parseInt(seq, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(seq, p++, lim, '-');
-                int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T', ' ');
-                    int hour = Numbers.parseInt(seq, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(seq, p++, lim, ':');
-                        int min = Numbers.parseInt(seq, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(seq, p++, lim, ':');
-                            int sec = Numbers.parseInt(seq, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (p < lim && seq.byteAt(p) == '.') {
-
-                                p++;
-                                // varlen milli and micros
-                                int micrLim = p + 6;
-                                int mlim = Math.min(lim, micrLim);
-                                int micr = 0;
-                                for (; p < mlim; p++) {
-                                    char c = (char) seq.byteAt(p);
-                                    if (Numbers.notDigit(c)) {
-                                        // Timezone
-                                        break;
-                                    }
-                                    micr *= 10;
-                                    micr += c - '0';
-                                }
-                                micr *= tenPow(micrLim - p);
-
-                                // truncate remaining nanos if any
-                                for (int nlim = Math.min(lim, p + 3); p < nlim; p++) {
-                                    char c = (char) seq.byteAt(p);
-                                    if (Numbers.notDigit(c)) {
-                                        // Timezone
-                                        break;
-                                    }
-                                }
-
-                                // micros
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + micr
-                                        + checkTimezoneTail(seq, p, lim);
-                            } else {
-                                // seconds
-                                ts = Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + checkTimezoneTail(seq, p, lim);
-                            }
-                        } else {
-                            // minute
-                            ts = Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS;
-
-                        }
-                    } else {
-                        // year + month + day + hour
-                        ts = Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS;
-
-                    }
-                } else {
-                    // year + month + day
-                    ts = Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS;
-                }
-            } else {
-                // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
-            }
-        } else {
-            // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
-        }
-        return ts;
-    }
-
-    public static long parseFloorPartialTimestamp(CharSequence seq) throws NumericException {
-        return parseFloorPartialTimestamp(seq, 0, seq.length());
-    }
-
-    public static long parseFloorPartialTimestamp(Utf8Sequence seq) throws NumericException {
-        return parseFloorPartialTimestamp(seq, 0, seq.size());
-    }
-
-    public static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(seq, p++, lim, '-');
-            int month = Numbers.parseInt(seq, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(seq, p++, lim, '-');
-                int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
-                    int hour = Numbers.parseInt(seq, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(seq, p++, lim, ':');
-                        int min = Numbers.parseInt(seq, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(seq, p++, lim, ':');
-                            int sec = Numbers.parseInt(seq, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (p < lim) {
-                                throw NumericException.INSTANCE;
-                            } else {
-                                // seconds
-                                addHiLoInterval(Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS,
-                                        Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS
-                                                + 999999,
-                                        operation,
-                                        out);
-                            }
-                        } else {
-                            // minute
-                            addHiLoInterval(Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS,
-                                    Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + 59 * Timestamps.SECOND_MICROS
-                                            + 999999,
-                                    operation,
-                                    out);
-                        }
-                    } else {
-                        // year + month + day + hour
-                        addHiLoInterval(Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS,
-                                Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + 59 * Timestamps.MINUTE_MICROS
-                                        + 59 * Timestamps.SECOND_MICROS
-                                        + 999999,
-                                operation,
-                                out);
-                    }
-                } else {
-                    // year + month + day
-                    addHiLoInterval(Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS,
-                            Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + 23 * Timestamps.HOUR_MICROS
-                                    + 59 * Timestamps.MINUTE_MICROS
-                                    + 59 * Timestamps.SECOND_MICROS
-                                    + 999999,
-                            operation,
-                            out);
-                }
-            } else {
-                // year + month
-                addHiLoInterval(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
-                        Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
-                                + 23 * Timestamps.HOUR_MICROS
-                                + 59 * Timestamps.MINUTE_MICROS
-                                + 59 * Timestamps.SECOND_MICROS
-                                + 999999,
-                        operation,
-                        out);
-            }
-        } else {
-            // year
-            addHiLoInterval(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
-                    Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(12, l)
-                            + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
-                            + 23 * Timestamps.HOUR_MICROS
-                            + 59 * Timestamps.MINUTE_MICROS
-                            + 59 * Timestamps.SECOND_MICROS
-                            + 999999,
-                    operation,
-                    out);
-        }
-    }
-
-    public static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+    public static void parseInterval(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation
+    ) throws SqlException {
         int writeIndex = out.size();
         int[] pos = new int[3];
         int p = -1;
@@ -792,30 +396,30 @@ public final class IntervalUtils {
 
         switch (p) {
             case -1:
-                // no semicolons, just date part, which can be interval in itself
+                // no semicolons, just date part, which can be the interval in itself
                 try {
-                    parseInterval(seq, lo, lim, operation, out);
+                    timestampDriver.parseInterval(seq, lo, lim, operation, out);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
                 }
 
                 try {
-                    long millis = parseFloorPartialTimestamp(seq, lo, lim);
-                    addHiLoInterval(millis, millis, operation, out);
+                    long timestamp = timestampDriver.parseFloor(seq, lo, lim);
+                    encodeInterval(timestamp, timestamp, operation, out);
                     break;
                 } catch (NumericException e) {
                     try {
-                        long millis = Numbers.parseLong(seq);
-                        addHiLoInterval(millis, millis, operation, out);
+                        final long timestamp = Numbers.parseLong(seq);
+                        encodeInterval(timestamp, timestamp, operation, out);
                         break;
                     } catch (NumericException e2) {
                         throw SqlException.$(position, "Invalid date");
                     }
                 }
             case 0:
-                // single semicolon, expect period format after date
-                parseRange(seq, lo, pos[0], lim, position, operation, out);
+                // single semicolon, expect a period format after date
+                parseRange(timestampDriver, seq, lo, pos[0], lim, position, operation, out);
                 break;
             case 2:
                 // 2018-01-10T10:30:00.000Z;30m;2d;2
@@ -833,10 +437,10 @@ public final class IntervalUtils {
                     throw SqlException.$(position, "Count not a number");
                 }
 
-                parseRange(seq, lo, pos[0], pos[1], position, operation, out);
+                parseRange(timestampDriver, seq, lo, pos[0], pos[1], position, operation, out);
                 char type = seq.charAt(pos[2] - 1);
-                long low = getEncodedPeriodLo(out, writeIndex);
-                long hi = getEncodedPeriodHi(out, writeIndex);
+                long low = decodeIntervalLo(out, writeIndex);
+                long hi = decodeIntervalHi(out, writeIndex);
 
                 replaceHiLoInterval(low, hi, period, type, count, operation, out);
                 switch (type) {
@@ -856,36 +460,23 @@ public final class IntervalUtils {
         }
     }
 
-    public static void parseSingleTimestamp(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
-        try {
-            long millis = parseFloorPartialTimestamp(seq, lo, lim);
-            addHiLoInterval(millis, millis, operation, out);
-        } catch (NumericException e) {
-            try {
-                long millis = Numbers.parseLong(seq);
-                addHiLoInterval(millis, millis, operation, out);
-            } catch (NumericException e2) {
-                for (int i = lo; i < lim; i++) {
-                    if (seq.charAt(i) == ';') {
-                        throw SqlException.$(position, "Not a date, use IN keyword with intervals");
-                    }
-                }
-                throw SqlException.$(position, "Invalid date");
-            }
-        }
+    public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+        int lastIndex = out.size() - 4;
+        out.setQuick(lastIndex, lo);
+        out.setQuick(lastIndex + HI_INDEX, hi);
+        out.setQuick(
+                lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX,
+                Numbers.encodeLowHighInts(
+                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                        0
+                )
+        );
+        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
     }
 
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInPlace(intervals, divider);
-    }
-
-    public static long tryParseTimestamp(CharSequence seq) throws CairoException {
-        try {
-            return parseFloorPartialTimestamp(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().put("Invalid timestamp: ").put(seq);
-        }
     }
 
     /**
@@ -951,7 +542,7 @@ public final class IntervalUtils {
             if (writePoint > 0) {
                 long prevHi = intervals.getQuick(writePoint - 1);
                 if (nextLo <= prevHi) {
-                    // Intersection with previously safed interval
+                    // Intersection with a previously saved interval
                     intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));
                     continue;
                 }
@@ -976,7 +567,7 @@ public final class IntervalUtils {
         intervals.setPos(writePoint);
     }
 
-    private static void addMillisInterval(long period, int count, LongList out) {
+    private static void addLinearInterval(long period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
@@ -997,163 +588,84 @@ public final class IntervalUtils {
         }
     }
 
-    private static void addMonthInterval(int period, int count, LongList out) {
+    private static void addMonthInterval(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
         if (period < 0) {
-            lo = Timestamps.addMonths(lo, period * n);
-            hi = Timestamps.addMonths(hi, period * n);
+            lo = timestampDriver.addMonths(lo, period * n);
+            hi = timestampDriver.addMonths(hi, period * n);
             out.setQuick(k - 2, lo);
             out.setQuick(k - 1, hi);
             period = -period;
         }
 
         for (int i = 0; i < n; i++) {
-            lo = Timestamps.addMonths(lo, period);
-            hi = Timestamps.addMonths(hi, period);
+            lo = timestampDriver.addMonths(lo, period);
+            hi = timestampDriver.addMonths(hi, period);
             writePoint = append(out, writePoint, lo, hi);
         }
     }
 
-    private static void addYearIntervals(int period, int count, LongList out) {
+    private static void addYearIntervals(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
         if (period < 0) {
-            lo = Timestamps.addYears(lo, period * n);
-            hi = Timestamps.addYears(hi, period * n);
+            lo = timestampDriver.addYears(lo, period * n);
+            hi = timestampDriver.addYears(hi, period * n);
             out.setQuick(k - 2, lo);
             out.setQuick(k - 1, hi);
             period = -period;
         }
 
         for (int i = 0; i < n; i++) {
-            lo = Timestamps.addYears(lo, period);
-            hi = Timestamps.addYears(hi, period);
+            lo = timestampDriver.addYears(lo, period);
+            hi = timestampDriver.addYears(hi, period);
             writePoint = append(out, writePoint, lo, hi);
         }
     }
 
-    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
-        if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkChar(Utf8Sequence s, int p, int lim, char c) throws NumericException {
-        if (p >= lim || s.byteAt(p) != c) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
-        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkChar(Utf8Sequence s, int p, int lim, char c1, char c2) throws NumericException {
-        if (p >= lim || (s.byteAt(p) != c1 && s.byteAt(p) != c2)) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static boolean checkLen(int p, int lim) throws NumericException {
-        if (lim - p > 2) {
-            return true;
-        }
-        if (lim <= p) {
-            return false;
-        }
-
-        throw NumericException.INSTANCE;
-    }
-
-    private static boolean checkLenStrict(int p, int lim) throws NumericException {
-        if (lim - p == 2) {
-            return true;
-        }
-        if (lim <= p) {
-            return false;
-        }
-
-        throw NumericException.INSTANCE;
-    }
-
-    private static void checkRange(int x, int min, int max) throws NumericException {
-        if (x < min || x > max) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
-        if (lim == p) {
-            return 0;
-        }
-
-        if (lim - p < 2) {
-            checkChar(seq, p, lim, 'Z');
-            return 0;
-        }
-
-        if (lim - p > 2) {
-            int tzSign = parseSign(seq.charAt(p++));
-            int hour = Numbers.parseInt(seq, p, p += 2);
-            checkRange(hour, 0, 23);
-
-            if (lim - p == 3) {
-                // Optional : separator between hours and mins in timezone
-                checkChar(seq, p++, lim, ':');
-            }
-
-            if (checkLenStrict(p, lim)) {
-                int min = Numbers.parseInt(seq, p, p + 2);
-                checkRange(min, 0, 59);
-                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
-            } else {
-                return tzSign * (hour * Timestamps.HOUR_MICROS);
+    private static void apply(TimestampDriver timestampDriver, LongList temp, long lo, long hi, int period, char periodType, int count) {
+        temp.add(lo, hi);
+        if (count > 1) {
+            switch (periodType) {
+                case PeriodType.YEAR:
+                    addYearIntervals(timestampDriver, period, count, temp);
+                    break;
+                case PeriodType.MONTH:
+                    addMonthInterval(timestampDriver, period, count, temp);
+                    break;
+                case PeriodType.HOUR:
+                    addLinearInterval(timestampDriver.fromHours(period), count, temp);
+                    break;
+                case PeriodType.MINUTE:
+                    addLinearInterval(timestampDriver.fromMinutes(period), count, temp);
+                    break;
+                case PeriodType.SECOND:
+                    addLinearInterval(timestampDriver.fromSeconds(period), count, temp);
+                    break;
+                case PeriodType.DAY:
+                    addLinearInterval(timestampDriver.fromDays(period), count, temp);
+                    break;
             }
         }
-        throw NumericException.INSTANCE;
     }
 
-    private static long checkTimezoneTail(Utf8Sequence seq, int p, int lim) throws NumericException {
-        if (lim == p) {
-            return 0;
-        }
-
-        if (lim - p < 2) {
-            checkChar(seq, p, lim, 'Z');
-            return 0;
-        }
-
-        if (lim - p > 2) {
-            int tzSign = parseSign((char) seq.byteAt(p++));
-            int hour = Numbers.parseInt(seq, p, p += 2);
-            checkRange(hour, 0, 23);
-
-            if (lim - p == 3) {
-                // Optional : separator between hours and mins in timezone
-                checkChar(seq, p++, lim, ':');
-            }
-
-            if (checkLenStrict(p, lim)) {
-                int min = Numbers.parseInt(seq, p, p + 2);
-                checkRange(min, 0, 59);
-                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
-            } else {
-                return tzSign * (hour * Timestamps.HOUR_MICROS);
-            }
-        }
-        throw NumericException.INSTANCE;
-    }
-
-    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
+    private static void parseRange(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int p,
+            int lim,
+            int position,
+            short operation,
+            LongList out
+    ) throws SqlException {
         char type = seq.charAt(lim - 1);
         int period;
         try {
@@ -1163,10 +675,10 @@ public final class IntervalUtils {
         }
         try {
             int index = out.size();
-            parseInterval(seq, lo, p, operation, out);
-            long low = getEncodedPeriodLo(out, index);
-            long hi = getEncodedPeriodHi(out, index);
-            hi = Timestamps.addPeriod(hi, type, period);
+            timestampDriver.parseInterval(seq, lo, p, operation, out);
+            long low = decodeIntervalLo(out, index);
+            long hi = decodeIntervalHi(out, index);
+            hi = timestampDriver.add(hi, type, period);
             if (hi < low) {
                 throw SqlException.invalidDate(position);
             }
@@ -1176,62 +688,14 @@ public final class IntervalUtils {
             // try date instead
         }
         try {
-            long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
-            long hiMillis = Timestamps.addPeriod(loMillis, type, period);
-            if (hiMillis < loMillis) {
+            long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
+            long hiMicros = timestampDriver.add(loMicros, type, period);
+            if (hiMicros < loMicros) {
                 throw SqlException.invalidDate(position);
             }
-            addHiLoInterval(loMillis, hiMillis, operation, out);
+            encodeInterval(loMicros, hiMicros, operation, out);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
-        }
-    }
-
-    private static int parseSign(char c) throws NumericException {
-        int tzSign;
-        switch (c) {
-            case '+':
-                tzSign = -1;
-                break;
-            case '-':
-                tzSign = 1;
-                break;
-            default:
-                throw NumericException.INSTANCE;
-        }
-        return tzSign;
-    }
-
-    private static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
-        int lastIndex = out.size() - 4;
-        out.setQuick(lastIndex, lo);
-        out.setQuick(lastIndex + HI_INDEX, hi);
-        out.setQuick(lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX, Numbers.encodeLowHighInts(
-                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
-                0));
-        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
-    }
-
-    private static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
-        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
-    }
-
-    private static int tenPow(int i) throws NumericException {
-        switch (i) {
-            case 0:
-                return 1;
-            case 1:
-                return 10;
-            case 2:
-                return 100;
-            case 3:
-                return 1000;
-            case 4:
-                return 10000;
-            case 5:
-                return 100000;
-            default:
-                throw NumericException.INSTANCE;
         }
     }
 
@@ -1247,5 +711,9 @@ public final class IntervalUtils {
         list.extendAndSet(2 * writePoint + 1, hi);
         list.setQuick(2 * writePoint, lo);
         return writePoint + 1;
+    }
+
+    static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
+        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
     }
 }

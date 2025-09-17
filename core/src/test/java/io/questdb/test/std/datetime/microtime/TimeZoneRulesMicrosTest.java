@@ -28,9 +28,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -63,11 +63,11 @@ public class TimeZoneRulesMicrosTest {
             zoneRules.add(new TimeZoneRulesMicros(zone.getRules()));
         }
 
-        long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
-        long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
+        long micros = Micros.toMicros(1900, 1, 1, 0, 0);
+        long deadline = Micros.toMicros(2115, 12, 31, 0, 0);
 
         while (micros < deadline) {
-            final int y = Timestamps.getYear(micros);
+            final int y = Micros.getYear(micros);
 
             Instant dt = Instant.ofEpochMilli(micros / 1000);
 
@@ -82,16 +82,16 @@ public class TimeZoneRulesMicrosTest {
                 long offset = rules.getOffset(micros, y);
 
                 try {
-                    Assert.assertEquals(expected, offset / Timestamps.SECOND_MICROS);
+                    Assert.assertEquals(expected, offset / Micros.SECOND_MICROS);
                 } catch (Throwable e) {
-                    System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(micros + offset));
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Micros.toString(micros + offset));
                     System.out.println("e: " + expected + "; a: " + offset);
                     System.out.println(dt);
-                    System.out.println(Timestamps.toString(micros));
+                    System.out.println(Micros.toString(micros));
                     throw e;
                 }
             }
-            micros += Timestamps.DAY_MICROS;
+            micros += Micros.DAY_MICROS;
         }
     }
 
@@ -101,27 +101,27 @@ public class TimeZoneRulesMicrosTest {
         final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zone.getRules());
 
         Assert.assertEquals(0, rules.getDstGapOffset(0));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z")));
 
         // DST
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000Z")));
-        Assert.assertEquals(0L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000Z")));
-        Assert.assertEquals(60001000L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T02:01:00.001Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T03:00:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-03-28T03:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-10-31T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-10-31T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("2021-10-31T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-03-28T01:00:00.000Z")));
+        Assert.assertEquals(0L, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-03-28T02:00:00.000Z")));
+        Assert.assertEquals(60001000L, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-03-28T02:01:00.001Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-03-28T03:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-03-28T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-10-31T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-10-31T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("2021-10-31T03:01:00.000Z")));
 
         // historical
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T01:01:00.000Z")));
-        Assert.assertEquals(0L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T02:00:00.000Z")));
-        Assert.assertEquals(60000001L, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T02:01:00.000001Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T03:00:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-03-30T03:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-10-26T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-10-26T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(TimestampFormatUtils.parseTimestamp("1997-10-26T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-03-30T01:01:00.000Z")));
+        Assert.assertEquals(0L, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-03-30T02:00:00.000Z")));
+        Assert.assertEquals(60000001L, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-03-30T02:01:00.000001Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-03-30T03:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-03-30T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-10-26T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-10-26T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MicrosFormatUtils.parseTimestamp("1997-10-26T03:01:00.000Z")));
     }
 
     @Test
@@ -138,14 +138,14 @@ public class TimeZoneRulesMicrosTest {
             zoneRules.add(new TimeZoneRulesMicros(zone.getRules()));
         }
 
-        long millis = Timestamps.toMicros(1900, 1, 1, 0, 0);
-        long deadline = Timestamps.toMicros(2615, 12, 31, 0, 0);
+        long millis = Micros.toMicros(1900, 1, 1, 0, 0);
+        long deadline = Micros.toMicros(2615, 12, 31, 0, 0);
 
         while (millis < deadline) {
             for (int i = 0, n = zones.size(); i < n; i++) {
                 zoneRules.get(i).getOffset(millis);
             }
-            millis += Timestamps.DAY_MICROS;
+            millis += Micros.DAY_MICROS;
         }
     }
 
@@ -159,13 +159,13 @@ public class TimeZoneRulesMicrosTest {
         int d = 29;
 
         LocalDateTime dt = LocalDateTime.of(y, m, d, 0, 0);
-        long millis = Timestamps.toMicros(y, m, d, 0, 0);
+        long millis = Micros.toMicros(y, m, d, 0, 0);
 
         ZonedDateTime zdt = dt.atZone(zone);
         long expected = zdt.getOffset().getTotalSeconds();
 
         // find out how much algo added to datetime itself
-        long changed = Timestamps.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000L;
+        long changed = Micros.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000L;
         // add any extra time
         expected += (changed - millis) / 1000;
         long offset = rules.getOffset(millis, y);
@@ -173,7 +173,7 @@ public class TimeZoneRulesMicrosTest {
         try {
             Assert.assertEquals(expected, offset / 1000);
         } catch (Throwable e) {
-            System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(millis + offset));
+            System.out.println(zone.getId() + "; " + zdt + "; " + Micros.toString(millis + offset));
             throw e;
         }
     }
@@ -195,12 +195,17 @@ public class TimeZoneRulesMicrosTest {
         }
 
         final DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
-        long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
-        final long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
-        final long step = Math.max(1, rnd.nextLong(30)) * Timestamps.DAY_MICROS;
-
+        long micros = Micros.toMicros(1900, 1, 1, 0, 0);
+        final long deadline = Micros.toMicros(2115, 12, 31, 0, 0);
+        final long step = Math.max(1, rnd.nextLong(30)) * Micros.DAY_MICROS;
+        LocalDateTime dt;
         while (micros < deadline) {
-            LocalDateTime dt = LocalDateTime.parse(Timestamps.toString(micros), localDateTimeFormat);
+            try {
+                dt = LocalDateTime.parse(Micros.toString(micros), localDateTimeFormat);
+            } catch (Throwable e) {
+                System.out.println(micros);
+                throw e;
+            }
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);
@@ -208,18 +213,19 @@ public class TimeZoneRulesMicrosTest {
 
                 ZonedDateTime zdt = dt.atZone(zone);
 
-                long expected = zdt.toInstant().toEpochMilli() * Timestamps.MILLI_MICROS;
+                long expected = zdt.toInstant().toEpochMilli() * Micros.MILLI_MICROS;
                 // find out how much algo added to datetime itself
-                long offset = rules.getLocalOffset(dt.toInstant(ZoneOffset.UTC).toEpochMilli() * Timestamps.MILLI_MICROS);
+                long offset = rules.getLocalOffset(dt.toInstant(ZoneOffset.UTC).toEpochMilli() * Micros.MILLI_MICROS);
                 long actual = micros - offset;
 
                 try {
                     Assert.assertEquals(expected, actual);
                 } catch (Throwable e) {
-                    System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(actual));
+                    System.out.println(micros);
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Micros.toString(actual));
                     System.out.println("e: " + expected + "; a: " + actual);
                     System.out.println(dt);
-                    System.out.println(Timestamps.toString(micros));
+                    System.out.println(Micros.toString(micros));
                     throw e;
                 }
             }

@@ -42,6 +42,7 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
     private long valueRight;
 
     public TimestampFunctionMemoizer(Function fn) {
+        super(fn.getType());
         assert fn.shouldMemoize();
         this.fn = fn;
     }

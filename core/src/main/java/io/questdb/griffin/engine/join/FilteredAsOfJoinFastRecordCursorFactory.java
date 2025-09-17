@@ -106,6 +106,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveTimestampIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
@@ -180,9 +182,11 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 SingleRecordSink slaveSinkTarget,
+                int masterTimestampType,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;
         }
@@ -204,7 +208,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 return false;
             }
 
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             record.hasSlave(origHasSlave);
             if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
@@ -251,7 +255,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             long filteredRowId = initialFilteredRowId;
 
             for (; ; ) {
-                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
