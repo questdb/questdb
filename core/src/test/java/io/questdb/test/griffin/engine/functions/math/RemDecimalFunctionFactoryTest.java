@@ -26,7 +26,8 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -34,26 +35,23 @@ import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.math.RemDecimalFunctionFactory;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class RemDecimalFunctionFactoryTest extends AbstractTest {
+public class RemDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFactoryTest {
     private static final RemDecimalFunctionFactory factory = new RemDecimalFunctionFactory();
 
     @Test
-    public void testRemDecimal128DivideByZero() {
+    public void testRemDecimal128DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(0, 0, ColumnType.getDecimalType(19, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(19, 2));
+        createFunctionAndAssertFails(args, "'%' operation failed: Division by zero");
     }
 
     @Test
-    public void testRemDecimal128Simple() {
+    public void testRemDecimal128Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 500, ColumnType.getDecimalType(20, 2))); // 5.00
         args.add(new Decimal128Constant(0, 300, ColumnType.getDecimalType(20, 2))); // 3.00
@@ -61,7 +59,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal128WithCarry() {
+    public void testRemDecimal128WithCarry() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 1000, ColumnType.getDecimalType(20, 2))); // 10.00
         args.add(new Decimal128Constant(0, 300, ColumnType.getDecimalType(20, 2))); // 3.00
@@ -69,7 +67,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal128WithDifferentScales() {
+    public void testRemDecimal128WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 500, ColumnType.getDecimalType(19, 2))); // 5.00
         args.add(new Decimal128Constant(0, 15, ColumnType.getDecimalType(19, 1))); // 1.5
@@ -77,7 +75,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal128WithNull() {
+    public void testRemDecimal128WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 0)));
@@ -85,15 +83,15 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal16DivideByZero() {
+    public void testRemDecimal16DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(4, 2));
+        createFunctionAndAssertFails(args, "'%' operation failed: Division by zero");
     }
 
     @Test
-    public void testRemDecimal16Simple() {
+    public void testRemDecimal16Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 500, ColumnType.getDecimalType(4, 2))); // 5.00
         args.add(new Decimal16Constant((short) 300, ColumnType.getDecimalType(4, 2))); // 3.00
@@ -101,7 +99,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal16WithDifferentScales() {
+    public void testRemDecimal16WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 500, ColumnType.getDecimalType(4, 2))); // 5.00
         args.add(new Decimal16Constant((short) 15, ColumnType.getDecimalType(4, 1))); // 1.5
@@ -109,7 +107,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal16WithNull() {
+    public void testRemDecimal16WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 0)));
@@ -117,15 +115,15 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal256DivideByZero() {
+    public void testRemDecimal256DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2)));
         args.add(new Decimal256Constant(0, 0, 0, 0, ColumnType.getDecimalType(40, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(40, 2));
+        createFunctionAndAssertFails(args, "'%' operation failed: Division by zero");
     }
 
     @Test
-    public void testRemDecimal256MaxPrecision() {
+    public void testRemDecimal256MaxPrecision() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 500, ColumnType.getDecimalType(Decimals.MAX_PRECISION, Decimals.MAX_SCALE)));
         args.add(new Decimal256Constant(0, 0, 0, 300, ColumnType.getDecimalType(Decimals.MAX_PRECISION, Decimals.MAX_SCALE)));
@@ -133,7 +131,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal256Negative() {
+    public void testRemDecimal256Negative() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, -10, ColumnType.getDecimalType(40, 0))); // -10
         args.add(new Decimal256Constant(0, 0, 0, 1, ColumnType.getDecimalType(40, 0))); // 1
@@ -141,7 +139,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal256Simple() {
+    public void testRemDecimal256Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 500, ColumnType.getDecimalType(40, 2))); // 5.00
         args.add(new Decimal256Constant(0, 0, 0, 300, ColumnType.getDecimalType(40, 2))); // 3.00
@@ -149,7 +147,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal256WithCarry() {
+    public void testRemDecimal256WithCarry() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 1, 0, ColumnType.getDecimalType(39, 0))); // large number
         args.add(new Decimal256Constant(0, 0, 0, 3, ColumnType.getDecimalType(39, 0))); // 3
@@ -157,7 +155,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal256WithNull() {
+    public void testRemDecimal256WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(
                 Decimals.DECIMAL256_HH_NULL,
@@ -171,15 +169,15 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal32DivideByZero() {
+    public void testRemDecimal32DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(8, 2)));
         args.add(new Decimal32Constant(0, ColumnType.getDecimalType(8, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(8, 2));
+        createFunctionAndAssertFails(args, "'%' operation failed: Division by zero");
     }
 
     @Test
-    public void testRemDecimal32Simple() {
+    public void testRemDecimal32Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(500, ColumnType.getDecimalType(8, 2))); // 5.00
         args.add(new Decimal32Constant(300, ColumnType.getDecimalType(8, 2))); // 3.00
@@ -187,7 +185,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal32WithDifferentScales() {
+    public void testRemDecimal32WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(500, ColumnType.getDecimalType(9, 2))); // 5.00
         args.add(new Decimal32Constant(15, ColumnType.getDecimalType(9, 1))); // 1.5
@@ -195,7 +193,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal32WithNull() {
+    public void testRemDecimal32WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(9, 2)));
         args.add(new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
@@ -203,15 +201,15 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal64DivideByZero() {
+    public void testRemDecimal64DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(10, 2)));
         args.add(new Decimal64Constant(0, ColumnType.getDecimalType(10, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(10, 2));
+        createFunctionAndAssertFails(args, "'%' operation failed: Division by zero");
     }
 
     @Test
-    public void testRemDecimal64Simple() {
+    public void testRemDecimal64Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(500, ColumnType.getDecimalType(10, 2))); // 5.00
         args.add(new Decimal64Constant(300, ColumnType.getDecimalType(10, 2))); // 3.00
@@ -219,7 +217,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal64WithDifferentScales() {
+    public void testRemDecimal64WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(500, ColumnType.getDecimalType(14, 2))); // 5.00
         args.add(new Decimal64Constant(15, ColumnType.getDecimalType(14, 1))); // 1.5
@@ -227,7 +225,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal64WithNull() {
+    public void testRemDecimal64WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(15, 2)));
         args.add(new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(15, 0)));
@@ -235,15 +233,15 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal8DivideByZero() {
+    public void testRemDecimal8DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 1)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(2, 1));
+        createFunctionAndAssertFails(args, "'%' operation failed: Division by zero");
     }
 
     @Test
-    public void testRemDecimal8Simple() {
+    public void testRemDecimal8Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 50, ColumnType.getDecimalType(2, 1))); // 5.0
         args.add(new Decimal8Constant((byte) 30, ColumnType.getDecimalType(2, 1))); // 3.0
@@ -251,7 +249,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal8WithDifferentScales() {
+    public void testRemDecimal8WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 50, ColumnType.getDecimalType(2, 2))); // 0.50
         args.add(new Decimal8Constant((byte) 3, ColumnType.getDecimalType(2, 1))); // 0.3
@@ -259,7 +257,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemDecimal8WithNull() {
+    public void testRemDecimal8WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 0)));
@@ -267,7 +265,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemMixedDecimalTypes() {
+    public void testRemMixedDecimalTypes() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(1, 1, 1, 5, ColumnType.getDecimalType(40, 2)));
         args.add(new Decimal128Constant(0, 1, ColumnType.getDecimalType(20, 2)));
@@ -280,7 +278,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemRandomValues() {
+    public void testRemRandomValues() throws SqlException {
         for (int i = 2; i < 50; i++) {
             long dividend = i * 13;
             long divisor = i % 7 + 1; // ensure divisor is not zero
@@ -295,7 +293,7 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testRemWithPrecisionScaling() {
+    public void testRemWithPrecisionScaling() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 1234, ColumnType.getDecimalType(22, 2))); // 12.34
         args.add(new Decimal128Constant(0, 567, ColumnType.getDecimalType(22, 1))); // 56.7
@@ -303,26 +301,8 @@ public class RemDecimalFunctionFactoryTest extends AbstractTest {
         createFunctionAndAssert(args, 0, 0, 0, 1234, ColumnType.getDecimalType(22, 2));
     }
 
-    private void createFunctionAndAssert(ObjList<Function> args, long hh, long hl, long lh, long ll, int expectedType) {
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
-            Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
-            Assert.assertEquals(hh, value.getHh());
-            Assert.assertEquals(hl, value.getHl());
-            Assert.assertEquals(lh, value.getLh());
-            Assert.assertEquals(ll, value.getLl());
-            Assert.assertEquals(expectedType, func.getType());
-        }
-    }
-
-    private void createFunctionAndAssertNull(ObjList<Function> args, int expectedType) {
-        createFunctionAndAssert(
-                args,
-                Decimals.DECIMAL256_HH_NULL,
-                Decimals.DECIMAL256_HL_NULL,
-                Decimals.DECIMAL256_LH_NULL,
-                Decimals.DECIMAL256_LL_NULL,
-                expectedType
-        );
+    @Override
+    protected FunctionFactory getFactory() {
+        return factory;
     }
 }

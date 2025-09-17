@@ -27,6 +27,8 @@ package io.questdb.test.griffin.engine.functions.math;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -37,15 +39,14 @@ import io.questdb.griffin.engine.functions.math.DivDecimalFunctionFactory;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DivDecimalFunctionFactoryTest extends AbstractTest {
+public class DivDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFactoryTest {
     private static final DivDecimalFunctionFactory factory = new DivDecimalFunctionFactory();
 
     @Test
-    public void testDivByOne() {
+    public void testDivByOne() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 12345, ColumnType.getDecimalType(19, 3))); // 12.345
         args.add(new Decimal128Constant(0, 1000, ColumnType.getDecimalType(19, 3))); // 1.000
@@ -53,15 +54,15 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal128DivideByZero() {
+    public void testDivDecimal128DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(0, 0, ColumnType.getDecimalType(19, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 4));
+        createFunctionAndAssertFails(args, "'/' operation failed: Division by zero");
     }
 
     @Test
-    public void testDivDecimal128Simple() {
+    public void testDivDecimal128Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 600, ColumnType.getDecimalType(20, 2))); // 6.00
         args.add(new Decimal128Constant(0, 200, ColumnType.getDecimalType(20, 2))); // 2.00
@@ -69,7 +70,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal128WithDifferentScales() {
+    public void testDivDecimal128WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 1000, ColumnType.getDecimalType(19, 2))); // 10.00
         args.add(new Decimal128Constant(0, 25, ColumnType.getDecimalType(19, 1))); // 2.5
@@ -77,7 +78,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal128WithNull() {
+    public void testDivDecimal128WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 0)));
@@ -85,7 +86,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal128WithRemainder() {
+    public void testDivDecimal128WithRemainder() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 2))); // 1.00
         args.add(new Decimal128Constant(0, 300, ColumnType.getDecimalType(20, 2))); // 3.00
@@ -94,15 +95,15 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal16DivideByZero() {
+    public void testDivDecimal16DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 4));
+        createFunctionAndAssertFails(args, "'/' operation failed: Division by zero");
     }
 
     @Test
-    public void testDivDecimal16Simple() {
+    public void testDivDecimal16Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 600, ColumnType.getDecimalType(4, 2))); // 6.00
         args.add(new Decimal16Constant((short) 200, ColumnType.getDecimalType(4, 2))); // 2.00
@@ -110,7 +111,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal16WithDifferentScales() {
+    public void testDivDecimal16WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 1000, ColumnType.getDecimalType(4, 2))); // 10.00
         args.add(new Decimal16Constant((short) 25, ColumnType.getDecimalType(4, 1))); // 2.5
@@ -118,7 +119,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal16WithNull() {
+    public void testDivDecimal16WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 0)));
@@ -126,15 +127,15 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal256DivideByZero() {
+    public void testDivDecimal256DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2)));
         args.add(new Decimal256Constant(0, 0, 0, 0, ColumnType.getDecimalType(40, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 4));
+        createFunctionAndAssertFails(args, "'/' operation failed: Division by zero");
     }
 
     @Test
-    public void testDivDecimal256MaxPrecision() {
+    public void testDivDecimal256MaxPrecision() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 600, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0)));
         args.add(new Decimal256Constant(0, 0, 0, 200, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0)));
@@ -142,7 +143,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal256Negative() {
+    public void testDivDecimal256Negative() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(-1, -1, -1, -15, ColumnType.getDecimalType(40, 0))); // -15
         args.add(new Decimal256Constant(0, 0, 0, 3, ColumnType.getDecimalType(40, 0))); // 3
@@ -150,7 +151,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal256Simple() {
+    public void testDivDecimal256Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 600, ColumnType.getDecimalType(40, 2))); // 6.00
         args.add(new Decimal256Constant(0, 0, 0, 200, ColumnType.getDecimalType(40, 2))); // 2.00
@@ -158,7 +159,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal256WithNull() {
+    public void testDivDecimal256WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(
                 Decimals.DECIMAL256_HH_NULL,
@@ -172,7 +173,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal256WithRounding() {
+    public void testDivDecimal256WithRounding() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 1, 0, ColumnType.getDecimalType(39, 0))); // large number
         args.add(new Decimal256Constant(0, 0, 0, 3, ColumnType.getDecimalType(39, 0))); // 3
@@ -181,15 +182,15 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal32DivideByZero() {
+    public void testDivDecimal32DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(8, 2)));
         args.add(new Decimal32Constant(0, ColumnType.getDecimalType(8, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 4));
+        createFunctionAndAssertFails(args, "'/' operation failed: Division by zero");
     }
 
     @Test
-    public void testDivDecimal32Simple() {
+    public void testDivDecimal32Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(600, ColumnType.getDecimalType(8, 2))); // 6.00
         args.add(new Decimal32Constant(200, ColumnType.getDecimalType(8, 2))); // 2.00
@@ -197,7 +198,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal32WithDifferentScales() {
+    public void testDivDecimal32WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(1000, ColumnType.getDecimalType(9, 2))); // 10.00
         args.add(new Decimal32Constant(25, ColumnType.getDecimalType(9, 1))); // 2.5
@@ -205,7 +206,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal32WithNull() {
+    public void testDivDecimal32WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(9, 2)));
         args.add(new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
@@ -213,15 +214,15 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal64DivideByZero() {
+    public void testDivDecimal64DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(10, 2)));
         args.add(new Decimal64Constant(0, ColumnType.getDecimalType(10, 2)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 4));
+        createFunctionAndAssertFails(args, "'/' operation failed: Division by zero");
     }
 
     @Test
-    public void testDivDecimal64Simple() {
+    public void testDivDecimal64Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(600, ColumnType.getDecimalType(10, 2))); // 6.00
         args.add(new Decimal64Constant(200, ColumnType.getDecimalType(10, 2))); // 2.00
@@ -229,7 +230,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal64WithDifferentScales() {
+    public void testDivDecimal64WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(1000, ColumnType.getDecimalType(14, 2))); // 10.00
         args.add(new Decimal64Constant(25, ColumnType.getDecimalType(14, 1))); // 2.5
@@ -237,7 +238,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal64WithNull() {
+    public void testDivDecimal64WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(15, 2)));
         args.add(new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(15, 0)));
@@ -245,15 +246,15 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal8DivideByZero() {
+    public void testDivDecimal8DivideByZero() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 1)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 2));
+        createFunctionAndAssertFails(args, "'/' operation failed: Division by zero");
     }
 
     @Test
-    public void testDivDecimal8Simple() {
+    public void testDivDecimal8Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 60, ColumnType.getDecimalType(2, 1))); // 6.0
         args.add(new Decimal8Constant((byte) 20, ColumnType.getDecimalType(2, 1))); // 2.0
@@ -261,7 +262,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal8WithDifferentScales() {
+    public void testDivDecimal8WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 100, ColumnType.getDecimalType(2, 2))); // 1.00
         args.add(new Decimal8Constant((byte) 25, ColumnType.getDecimalType(2, 1))); // 2.5
@@ -269,7 +270,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivDecimal8WithNull() {
+    public void testDivDecimal8WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 0)));
@@ -277,7 +278,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivMixedDecimalTypes() {
+    public void testDivMixedDecimalTypes() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 1000, ColumnType.getDecimalType(40, 2))); // 10.00
         args.add(new Decimal128Constant(0, 200, ColumnType.getDecimalType(20, 2))); // 2.00
@@ -290,7 +291,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivRandomValues() {
+    public void testDivRandomValues() throws SqlException {
         for (int i = 2; i < 10; i++) {
             long dividend = i * 12;
             long divisor = i % 6 + 1; // ensure divisor is not zero
@@ -314,7 +315,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivWithPrecisionScaling() {
+    public void testDivWithPrecisionScaling() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 5608, ColumnType.getDecimalType(22, 2))); // 56.08
         args.add(new Decimal128Constant(0, 456, ColumnType.getDecimalType(22, 1))); // 45.6
@@ -323,7 +324,7 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testDivWithRounding() {
+    public void testDivWithRounding() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2))); // 1.00
         args.add(new Decimal128Constant(0, 600, ColumnType.getDecimalType(19, 2))); // 6.00
@@ -331,26 +332,8 @@ public class DivDecimalFunctionFactoryTest extends AbstractTest {
         createFunctionAndAssert(args, 0, 0, 0, 1667, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 4));
     }
 
-    private void createFunctionAndAssert(ObjList<Function> args, long hh, long hl, long lh, long ll, int expectedType) {
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
-            Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
-            Assert.assertEquals(hh, value.getHh());
-            Assert.assertEquals(hl, value.getHl());
-            Assert.assertEquals(lh, value.getLh());
-            Assert.assertEquals(ll, value.getLl());
-            Assert.assertEquals(expectedType, func.getType());
-        }
-    }
-
-    private void createFunctionAndAssertNull(ObjList<Function> args, int expectedType) {
-        createFunctionAndAssert(
-                args,
-                Decimals.DECIMAL256_HH_NULL,
-                Decimals.DECIMAL256_HL_NULL,
-                Decimals.DECIMAL256_LH_NULL,
-                Decimals.DECIMAL256_LL_NULL,
-                expectedType
-        );
+    @Override
+    protected FunctionFactory getFactory() {
+        return factory;
     }
 }

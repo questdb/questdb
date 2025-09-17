@@ -55,13 +55,13 @@ public class MulDecimalFunctionFactory implements FunctionFactory {
         final int rightType = right.getType();
         final int precision = Decimals.MAX_PRECISION;
         final int scale = Math.min(ColumnType.getDecimalScale(leftType) + ColumnType.getDecimalScale(rightType), Decimals.MAX_SCALE);
-        return new Func(left, right, ColumnType.getDecimalType(precision, scale));
+        return new Func(left, right, ColumnType.getDecimalType(precision, scale), position);
     }
 
     private static class Func extends ArithmeticDecimal256Function {
 
-        public Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
+        public Func(Function left, Function right, int targetType, int position) {
+            super(left, right, targetType, position);
         }
 
         @Override

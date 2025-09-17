@@ -26,7 +26,8 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -34,26 +35,23 @@ import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.math.AddDecimalFunctionFactory;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class AddDecimalFunctionFactoryTest extends AbstractTest {
+public class AddDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFactoryTest {
     private static final AddDecimalFunctionFactory factory = new AddDecimalFunctionFactory();
 
     @Test
-    public void testAddDecimal128Overflow() {
+    public void testAddDecimal128Overflow() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(Long.MAX_VALUE, Long.MAX_VALUE, ColumnType.getDecimalType(37, 0)));
         args.add(new Decimal128Constant(0, 1, ColumnType.getDecimalType(37, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(38, 0));
+        createFunctionAndAssertFails(args, "'+' operation failed: Overflow in addition: result exceeds maximum precision");
     }
 
     @Test
-    public void testAddDecimal128Simple() {
+    public void testAddDecimal128Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 2))); // 1.00
         args.add(new Decimal128Constant(0, 200, ColumnType.getDecimalType(20, 2))); // 2.00
@@ -61,7 +59,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal128WithCarry() {
+    public void testAddDecimal128WithCarry() throws SqlException {
         // Test values that require carry operation
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, -1, ColumnType.getDecimalType(20, 2)));
@@ -70,7 +68,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal128WithDifferentScales() {
+    public void testAddDecimal128WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 150, ColumnType.getDecimalType(19, 2))); // 1.50
         args.add(new Decimal128Constant(0, 5, ColumnType.getDecimalType(19, 1))); // 0.5
@@ -78,7 +76,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal128WithNull() {
+    public void testAddDecimal128WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 100, ColumnType.getDecimalType(19, 2)));
         args.add(new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 0)));
@@ -86,7 +84,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal16Simple() {
+    public void testAddDecimal16Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2))); // 1.00
         args.add(new Decimal16Constant((short) 200, ColumnType.getDecimalType(4, 2))); // 2.00
@@ -94,7 +92,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal16WithDifferentScales() {
+    public void testAddDecimal16WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 150, ColumnType.getDecimalType(4, 2))); // 1.50
         args.add(new Decimal16Constant((short) 5, ColumnType.getDecimalType(4, 1))); // 0.5
@@ -102,7 +100,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal16WithNull() {
+    public void testAddDecimal16WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal16Constant((short) 100, ColumnType.getDecimalType(4, 2)));
         args.add(new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 0)));
@@ -110,7 +108,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal256MaxPrecision() {
+    public void testAddDecimal256MaxPrecision() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(Decimals.MAX_PRECISION, Decimals.MAX_SCALE)));
         args.add(new Decimal256Constant(0, 0, 0, 200, ColumnType.getDecimalType(Decimals.MAX_PRECISION, Decimals.MAX_SCALE)));
@@ -118,7 +116,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal256Negative() {
+    public void testAddDecimal256Negative() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 1, ColumnType.getDecimalType(40, 0)));
         args.add(new Decimal256Constant(-1, -1, -1, -1, ColumnType.getDecimalType(40, 0)));
@@ -126,15 +124,15 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal256Overflow() {
+    public void testAddDecimal256Overflow() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0)));
         args.add(new Decimal256Constant(0, 0, 0, 1, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(Decimals.MAX_PRECISION, 0));
+        createFunctionAndAssertFails(args, "'+' operation failed: Overflow in addition: result exceeds maximum precision");
     }
 
     @Test
-    public void testAddDecimal256Simple() {
+    public void testAddDecimal256Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2))); // 1.00
         args.add(new Decimal256Constant(0, 0, 0, 200, ColumnType.getDecimalType(40, 2))); // 2.00
@@ -142,7 +140,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal256WithCarry() {
+    public void testAddDecimal256WithCarry() throws SqlException {
         // Test values that require carry operation
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(0, 0, 0, -1, ColumnType.getDecimalType(39, 0)));
@@ -151,7 +149,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal256WithNull() {
+    public void testAddDecimal256WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(
                 Decimals.DECIMAL256_HH_NULL,
@@ -165,7 +163,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal32Simple() {
+    public void testAddDecimal32Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(8, 2))); // 1.00
         args.add(new Decimal32Constant(200, ColumnType.getDecimalType(8, 2))); // 2.00
@@ -173,7 +171,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal32WithDifferentScales() {
+    public void testAddDecimal32WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(150, ColumnType.getDecimalType(9, 2))); // 1.50
         args.add(new Decimal32Constant(5, ColumnType.getDecimalType(9, 1))); // 0.5
@@ -181,7 +179,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal32WithNull() {
+    public void testAddDecimal32WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal32Constant(100, ColumnType.getDecimalType(9, 2)));
         args.add(new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
@@ -189,15 +187,15 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal64Overflow() {
+    public void testAddDecimal64Overflow() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(Long.MAX_VALUE, ColumnType.getDecimalType(17, 0)));
         args.add(new Decimal64Constant(1, ColumnType.getDecimalType(17, 0)));
-        createFunctionAndAssertNull(args, ColumnType.getDecimalType(18, 0));
+        createFunctionAndAssertFails(args, "'+' operation failed: Overflow in addition: result exceeds 64-bit capacity");
     }
 
     @Test
-    public void testAddDecimal64Simple() {
+    public void testAddDecimal64Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(10, 2))); // 1.00
         args.add(new Decimal64Constant(200, ColumnType.getDecimalType(10, 2))); // 2.00
@@ -205,7 +203,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal64WithDifferentScales() {
+    public void testAddDecimal64WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(150, ColumnType.getDecimalType(14, 2))); // 1.50
         args.add(new Decimal64Constant(5, ColumnType.getDecimalType(14, 1))); // 0.5
@@ -213,7 +211,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal64WithNull() {
+    public void testAddDecimal64WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal64Constant(100, ColumnType.getDecimalType(15, 2)));
         args.add(new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(15, 0)));
@@ -221,7 +219,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal8Simple() {
+    public void testAddDecimal8Simple() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1))); // 1.0
         args.add(new Decimal8Constant((byte) 20, ColumnType.getDecimalType(2, 1))); // 2.0
@@ -229,7 +227,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal8WithDifferentScales() {
+    public void testAddDecimal8WithDifferentScales() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 15, ColumnType.getDecimalType(2, 2))); // 0.15
         args.add(new Decimal8Constant((byte) 5, ColumnType.getDecimalType(2, 1))); // 0.5
@@ -237,7 +235,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddDecimal8WithNull() {
+    public void testAddDecimal8WithNull() throws SqlException {
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal8Constant((byte) 10, ColumnType.getDecimalType(2, 1)));
         args.add(new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 0)));
@@ -245,7 +243,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddMixedDecimalTypes() {
+    public void testAddMixedDecimalTypes() throws SqlException {
         // Test adding different decimal sizes
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)));
@@ -259,7 +257,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddRandomValues() {
+    public void testAddRandomValues() throws SqlException {
         // Test with some random but predictable values
         for (int i = 1; i < 50; i++) {
             long val1 = i * 13;
@@ -274,7 +272,7 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     @Test
-    public void testAddWithPrecisionScaling() {
+    public void testAddWithPrecisionScaling() throws SqlException {
         // Test that precision and scale are handled correctly
         ObjList<Function> args = new ObjList<>();
         args.add(new Decimal128Constant(0, 1234, ColumnType.getDecimalType(22, 2)));
@@ -283,26 +281,8 @@ public class AddDecimalFunctionFactoryTest extends AbstractTest {
         createFunctionAndAssert(args, 0, 0, 0, 6904, ColumnType.getDecimalType(23, 2));
     }
 
-    private void createFunctionAndAssert(ObjList<Function> args, long hh, long hl, long lh, long ll, int expectedType) {
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
-            Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
-            Assert.assertEquals(hh, value.getHh());
-            Assert.assertEquals(hl, value.getHl());
-            Assert.assertEquals(lh, value.getLh());
-            Assert.assertEquals(ll, value.getLl());
-            Assert.assertEquals(expectedType, func.getType());
-        }
-    }
-
-    private void createFunctionAndAssertNull(ObjList<Function> args, int expectedType) {
-        createFunctionAndAssert(
-                args,
-                Decimals.DECIMAL256_HH_NULL,
-                Decimals.DECIMAL256_HL_NULL,
-                Decimals.DECIMAL256_LH_NULL,
-                Decimals.DECIMAL256_LL_NULL,
-                expectedType
-        );
+    @Override
+    protected FunctionFactory getFactory() {
+        return factory;
     }
 }

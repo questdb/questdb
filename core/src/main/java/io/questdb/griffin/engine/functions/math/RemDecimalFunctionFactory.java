@@ -61,18 +61,18 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
             case 1:
             case 2:
             case 3:
-                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale));
+                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale), position);
             case 4:
-                return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale));
+                return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale), position);
             default:
-                return new Decimal256Func(left, right, ColumnType.getDecimalType(precision, scale));
+                return new Decimal256Func(left, right, ColumnType.getDecimalType(precision, scale), position);
         }
     }
 
     private static class Decimal128Func extends ArithmeticDecimal128Function {
 
-        public Decimal128Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
+        public Decimal128Func(Function left, Function right, int targetType, int position) {
+            super(left, right, targetType, position);
         }
 
         @Override
@@ -88,8 +88,8 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
 
     private static class Decimal256Func extends ArithmeticDecimal256Function {
 
-        public Decimal256Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
+        public Decimal256Func(Function left, Function right, int targetType, int position) {
+            super(left, right, targetType, position);
         }
 
         @Override
@@ -105,8 +105,8 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
 
     private static class Decimal64Func extends ArithmeticDecimal64Function {
 
-        public Decimal64Func(Function left, Function right, int targetType) {
-            super(left, right, targetType);
+        public Decimal64Func(Function left, Function right, int targetType, int position) {
+            super(left, right, targetType, position);
         }
 
         @Override

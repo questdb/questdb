@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.math;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -43,14 +44,16 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
     protected final int precision;
     protected final Function right;
     protected final int scale;
+    private final int position;
     private final int rightScale;
     private final int rightStorageSizePow2;
     private boolean isNull;
 
-    public ArithmeticDecimal256Function(Function left, Function right, int targetType) {
+    public ArithmeticDecimal256Function(Function left, Function right, int targetType, int position) {
         super(targetType);
         this.left = left;
         this.right = right;
+        this.position = position;
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
         this.rightScale = ColumnType.getDecimalScale(right.getType());
@@ -226,8 +229,9 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
 
         try {
             exec(rightHH, rightHL, rightLH, rightLL, rightScale);
-        } catch (NumericException ignore) {
-            return false;
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().position(position)
+                    .put('\'').put(getName()).put("' operation failed: ").put(e.getFlyweightMessage());
         }
         return true;
     }
