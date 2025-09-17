@@ -81,15 +81,14 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.parser = new LineTcpParser(configuration.getCairoConfiguration());
+        this.parser = new LineTcpParser();
         recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_HTTP_CONN)
                 .of(initRecvBufSize, configuration.getMaxRecvBufferSize());
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
-                configuration.getTimestampAdapter(),
-                engine.getConfiguration().getMaxFileNameLength(),
-                configuration.getMicrosecondClock()
+                configuration.getTimestampUnit(),
+                engine.getConfiguration().getMaxFileNameLength()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(

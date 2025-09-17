@@ -31,13 +31,13 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.*;
 
 import java.io.Closeable;
 
 public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final Utf8StringIntHashMap symbolValueToKeyMap = new Utf8StringIntHashMap(
             256,
@@ -56,7 +56,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         this(configuration.getMicrosecondClock(), configuration.getSymbolCacheWaitBeforeReload());
     }
 
-    public SymbolCache(MicrosecondClock microsecondClock, long waitIntervalBeforeReload) {
+    public SymbolCache(Clock microsecondClock, long waitIntervalBeforeReload) {
         this.clock = microsecondClock;
         this.waitIntervalBeforeReload = waitIntervalBeforeReload;
     }

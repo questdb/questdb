@@ -389,6 +389,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED("line.tcp.undocumented.string.as.tag.supported"),
     LINE_FLOAT_DEFAULT_COLUMN_TYPE("line.float.default.column.type"),
     LINE_INTEGER_DEFAULT_COLUMN_TYPE("line.integer.default.column.type"),
+    LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE("line.timestamp.default.column.type"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),

@@ -75,7 +75,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
         mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
         if (!orderedByTimestampAsc) {
-            mapValueTypes.add(TIMESTAMP_VALUE_IDX, ColumnType.TIMESTAMP);
+            mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
         }
         Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
         this.cursor = new LatestByLightRecordCursor(latestByMap);
