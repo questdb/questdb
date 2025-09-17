@@ -3951,6 +3951,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
 
+        Function implicitCast = functionParser.createImplicitCast(functionPosition, function, columnType);
+        if (implicitCast != null) {
+            valueFunctions.add(implicitCast);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
         throw SqlException.inconvertibleTypes(
                 functionPosition,
                 function.getType(),
