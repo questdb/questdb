@@ -93,7 +93,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getNetworkWorkerPoolConfiguration().getWorkerCount());
+                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getSharedWorkerPoolNetworkConfiguration().getWorkerCount());
                     Assert.assertEquals(PG_WIRE_POOL_SIZE, qdb.getConfiguration().getPGWireConfiguration().getWorkerCount());
 
                     TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName);
@@ -118,7 +118,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getNetworkWorkerPoolConfiguration().getWorkerCount());
+                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getSharedWorkerPoolNetworkConfiguration().getWorkerCount());
                     Assert.assertEquals(PG_WIRE_POOL_SIZE, qdb.getConfiguration().getPGWireConfiguration().getWorkerCount());
 
                     TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName);

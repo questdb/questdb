@@ -183,7 +183,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new LastNotNullValueOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -254,7 +254,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new LastNotNullOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new LastNotNullValueOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -1614,7 +1614,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -1912,7 +1913,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
