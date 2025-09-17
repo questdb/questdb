@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -43,7 +44,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.WeakMutableObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -64,7 +65,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
     private final DatabaseCheckpointStatus checkpointStatus;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final long retryDelay;
@@ -282,6 +283,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             LOG.debug().$("table deleted, skipping [tableDir=").$safe(tableName).I$();
                             continue;
                         }
+                        int timestampType;
+                        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                            timestampType = metadata.getTimestampType();
+                        }
 
                         taskInitialized = true;
                         task.of(
@@ -290,6 +295,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 tableId,
                                 truncateVersion,
                                 columnType,
+                                timestampType,
                                 partitionBy,
                                 updateTxn,
                                 retryDelay,
@@ -297,7 +303,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         );
                     }
                     long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
-                    long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
+                    long partitionTs = task.getTimestampTypeDriver().fromMicros(rec.getLong(PARTITION_TIMESTAMP_COLUMN));
                     long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);
                     task.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
@@ -364,7 +370,9 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
                     row.putLong(UPDATE_TXN_COLUMN, cleanTask.getUpdateTxn());
                     row.putLong(COLUMN_VERSION_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION));
-                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP));
+                    // We always store `timestamp_micro` types in `column_versions_purge_log` to maintain uniformity in table output.
+                    // This doesn't result in any loss of precision when restore from table, as the `PARTITION BY` unit is larger than nanos (the nanosecond portion is always 0).
+                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, cleanTask.getTimestampTypeDriver().toMicros(updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP)));
                     row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN));
                     row.append();
                     updatedColumnInfo.setQuick(
@@ -435,12 +443,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 int tableId,
                 long truncateVersion,
                 int columnType,
+                int timestampType,
                 int partitionBy,
                 long updateTxn,
                 long retryDelay,
                 long microTime
         ) {
-            super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+            super.of(tableName, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
             this.retryDelay = retryDelay;
             nextRunTimestamp = microTime;
         }

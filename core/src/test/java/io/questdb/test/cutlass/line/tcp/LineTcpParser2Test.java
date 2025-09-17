@@ -40,6 +40,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -552,13 +553,13 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             Numbers.append(sink, lineTcpParser.getTimestamp());
             if (lineTcpParser.getTimestampUnit() != LineTcpParser.ENTITY_UNIT_NONE) {
                 switch (lineTcpParser.getTimestampUnit()) {
-                    case LineTcpParser.ENTITY_UNIT_NANO:
+                    case CommonUtils.TIMESTAMP_UNIT_NANOS:
                         sink.put("n");
                         break;
-                    case LineTcpParser.ENTITY_UNIT_MICRO:
+                    case CommonUtils.TIMESTAMP_UNIT_MICROS:
                         sink.put("t");
                         break;
-                    case LineTcpParser.ENTITY_UNIT_MILLI:
+                    case CommonUtils.TIMESTAMP_UNIT_MILLIS:
                         sink.put("m");
                         break;
                 }

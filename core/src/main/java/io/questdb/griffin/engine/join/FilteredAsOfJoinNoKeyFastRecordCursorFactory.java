@@ -91,6 +91,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveTimestampIndex,
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
@@ -162,9 +164,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
         }
 
         @Override
@@ -177,7 +181,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return false;
             }
 
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             if (masterTimestamp >= lookaheadTimestamp) {
                 if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
@@ -205,7 +209,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return true;
             }
 
-            if (toleranceInterval != Numbers.LONG_NULL && slaveRecB.getTimestamp(slaveTimestampIndex) < masterTimestamp - toleranceInterval) {
+            if (toleranceInterval != Numbers.LONG_NULL && scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale) < masterTimestamp - toleranceInterval) {
                 // we are past the tolerance interval, no need to traverse the slave cursor any further
                 record.hasSlave(false);
                 return true;
@@ -275,7 +279,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 slaveTimeFrameCursor.recordAtRowIndex(slaveRecB, filteredRowId);
-                if (toleranceInterval != Numbers.LONG_NULL && slaveRecB.getTimestamp(slaveTimestampIndex) < masterTimestamp - toleranceInterval) {
+                if (toleranceInterval != Numbers.LONG_NULL && scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale) < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);

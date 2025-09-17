@@ -35,7 +35,7 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -478,7 +478,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                     thread.start();
                 }
 
-                MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion
                 while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= errorsExpected) {
@@ -592,7 +592,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                     thread.start();
                 }
 
-                MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion
                 while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= 0) {
