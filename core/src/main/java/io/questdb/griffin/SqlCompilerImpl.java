@@ -718,6 +718,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             columnType = typeTag;
         }
 
+        if (columnType == ColumnType.DECIMAL) {
+            columnType = SqlParser.parseDecimalColumnType(lexer, tok);
+        }
+
         tok = SqlUtil.fetchNext(lexer);
 
         // check for an unmatched bracket
@@ -4625,6 +4629,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
         addSupportedConversion(ColumnType.DATE, numericTypes);
 
+        //region Decimals
+        for (short i = ColumnType.DECIMAL8; i <= ColumnType.DECIMAL256; i++) {
+            for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
+                addSupportedConversion(i, j);
+            }
+            // We only allow types that are accurately representable to be converted directly, others should use explicit
+            // casting.
+            addSupportedConversion(ColumnType.BYTE, i);
+            addSupportedConversion(ColumnType.SHORT, i);
+            addSupportedConversion(ColumnType.INT, i);
+            addSupportedConversion(ColumnType.LONG, i);
+        }
+        //endregion
 
         // Other exotics <-> strings
         addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);

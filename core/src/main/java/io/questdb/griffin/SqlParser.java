@@ -1675,7 +1675,7 @@ public class SqlParser {
      *
      * @return the concrete DECIMAL type with proper precision/scale set.
      */
-    private int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
+    public static int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
         previousToken = GenericLexer.immutableOf(previousToken);
         int previousTokenPosition = lexer.lastTokenPosition();
 

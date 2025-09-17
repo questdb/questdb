@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
@@ -373,6 +374,66 @@ public final class DecimalUtil {
         } catch (NumericException e) {
             throw SqlException.position(position)
                     .put("invalid DECIMAL type, scale must be a number");
+        }
+    }
+
+    /**
+     * Store a Decimal256 to a memory location
+     */
+    public static void store(Decimal256 decimal, MemoryCMARW mem, int targetType) {
+        if (decimal.isNull()) {
+            switch (ColumnType.tagOf(targetType)) {
+                case ColumnType.DECIMAL8:
+                    mem.putByte(Decimals.DECIMAL8_NULL);
+                    break;
+                case ColumnType.DECIMAL16:
+                    mem.putShort(Decimals.DECIMAL16_NULL);
+                    break;
+                case ColumnType.DECIMAL32:
+                    mem.putInt(Decimals.DECIMAL32_NULL);
+                    break;
+                case ColumnType.DECIMAL64:
+                    mem.putLong(Decimals.DECIMAL64_NULL);
+                    break;
+                case ColumnType.DECIMAL128:
+                    mem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+                    break;
+                case ColumnType.DECIMAL256:
+                    mem.putDecimal256(
+                            Decimals.DECIMAL256_HH_NULL,
+                            Decimals.DECIMAL256_HL_NULL,
+                            Decimals.DECIMAL256_LH_NULL,
+                            Decimals.DECIMAL256_LL_NULL
+                    );
+                    break;
+                default:
+                    assert false;
+            }
+        }
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8:
+                mem.putByte((byte) decimal.getLl());
+                break;
+            case ColumnType.DECIMAL16:
+                mem.putShort((short) decimal.getLl());
+                break;
+            case ColumnType.DECIMAL32:
+                mem.putInt((int) decimal.getLl());
+                break;
+            case ColumnType.DECIMAL64:
+                mem.putLong(decimal.getLl());
+                break;
+            case ColumnType.DECIMAL128:
+                mem.putDecimal128(decimal.getLh(), decimal.getLl());
+                break;
+            default:
+                mem.putDecimal256(
+                        decimal.getHh(),
+                        decimal.getHl(),
+                        decimal.getLh(),
+                        decimal.getLl()
+                );
+                break;
         }
     }
 }
