@@ -95,15 +95,16 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
         long copyID = copyImportContext.assignActiveImportId(executionContext.getSecurityContext());
         if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
             final RingQueue<CopyImportRequestTask> copyImportRequestQueue = messageBus.getCopyImportRequestQueue();
-            final SPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
-            long processingCursor = copyRequestPubSeq.next();
+
             importIdSink.clear();
             Numbers.appendHex(importIdSink, copyID, true);
 
             try {
+                circuitBreaker.reset();
+                final SPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
+                long processingCursor = copyRequestPubSeq.next();
                 assert processingCursor > -1;
                 final CopyImportRequestTask task = copyImportRequestQueue.get(processingCursor);
-                circuitBreaker.reset();
                 task.of(
                         executionContext.getSecurityContext(),
                         copyID,
@@ -116,7 +117,7 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
                         partitionBy,
                         atomicity
                 );
-
+                copyRequestPubSeq.done(processingCursor);
                 record.setValue(importIdSink);
                 cursor.toTop();
                 return cursor;
@@ -124,8 +125,6 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
                 copyImportContext.clear();
                 LOG.errorW().$("copy import failed [id=").$(importIdSink).$(", message=").$(ex.getMessage()).I$();
                 throw ex;
-            } finally {
-                copyRequestPubSeq.done(processingCursor);
             }
         } else {
             long activeCopyID = copyImportContext.getActiveImportID();

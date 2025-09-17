@@ -121,7 +121,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     "ts TIMESTAMP, " + // 0
                     "id VARCHAR, " + // 1
                     "table_name SYMBOL, " + // 2
-                    "file SYMBOL, " + // 3
+                    "files VARCHAR, " + // 3
                     "phase SYMBOL, " + // 4
                     "status SYMBOL, " + // 5
                     "message VARCHAR, " + // 6
@@ -259,9 +259,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 2147483647", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table/default.parquet\tfinished\n",
-                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertSql("files\tstatus\n" +
+                                    "test_table/1970-01-01.parquet\tfinished\n",
+                            "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
 
             testCopyExport(stmt, test);
@@ -279,9 +279,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 1", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table/default.parquet\tfinished\n",
-                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertSql("files\tstatus\n" +
+                                    "test_table/1970-01-01.parquet\tfinished\n",
+                            "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -298,9 +298,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size -1", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table/default.parquet\tfinished\n",
-                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertSql("files\tstatus\n" +
+                                    "test_table/1970-01-01.parquet\tfinished\n",
+                            "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -317,9 +317,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 0", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "test_table\tfinished\n",
-                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertSql("files\tstatus\n" +
+                                    "test_table/1970-01-01.parquet\tfinished\n",
+                            "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -334,9 +334,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy empty_table to 'output15' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("file\tstatus\n" +
-                                    "output15\tfailed\n",
-                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertSql("files\tstatus\tmessage\n" +
+                                    "\tfinished\tEmpty Table\n",
+                            "SELECT files, status,message FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -421,17 +421,17 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tphase\tstatus\tmessage\terrors\n" +
-                                        "test_table\twait_to_run\tstarted\tqueued\t0\n" +
-                                        "test_table\twait_to_run\tfinished\t\t0\n" +
-                                        "test_table\tpopulating_data_to_temp_table\tstarted\t\t0\n" +
-                                        "test_table\tpopulating_data_to_temp_table\tfinished\t\t0\n" +
-                                        "test_table\tconverting_partitions\tstarted\t\t0\n" +
-                                        "test_table\tconverting_partitions\tfinished\t\t0\n" +
-                                        "test_table\tdropping_temp_table\tstarted\t\t0\n" +
-                                        "test_table\tdropping_temp_table\tfinished\t\t0\n" +
-                                        "test_table\tsuccess\tfinished\t\t0\n",
-                                "SELECT file,phase,status,message,errors FROM sys.copy_export_log");
+                        assertSql("files\tphase\tstatus\tmessage\terrors\n" +
+                                        "\twait_to_run\tstarted\tqueued\t0\n" +
+                                        "\twait_to_run\tfinished\t\t0\n" +
+                                        "\tpopulating_data_to_temp_table\tstarted\t\t0\n" +
+                                        "\tpopulating_data_to_temp_table\tfinished\t\t0\n" +
+                                        "\tconverting_partitions\tstarted\t\t0\n" +
+                                        "\tconverting_partitions\tfinished\t\t0\n" +
+                                        "\tdropping_temp_table\tstarted\t\t0\n" +
+                                        "\tdropping_temp_table\tfinished\t\t0\n" +
+                                        "test_table/2023-01.parquet,test_table/2023-02.parquet\tsuccess\tfinished\t\t0\n",
+                                "SELECT files,phase,status,message,errors FROM sys.copy_export_log");
                         // Verify count and sample data
                         assertSql("ts\tx\n" +
                                         "2023-01-01T10:00:00.000000Z\t1\n" +
@@ -465,9 +465,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output_large\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("files\tstatus\n" +
+                                        "output_large/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify count and sample data
                         assertSql("count\n1000\n",
                                 "select count(*) from read_parquet('" + exportRoot + "/output_large/default.parquet')");
@@ -587,9 +587,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output_all_types/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify all data types are preserved correctly
                         assertSql("bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tts\n" +
                                         "true\t1\t100\t1000\t10000\t1.5\t2.5\ttest\tsym1\t2023-01-01T10:00:00.000000Z\n",
@@ -717,9 +717,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output_complex/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify complex query results
                         assertSql("id\tname\tamount\torder_date\n" +
                                         "1\tJohn\t100.5\t2023-01-01T10:00:00.000000Z\n" +
@@ -742,9 +742,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output_large/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("files\tstatus\n" +
+                                        "output_nulls/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify null values are handled correctly
                         assertSql("x\ty\tz\n" +
                                         "null\t\tnull\n" +
@@ -768,9 +768,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output_special/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify special characters are preserved
                         assertSql("x\ty\n" +
                                         "1\thello\\nworld\n" +
@@ -793,9 +793,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                                assertSql("file\tstatus\n" +
+                                assertSql("files\tstatus\n" +
                                                 "output3/default.parquet\tfinished\n",
-                                        "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                        "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                                 // Verify only filtered data was exported
                                 assertSql("id\tvalue\n" +
                                                 "2\t2.5\n" +
@@ -819,9 +819,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output1\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("files\tstatus\n" +
+                                        "output1/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify exported data can be read back and matches original
                         assertSql("x\ty\tz\n" +
                                         "1\t100\thello\n" +
@@ -868,9 +868,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output2/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify exported data
                         assertSql("x\ty\n" +
                                         "1\t100\n" +
@@ -893,9 +893,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output14/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify case-insensitive options work
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/output14/default.parquet')");
@@ -916,9 +916,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output4\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("files\tstatus\n" +
+                                        "output4/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify compressed data is readable
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/output4/default.parquet')");
@@ -939,9 +939,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output5/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with compression level
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/output5/default.parquet')");
@@ -962,9 +962,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output7\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("files\tstatus\n" +
+                                        "output7/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with custom page size
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/output7/default.parquet')");
@@ -987,9 +987,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output13\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("files\tstatus\n" +
+                                        "output13/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with multiple options
                         assertSql("x\ty\tz\n" +
                                         "1\thello\t1.5\n" +
@@ -1012,9 +1012,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output10/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with specific Parquet version
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/output10/default.parquet')");
@@ -1035,9 +1035,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output11/2023-01-01.parquet,output11/2023-01-02.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify partitioned data
                         assertSql("ts\tx\n" +
                                         "2023-01-01T10:00:00.000000Z\t1\n",
@@ -1084,9 +1084,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output6/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with custom row group size
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/output6/default.parquet')");
@@ -1121,9 +1121,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "test_table/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with statistics disabled
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('" + exportRoot + "/test_table/default.parquet')");
@@ -1144,9 +1144,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
+                        assertSql("files\tstatus\n" +
                                         "output8/default.parquet\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify data with statistics enabled
                         assertSql("x\ty\n1\ttest\n",
                                 "select * from read_parquet('output8/default.parquet')");

@@ -206,7 +206,9 @@ public class SerialParquetExporter implements Closeable {
                             }
 
                             // native partition - convert to parquet
-                            reader.openPartition(partitionIndex);
+                            if (reader.openPartition(partitionIndex) <= 0) {
+                                continue;
+                            }
                             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                             toParquet.trimTo(toParquetBaseLen);
                             toParquet.concat(fileName);

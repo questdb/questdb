@@ -81,7 +81,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                                 "ts TIMESTAMP, " + // 0
                                 "id VARCHAR, " + // 1
                                 "table_name SYMBOL, " + // 2
-                                "file VARCHAR, " + // 3
+                                "files VARCHAR, " + // 3
                                 "phase SYMBOL, " + // 4
                                 "status SYMBOL, " + // 5
                                 "message VARCHAR, " + // 6
@@ -195,7 +195,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                     updateStatus(phase, CopyExportRequestTask.Status.FINISHED, task,
                             null, "signal sent", 0);
                 }
-                updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, task, serialExporter.getFiles(), null, 0);
+                Utf8StringSink files = serialExporter.getFiles();
+                updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, task, files, files.size() == 0 ? "Empty Table" : "", 0);
             } catch (CopyExportException e) {
                 updateStatus(
                         e.getPhase(),

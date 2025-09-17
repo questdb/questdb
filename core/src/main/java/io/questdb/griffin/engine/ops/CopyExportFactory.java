@@ -125,23 +125,21 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         long copyID = copyContext.assignActiveExportId(securityContext);
         if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
             final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
-            final SPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
-            long processingCursor = copyRequestPubSeq.next();
             final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
             circuitBreaker.reset();
             try {
-                assert processingCursor > -1;
-                final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 CreateTableOperationImpl createOp = null;
-                if (this.tableName != null && partitionBy != -1) {
+                if (this.tableName != null) {
                     TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                     if (tableToken == null) {
                         throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
                     }
-                    try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-                        int tablePartitionBy = meta.getPartitionBy();
-                        if (tablePartitionBy != partitionBy) {
-                            this.selectText = this.tableName;
+                    if (partitionBy != -1) {
+                        try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                            int tablePartitionBy = meta.getPartitionBy();
+                            if (tablePartitionBy != partitionBy) {
+                                this.selectText = this.tableName;
+                            }
                         }
                     }
                 }
@@ -161,6 +159,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 if (copyExportResult != null) {
                     copyExportResult.setCopyID(copyID);
                 }
+                final SPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
+                long processingCursor = copyRequestPubSeq.next();
+                assert processingCursor > -1;
+                final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
                 task.of(
                         securityContext,
                         copyID,
@@ -179,17 +181,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         rawArrayEncoding,
                         userSpecifiedExportOptions
                 );
-                copyRequestPubSeq.done(processingCursor);
-                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, "queued", 0);
+                if (copyContext.getReporter() != null) {
+                    copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, "queued", 0);
+                }
                 cursor.toTop();
+                copyRequestPubSeq.done(processingCursor);
                 return cursor;
-            } catch (SqlException ex) {
-                copyContext.clear();
-                exportIdSink.clear();
-                Numbers.appendHex(exportIdSink, copyID, true);
-                LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getFlyweightMessage()).I$();
-                throw ex;
-            } catch (CairoException ex) {
+            } catch (SqlException | CairoException ex) {
                 copyContext.clear();
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
