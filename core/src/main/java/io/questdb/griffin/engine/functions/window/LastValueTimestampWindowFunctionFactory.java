@@ -2097,6 +2097,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         private final boolean isRange;
         private final long rowsLo;
         private long value = Numbers.LONG_NULL;
+
         /**
          * Creates a partitioned last_value implementation for frames that always include the current row.
          * <p>
@@ -2297,6 +2298,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         protected final long minDiff;
         protected final int timestampIndex;
         protected long lastValue = Numbers.LONG_NULL;
+
         /**
          * Constructs a partitioned RANGE-frame implementation of `last_value` for TIMESTAMP values.
          * <p>
@@ -2581,6 +2583,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         private final MemoryARW memory;
         private final long rowLo;
         private long lastValue = Numbers.LONG_NULL;
+
         /**
          * Constructs a partitioned ROWS-frame last_value function that uses a per-partition ring buffer.
          * <p>
@@ -3244,6 +3247,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     public static class LastValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowTimestampFunction {
         private boolean found;
         private long value = Numbers.LONG_NULL;
+
         /**
          * Creates a LastValueOverWholeResultSetFunction that computes `last_value` over the entire result set.
          *

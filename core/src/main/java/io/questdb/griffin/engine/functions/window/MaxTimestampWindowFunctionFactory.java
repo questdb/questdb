@@ -2303,6 +2303,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         private final TimestampComparator comparator;
         private final String name;
         private long maxMin = Numbers.LONG_NULL;
+
         /**
          * Constructs a window function that computes the maximum timestamp across the entire result set.
          *

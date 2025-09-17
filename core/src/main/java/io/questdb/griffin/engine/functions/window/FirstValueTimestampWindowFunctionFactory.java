@@ -2888,6 +2888,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     public static class FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowTimestampFunction {
         protected boolean found;
         protected long value = Numbers.LONG_NULL;
+
         /**
          * Construct a FirstValueOverWholeResultSetFunction that computes the FIRST_VALUE over the entire result set.
          *
