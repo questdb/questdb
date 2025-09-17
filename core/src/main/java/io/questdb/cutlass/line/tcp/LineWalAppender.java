@@ -43,6 +43,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.LineTcpTimestampAdapter.TS_COLUMN_INSTANCE;
@@ -56,6 +57,7 @@ public class LineWalAppender {
     private final Long256Impl long256;
     private final int maxFileNameLength;
     private final MicrosecondClock microsecondClock;
+    private final DirectUtf8Sink sink;
     private final boolean stringToCharCastAllowed;
     private LineTcpTimestampAdapter timestampAdapter;
 
@@ -63,6 +65,7 @@ public class LineWalAppender {
             boolean autoCreateNewColumns,
             boolean stringToCharCastAllowed,
             LineTcpTimestampAdapter timestampAdapter,
+            DirectUtf8Sink sink,
             int maxFileNameLength,
             MicrosecondClock microsecondClock
     ) {
@@ -72,6 +75,7 @@ public class LineWalAppender {
         this.maxFileNameLength = maxFileNameLength;
         this.microsecondClock = microsecondClock;
         this.long256 = new Long256Impl();
+        this.sink = sink;
     }
 
     public void appendToWal(
@@ -282,7 +286,13 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, ent.getLongValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    sink.clear();
+                                    Numbers.append(sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "INTEGER", colType, ent.getName());
@@ -298,7 +308,13 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    sink.clear();
+                                    Numbers.append(sink, ent.getFloatValue());
+                                    r.putSymUtf8(columnIndex, sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
@@ -411,7 +427,13 @@ public class LineWalAppender {
                                 r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    sink.clear();
+                                    sink.put(ent.getBooleanValue() ? 't' : 'f');
+                                    r.putSymUtf8(columnIndex, sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "BOOLEAN", colType, ent.getName());
@@ -429,7 +451,13 @@ public class LineWalAppender {
                                 r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    sink.clear();
+                                    Numbers.append(sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "TIMESTAMP", colType, ent.getName());
@@ -437,11 +465,15 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_ARRAY:
-                        ArrayView array = ent.getArray();
-                        if (array.getType() != colType && !array.isNull()) {
-                            throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, ent.getName());
+                        if (ColumnType.isArray(colType)) {
+                            ArrayView array = ent.getArray();
+                            if (array.getType() != colType && !array.isNull()) {
+                                throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, ent.getName());
+                            }
+                            r.putArray(columnIndex, array);
+                        } else {
+                            throw castError(tud.getTableNameUtf16(), "ARRAY", colType, ent.getName());
                         }
-                        r.putArray(columnIndex, array);
                         break;
                     default:
                         break; // unsupported types are ignored
@@ -453,14 +485,14 @@ public class LineWalAppender {
             throw commitFailedException;
         } catch (CairoException th) {
             LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).I$();
+                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
             }
             throw th;
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(th).I$();
+                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
             }

@@ -55,6 +55,7 @@ import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
@@ -83,6 +84,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
@@ -180,6 +182,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     autoCreateNewColumns,
                     configuration.isStringToCharCastAllowed(),
                     configuration.getTimestampAdapter(),
+                    sink,
                     cairoConfiguration.getMaxFileNameLength(),
                     configuration.getMicrosecondClock()
             );
@@ -212,6 +215,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
             netIoJobs[i].close();
         }
+        Misc.free(sink);
     }
 
     public boolean doMaintenance(
