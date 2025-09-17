@@ -86,6 +86,9 @@ public class WalUtils {
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
+    // todo: add new WAL format version
+    //  the new TIMESTAMP_NS type can make it into WAL (create table, alter column type)
+    public static final short WALE_NANOS_FORMAT_VERSION = WALE_MAT_VIEW_FORMAT_VERSION + 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";
