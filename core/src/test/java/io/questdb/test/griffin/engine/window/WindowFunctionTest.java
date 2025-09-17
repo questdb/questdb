@@ -4163,7 +4163,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by i"
             );
 
-            // Cross-check: aggregate query equivalent to the window function
             assertSql(
                     "max_d\ti\n" +
                             "160000.0\t0\n" +
@@ -4174,7 +4173,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from ( " +
                             "  select data.d, data.i " +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
                             "  order by data.i, ts " +
                             ") " +
                             "where i in (0,1,2,3) " +

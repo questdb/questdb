@@ -3280,10 +3280,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         assertQueryNoLeakCheck(
                 compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "id\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
-                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\n" +
-                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\n",
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\n" +
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\n",
                 "show columns from timestamp_test",
                 null,
                 sqlExecutionContext,
