@@ -33,11 +33,11 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -47,7 +47,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 
@@ -67,7 +67,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private static final String WRITER_LOCK_REASON = "ilpUdp";
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnNameType = new LongList();
     private final LongList columnValues = new LongList();
@@ -81,7 +81,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     private final Path path = new Path();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final LineTimestampAdapter timestampAdapter;
+    private final byte timestampUnit;
     private final LineUdpReceiverConfiguration udpConfiguration;
     private final boolean useLegacyStringDefault;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
@@ -101,6 +101,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private long tableName;
     private TableToken tableToken;
+    private TimestampDriver timestampDriver;
     private TableWriter writer;
     private final LineEndParser MY_LINE_END = this::appendRow;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
@@ -115,7 +116,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.clock = configuration.getMicrosecondClock();
         this.engine = engine;
         this.udpConfiguration = udpConfiguration;
-        this.timestampAdapter = udpConfiguration.getTimestampAdapter();
+        this.timestampUnit = udpConfiguration.getTimestampUnit();
 
         this.defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
         this.defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();
@@ -201,6 +202,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
         TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         this.writer = writer;
+        this.timestampDriver = ColumnType.getTimestampDriver(writer.getTimestampType());
         this.metadata = writer.getMetadata();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
 
@@ -268,7 +270,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return writer.newRow(clock.getTicks());
         } else {
             try {
-                return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));
+                return writer.newRow(timestampDriver.from(Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))), timestampUnit));
             } catch (NumericException e) {
                 LOG.error().$("invalid timestamp: ").$safe(cache.get(columnValues.getQuick(valueCount - 1))).$();
                 return null;
@@ -278,6 +280,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void createState(CacheEntry entry) {
         writer = entry.writer;
+        timestampDriver = ColumnType.getTimestampDriver(writer.getTimestampType());
         metadata = writer.getMetadata();
         switchModeToAppend();
     }
@@ -595,7 +598,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public int getColumnType(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
-                return ColumnType.TIMESTAMP;
+                return ColumnType.TIMESTAMP_MICRO;
             }
             return (int) columnNameType.getQuick(columnIndex * 2 + 1);
         }

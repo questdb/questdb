@@ -709,7 +709,7 @@ public class WalTxnDetails implements QuietCloseable {
                             if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
-                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestampUs());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, matViewDataInfo.getLastPeriodHi());
                             } else {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);

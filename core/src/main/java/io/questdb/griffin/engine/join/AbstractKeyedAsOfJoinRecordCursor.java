@@ -48,12 +48,14 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             int columnSplit,
             Record nullRecord,
             int masterTimestampIndex,
+            int masterTimestampType,
             SingleRecordSink masterSinkTarget,
             int slaveTimestampIndex,
+            int slaveTimestampType,
             SingleRecordSink slaveSinkTarget,
             int lookahead
     ) {
-        super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+        super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
         this.masterSinkTarget = masterSinkTarget;
         this.slaveSinkTarget = slaveSinkTarget;
     }
@@ -84,7 +86,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         }
         record.hasSlave(origHasSlave);
 
-        final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+        final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
         if (masterTimestamp >= lookaheadTimestamp) {
             nextSlave(masterTimestamp);
         }

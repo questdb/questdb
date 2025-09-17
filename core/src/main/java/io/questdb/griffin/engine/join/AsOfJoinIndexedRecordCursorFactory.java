@@ -70,12 +70,16 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         this.masterSymbolColumnIndex = masterSymbolColumnIndex;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
+        RecordMetadata masterMeta = masterFactory.getMetadata();
+        RecordMetadata slaveMeta = slaveFactory.getMetadata();
         this.cursor = new AsOfJoinIndexedRecordCursor(
                 columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
+                NullRecordFactory.getInstance(slaveMeta),
+                masterMeta.getTimestampIndex(),
+                masterMeta.getTimestampType(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
-                slaveFactory.getMetadata().getTimestampIndex(),
+                slaveMeta.getTimestampIndex(),
+                slaveMeta.getTimestampType(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
@@ -133,12 +137,14 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
+                int masterTimestampType,
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
+                int slaveTimestampType,
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterSinkTarget, slaveTimestampIndex, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
         }
 
         @Override
@@ -165,7 +171,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 rowMax--;
             } else {
                 slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
-                if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                if (scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale) > masterTimestamp) {
                     // slaveFrameRow points to row just beyond the one with timestamp <= masterTimestamp
                     rowMax--;
                 }
@@ -202,7 +208,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 if (rowCursor.hasNext()) {
                     long rowId = rowCursor.next();
                     slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
-                    long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     if (slaveTimestamp <= masterTimestamp) {
                         // Enforce tolerance limit if specified
                         boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||

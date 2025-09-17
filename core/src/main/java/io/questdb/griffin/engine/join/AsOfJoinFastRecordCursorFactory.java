@@ -71,9 +71,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                masterFactory.getMetadata().getTimestampType(), new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                slaveFactory.getMetadata().getTimestampType(), new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
@@ -131,12 +131,14 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
+                int masterTimestampType,
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
+                int slaveTimestampType,
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterSinkTarget, slaveTimestampIndex, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
         }
 
         @Override
@@ -174,7 +176,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
 
             for (; ; ) {
-                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);

@@ -62,6 +62,7 @@ public class DebugUtils {
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
+        TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
         for (int p = 0; p < partitionCount; p++) {
             long partitionRowCount = reader.getPartitionRowCount(p);
             if (partitionRowCount != -1) {
@@ -71,7 +72,7 @@ public class DebugUtils {
                     long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
-                        LOG.critical().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                        LOG.critical().$("failed to reconcile column top [partition=").$ts(driver, partitionTimestamp)
                                 .$(", column=").$(c)
                                 .$(", expected=").$(columnTop)
                                 .$(", actual=").$(colTop).$(']').
@@ -103,20 +104,20 @@ public class DebugUtils {
         }
     }
 
-    static void logO3Index(long indexAddr, long indexSize, long tailLen) {
+    static void logO3Index(TimestampDriver driver, long indexAddr, long indexSize, long tailLen) {
         long start = Math.max(0, indexSize - tailLen);
         for (long i = start; i < indexSize; i++) {
             long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
             long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
-            LOG.info().$("index [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
+            LOG.info().$("index [").$(i).$("] = ").$ts(driver, ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
         }
     }
 
-    static void logTimestampColumn(long colAddr, long colSize, long tailLen) {
+    static void logTimestampColumn(TimestampDriver driver, long colAddr, long colSize, long tailLen) {
         long start = Math.max(0, colSize - tailLen);
         for (long i = start; i < colSize; i++) {
             long ts = Unsafe.getUnsafe().getLong(colAddr + 8 * i);
-            LOG.info().$("ts_col [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$();
+            LOG.info().$("ts_col [").$(i).$("] = ").$ts(driver, ts).$(", ts=").$(ts).$();
         }
     }
 }
