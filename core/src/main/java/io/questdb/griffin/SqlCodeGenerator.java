@@ -2725,7 +2725,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveModel.getContext(),
                                                             asOfToleranceInterval
                                                     );
-                                                    created = true;
                                                 } else {
                                                     // Fall back to original fast join with symbol short-circuit
                                                     SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
@@ -2741,8 +2740,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveModel.getContext(),
                                                             asOfToleranceInterval
                                                     );
-                                                    created = true;
                                                 }
+                                                created = true;
                                             }
 
                                             if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
