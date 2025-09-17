@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
@@ -380,7 +380,7 @@ public final class DecimalUtil {
     /**
      * Store a Decimal256 to a memory location
      */
-    public static void store(Decimal256 decimal, MemoryCMARW mem, int targetType) {
+    public static void store(Decimal256 decimal, MemoryA mem, int targetType) {
         if (decimal.isNull()) {
             switch (ColumnType.tagOf(targetType)) {
                 case ColumnType.DECIMAL8:

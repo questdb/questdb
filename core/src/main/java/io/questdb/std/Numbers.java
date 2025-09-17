@@ -25,8 +25,10 @@
 package io.questdb.std;
 
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
@@ -1350,7 +1352,7 @@ public final class Numbers {
         return extractLong256(text, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
-    public static long parseLongDuration(CharSequence sequence) throws NumericException {
+    public static long parseLongDurationMicros(CharSequence sequence) throws NumericException {
         final int lim = sequence.length();
         if (lim == 0) {
             throw NumericException.INSTANCE;
@@ -1363,6 +1365,7 @@ public final class Numbers {
 
         long val = 0;
         long r;
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
         EX:
         for (int i = 0; i < lim; i++) {
             int c = sequence.charAt(i);
@@ -1370,49 +1373,49 @@ public final class Numbers {
                 if (i == lim - 1) {
                     switch (c) {
                         case 's':
-                            r = val * Timestamps.SECOND_MICROS;
+                            r = driver.fromSeconds(val);
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'm':
-                            r = val * Timestamps.MINUTE_MICROS;
+                            r = driver.fromMinutes((int) val);
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'h':
-                            r = val * Timestamps.HOUR_MICROS;
+                            r = driver.fromHours((int) val);
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'd':
-                            r = val * Timestamps.DAY_MICROS;
+                            r = driver.fromDays((int) val);
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'w':
-                            r = val * Timestamps.WEEK_MICROS;
+                            r = driver.fromWeeks((int) val);
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'M':
-                            r = val * Timestamps.DAY_MICROS * 30;
+                            r = driver.fromDays((int) (val * 30));
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
                             val = r;
                             break EX;
                         case 'y':
-                            r = val * Timestamps.DAY_MICROS * 365;
+                            r = driver.fromDays((int) (val * 365));
                             if (r > val) {
                                 throw NumericException.INSTANCE;
                             }
@@ -1540,6 +1543,7 @@ public final class Numbers {
 
         long val = 0;
         int digitCount = 0;
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
         char c;
         OUT:
         for (; i < lim; i++) {
@@ -1555,19 +1559,19 @@ public final class Numbers {
                         // could be 'ms' or an error
                         if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
                             // 'ms' at the end of the string
-                            val *= Timestamps.MILLI_MICROS;
+                            val = driver.fromMillis(val);
                         } else {
                             throw NumericException.INSTANCE;
                         }
                     } else {
                         // 'm' at the end of the string
-                        val *= Timestamps.MINUTE_MICROS;
+                        val = driver.fromMinutes((int) val);
                     }
                     break OUT;
                 case 's':
                     // second
                     if (digitCount > 0 && i + 1 == lim) {
-                        val *= Timestamps.SECOND_MICROS;
+                        val = driver.fromSeconds(val);
                     } else {
                         throw NumericException.INSTANCE;
                     }
@@ -1587,7 +1591,7 @@ public final class Numbers {
                     break OUT;
                 case 'h':
                     if (digitCount > 0 && i + 1 == lim) {
-                        val *= Timestamps.HOUR_MICROS;
+                        val = driver.fromHours((int) val);
                     } else {
                         throw NumericException.INSTANCE;
                     }
@@ -1743,6 +1747,7 @@ public final class Numbers {
 
         long val = 0;
         int digitCount = 0;
+        TimestampDriver driver = NanosTimestampDriver.INSTANCE;
         char c;
         OUT:
         for (; i < lim; i++) {
@@ -1758,19 +1763,19 @@ public final class Numbers {
                         // could be 'ms' or an error
                         if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
                             // 'ms' at the end of the string
-                            val *= Timestamps.MILLI_MICROS * 1000;
+                            val = driver.fromMillis(val);
                         } else {
                             throw NumericException.INSTANCE;
                         }
                     } else {
                         // 'm' at the end of the string
-                        val *= Timestamps.MINUTE_MICROS * 1000;
+                        val = driver.fromMinutes((int) val);
                     }
                     break OUT;
                 case 's':
                     // second
                     if (digitCount > 0 && i + 1 == lim) {
-                        val *= Timestamps.SECOND_MICROS * 1000;
+                        val = driver.fromSeconds(val);
                     } else {
                         throw NumericException.INSTANCE;
                     }
@@ -1790,7 +1795,7 @@ public final class Numbers {
                     break OUT;
                 case 'h':
                     if (digitCount > 0 && i + 1 == lim) {
-                        val *= Timestamps.HOUR_MICROS * 1000;
+                        val = driver.fromHours((int) val);
                     } else {
                         throw NumericException.INSTANCE;
                     }

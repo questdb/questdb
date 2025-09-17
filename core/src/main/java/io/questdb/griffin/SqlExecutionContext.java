@@ -73,12 +73,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     );
@@ -106,6 +109,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     Decimal256 getDecimal256();
 
+    int getIntervalFunctionType();
+
     int getJitMode();
 
     default @NotNull MessageBus getMessageBus() {
@@ -122,7 +127,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     long getMicrosecondTimestamp();
 
-    long getNow();
+    long getNanosecondTimestamp();
+
+    /**
+     * Gets the current timestamp with specified precision.
+     *
+     * @param timestampType the timestamp precision type (micros or nanos)
+     * @return current timestamp value in the specified precision
+     */
+    long getNow(int timestampType);
+
+    int getNowTimestampType();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
@@ -204,7 +219,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // This method is used to override intrinsic values in the query execution context
     // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
-    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
 
     void popTimestampRequiredFlag();
@@ -226,9 +241,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Used to disable column pre-touch without affecting the explain plan
     void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
+    void setIntervalFunctionType(int intervalType);
+
     void setJitMode(int jitMode);
 
-    void setNowAndFixClock(long now);
+    void setNowAndFixClock(long now, int nowTimestampType);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 

@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -48,7 +48,7 @@ public class DecimalColumnTypeConverter {
     private static final Loader loaderFromLong = DecimalColumnTypeConverter::loadDecimalFromLong;
 
 
-    public static boolean convertToDecimal(long srcMem, int srcType, MemoryCMARW dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+    public static boolean convertToDecimal(long srcMem, int srcType, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
         final int srcScale = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
         final int dstScale = ColumnType.getDecimalScale(dstType);
         final int dstPrecision = ColumnType.getDecimalPrecision(dstType);

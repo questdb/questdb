@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToDateFunctionFactory implements FunctionFactory {
@@ -45,14 +44,14 @@ public class CastTimestampToDateFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToDateFunction {
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public long getDate(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            return value == Numbers.LONG_NULL ? value : value / 1000L;
+            return arg.getDate(rec);
         }
     }
 }

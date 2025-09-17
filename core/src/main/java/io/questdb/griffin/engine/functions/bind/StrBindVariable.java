@@ -24,13 +24,14 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -98,13 +99,14 @@ public class StrBindVariable extends StrFunction implements Mutable {
         return true;
     }
 
-    public void setTimestamp(long value) {
+    public void setTimestamp(long value, int timestampType) {
         isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf16Sink.clear();
-            TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            timestampDriver.append(utf16Sink, value);
             utf8Sink.clear();
-            TimestampFormatUtils.appendDateTimeUSec(utf8Sink, value);
+            timestampDriver.append(utf8Sink, value);
         }
     }
 

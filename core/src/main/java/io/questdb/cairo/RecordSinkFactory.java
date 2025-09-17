@@ -63,9 +63,18 @@ public class RecordSinkFactory {
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, writeStringAsVarchar);
+        return getInstance(
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos);
     }
 
     public static RecordSink getInstance(
@@ -76,27 +85,6 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString
     ) {
         return getInstance(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, null, skewIndex, writeSymbolAsString, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable BitSet writeSymbolAsString,
-            @Transient @Nullable IntList skewIndex
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, null);
     }
 
     public static RecordSink getInstance(
@@ -115,7 +103,31 @@ public class RecordSinkFactory {
                 keyFunctions,
                 skewIndex,
                 writeSymbolAsString,
-                writeStringAsVarchar
+                writeStringAsVarchar,
+                null
+        );
+        return getInstance(clazz, keyFunctions);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
+    ) {
+        final Class<RecordSink> clazz = getInstanceClass(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos
         );
         return getInstance(clazz, keyFunctions);
     }
@@ -150,7 +162,7 @@ public class RecordSinkFactory {
             @Nullable ObjList<Function> keyFunctions,
             @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
+        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
     }
 
     /**
@@ -196,7 +208,8 @@ public class RecordSinkFactory {
             @Nullable ObjList<Function> keyFunctions,
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
     ) {
         asm.init(RecordSink.class);
         asm.setupPool();
@@ -299,8 +312,9 @@ public class RecordSinkFactory {
         final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(JJ)V");
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(JJJJ)V");
 
-        int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
+        final int constantLong1000 = asm.poolLongConst(1000L);
+        final int copyNameIndex = asm.poolUtf8("copy");
+        final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
         final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
 
@@ -354,6 +368,7 @@ public class RecordSinkFactory {
             }
             final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
             final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
+            final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
             int skewedIndex;
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
@@ -405,6 +420,11 @@ public class RecordSinkFactory {
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetTimestamp, 1);
+                    if (timestampAsNanos) {
+                        // Convert microseconds to nanoseconds: multiply by 1000
+                        asm.ldc2_w(constantLong1000);
+                        asm.lmul();
+                    }
                     asm.invokeInterface(wPutTimestamp, 2);
                     break;
                 case ColumnType.BYTE:

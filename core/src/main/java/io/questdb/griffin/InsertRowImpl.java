@@ -29,17 +29,22 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.CommonUtils;
 
 public final class InsertRowImpl implements QuietCloseable {
     private final RecordToRowCopier copier;
     private final RowFactory rowFactory;
+    private final TimestampDriver timestampDriver;
     private final Function timestampFunction;
+    private final CommonUtils.TimestampUnitConverter timestampFunctionConverter;
     private final int timestampFunctionPosition;
+    private final int timestampType;
     private final int tupleIndex;
     private final VirtualRecord virtualRecord;
 
@@ -48,21 +53,31 @@ public final class InsertRowImpl implements QuietCloseable {
             RecordToRowCopier copier,
             Function timestampFunction,
             int timestampFunctionPosition,
-            int tupleIndex
+            int tupleIndex,
+            int timestampType
     ) {
         this.virtualRecord = virtualRecord;
         this.copier = copier;
         this.timestampFunction = timestampFunction;
         this.timestampFunctionPosition = timestampFunctionPosition;
         this.tupleIndex = tupleIndex;
+        this.timestampType = timestampType;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         if (timestampFunction != null) {
             int type = timestampFunction.getType();
             if (ColumnType.isString(type) || ColumnType.isVarchar(type)) {
                 rowFactory = this::getRowWithStringTimestamp;
+                this.timestampFunctionConverter = null;
             } else {
-                rowFactory = this::getRowWithTimestamp;
+                timestampFunctionConverter = timestampDriver.getTimestampUnitConverter(type);
+                if (timestampFunctionConverter == null) {
+                    rowFactory = this::getRowWithTimestamp;
+                } else {
+                    rowFactory = this::getRowWithTimestampWithConverter;
+                }
             }
         } else {
+            this.timestampFunctionConverter = null;
             rowFactory = this::getRowWithoutTimestamp;
         }
     }
@@ -97,11 +112,11 @@ public final class InsertRowImpl implements QuietCloseable {
         if (timestampValue != null) {
             try {
                 return tableWriter.newRow(
-                        SqlUtil.parseFloorPartialTimestamp(
+                        timestampDriver.fromStr(
                                 timestampFunction.getStrA(null),
                                 tupleIndex,
                                 timestampFunction.getType(),
-                                ColumnType.TIMESTAMP
+                                timestampType
                         )
                 );
             } catch (CairoException e) {
@@ -117,6 +132,17 @@ public final class InsertRowImpl implements QuietCloseable {
     private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {
         try {
             return tableWriter.newRow(timestampFunction.getTimestamp(null));
+        } catch (CairoException e) {
+            if (!e.isCritical()) {
+                e.position(timestampFunctionPosition);
+            }
+            throw e;
+        }
+    }
+
+    private TableWriter.Row getRowWithTimestampWithConverter(TableWriterAPI tableWriter) {
+        try {
+            return tableWriter.newRow(timestampFunctionConverter.convert(timestampFunction.getTimestamp(null)));
         } catch (CairoException e) {
             if (!e.isCritical()) {
                 e.position(timestampFunctionPosition);
