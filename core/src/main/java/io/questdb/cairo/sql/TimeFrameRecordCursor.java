@@ -43,10 +43,7 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      * @return BitmapIndexReader for the specified column, or null if the column is not indexed
      * or if this cursor doesn't support indexed access
      */
-    default BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-        // Default implementation returns null - no indexed access
-        return null;
-    }
+    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
      * @return record at current position
