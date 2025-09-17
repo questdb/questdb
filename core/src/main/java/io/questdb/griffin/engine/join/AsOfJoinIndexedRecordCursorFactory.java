@@ -161,7 +161,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // Ensure rowMax points to a row with timestamp <= masterTimestamp.
             slaveTimeFrameCursor.open();
             long rowMax = slaveFrameRow;
-            int partitionIndex = timeFrame.getFrameIndex();
             if (rowMax == timeFrame.getRowHi()) {
                 // slaveFrameRow points to one beyond the end of current frame
                 rowMax--;
@@ -201,7 +200,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 // Check the first entry only. They are sorted by timestamp, so other entries are older
                 if (rowCursor.hasNext()) {
                     long rowId = rowCursor.next();
-                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(partitionIndex, rowId));
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
                     long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
                     if (slaveTimestamp <= masterTimestamp) {
                         // Enforce tolerance limit if specified
@@ -218,7 +217,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     return;
                 }
                 slaveTimeFrameCursor.open();
-                partitionIndex = timeFrame.getFrameIndex();
                 rowMax = timeFrame.getRowHi() - 1;
             }
         }
