@@ -89,6 +89,92 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentInsertAndCopyPartitionFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table fuzz_table (ts timestamp, id long, value double, name string) timestamp(ts) partition by DAY WAL");
+
+            StringBuilder initialInsert = new StringBuilder("insert into fuzz_table values ");
+            for (int i = 0; i < 1000; i++) {
+                if (i > 0) initialInsert.append(", ");
+                initialInsert.append("(")
+                        .append(1000 + i)
+                        .append(", ")
+                        .append(i)
+                        .append(", ")
+                        .append(i * 1.5)
+                        .append(", 'name")
+                        .append(i)
+                        .append("')");
+            }
+            execute(initialInsert.toString());
+            drainWalQueue();
+
+            Thread insertThread = new Thread(() -> {
+                try {
+                    for (int batch = 0; batch < 50; batch++) {
+                        StringBuilder batchInsert = new StringBuilder("insert into fuzz_table values ");
+                        for (int i = 0; i < 100; i++) {
+                            if (i > 0) batchInsert.append(", ");
+                            long id = 20000 + (batch * 100) + i;
+                            batchInsert.append(10000 + i)
+                                    .append(", ")
+                                    .append(id)
+                                    .append(", ")
+                                    .append(id * 2.0)
+                                    .append(", 'concurrent")
+                                    .append(id)
+                                    .append("')");
+                        }
+                        execute(batchInsert.toString());
+                        drainWalQueue();
+                        Os.sleep(10);
+                    }
+                } catch (Exception e) {
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            CopyExportRunnable stmt = () -> {
+                insertThread.start();
+                Os.sleep(50);
+                runAndFetchCopyExportID("copy fuzz_table to 'fuzz_output' with format parquet partition_by MONTH", sqlExecutionContext);
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        try {
+                            insertThread.join(10000);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+
+                        assertSql("files\tstatus\n" +
+                                        "fuzz_output/1970-01.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+
+                        // Verify exported data integrity - should have at least initial 10k records
+                        String countQuery = "select count(*) from read_parquet('" + exportRoot + "/fuzz_output/1970-01.parquet')";
+                        try (RecordCursorFactory factory = select(countQuery);
+                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            assertTrue(cursor.hasNext());
+                            long count = cursor.getRecord().getLong(0);
+                            assertTrue(count >= 1000);
+                        }
+
+                        assertSql("id\tvalue\tname\n" +
+                                        "0\t0.0\tname0\n",
+                                "select id, value, name from read_parquet('" + exportRoot + "/fuzz_output/1970-01.parquet') where id = 0");
+                        assertSql("id\tvalue\tname\n" +
+                                        "999\t1498.5\tname999\n",
+                                "select id, value, name from read_parquet('" + exportRoot + "/fuzz_output/1970-01.parquet') where id = 999");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyCancelSyntaxError() throws Exception {
         assertException(
                 "copy 'foobar' cancel aw beans;",
@@ -523,7 +609,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
             // Insert multiple rows to test larger datasets
             StringBuilder insertQuery = new StringBuilder("insert into large_table values ");
-            for (int i = 0; i < 1000; i++) {
+            for (int i = 0; i < 10000; i++) {
                 if (i > 0) insertQuery.append(", ");
                 insertQuery.append("(").append(i).append(", 'value").append(i).append("')");
             }
@@ -538,12 +624,57 @@ public class CopyExportTest extends AbstractCairoTest {
                                         "output_large/default.parquet\tfinished\n",
                                 "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify count and sample data
-                        assertSql("count\n1000\n",
+                        assertSql("count\n10000\n",
                                 "select count(*) from read_parquet('" + exportRoot + "/output_large/default.parquet')");
                         assertSql("id\tvalue\n0\tvalue0\n",
                                 "select * from read_parquet('" + exportRoot + "/output_large/default.parquet') where id = 0");
                         assertSql("id\tvalue\n999\tvalue999\n",
                                 "select * from read_parquet('" + exportRoot + "/output_large/default.parquet') where id = 999");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetOnMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2023-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2023-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2023-11-10T12:02')" +
+                            ",('jpyusd', 1.321, '2023-11-10T12:03')"
+            );
+            drainWalQueue();
+
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainWalAndMatViewQueues();
+            drainPurgeJob();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy price_1h to 'price_1h' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "price_1h/2023-09.parquet,price_1h/2023-11.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("sym\tprice\tts\n" +
+                                        "gbpusd\t1.323\t2023-09-10T12:00:00.000000000Z\n",
+                                "select * from read_parquet('" + exportRoot + "/price_1h/2023-09.parquet')");
+                        assertSql("sym\tprice\tts\n" +
+                                        "jpyusd\t1.321\t2023-11-10T12:00:00.000000000Z\n",
+                                "select * from read_parquet('" + exportRoot + "/price_1h/2023-11.parquet')");
                     });
 
             testCopyExport(stmt, test);
@@ -644,11 +775,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     "double_col double, " +
                     "string_col string, " +
                     "symbol_col symbol, " +
+                    "t_ns timestamp_ns, " +
+                    "d_array DOUBLE[], " +
                     "ts timestamp" +
                     ") timestamp(ts)");
 
             execute("insert into all_types values (" +
-                    "true, 1, 100, 1000, 10000L, 1.5f, 2.5, 'test', 'sym1', '2023-01-01T10:00:00.000Z'" +
+                    "true, 1, 100, 1000, 10000L, 1.5f, 2.5, 'test', 'sym1', '2023-01-01T10:00:00.123456789Z', ARRAY[1.0, 2, 3],'2023-01-01T10:00:00.000Z'" +
                     ")");
 
             CopyExportRunnable stmt = () ->
@@ -660,8 +793,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                         "output_all_types/default.parquet\tfinished\n",
                                 "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify all data types are preserved correctly
-                        assertSql("bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tts\n" +
-                                        "true\t1\t100\t1000\t10000\t1.5\t2.5\ttest\tsym1\t2023-01-01T10:00:00.000000Z\n",
+                        assertSql("bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts\n" +
+                                        "true\t1\t100\t1000\t10000\t1.5\t2.5\ttest\tsym1\t2023-01-01T10:00:00.123456789Z\t[1.0,2.0,3.0]\t2023-01-01T10:00:00.000000Z\n",
                                 "select * from read_parquet('" + exportRoot + "/output_all_types/default.parquet')");
                     });
 

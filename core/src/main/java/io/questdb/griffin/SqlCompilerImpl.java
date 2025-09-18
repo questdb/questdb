@@ -147,6 +147,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.model.CopyModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -3189,7 +3190,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
-                        checkMatViewModification(executionModel);
+                        assert executionModel.getModelType() == ExecutionModel.COPY;
+                        if (((CopyModel) executionModel).getType() == COPY_TYPE_FROM) {
+                            checkMatViewModification(executionModel);
+                        }
                     }
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
@@ -3313,7 +3317,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (copyModel.isCancel()) {
                 copyFactory = compileCopyCancel(executionContext, copyModel);
             } else {
-                if (copyModel.getType() == CopyModel.COPY_TYPE_FROM) {
+                if (copyModel.getType() == COPY_TYPE_FROM) {
                     copyFactory = compileCopyFrom(executionContext.getSecurityContext(), copyModel);
                 } else {
                     copyFactory = compileCopyTo(executionContext.getSecurityContext(), copyModel, sqlText);
