@@ -1163,6 +1163,26 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {
+                int position = argPositions.getQuick(k);
+                final int targetPrecision;
+                if (arg.isConstant()) {
+                    int value = arg.getInt(null);
+                    targetPrecision = Math.max(Decimals.getIntPrecision(value), 1);
+                } else {
+                    targetPrecision = Decimals.getIntPrecision(Integer.MAX_VALUE);
+                }
+                args.setQuick(k, CastIntToDecimalFunctionFactory.newInstance(position, arg, ColumnType.getDecimalType(targetPrecision, 0), sqlExecutionContext));
+            } else if (argTypeTag == ColumnType.LONG && sigArgTypeTag == ColumnType.DECIMAL) {
+                int position = argPositions.getQuick(k);
+                final int targetPrecision;
+                if (arg.isConstant()) {
+                    long value = arg.getLong(null);
+                    targetPrecision = Math.max(Decimals.getLongPrecision(value), 1);
+                } else {
+                    targetPrecision = Decimals.getLongPrecision(Long.MAX_VALUE);
+                }
+                args.setQuick(k, CastLongToDecimalFunctionFactory.newInstance(position, arg, ColumnType.getDecimalType(targetPrecision, 0), sqlExecutionContext));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);

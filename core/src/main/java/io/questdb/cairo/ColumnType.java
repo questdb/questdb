@@ -774,8 +774,8 @@ public final class ColumnType {
                 /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
                 /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
                 /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE}
+                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
+                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
                 /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
                 /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
                 /* 9  FLOAT      */, {FLOAT, DOUBLE}
