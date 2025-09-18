@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
@@ -39,7 +38,7 @@ import io.questdb.std.Decimals;
 import org.junit.Test;
 
 public class MulDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFactoryTest {
-    private static final MulDecimalFunctionFactory factory = new MulDecimalFunctionFactory();
+    private final MulDecimalFunctionFactory factory = new MulDecimalFunctionFactory();
 
     @Test
     public void testMulByOne() throws SqlException {

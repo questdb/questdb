@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
@@ -39,7 +38,7 @@ import io.questdb.std.Decimals;
 import org.junit.Test;
 
 public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFactoryTest {
-    private static final SubDecimalFunctionFactory factory = new SubDecimalFunctionFactory();
+    private final SubDecimalFunctionFactory factory = new SubDecimalFunctionFactory();
 
     @Test
     public void testSubDecimal128Overflow() throws SqlException {

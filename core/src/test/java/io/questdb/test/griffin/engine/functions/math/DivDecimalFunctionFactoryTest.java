@@ -43,7 +43,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DivDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFactoryTest {
-    private static final DivDecimalFunctionFactory factory = new DivDecimalFunctionFactory();
+    private final DivDecimalFunctionFactory factory = new DivDecimalFunctionFactory();
 
     @Test
     public void testDivByOne() throws SqlException {

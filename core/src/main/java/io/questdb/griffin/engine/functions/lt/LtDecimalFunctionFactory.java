@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -31,19 +31,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.lt.CompareDecimal128Function;
-import io.questdb.griffin.engine.functions.lt.CompareDecimal256Function;
-import io.questdb.griffin.engine.functions.lt.CompareDecimal64Function;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class EqDecimalFunctionFactory implements FunctionFactory {
+public class LtDecimalFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "=(ΞΞ)";
+        return "<(ΞΞ)";
     }
 
     @Override
@@ -59,7 +58,6 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        // TODO(puzpuzpuz): rescale constants to the other side when possible here and in +/-/< ops
         final Function left = args.getQuick(0);
         final Function right = args.getQuick(1);
         final int leftType = left.getType();
@@ -110,14 +108,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
-                sink.val('!');
+                sink.val(">=");
+            } else {
+                sink.val('<');
             }
-            sink.val('=').val(right);
+            sink.val(right);
         }
 
         @Override
         protected boolean exec(long rightHigh, long rightLow, int rightScale) {
-            return decimal.compareTo(rightHigh, rightLow, rightScale) == 0;
+            return decimal.compareTo(rightHigh, rightLow, rightScale) < 0;
         }
     }
 
@@ -131,14 +131,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
-                sink.val('!');
+                sink.val(">=");
+            } else {
+                sink.val('<');
             }
-            sink.val('=').val(right);
+            sink.val(right);
         }
 
         @Override
         protected boolean exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
-            return decimal.compareTo(rightHH, rightHL, rightLH, rightLL, rightScale) == 0;
+            return decimal.compareTo(rightHH, rightHL, rightLH, rightLL, rightScale) < 0;
         }
     }
 
@@ -152,18 +154,20 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
-                sink.val('!');
+                sink.val(">=");
+            } else {
+                sink.val('<');
             }
-            sink.val('=').val(right);
+            sink.val(right);
         }
 
         @Override
         protected boolean exec(long rightValue, int rightScale) {
-            return decimal.compareTo(rightValue, rightScale) == 0;
+            return decimal.compareTo(rightValue, rightScale) < 0;
         }
     }
 
-    private static class UnscaledDecimal128Func extends AbstractEqBinaryFunction {
+    private static class UnscaledDecimal128Func extends AbstractLtBinaryFunction {
 
         public UnscaledDecimal128Func(Function left, Function right) {
             super(left, right);
@@ -171,14 +175,22 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (
-                    left.getDecimal128Hi(rec) == right.getDecimal128Hi(rec)
-                            && left.getDecimal128Lo(rec) == right.getDecimal128Lo(rec)
-            );
+            final long aHi = left.getDecimal128Hi(rec);
+            final long aLo = left.getDecimal128Lo(rec);
+            final long bHi = right.getDecimal128Hi(rec);
+            final long bLo = right.getDecimal128Lo(rec);
+
+            if (Decimal128.isNull(aHi, aLo) || Decimal128.isNull(bHi, bLo)) {
+                return false;
+            }
+            if (aHi != bHi) {
+                return negated == (aHi > bHi);
+            }
+            return negated == (Long.compareUnsigned(aLo, bLo) >= 0);
         }
     }
 
-    private static class UnscaledDecimal16Func extends AbstractEqBinaryFunction {
+    private static class UnscaledDecimal16Func extends AbstractLtBinaryFunction {
 
         public UnscaledDecimal16Func(Function left, Function right) {
             super(left, right);
@@ -186,11 +198,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getDecimal16(rec) == right.getDecimal16(rec));
+            final long a = left.getDecimal16(rec);
+            final long b = right.getDecimal16(rec);
+            if (a == Decimals.DECIMAL16_NULL || b == Decimals.DECIMAL16_NULL) {
+                return false;
+            }
+            return negated == (a >= b);
         }
     }
 
-    private static class UnscaledDecimal256Func extends AbstractEqBinaryFunction {
+    private static class UnscaledDecimal256Func extends AbstractLtBinaryFunction {
 
         public UnscaledDecimal256Func(Function left, Function right) {
             super(left, right);
@@ -198,16 +215,32 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (
-                    left.getDecimal256HH(rec) == right.getDecimal256HH(rec)
-                            && left.getDecimal256HL(rec) == right.getDecimal256HL(rec)
-                            && left.getDecimal256LH(rec) == right.getDecimal256LH(rec)
-                            && left.getDecimal256LL(rec) == right.getDecimal256LL(rec)
-            );
+            final long aHH = left.getDecimal256HH(rec);
+            final long aHL = left.getDecimal256HL(rec);
+            final long aLH = left.getDecimal256LH(rec);
+            final long aLL = left.getDecimal256LL(rec);
+            final long bHH = right.getDecimal256HH(rec);
+            final long bHL = right.getDecimal256HL(rec);
+            final long bLH = right.getDecimal256LH(rec);
+            final long bLL = right.getDecimal256LL(rec);
+
+            if (Decimal256.isNull(aHH, aHL, aLH, aLL) || Decimal256.isNull(bHH, bHL, bLH, bLL)) {
+                return false;
+            }
+            if (aHH != bHH) {
+                return negated == (aHH > bHH);
+            }
+            if (aHL != bHL) {
+                return negated == (Long.compareUnsigned(aHL, bHL) > 0);
+            }
+            if (aLH != bLH) {
+                return negated == (Long.compareUnsigned(aLH, bLH) > 0);
+            }
+            return negated == (Long.compareUnsigned(aLL, bLL) >= 0);
         }
     }
 
-    private static class UnscaledDecimal32Func extends AbstractEqBinaryFunction {
+    private static class UnscaledDecimal32Func extends AbstractLtBinaryFunction {
 
         public UnscaledDecimal32Func(Function left, Function right) {
             super(left, right);
@@ -215,11 +248,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getDecimal32(rec) == right.getDecimal32(rec));
+            final long a = left.getDecimal32(rec);
+            final long b = right.getDecimal32(rec);
+            if (a == Decimals.DECIMAL32_NULL || b == Decimals.DECIMAL32_NULL) {
+                return false;
+            }
+            return negated == (a >= b);
         }
     }
 
-    private static class UnscaledDecimal64Func extends AbstractEqBinaryFunction {
+    private static class UnscaledDecimal64Func extends AbstractLtBinaryFunction {
 
         public UnscaledDecimal64Func(Function left, Function right) {
             super(left, right);
@@ -227,11 +265,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getDecimal64(rec) == right.getDecimal64(rec));
+            final long a = left.getDecimal64(rec);
+            final long b = right.getDecimal64(rec);
+            if (a == Decimals.DECIMAL64_NULL || b == Decimals.DECIMAL64_NULL) {
+                return false;
+            }
+            return negated == (a >= b);
         }
     }
 
-    private static class UnscaledDecimal8Func extends AbstractEqBinaryFunction {
+    private static class UnscaledDecimal8Func extends AbstractLtBinaryFunction {
 
         public UnscaledDecimal8Func(Function left, Function right) {
             super(left, right);
@@ -239,7 +282,12 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getDecimal8(rec) == right.getDecimal8(rec));
+            final long a = left.getDecimal8(rec);
+            final long b = right.getDecimal8(rec);
+            if (a == Decimals.DECIMAL8_NULL || b == Decimals.DECIMAL8_NULL) {
+                return false;
+            }
+            return negated == (a >= b);
         }
     }
 }

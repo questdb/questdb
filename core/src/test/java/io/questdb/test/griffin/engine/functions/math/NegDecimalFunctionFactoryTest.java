@@ -42,7 +42,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class NegDecimalFunctionFactoryTest extends AbstractTest {
-    private static final NegDecimalFunctionFactory factory = new NegDecimalFunctionFactory();
+    private final ObjList<Function> args = new ObjList<>();
+    private final NegDecimalFunctionFactory factory = new NegDecimalFunctionFactory();
 
     @Test
     public void testNegDecimal128MinValue() {
@@ -339,7 +340,7 @@ public class NegDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     private void createFunctionAndAssert(Function arg, long expectedValue, int expectedType) {
-        ObjList<Function> args = new ObjList<>();
+        args.clear();
         args.add(arg);
         try (Function func = factory.newInstance(-1, args, null, null, null)) {
             Decimal256 value = new Decimal256();
@@ -360,7 +361,7 @@ public class NegDecimalFunctionFactoryTest extends AbstractTest {
     }
 
     private void createFunctionAndAssert(Function arg, long hh, long hl, long lh, long ll, int expectedType) {
-        ObjList<Function> args = new ObjList<>();
+        args.clear();
         args.add(arg);
         try (Function func = factory.newInstance(-1, args, null, null, null)) {
             Decimal256 value = new Decimal256();
