@@ -63,10 +63,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private TableToken tableToken;
 
     public SequencerMetadata(FilesFacade ff, int commitMode) {
-        this(ff, commitMode, false);
+        this(ff, commitMode, false, false);
     }
 
-    public SequencerMetadata(FilesFacade ff, int commitMode, boolean readonly) {
+    public SequencerMetadata(FilesFacade ff, int commitMode, boolean readonly, boolean bypassFdCache) {
         this.ff = ff;
         this.commitMode = commitMode;
         this.readonly = readonly;
@@ -74,7 +74,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
-            roMetaMem = Vm.getCMRInstance();
+            roMetaMem = Vm.getCMRInstance(bypassFdCache);
         }
     }
 

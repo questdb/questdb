@@ -50,8 +50,8 @@ public class WalTxnRangeLoader implements QuietCloseable {
     private long minTimestamp;
     private DirectLongList txnDetails = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_READER);
 
-    public WalTxnRangeLoader(FilesFacade ff) {
-        walEventReader = new WalEventReader(ff);
+    public WalTxnRangeLoader(FilesFacade ff, boolean bypassFdCache) {
+        walEventReader = new WalEventReader(ff, bypassFdCache);
     }
 
     @Override
