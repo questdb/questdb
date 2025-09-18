@@ -224,6 +224,17 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Compares 2 Decimal128, ignoring scaling.
+     */
+    public static int compare(long aHi, long aLo, long bHi, long bLo) {
+        int s = Long.compare(aHi, bHi);
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(aLo, bLo);
+    }
+
+    /**
      * Create a Decimal128 from a BigDecimal value.
      *
      * @param value the BigDecimal value to convert
@@ -371,16 +382,9 @@ public class Decimal128 implements Sinkable {
             return aNeg ? -1 : 1;
         }
 
-        // Stores the coefficient to apply to the response, if both numbers are negative, then
-        // we have to reverse the result
-        int diffQ = aNeg ? -1 : 1;
-
         if (this.scale == otherScale) {
             // Same scale - direct comparison
-            if (this.high != otherHigh) {
-                return Long.compare(this.high, otherHigh);
-            }
-            return Long.compareUnsigned(this.low, otherLow);
+            return compare(high, low, otherHigh, otherLow);
         }
 
         // We need to make both operands positive to detect overflows when scaling them
@@ -412,11 +416,7 @@ public class Decimal128 implements Sinkable {
             bL = holder.low;
         }
 
-        // Compare this with scaled other
-        if (aH != bH) {
-            return Long.compare(aH, bH) * diffQ;
-        }
-        return Long.compareUnsigned(aL, bL) * diffQ;
+        return compare(aH, aL, bH, bL) * (aNeg ? -1 : 1);
     }
 
     /**
@@ -926,10 +926,7 @@ public class Decimal128 implements Sinkable {
     }
 
     private int compareTo0(long otherHi, long otherLo) {
-        if (this.high != otherHi) {
-            return Long.compare(this.high, otherHi);
-        }
-        return Long.compareUnsigned(this.low, otherLo);
+        return compare(high, low, otherHi, otherLo);
     }
 
     private boolean hasOverflowed() {
