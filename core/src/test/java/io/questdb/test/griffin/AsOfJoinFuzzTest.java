@@ -179,17 +179,20 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
 
-        long toleranceSeconds = 0;
+        final long toleranceSeconds;
         if (maxTolerance != -1) {
             toleranceSeconds = rnd.nextLong(maxTolerance) + 1;
             onSuffix += " tolerance " + toleranceSeconds + "s ";
+        } else {
+            toleranceSeconds = 0;
         }
 
         StringSink filter = new StringSink();
+        final int numIntervals;
         if (exerciseIntervals) {
-            int n = rnd.nextInt(5) + 1;
+            numIntervals = rnd.nextInt(5) + 1;
             long baseTs = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            for (int i = 0; i < n; i++) {
+            for (int i = 0; i < numIntervals; i++) {
                 if (i == 0) {
                     filter.put(" where ts between '");
                 } else {
@@ -204,6 +207,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 MicrosFormatUtils.appendDateTimeUSec(filter, tsEnd);
                 filter.put("'");
             }
+        } else {
+            numIntervals = 0;
         }
         if (exerciseFilters) {
             int n = rnd.nextInt(5) + 1;
