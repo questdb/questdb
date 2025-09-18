@@ -36,11 +36,11 @@ import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.lt.LtDecimalFunctionFactory;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LtDecimalFunctionFactoryTest extends AbstractTest {
+public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
     private static final LtDecimalFunctionFactory factory = new LtDecimalFunctionFactory();
     private final ObjList<Function> args = new ObjList<>();
 
@@ -798,14 +798,14 @@ public class LtDecimalFunctionFactoryTest extends AbstractTest {
         args.clear();
         args.add(left);
         args.add(right);
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             boolean result = func.getBool(null);
             Assert.assertEquals(expected, result);
         }
 
         // Check that left => right returns the opposite result (except for null cases)
         if (isNonNull(left) && isNonNull(right)) {
-            try (Function func = factory.newInstance(-1, args, null, null, null)) {
+            try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
                 ((NegatableBooleanFunction) func).setNegated();
                 boolean result = func.getBool(null);
                 Assert.assertEquals(!expected, result);
@@ -815,7 +815,7 @@ public class LtDecimalFunctionFactoryTest extends AbstractTest {
             args.clear();
             args.add(right);
             args.add(left);
-            try (Function func = factory.newInstance(-1, args, null, null, null)) {
+            try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
                 boolean result = func.getBool(null);
                 Assert.assertFalse(expected);
                 Assert.assertFalse(result);

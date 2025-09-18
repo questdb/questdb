@@ -37,11 +37,11 @@ import io.questdb.griffin.engine.functions.math.NegDecimalFunctionFactory;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NegDecimalFunctionFactoryTest extends AbstractTest {
+public class NegDecimalFunctionFactoryTest extends AbstractCairoTest {
     private final ObjList<Function> args = new ObjList<>();
     private final NegDecimalFunctionFactory factory = new NegDecimalFunctionFactory();
 
@@ -342,7 +342,7 @@ public class NegDecimalFunctionFactoryTest extends AbstractTest {
     private void createFunctionAndAssert(Function arg, long expectedValue, int expectedType) {
         args.clear();
         args.add(arg);
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             Decimal256 value = new Decimal256();
             DecimalUtil.load(value, func, null);
             if (expectedValue >= 0) {
@@ -363,7 +363,7 @@ public class NegDecimalFunctionFactoryTest extends AbstractTest {
     private void createFunctionAndAssert(Function arg, long hh, long hl, long lh, long ll, int expectedType) {
         args.clear();
         args.add(arg);
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             Decimal256 value = new Decimal256();
             DecimalUtil.load(value, func, null);
             Assert.assertEquals(hh, value.getHh());

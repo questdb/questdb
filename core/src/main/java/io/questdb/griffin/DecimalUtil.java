@@ -45,6 +45,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class DecimalUtil {
+
     private DecimalUtil() {
     }
 
@@ -72,7 +73,7 @@ public final class DecimalUtil {
     /**
      * Creates a new constant Decimal from the given 256-bit decimal value.
      */
-    public static @NotNull ConstantFunction createDecimalConstant(Decimal256 d, int precision, int scale) {
+    public static @NotNull ConstantFunction createDecimalConstant(@NotNull Decimal256 d, int precision, int scale) {
         return createDecimalConstant(d.getHh(), d.getHl(), d.getLh(), d.getLl(), precision, scale);
     }
 
@@ -326,6 +327,47 @@ public final class DecimalUtil {
     }
 
     /**
+     * Checks if the provided function is a Decimal constant and, if so, tries to rescale it.
+     * Otherwise, returns the same function.
+     * <p>
+     * This method is useful when choosing the most efficient function implementation in a function factory.
+     * After rescaling one of the arguments, we no longer have to rescale it for each row.
+     *
+     * @param func        the input function; must not be used after this call as it may be closed.
+     * @param decimal     intermediate object, used for rescaling
+     * @param targetScale target scale
+     * @return the newly created Decimal constant function
+     */
+    public static @NotNull Function maybeRescaleDecimalConstant(
+            @NotNull Function func,
+            @NotNull Decimal256 decimal,
+            int targetScale
+    ) {
+        final int type = func.getType();
+        final int scale = ColumnType.getDecimalScale(type);
+        if (func.isConstant() && ColumnType.isDecimal(type) && scale < targetScale) {
+            final int targetPrecision = ColumnType.getDecimalPrecision(type) + (targetScale - scale);
+            if (targetPrecision <= Decimals.MAX_PRECISION) {
+                try {
+                    final Function newFunc;
+                    if (func.isNullConstant()) {
+                        newFunc = createNullDecimalConstant(targetPrecision, targetScale);
+                    } else {
+                        load(decimal, func, null);
+                        decimal.rescale(targetScale);
+                        newFunc = createDecimalConstant(decimal, targetPrecision, targetScale);
+                    }
+                    func.close();
+                    return newFunc;
+                } catch (NumericException ignore) {
+                    // no-op, just return the func as is
+                }
+            }
+        }
+        return func;
+    }
+
+    /**
      * Parses a decimal from a literal to the most adapted decimal type as a constant.
      * The literal may end with [m/M] but not necessarily.
      *
@@ -337,7 +379,13 @@ public final class DecimalUtil {
      * @return a ConstantFunction containing the value parsed
      * @throws SqlException if the value couldn't be parsed with detailed error message
      */
-    public static @NotNull ConstantFunction parseDecimalConstant(int position, Decimal256 decimal, final CharSequence tok, int precision, int scale) throws SqlException {
+    public static @NotNull ConstantFunction parseDecimalConstant(
+            int position,
+            @NotNull Decimal256 decimal,
+            @NotNull CharSequence tok,
+            int precision,
+            int scale
+    ) throws SqlException {
         try {
             precision = decimal.ofString(tok, precision, scale);
         } catch (NumericException ex) {

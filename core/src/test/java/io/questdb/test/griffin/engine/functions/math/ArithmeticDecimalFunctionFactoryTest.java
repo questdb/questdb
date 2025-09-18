@@ -32,11 +32,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractTest {
+public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractCairoTest {
     private final ObjList<Function> args = new ObjList<>();
     private final Decimal256 decimal256 = new Decimal256();
 
@@ -44,7 +44,7 @@ public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractTest 
         args.clear();
         args.add(left);
         args.add(right);
-        try (Function func = getFactory().newInstance(-1, args, null, null, null)) {
+        try (Function func = getFactory().newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             DecimalUtil.load(decimal256, func, null);
             Assert.assertEquals(hh, decimal256.getHh());
             Assert.assertEquals(hl, decimal256.getHl());
@@ -59,7 +59,7 @@ public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractTest 
         args.add(left);
         args.add(right);
         try {
-            try (Function func = getFactory().newInstance(-1, args, null, null, null)) {
+            try (Function func = getFactory().newInstance(-1, args, null, configuration, sqlExecutionContext)) {
                 DecimalUtil.load(decimal256, func, null);
                 Assert.fail();
             }

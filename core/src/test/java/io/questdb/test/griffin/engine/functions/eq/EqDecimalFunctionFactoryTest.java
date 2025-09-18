@@ -35,11 +35,11 @@ import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.eq.EqDecimalFunctionFactory;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class EqDecimalFunctionFactoryTest extends AbstractTest {
+public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
     private final ObjList<Function> args = new ObjList<>();
     private final EqDecimalFunctionFactory factory = new EqDecimalFunctionFactory();
 
@@ -833,7 +833,7 @@ public class EqDecimalFunctionFactoryTest extends AbstractTest {
         args.clear();
         args.add(left);
         args.add(right);
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             boolean result = func.getBool(null);
             Assert.assertEquals(expected, result);
         }
@@ -842,7 +842,7 @@ public class EqDecimalFunctionFactoryTest extends AbstractTest {
         args.clear();
         args.add(right);
         args.add(left);
-        try (Function func = factory.newInstance(-1, args, null, null, null)) {
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             boolean result = func.getBool(null);
             Assert.assertEquals(expected, result);
         }

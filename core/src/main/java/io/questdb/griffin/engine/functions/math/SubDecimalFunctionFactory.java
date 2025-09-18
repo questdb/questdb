@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimals;
@@ -49,8 +50,13 @@ public class SubDecimalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function left = args.getQuick(0);
-        final Function right = args.getQuick(1);
+        Function left = args.getQuick(0);
+        Function right = args.getQuick(1);
+        left = DecimalUtil.maybeRescaleDecimalConstant(left, sqlExecutionContext.getDecimal256(), ColumnType.getDecimalScale(right.getType()));
+        args.setQuick(0, left); // the OG function may be already closed
+        right = DecimalUtil.maybeRescaleDecimalConstant(right, sqlExecutionContext.getDecimal256(), ColumnType.getDecimalScale(left.getType()));
+        args.setQuick(1, right);
+
         final int leftType = left.getType();
         final int rightType = right.getType();
         final int leftScale = ColumnType.getDecimalScale(leftType);

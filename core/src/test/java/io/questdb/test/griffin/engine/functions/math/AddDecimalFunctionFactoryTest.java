@@ -278,6 +278,142 @@ public class AddDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
                 new Decimal64Constant(1, ColumnType.getDecimalType(10, 2)),
                 1, 1, 1, 2, ColumnType.getDecimalType(41, 2)
         );
+
+        createFunctionAndAssert(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal32Constant(1, ColumnType.getDecimalType(8, 2)),
+                1, 1, 1, 2, ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal16Constant((short) 1, ColumnType.getDecimalType(4, 2)),
+                1, 1, 1, 2, ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal8Constant((byte) 1, ColumnType.getDecimalType(2, 2)),
+                1, 1, 1, 2, ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal64Constant(1, ColumnType.getDecimalType(10, 2)),
+                0, 0, 1, 2, ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal32Constant(1, ColumnType.getDecimalType(8, 2)),
+                0, 0, 1, 2, ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal16Constant((short) 1, ColumnType.getDecimalType(4, 2)),
+                0, 0, 1, 2, ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal8Constant((byte) 1, ColumnType.getDecimalType(2, 2)),
+                0, 0, 1, 2, ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal64Constant(1, ColumnType.getDecimalType(15, 2)),
+                new Decimal32Constant(1, ColumnType.getDecimalType(8, 2)),
+                0, 0, 0, 2, ColumnType.getDecimalType(16, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal64Constant(1, ColumnType.getDecimalType(15, 2)),
+                new Decimal16Constant((short) 1, ColumnType.getDecimalType(4, 2)),
+                0, 0, 0, 2, ColumnType.getDecimalType(16, 2)
+        );
+
+        createFunctionAndAssert(
+                new Decimal64Constant(1, ColumnType.getDecimalType(15, 2)),
+                new Decimal8Constant((byte) 1, ColumnType.getDecimalType(2, 2)),
+                0, 0, 0, 2, ColumnType.getDecimalType(16, 2)
+        );
+    }
+
+    @Test
+    public void testAddMixedDecimalTypesNull() throws SqlException {
+        // Test adding different decimal sizes
+        createFunctionAndAssertNull(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(8, 2)),
+                ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 2)),
+                ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal256Constant(1, 1, 1, 1, ColumnType.getDecimalType(40, 2)),
+                new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 2)),
+                ColumnType.getDecimalType(41, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(8, 2)),
+                ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 2)),
+                ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal128Constant(1, 1, ColumnType.getDecimalType(20, 2)),
+                new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 2)),
+                ColumnType.getDecimalType(21, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal64Constant(1, ColumnType.getDecimalType(15, 2)),
+                new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(8, 2)),
+                ColumnType.getDecimalType(16, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal64Constant(1, ColumnType.getDecimalType(15, 2)),
+                new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(4, 2)),
+                ColumnType.getDecimalType(16, 2)
+        );
+
+        createFunctionAndAssertNull(
+                new Decimal64Constant(1, ColumnType.getDecimalType(15, 2)),
+                new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 2)),
+                ColumnType.getDecimalType(16, 2)
+        );
     }
 
     @Test

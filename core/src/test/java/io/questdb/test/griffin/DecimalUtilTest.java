@@ -24,8 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
@@ -34,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -79,6 +84,63 @@ public class DecimalUtilTest extends AbstractTest {
         ConstantFunction result = DecimalUtil.createDecimalConstant(0, 0, 0, 123, 2, 0);
         Assert.assertTrue(result instanceof Decimal8Constant);
         Assert.assertEquals(123, result.getDecimal8(null));
+    }
+
+    @Test
+    public void testMaybeRescaleDecimalConstantLargerTargetScale() {
+        final Decimal256 decimal = new Decimal256();
+        final int precision = 10;
+        final int scale = 2;
+        final int targetScale = 5;
+        final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        Assert.assertNotSame(constantFunc, result);
+        Assert.assertTrue(result.isConstant());
+        Assert.assertEquals(targetScale, ColumnType.getDecimalScale(result.getType()));
+    }
+
+    @Test
+    public void testMaybeRescaleDecimalConstantNonConstantFunction() {
+        final Decimal256 decimal = new Decimal256();
+        final Function nonConstantFunc = new TestNonConstantDecimalFunction();
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(nonConstantFunc, decimal, 5);
+        Assert.assertSame(nonConstantFunc, result);
+    }
+
+    @Test
+    public void testMaybeRescaleDecimalConstantNull() {
+        final Decimal256 decimal = new Decimal256();
+        final int precision = 13;
+        final int scale = 2;
+        final int targetScale = 5;
+        final ConstantFunction constantFunc = new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(precision, scale));
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        Assert.assertNotSame(constantFunc, result);
+        Assert.assertTrue(result.isConstant());
+        Assert.assertTrue(result.isNullConstant());
+        Assert.assertEquals(targetScale, ColumnType.getDecimalScale(result.getType()));
+    }
+
+    @Test
+    public void testMaybeRescaleDecimalConstantSameScale() {
+        final Decimal256 decimal = new Decimal256();
+        final int precision = 10;
+        final int scale = 5;
+        final int targetScale = 5;
+        final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        Assert.assertSame(constantFunc, result);
+    }
+
+    @Test
+    public void testMaybeRescaleDecimalConstantSmallerTargetScale() {
+        final Decimal256 decimal = new Decimal256();
+        final int precision = 10;
+        final int scale = 5;
+        final int targetScale = 2;
+        final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        Assert.assertSame(constantFunc, result);
     }
 
     @Test
@@ -523,5 +585,22 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseScaleZero() throws SqlException {
         int scale = DecimalUtil.parseScale(0, "0", 0, 1);
         Assert.assertEquals(0, scale);
+    }
+
+    private static class TestNonConstantDecimalFunction extends DecimalFunction {
+
+        public TestNonConstantDecimalFunction() {
+            super(ColumnType.getDecimalType(10, 2));
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
     }
 }
