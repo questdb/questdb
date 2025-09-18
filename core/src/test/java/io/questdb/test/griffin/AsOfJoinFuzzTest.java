@@ -46,10 +46,13 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
+    private static final int RUN_N_PERMUTATIONS = 10;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
@@ -96,51 +99,52 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
-    private void assertResultSetsMatch0(Rnd rnd) throws Exception {
+    private void assertResultSetsMatch0(Rnd rnd, boolean symbolIndexCreated) {
         Object[][] allOpts = {
                 JoinType.values(),
-                {true, false}, // exercise interval intrinsics
+                NumIntervals.values(),
                 LimitType.values(),
                 {true, false}, // exercise filters
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
                 {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
-                {true, false} // AVOID BINARY_SEARCH hint
+                {true, false}, // AVOID_BINARY_SEARCH hint
         };
 
-        Object[][] permutations;
+        final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
+        final Object[][] permutations;
         if (RUN_ALL_PERMUTATIONS) {
-            permutations = TestUtils.cartesianProduct(allOpts);
+            permutations = allPermutations;
         } else {
-            // to keep the test fast, we only run a single permutation at a time
-            permutations = new Object[1][allOpts.length];
-            for (int i = 0; i < allOpts.length; i++) {
-                Object[] opts = allOpts[i];
-                permutations[0][i] = opts[rnd.nextInt(opts.length)];
-            }
+            List<Object[]> allPermutationsList = Arrays.asList(allPermutations);
+            Collections.shuffle(allPermutationsList);
+            permutations = Arrays.copyOf(allPermutations, RUN_N_PERMUTATIONS);
         }
 
         for (int i = 0, n = permutations.length; i < n; i++) {
             Object[] params = permutations[i];
             JoinType joinType = (JoinType) params[0];
-            boolean exerciseIntervals = (boolean) params[1];
+            NumIntervals numIntervals = (NumIntervals) params[1];
             LimitType limitType = (LimitType) params[2];
             boolean exerciseFilters = (boolean) params[3];
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
             boolean avoidBinarySearchHint = (boolean) params[7];
+
             String paramsMsg = "joinType=" + joinType +
-                    ", exerciseIntervals=" + exerciseIntervals +
+                    ", numIntervals=" + numIntervals +
                     ", limitType=" + limitType +
                     ", exerciseFilters=" + exerciseFilters +
                     ", projectionType=" + projectionType +
                     ", applyOuterProjection = " + applyOuterProjection +
                     ", maxTolerance=" + maxTolerance +
-                    ", avoidBinarySearchHint=" + avoidBinarySearchHint;
+                    ", avoidBinarySearchHint=" + avoidBinarySearchHint +
+                    ", useSymbolIndex=" + symbolIndexCreated;
             LOG.info().$("Testing with parameters: ").$(paramsMsg).$();
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, avoidBinarySearchHint, rnd);
+                assertResultSetsMatch0(joinType, numIntervals, limitType, exerciseFilters, projectionType,
+                        applyOuterProjection, maxTolerance, avoidBinarySearchHint, symbolIndexCreated, rnd);
             } catch (Throwable e) {
                 throw new AssertionError("Failed with parameters: " + paramsMsg, e);
             }
@@ -149,13 +153,14 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
     private void assertResultSetsMatch0(
             JoinType joinType,
-            boolean exerciseIntervals,
+            NumIntervals numIntervalsOpt,
             LimitType limitType,
             boolean exerciseFilters,
             ProjectionType projectionType,
             boolean applyOuterProjection,
             long maxTolerance,
             boolean avoidBinarySearchHint,
+            boolean symbolIndexCreated,
             Rnd rnd
     ) throws Exception {
         String join;
@@ -188,9 +193,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         StringSink filter = new StringSink();
-        final int numIntervals;
-        if (exerciseIntervals) {
-            numIntervals = rnd.nextInt(5) + 1;
+        if (numIntervalsOpt != NumIntervals.ZERO) {
+            final int numIntervals = (numIntervalsOpt == NumIntervals.ONE) ? 1 : rnd.nextInt(4) + 2;
             long baseTs = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             for (int i = 0; i < numIntervals; i++) {
                 if (i == 0) {
@@ -207,13 +211,11 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 MicrosFormatUtils.appendDateTimeUSec(filter, tsEnd);
                 filter.put("'");
             }
-        } else {
-            numIntervals = 0;
         }
         if (exerciseFilters) {
             int n = rnd.nextInt(5) + 1;
             for (int i = 0; i < n; i++) {
-                if (i == 0 && !exerciseIntervals) {
+                if (i == 0 && numIntervalsOpt == NumIntervals.ZERO) {
                     filter.put("where i != ");
                 } else {
                     filter.put(" and i != ");
@@ -305,10 +307,13 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         printSql("EXPLAIN " + query, false);
         if (avoidBinarySearchHint) {
+            TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
+        } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
-        } else if (joinType == JoinType.ASOF_NONKEYED || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
+        } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
+            TestUtils.assertContains(sink, "AsOf Join " + (symbolIndexCreated ? "Indexed" : "Fast") + " Scan");
         }
 
         final StringSink actualSink = new StringSink();
@@ -364,7 +369,11 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             }
 
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType.getTypeName());
+            boolean useSymbolIndex = rnd.nextBoolean();
+            String index = useSymbolIndex ? " INDEX" : "";
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL" + index + ") timestamp(ts) partition by day bypass wal",
+                    rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
@@ -375,7 +384,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch0(rnd);
+            assertResultSetsMatch0(rnd, useSymbolIndex);
         });
     }
 
@@ -397,8 +406,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
+            boolean useSymbolIndex = rnd.nextBoolean();
+            String index = useSymbolIndex ? " INDEX" : "";
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL" + index + ") timestamp(ts)",
+                    rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
@@ -409,7 +422,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch0(rnd);
+            assertResultSetsMatch0(rnd, useSymbolIndex);
         });
     }
 
@@ -421,6 +434,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         NO_LIMIT,
         POSITIVE_LIMIT,
         NEGATIVE_LIMIT
+    }
+
+    private enum NumIntervals {
+        ZERO, ONE, MANY
     }
 
     private enum ProjectionType {
