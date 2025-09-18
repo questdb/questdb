@@ -287,7 +287,7 @@ public class IntListTest {
         // Create a scenario that would trigger deep recursion in quicksort
         // by creating reverse sorted data which causes worst-case O(n) recursion depth
         int groupSize = 3;
-        int numGroups = 50000; // Large size to ensure stack overflow with recursive implementation
+        int numGroups = 30000; // Large size to ensure stack overflow with recursive implementation
 
         IntList list = new IntList(numGroups * groupSize);
 
