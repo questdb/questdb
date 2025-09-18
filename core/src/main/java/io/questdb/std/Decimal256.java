@@ -551,6 +551,25 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Compares 2 Decimal256, ignoring scaling.
+     */
+    public static int compare(long aHH, long aHL, long aLH, long aLL, long bHH, long bHL, long bLH, long bLL) {
+        int s = Long.compare(aHH, bHH);
+        if (s != 0) {
+            return s;
+        }
+        s = Long.compareUnsigned(aHL, bHL);
+        if (s != 0) {
+            return s;
+        }
+        s = Long.compareUnsigned(aLH, bLH);
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(aLL, bLL);
+    }
+
+    /**
      * Static subtraction method.
      *
      * @param a      the first operand
@@ -746,20 +765,9 @@ public class Decimal256 implements Sinkable {
             return aNeg ? -1 : 1;
         }
 
-        int diffQ = aNeg ? -1 : 1;
-
         if (this.scale == otherScale) {
             // Same scale - direct comparison
-            if (this.hh != otherHH) {
-                return Long.compare(this.hh, otherHH);
-            }
-            if (this.hl != otherHL) {
-                return Long.compareUnsigned(this.hl, otherHL) * diffQ;
-            }
-            if (this.lh != otherLH) {
-                return Long.compareUnsigned(this.lh, otherLH) * diffQ;
-            }
-            return Long.compareUnsigned(this.ll, otherLL) * diffQ;
+            return compare(hh, hl, lh, ll, otherHH, otherHL, otherLH, otherLL);
         }
 
         // Stores the coefficient to apply to the response, if both numbers are negative, then
@@ -809,16 +817,7 @@ public class Decimal256 implements Sinkable {
             bLL = holder.ll;
         }
 
-        if (aHH != bHH) {
-            return Long.compare(aHH, bHH) * diffQ;
-        }
-        if (aHL != bHL) {
-            return Long.compareUnsigned(aHL, bHL) * diffQ;
-        }
-        if (aLH != bLH) {
-            return Long.compareUnsigned(aLH, bLH) * diffQ;
-        }
-        return Long.compareUnsigned(aLL, bLL) * diffQ;
+        return compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) * (aNeg ? -1 : 1);
     }
 
     /**
@@ -1724,16 +1723,7 @@ public class Decimal256 implements Sinkable {
     }
 
     private int compareTo0(long bHH, long bHL, long bLH, long bLL) {
-        if (hh != bHH) {
-            return Long.compare(hh, bHH);
-        }
-        if (hl != bHL) {
-            return Long.compareUnsigned(hl, bHL);
-        }
-        if (lh != bLH) {
-            return Long.compareUnsigned(lh, bLH);
-        }
-        return Long.compareUnsigned(ll, bLL);
+        return compare(hh, hl, lh, ll, bHH, bHL, bLH, bLL);
     }
 
     private boolean hasOverflowed() {

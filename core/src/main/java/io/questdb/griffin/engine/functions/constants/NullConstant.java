@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -94,6 +95,56 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
     @Override
     public long getDate(Record rec) {
         return DateConstant.NULL.getDate(null);
+    }
+
+    @Override
+    public long getDecimal128Hi(Record rec) {
+        return Decimals.DECIMAL128_HI_NULL;
+    }
+
+    @Override
+    public long getDecimal128Lo(Record rec) {
+        return Decimals.DECIMAL128_LO_NULL;
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return Decimals.DECIMAL16_NULL;
+    }
+
+    @Override
+    public long getDecimal256HH(Record rec) {
+        return Decimals.DECIMAL256_HH_NULL;
+    }
+
+    @Override
+    public long getDecimal256HL(Record rec) {
+        return Decimals.DECIMAL256_HL_NULL;
+    }
+
+    @Override
+    public long getDecimal256LH(Record rec) {
+        return Decimals.DECIMAL256_LH_NULL;
+    }
+
+    @Override
+    public long getDecimal256LL(Record rec) {
+        return Decimals.DECIMAL256_LL_NULL;
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return Decimals.DECIMAL32_NULL;
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return Decimals.DECIMAL64_NULL;
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return Decimals.DECIMAL8_NULL;
     }
 
     @Override
