@@ -852,6 +852,30 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetWithTableSpecialCharacters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table❤️ (x int, y string)");
+            execute("insert into test_table❤️ values (1, 'hello\\nworld11'), (2, 'tab\\there')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy `test_table❤️` to '❤️🍺' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "❤️🍺/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("x\ty\n" +
+                                        "1\thello\\nworld11\n" +
+                                        "2\ttab\\there\n",
+                                "select * from read_parquet('" + exportRoot + "/❤️🍺/default.parquet') order by x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryToParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table source_table (id int, value double, name string)");
@@ -1064,6 +1088,29 @@ public class CopyExportTest extends AbstractCairoTest {
                                         "1\thello\t1.5\n" +
                                         "2\tworld\t2.5\n",
                                 "select * from read_parquet('" + exportRoot + "/output13/default.parquet') order by x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithOutputSpecialChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string)");
+            execute("insert into test_table values (1, 'test')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to '💗❤️' with format parquet data_page_size 4096", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "💗❤️/default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        // Verify data with custom page size
+                        assertSql("x\ty\n1\ttest\n",
+                                "select * from read_parquet('" + exportRoot + "/💗❤️/default.parquet')");
                     });
 
             testCopyExport(stmt, test);
