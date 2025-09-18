@@ -64,6 +64,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int compressionCodec;
     private int compressionLevel;
     private int compressionLevelPos;
+    private boolean compressionLevelSet;
     private int dataPageSize;
     private byte delimiter;
     private ExpressionNode fileName;
@@ -75,7 +76,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int rowGroupSize;
     private int selectStartPos;
     @Nullable
-    private String selectText;
+    private CharSequence selectText;
     private int sizeLimit;
     private boolean statisticsEnabled;
     private ExpressionNode target; // holds table name (new import) or import id (cancel model)
@@ -108,6 +109,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         selectText = null;
         compressionCodec = -1;
         compressionLevel = -1;
+        compressionLevelSet = false;
         rowGroupSize = -1;
         dataPageSize = -1;
         parquetVersion = -1;
@@ -142,10 +144,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return fileName;
     }
 
-    public int getFormat() {
-        return format;
-    }
-
     @Override
     public int getModelType() {
         return ExecutionModel.COPY;
@@ -164,7 +162,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public @Nullable String getSelectText() {
+    public @Nullable CharSequence getSelectText() {
         return selectText;
     }
 
@@ -198,12 +196,38 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return type;
     }
 
+    public void initDefaultCompressLevel() {
+        if (format == COPY_FORMAT_PARQUET && compressionCodec >= 0 && !compressionLevelSet) {
+            switch (compressionCodec) {
+                case 2: // COMPRESSION_GZIP
+                    if (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL) {
+                        compressionLevel = GZIP_MIN_COMPRESSION_LEVEL;
+                    }
+                    break;
+                case 4: // COMPRESSION_BROTLI
+                    if (compressionLevel < BROTLI_MIN_COMPRESSION_LEVEL || compressionLevel > BROTLI_MAX_COMPRESSION_LEVEL) {
+                        compressionLevel = BROTLI_MIN_COMPRESSION_LEVEL;
+                    }
+                    break;
+                case 6: // COMPRESSION_ZSTD
+                    if (compressionLevel < ZSTD_MIN_COMPRESSION_LEVEL || compressionLevel > ZSTD_MAX_COMPRESSION_LEVEL) {
+                        compressionLevel = ZSTD_MIN_COMPRESSION_LEVEL;
+                    }
+                    break;
+            }
+        }
+    }
+
     public boolean isCancel() {
         return cancel;
     }
 
     public boolean isHeader() {
         return header;
+    }
+
+    public boolean isParquetFormat() {
+        return format == COPY_FORMAT_PARQUET;
     }
 
     public boolean isRawArrayEncoding() {
@@ -235,6 +259,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.compressionLevel = compressionLevel;
         this.userSpecifiedExportOptions = true;
         this.compressionLevelPos = pos;
+        this.compressionLevelSet = true;
     }
 
     public void setDataPageSize(int dataPageSize) {
@@ -267,6 +292,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         parquetVersion = configuration.getPartitionEncoderParquetVersion();
         rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
         partitionBy = -1;
+        compressionLevelSet = false;
     }
 
     public void setParquetVersion(int parquetVersion) {
@@ -289,7 +315,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.userSpecifiedExportOptions = true;
     }
 
-    public void setSelectText(@Nullable String selectText, int startPos) {
+    public void setSelectText(@Nullable CharSequence selectText, int startPos) {
         this.selectText = selectText;
         this.selectStartPos = startPos;
     }
@@ -324,6 +350,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     public void validCompressOptions() throws SqlException {
+        if (!compressionLevelSet) {
+            initDefaultCompressLevel();
+            return;
+        }
         if (format == COPY_FORMAT_PARQUET && compressionCodec >= 0) {
             switch (compressionCodec) {
                 case 0: // COMPRESSION_UNCOMPRESSED
@@ -335,21 +365,16 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
                     break;
                 case 2: // COMPRESSION_GZIP
                     // GZIP actually uses levels 0-9, where 0=fastest, 9=best compression
-                    if (compressionLevel != -1 && (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL)) {
+                    if (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL) {
                         throw SqlException.$(compressionLevelPos, "GZIP compression level must be between 0 and 9");
                     }
                     break;
                 case 4: // COMPRESSION_BROTLI
-                    if (compressionLevel != -1 && (compressionLevel < BROTLI_MIN_COMPRESSION_LEVEL || compressionLevel > BROTLI_MAX_COMPRESSION_LEVEL)) {
+                    if (compressionLevel < BROTLI_MIN_COMPRESSION_LEVEL || compressionLevel > BROTLI_MAX_COMPRESSION_LEVEL) {
                         throw SqlException.$(compressionLevelPos, "Brotli compression level must be between 0 and 11");
                     }
                     break;
                 case 6: // COMPRESSION_ZSTD
-                    if (compressionLevel == 0) { // default
-                        // ZSTD level 0 is not supported, use default level 1
-                        compressionLevel = 1;
-                    }
-
                     if (compressionLevel != -1 && (compressionLevel < ZSTD_MIN_COMPRESSION_LEVEL || compressionLevel > ZSTD_MAX_COMPRESSION_LEVEL)) {
                         throw SqlException.$(compressionLevelPos, "ZSTD compression level must be between 1 and 22");
                     }

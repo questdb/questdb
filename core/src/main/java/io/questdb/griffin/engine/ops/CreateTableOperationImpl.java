@@ -82,7 +82,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long o3MaxLag;
     private int partitionBy;
     private int partitionByPosition;
-    private String selectText;
+    private CharSequence selectText;
     private int selectTextPosition;
     private String sqlText;
     private String tableName;
@@ -97,8 +97,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int volumePosition;
     private boolean walEnabled;
 
-    protected CreateTableOperationImpl(@NotNull String selectText,
-                                       @NotNull String tableName,
+    protected CreateTableOperationImpl(CharSequence selectText,
+                                       String tableName,
                                        int partitionBy,
                                        boolean walEnabled,
                                        int defaultSymbolCapacity,
@@ -362,7 +362,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public String getSelectText() {
+    public CharSequence getSelectText() {
         return selectText;
     }
 

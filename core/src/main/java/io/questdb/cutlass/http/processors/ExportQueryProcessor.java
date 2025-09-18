@@ -79,7 +79,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -88,8 +87,11 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.griffin.model.CopyModel.COPY_FORMAT_PARQUET;
 
 public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
+    private static final String FILE_EXTENSION_CSV = ".csv";
+    private static final String FILE_EXTENSION_PARQUET = ".parquet";
     private static final Log LOG = LogFactory.getLog(ExportQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
@@ -145,14 +147,17 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             );
             sqlExecutionContext.initNow();
             if (state.recordCursorFactory == null) {
+                CompiledQuery cc = null;
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                    cc = compiler.compile(state.query, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
+                } finally {
+                    Misc.free(cc);
                 }
             } else {
                 sqlExecutionContext.setCacheHit(true);
@@ -172,17 +177,19 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             }
                             info(state).$safe(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
+                            CompiledQuery cc = null;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                                cc = compiler.compile(state.query, sqlExecutionContext);
                                 if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
                                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                                 }
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
+                            } finally {
+                                Misc.free(cc);
                             }
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
-
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -325,21 +332,21 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private void cleanupParquetFile(ExportQueryProcessorState state) {
-        if (state.getExportResult().getNeedCleanUp()) {
-            LPSZ file = state.getExportResult().getPath().$();
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            if (file.size() > 0 && ff.exists(file)) {
-                engine.getConfiguration().getFilesFacade().remove(file);
-            }
-        }
-    }
-
     private void cleanupParquetState(ExportQueryProcessorState state) {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
         if (state.parquetFileFd != -1) {
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
             ff.close(state.parquetFileFd);
+            if (state.getExportResult().needCleanUp()) {
+                ff.removeQuiet(state.getExportResult().getPath().$());
+            }
             state.parquetFileFd = -1;
+        }
+        if (state.suspendEvent != null) {
+            state.suspendEvent = Misc.free(state.suspendEvent);
+        }
+        if (state.parquetFileAddress != 0) {
+            ff.munmap(state.parquetFileAddress, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
+            state.parquetFileAddress = 0;
         }
     }
 
@@ -349,10 +356,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         CopyModel copyModel = state.getCopyModel();
-        copyModel.clear();
         copyModel.setParquetDefaults(engine.getConfiguration());
-        copyModel.setFormat(CopyModel.COPY_FORMAT_PARQUET);
         copyModel.setPartitionBy(PartitionBy.NONE);
+        copyModel.setSelectText(state.query, 0);
 
         // Handle partition_by option
         DirectUtf8Sequence partitionBy = request.getUrlParam(EXPORT_PARQUET_OPTION_PARTITION_BY);
@@ -382,16 +388,19 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             try {
                 int level = Numbers.parseInt(compressionLevel);
                 copyModel.setCompressionLevel(level, 0);
-                copyModel.validCompressOptions();
             } catch (NumericException e) {
                 errSink.clear();
                 errSink.put("invalid compression level:").put(compressionLevel);
                 sendException(response, 0, errSink, state);
                 return false;
-            } catch (SqlException e) {
-                sendException(response, 0, e.getFlyweightMessage(), state);
-                return false;
             }
+        }
+
+        try {
+            copyModel.validCompressOptions();
+        } catch (SqlException e) {
+            sendException(response, 0, e.getFlyweightMessage(), state);
+            return false;
         }
 
         // Handle row_group_size option
@@ -491,7 +500,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
                         // fall through
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT:
-                        CopyExportRequestTask.Status completion;
                         CopyExportResult result = state.getExportResult();
 
                         if (!result.isFinished()) {
@@ -531,11 +539,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE;
                         }
                         break;
-
                     case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE:
                         response.sendChunk(true);
+                        sendDone(response, state);
                         break OUT;
-
                     default:
                         break OUT;
                 }
@@ -543,8 +550,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 response.sendChunk(false);
-            } finally {
-                cleanupParquetFile(state);
             }
         }
 
@@ -573,8 +578,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
         final HttpChunkedResponse response = context.getChunkedResponse();
 
-        // Check if this is a parquet export request
-        if (SqlKeywords.isParquetKeyword(state.fmt)) {
+        if (state.getCopyModel().isParquetFormat()) {
             doParquetExport(context);
             return;
         }
@@ -689,23 +693,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
-    private String findParquetExportFile(CharSequence copyID) {
-        try (Path path = new Path()) {
-            path.of(engine.getConfiguration().getSqlCopyExportRoot()).concat("copy.").put(copyID);
-
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
-
-            path.concat("default.parquet");
-
-            if (ff.exists(path.$())) {
-                return path.asAsciiCharSequence().toString(); // todo: remove unnecessary string
-            } else {
-                return null;
-            }
-            // handle cleanup
-        }
-    }
-
     private LogRecord info(ExportQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -752,20 +739,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         state.parquetFileSize = ff.length(state.parquetFileFd);
         state.parquetFileOffset = 0;
         state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-
-        // Send headers
-        HttpChunkedResponse response = context.getChunkedResponse();
-        response.status(200, CONTENT_TYPE_PARQUET);
-
-        String fileName = state.fileName != null ? state.fileName : "questdb-query-" + clock.getTicks();
-        if (!fileName.endsWith(".parquet")) {
-            fileName += ".parquet";
-        }
-
-        response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(fileName).putAscii("\"").putEOL();
-        response.headers().putAscii("Content-Length: ").put(state.parquetFileSize).putEOL();
-        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        response.sendHeader();
+        header(context.getChunkedResponse(), state, 200);
     }
 
     private void internalError(
@@ -812,15 +786,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             // This is a critical error, so we treat it as an unhandled one.
             metrics.healthMetrics().incrementUnhandledErrors();
         }
-    }
-
-    private void onExportedParquetFileFound(long pUtf8NameZ, int type) {
-        // need to add the parquet file to the zip
-        FilesFacade ff = configuration.getFilesFacade();
-        Path tempPath = new Path(); //todo: fix allication
-
-        tempPath.trimTo(0).concat(pUtf8NameZ);
-        ff.openRO(tempPath.$());
     }
 
     private boolean parseUrl(
@@ -887,17 +852,20 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.delimiter = (char) delimiter.byteAt(0);
         }
 
-        state.fmt = "csv"; // default to csv
+        CopyModel copyModel = state.getCopyModel();
+        copyModel.clear();
+        copyModel.setFormat(CopyModel.COPY_FORMAT_CSV);
         DirectUtf8Sequence format = request.getUrlParam(URL_PARAM_FMT);
         if (format != null && format.size() > 0) {
-            if (SqlKeywords.isParquetKeyword(format.asAsciiCharSequence()) || SqlKeywords.isCsvKeyword(format.asAsciiCharSequence())) {
-                state.fmt = format.toString();
-            } else {
-                sendException(response, 0, "unrecognised format [format=" + format + "]", state);
+            if (SqlKeywords.isParquetKeyword(format.asAsciiCharSequence())) {
+                copyModel.setFormat(COPY_FORMAT_PARQUET);
+            } else if (!SqlKeywords.isCsvKeyword(format.asAsciiCharSequence())) {
+                errSink.clear();
+                errSink.put("unrecognised format [format=").put(format).put("]");
+                sendException(response, 0, errSink, state);
             }
         }
-
-        if (SqlKeywords.isParquetKeyword(state.fmt)) {
+        if (copyModel.isParquetFormat()) {
             if (!configureParquetOptions(request, response, state)) {
                 return false;
             }
@@ -1061,18 +1029,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void sendParquetFileChunk(HttpChunkedResponse response, ExportQueryProcessorState state) {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-
         if (state.parquetFileOffset >= state.parquetFileSize) {
             return;
         }
 
         state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, (int) (state.parquetFileSize - state.parquetFileOffset));
         response.bookmark();
-
         if (state.parquetFileOffset >= state.parquetFileSize) {
-            ff.close(state.parquetFileFd);
-            state.parquetFileFd = -1;
+            cleanupParquetState(state);
         } else {
             throw NoSpaceLeftInResponseBufferException.instance(state.parquetFileSize - state.parquetFileOffset);
         }
@@ -1094,9 +1058,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        String contentType = "parquet".equals(state.fmt) ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
-        String fileExtension = "parquet".equals(state.fmt) ? ".parquet" : ".csv";
-
+        boolean isParquet = state.getCopyModel().isParquetFormat();
+        String contentType = isParquet ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
+        String fileExtension = isParquet ? FILE_EXTENSION_PARQUET : FILE_EXTENSION_CSV;
         response.status(statusCode, contentType);
         if (state.fileName != null && !state.fileName.isEmpty()) {
             response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(fileExtension).putAscii("\"").putEOL();

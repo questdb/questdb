@@ -2325,7 +2325,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             authorizeSelectForCopy(securityContext, model);
         }
 
-        if (model.getFormat() == CopyModel.COPY_FORMAT_UNKNOWN) {
+        if (!model.isParquetFormat()) {
             throw SqlException.$(0, "export format must be specified, supported formats:, 'parquet'");
         }
         model.validCompressOptions();

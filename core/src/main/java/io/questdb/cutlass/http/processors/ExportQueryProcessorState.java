@@ -57,7 +57,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     RecordCursor cursor;
     char delimiter = ',';
     String fileName;
-    String fmt = null;
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
@@ -86,7 +85,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     public void clear() {
         delimiter = ',';
         fileName = null;
-        fmt = null;
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
@@ -120,10 +118,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         if (parquetFileBuffer != 0) {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
-        }
-        if (parquetFileFd != -1) {
-            // Close any open file descriptor
-            parquetFileFd = -1;
         }
         copyModel.clear();
         copyExportResult.clear();

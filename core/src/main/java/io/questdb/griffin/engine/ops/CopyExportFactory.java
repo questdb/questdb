@@ -86,7 +86,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private boolean rawArrayEncoding = false;
     private int rowGroupSize;
     private SecurityContext securityContext;
-    private @Nullable String selectText = null;
+    private String selectText = null;
     private int sizeLimit;
     private CharSequence sqlText;
     private boolean statisticsEnabled;
@@ -241,7 +241,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         final ExpressionNode fileNameExpr = model.getFileName();
         this.fileName = fileNameExpr != null ? GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position).toString() : null;
         this.securityContext = securityContext;
-        this.selectText = model.getSelectText();
+        if (model.getSelectText() != null) {
+            this.selectText = model.getSelectText().toString();
+        }
         this.partitionBy = model.getPartitionBy();
         this.sizeLimit = model.getSizeLimit();
         this.compressionCodec = model.getCompressionCodec();
@@ -259,8 +261,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private CreateTableOperationImpl validAndCreateTableOp(SqlExecutionContext executionContext) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
+        CompiledQuery selectQuery = null;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CompiledQuery selectQuery = compiler.compile(selectText, executionContext);
+            selectQuery = compiler.compile(selectText, executionContext);
+            if (selectQuery.getType() != CompiledQuery.SELECT) {
+                throw SqlException.$(0, "Copy command only accepts SELECT queries");
+            }
             try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
                 if (partitionBy == -1) {
                     partitionBy = PartitionBy.NONE;
@@ -286,6 +292,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         } catch (Throwable ex) {
             Misc.free(createOp);
             throw ex;
+        } finally {
+            Misc.free(selectQuery);
         }
 
         return createOp;

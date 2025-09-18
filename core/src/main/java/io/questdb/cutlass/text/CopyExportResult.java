@@ -42,7 +42,7 @@ public class CopyExportResult implements Closeable {
     private volatile CopyExportRequestTask.Status status = CopyExportRequestTask.Status.NONE;
 
     public void addFilePath(Path path, boolean needCleanUp) {
-        this.path = path.of(path);
+        this.path.of(path);
         this.needCleanUp = needCleanUp;
     }
 
@@ -66,10 +66,6 @@ public class CopyExportResult implements Closeable {
         return message;
     }
 
-    public boolean getNeedCleanUp() {
-        return needCleanUp;
-    }
-
     public Path getPath() {
         return path;
     }
@@ -86,6 +82,10 @@ public class CopyExportResult implements Closeable {
         return this.phase == CopyExportRequestTask.Phase.SUCCESS ||
                 status == CopyExportRequestTask.Status.FAILED ||
                 status == CopyExportRequestTask.Status.CANCELLED;
+    }
+
+    public boolean needCleanUp() {
+        return needCleanUp;
     }
 
     public void report(CopyExportRequestTask.Phase phase, CopyExportRequestTask.Status status, CharSequence message) {

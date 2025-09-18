@@ -115,7 +115,6 @@ public class SerialParquetExporter implements Closeable {
             statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, null, 0);
             final String tableName = task.getTableName();
             final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
-            @Nullable CharSequence toParquetCs;
             tableToken = cairoEngine.getTableTokenIfExists(tableName);
             if (tableToken == null) {
                 throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
@@ -256,7 +255,6 @@ public class SerialParquetExporter implements Closeable {
                     throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                 }
             }
-
             LOG.info().$("finished parquet conversion [table=").$(tableToken).$(']').$();
             statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, null, 0);
         } catch (CopyExportException e) {

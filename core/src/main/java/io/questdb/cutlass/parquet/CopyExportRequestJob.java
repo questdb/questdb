@@ -38,6 +38,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.network.NetworkError;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -170,6 +171,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         if (cursor > -1) {
             CopyExportRequestTask task = requestQueue.get(cursor);
             CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
+            boolean triggered = false;
             try {
                 if (copyContext.getCircuitBreaker().checkIfTripped()) {
                     LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
@@ -189,6 +191,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                     phase = CopyExportRequestTask.Phase.SENDING_DATA;
                     utf8StringSink.clear();
                     utf8StringSink.put("sending signal to waiting thread [fd=").put(task.getSuspendEvent().getFd()).put(']');
+                    triggered = true;
                     updateStatus(phase, CopyExportRequestTask.Status.STARTED, task,
                             null, utf8StringSink.asAsciiCharSequence(), 0);
                     task.getSuspendEvent().trigger();
@@ -225,9 +228,13 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                         -1
                 );
             } finally {
+                SuspendEvent event = task.getSuspendEvent();
                 task.clear();
                 requestSubSeq.done(cursor);
                 copyContext.clear();
+                if (!triggered && event != null) {
+                    event.trigger();
+                }
             }
 
             return true;

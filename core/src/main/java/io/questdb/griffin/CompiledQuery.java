@@ -33,7 +33,9 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Transient;
 
-public interface CompiledQuery {
+import java.io.Closeable;
+
+public interface CompiledQuery extends Closeable {
 
     short NONE = 0;
     // these values should be covered in both JsonQueryProcessor and PGConnectionContext

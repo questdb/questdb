@@ -301,7 +301,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'test_table'  with compression_codec aa;",
                 56,
-                "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
+                "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, lzo, brotli, zstd, lz4_raw"
         );
 
         assertException(
@@ -758,7 +758,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'output' with format parquet compression_codec unknown",
                 66,
-                "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
+                "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, lzo, brotli, zstd, lz4_raw"
         );
     }
 
@@ -1105,6 +1105,18 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyUseInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("CREATE TABLE reject_non_select_test AS (SELECT x FROM long_sequence(2))", sqlExecutionContext);
+            assertException(
+                    "copy (INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test) to 'test_table' with format parquet;",
+                    6,
+                    "table and column names that are SQL keywords have to be enclosed in double quotes, such as"
+            );
         });
     }
 
