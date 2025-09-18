@@ -940,6 +940,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testSymbolCapacityReloadFuzz() throws Exception {
+        // this test should pass on desktop withing 3-6s for WAL
+        // without errors. Anything else including timeouts is unexpected and is a regression
         String confString = "tcp::addr=localhost:" + bindPort + ";";
         runInContext(r -> {
             try (
