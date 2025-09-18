@@ -62,9 +62,19 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
-        left = DecimalUtil.maybeRescaleDecimalConstant(left, sqlExecutionContext.getDecimal256(), ColumnType.getDecimalScale(right.getType()));
+        left = DecimalUtil.maybeRescaleDecimalConstant(
+                left,
+                sqlExecutionContext.getDecimal256(),
+                ColumnType.getDecimalPrecision(right.getType()),
+                ColumnType.getDecimalScale(right.getType())
+        );
         args.setQuick(0, left); // the OG function may be already closed
-        right = DecimalUtil.maybeRescaleDecimalConstant(right, sqlExecutionContext.getDecimal256(), ColumnType.getDecimalScale(left.getType()));
+        right = DecimalUtil.maybeRescaleDecimalConstant(
+                right,
+                sqlExecutionContext.getDecimal256(),
+                ColumnType.getDecimalPrecision(left.getType()),
+                ColumnType.getDecimalScale(left.getType())
+        );
         args.setQuick(1, right);
 
         final int leftType = left.getType();

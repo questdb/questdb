@@ -43,10 +43,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToDecimalFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Lξ)";
-    }
 
     public static Function newInstance(
             int position,
@@ -69,6 +65,10 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
+    @Override
+    public String getSignature() {
+        return "cast(Lξ)";
+    }
 
     @Override
     public Function newInstance(
@@ -79,21 +79,6 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return newInstance(argPositions.getQuick(0), args.getQuick(0), args.getQuick(1).getType(), sqlExecutionContext);
-    }
-
-    private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
-        int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        switch (ColumnType.tagOf(targetType)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Decimals.getMaxLong(targetPrecision), value);
-            case ColumnType.DECIMAL128:
-                return new CastDecimal128UnscaledFunc(targetType, value);
-            default:
-                return new CastDecimal256UnscaledFunc(targetType, value);
-        }
     }
 
     private static Function newConstantInstance(
@@ -128,6 +113,21 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         // We don't try to narrow the type on its actual precision so that the user may pre-widen the constant decimal
         // to avoid doing it at query execution.
         return DecimalUtil.createDecimalConstant(d, targetPrecision, targetScale);
+    }
+
+    private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
+        int targetPrecision = ColumnType.getDecimalPrecision(targetType);
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Decimals.getMaxLong(targetPrecision), value);
+            case ColumnType.DECIMAL128:
+                return new CastDecimal128UnscaledFunc(targetType, value);
+            default:
+                return new CastDecimal256UnscaledFunc(targetType, value);
+        }
     }
 
     private static class CastDecimal128UnscaledFunc extends DecimalFunction implements UnaryFunction {

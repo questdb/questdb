@@ -333,21 +333,25 @@ public final class DecimalUtil {
      * This method is useful when choosing the most efficient function implementation in a function factory.
      * After rescaling one of the arguments, we no longer have to rescale it for each row.
      *
-     * @param func        the input function; must not be used after this call as it may be closed.
-     * @param decimal     intermediate object, used for rescaling
-     * @param targetScale target scale
+     * @param func            the input function; must not be used after this call as it may be closed.
+     * @param decimal         intermediate object, used for rescaling
+     * @param targetPrecision target precision
+     * @param targetScale     target scale
      * @return the newly created Decimal constant function
      */
     public static @NotNull Function maybeRescaleDecimalConstant(
             @NotNull Function func,
             @NotNull Decimal256 decimal,
+            int targetPrecision,
             int targetScale
     ) {
         final int type = func.getType();
         final int scale = ColumnType.getDecimalScale(type);
         if (func.isConstant() && ColumnType.isDecimal(type) && scale < targetScale) {
-            final int targetPrecision = ColumnType.getDecimalPrecision(type) + (targetScale - scale);
-            if (targetPrecision <= Decimals.MAX_PRECISION) {
+            final int rescaledPrecision = ColumnType.getDecimalPrecision(type) + (targetScale - scale);
+            if (rescaledPrecision <= Decimals.MAX_PRECISION) {
+                // aim for the target precision
+                targetPrecision = Math.max(targetPrecision, rescaledPrecision);
                 try {
                     final Function newFunc;
                     if (func.isNullConstant()) {

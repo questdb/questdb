@@ -89,13 +89,15 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testMaybeRescaleDecimalConstantLargerTargetScale() {
         final Decimal256 decimal = new Decimal256();
-        final int precision = 10;
+        final int precision = 20;
         final int scale = 2;
+        final int targetPrecision = 15;
         final int targetScale = 5;
         final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
         Assert.assertNotSame(constantFunc, result);
         Assert.assertTrue(result.isConstant());
+        Assert.assertEquals(precision + targetScale - scale, ColumnType.getDecimalPrecision(result.getType()));
         Assert.assertEquals(targetScale, ColumnType.getDecimalScale(result.getType()));
     }
 
@@ -103,7 +105,7 @@ public class DecimalUtilTest extends AbstractTest {
     public void testMaybeRescaleDecimalConstantNonConstantFunction() {
         final Decimal256 decimal = new Decimal256();
         final Function nonConstantFunc = new TestNonConstantDecimalFunction();
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(nonConstantFunc, decimal, 5);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(nonConstantFunc, decimal, 10, 5);
         Assert.assertSame(nonConstantFunc, result);
     }
 
@@ -112,12 +114,14 @@ public class DecimalUtilTest extends AbstractTest {
         final Decimal256 decimal = new Decimal256();
         final int precision = 13;
         final int scale = 2;
+        final int targetPrecision = 20;
         final int targetScale = 5;
         final ConstantFunction constantFunc = new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(precision, scale));
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
         Assert.assertNotSame(constantFunc, result);
         Assert.assertTrue(result.isConstant());
         Assert.assertTrue(result.isNullConstant());
+        Assert.assertEquals(targetPrecision, ColumnType.getDecimalPrecision(result.getType()));
         Assert.assertEquals(targetScale, ColumnType.getDecimalScale(result.getType()));
     }
 
@@ -126,9 +130,10 @@ public class DecimalUtilTest extends AbstractTest {
         final Decimal256 decimal = new Decimal256();
         final int precision = 10;
         final int scale = 5;
+        final int targetPrecision = 10;
         final int targetScale = 5;
         final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
         Assert.assertSame(constantFunc, result);
     }
 
@@ -137,9 +142,10 @@ public class DecimalUtilTest extends AbstractTest {
         final Decimal256 decimal = new Decimal256();
         final int precision = 10;
         final int scale = 5;
+        final int targetPrecision = 10;
         final int targetScale = 2;
         final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
         Assert.assertSame(constantFunc, result);
     }
 
