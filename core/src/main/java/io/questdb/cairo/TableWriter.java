@@ -894,32 +894,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 StringSink sink = new StringSink();
 
                 // pin column versions
-                ff.iterateDir(path.$(), new FindVisitor() {
-                    @Override
-                    public void onFind(long pUtf8NameZ, int type) {
-                        if (Files.notDots(pUtf8NameZ) && type == DT_FILE) {
-                            name.of(pUtf8NameZ);
-                            int firstDot = Utf8s.indexOfAscii(name, '.');
-                            if (firstDot != -1) {
-                                sink.clear();
-                                sink.put(name, 0, firstDot);
-                                // all our column files have .d (or such) extensions
-                                int columnIndex = metadata.getColumnIndexQuiet(sink);
-                                if (columnIndex != -1) {
-                                    // not a random file, we have column by this name
-                                    int lastDot = Utf8s.lastIndexOfAscii(name, '.');
-                                    int len = Utf8s.length(name);
-                                    if (lastDot > 1 && lastDot < len - 1) {
-                                        // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
-                                        try {
-                                            long nameTxn = Numbers.parseLong(name, lastDot + 1, len);
-                                            if (nameTxn > 0) {
-                                                // column tops are not supported (this is to make sure "copy" command can attach partitions
-                                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
-                                                System.out.println("nametxn: " + name.asAsciiCharSequence() + ", ver: " + nameTxn);
-                                            }
-                                        } catch (NumericException ignore) {
+                // todo: address GC
+                ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                    if (Files.notDots(pUtf8NameZ) && type == DT_FILE) {
+                        name.of(pUtf8NameZ);
+                        int firstDot = Utf8s.indexOfAscii(name, '.');
+                        if (firstDot != -1) {
+                            sink.clear();
+                            sink.put(name, 0, firstDot);
+                            // all our column files have .d (or such) extensions
+                            int columnIndex = metadata.getColumnIndexQuiet(sink);
+                            if (columnIndex != -1) {
+                                // not a random file, we have column by this name
+                                int lastDot = Utf8s.lastIndexOfAscii(name, '.');
+                                int len = Utf8s.length(name);
+                                if (lastDot > 1 && lastDot < len - 1) {
+                                    // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
+                                    try {
+                                        long nameTxn = Numbers.parseLong(name, lastDot + 1, len);
+                                        if (nameTxn > 0) {
+                                            // column tops are not supported (this is to make sure "copy" command can attach partitions
+                                            columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
                                         }
+                                    } catch (NumericException ignore) {
                                     }
                                 }
                             }
@@ -2281,6 +2278,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
+    }
+
+    public ColumnVersionReader getColumnVersionReader() {
+        return columnVersionWriter;
     }
 
     public long getDataAppendPageSize() {
@@ -5497,15 +5498,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ColumnType.isSymbol(columnType)) {
                 // Link .o, .c, .k, .v symbol files in the table root folder
                 try {
-                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    linkFile(
+                            ff,
+                            charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                            charFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                    );
                     if (!symbolCapacityChange) {
-                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(
+                                ff,
+                                offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                        );
+                        linkFile(
+                                ff,
+                                keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                        );
+                        linkFile(
+                                ff,
+                                valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                        );
                     } else {
                         // in case it's symbol capacity rebuild copy symbol offset file.
                         // it's almost the same but the capacity in the file header is changed
-                        ff.copy(offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        if (
+                                ff.copy(
+                                        offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                        offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)) < 0
+                        ) {
+                            throw CairoException.critical(ff.errno())
+                                    .put("Could not copy [from=").put(path)
+                                    .put(", to=").put(path)
+                                    .put(']');
+
+                        }
                     }
                 } catch (Throwable e) {
                     ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
@@ -10430,10 +10457,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     long getColumnTop(int columnIndex) {
         assert lastOpenPartitionTs != Long.MIN_VALUE;
         return columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex);
-    }
-
-    ColumnVersionReader getColumnVersionReader() {
-        return columnVersionWriter;
     }
 
     CairoConfiguration getConfiguration() {

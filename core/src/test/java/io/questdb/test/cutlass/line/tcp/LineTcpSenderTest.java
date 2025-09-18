@@ -41,18 +41,22 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,6 +69,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
@@ -928,6 +934,95 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 assertEquals(1, cursor.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCapacityReloadFuzz() throws Exception {
+        String confString = "tcp::addr=localhost:" + bindPort + ";";
+        runInContext(r -> {
+            try (
+                    Sender sender1 = Sender.fromConfig(confString);
+                    Sender sender2 = Sender.fromConfig(confString)
+            ) {
+                AtomicBoolean walRunning = new AtomicBoolean(true);
+                SOCountDownLatch doneAll = new SOCountDownLatch(3);
+                SOCountDownLatch doneILP = new SOCountDownLatch(2);
+                Rnd rnd = TestUtils.generateRandom(null);
+                long seed1a = rnd.nextLong();
+                long seed1b = rnd.nextLong();
+                long seed2a = rnd.nextLong();
+                long seed2b = rnd.nextLong();
+                AtomicInteger errorCount = new AtomicInteger();
+
+                new Thread(() -> {
+                    try {
+                        Rnd rnd1 = new Rnd(seed1a, seed1b);
+                        for (int i = 0; i < 1_000_000; i++) {
+                            sender1.table("mytable")
+                                    .symbol("sym1", rnd1.nextString(10))
+                                    .symbol("sym2", rnd1.nextString(2))
+                                    .doubleColumn("dd", rnd1.nextDouble())
+                                    .atNow();
+                        }
+                        sender1.flush();
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                        doneAll.countDown();
+                        doneILP.countDown();
+                    }
+                }).start();
+
+                new Thread(() -> {
+                    try {
+                        Rnd rnd2 = new Rnd(seed2a, seed2b);
+                        for (int i = 0; i < 1_000_000; i++) {
+                            sender2.table("mytable")
+                                    .symbol("sym1", rnd2.nextString(10))
+                                    .symbol("sym2", rnd2.nextString(2))
+                                    .doubleColumn("dd", rnd2.nextDouble())
+                                    .atNow();
+                        }
+                        sender2.flush();
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                        doneAll.countDown();
+                        doneILP.countDown();
+                    }
+                }).start();
+
+                new Thread(() -> {
+                    try {
+                        while (walRunning.get()) {
+                            drainWalQueue();
+                            Os.pause();
+                        }
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                        doneAll.countDown();
+                    }
+                }).start();
+
+
+                doneILP.await();
+                walRunning.set(false);
+                doneAll.await();
+
+                Assert.assertEquals(0, errorCount.get());
+
+                // make sure to assert before closing the Sender
+                // since the Sender will always flush on close
+                assertTableExistsEventually(engine, "mytable");
             }
         });
     }

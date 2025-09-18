@@ -734,7 +734,6 @@ public class CopyTask {
                 path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
                 remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
                 remapTableMemorySize = ff.length(remapFd);
-                assert remapTableMemorySize > 0;
 
                 if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
                     columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_IMPORT);

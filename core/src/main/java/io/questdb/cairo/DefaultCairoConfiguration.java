@@ -262,7 +262,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getDataIndexKeyAppendPageSize() {
-        return Files.PAGE_SIZE;
+        return 1024 * 1024;
     }
 
     @Override

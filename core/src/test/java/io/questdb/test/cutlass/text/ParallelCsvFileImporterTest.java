@@ -700,7 +700,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
-                if (Utf8s.endsWithAscii(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
+                if (Utf8s.endsWithAscii(name, "line.v.1") && stackContains("PhaseBuildSymbolIndex")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -761,7 +761,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, "line.c")) {
+                if (Utf8s.endsWithAscii(name, "line.c.1")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1579,7 +1579,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImportTimestampTypFormatMismatch() throws Exception {
+    public void testImportTimestampTypFormatMismatch() {
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
             importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', "ts_ns", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
             importer.process(AllowAllSecurityContext.INSTANCE);
@@ -2777,11 +2777,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int copy(LPSZ from, LPSZ to) {
-                return -1;
-            }
-
-            @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (Utf8s.endsWithAscii(from, "1972-09" + File.separator)) {
                     return Files.FILES_RENAME_ERR_OTHER;
@@ -2790,11 +2785,13 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
         };
 
+        final int workerCount = 4;
+        final int queueCapacity = 8;
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                workerCount, queueCapacity, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(compiler, "create table tab20 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
-                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, workerCount)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab20", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3517,7 +3514,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    interface TextImportRunnable {
+    public interface TextImportRunnable {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 

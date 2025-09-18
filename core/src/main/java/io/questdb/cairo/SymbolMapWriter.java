@@ -101,7 +101,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem = Vm.getWholeMARWInstance(
                     ff,
                     lpsz,
-                    mapPageSize,
+                    Math.max(mapPageSize, ff.length(lpsz)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -117,10 +117,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.indexWriter.of(path.trimTo(plen), columnName, columnNameTxn);
 
             // this is the place where symbol values are stored
+            lpsz = charFileName(path.trimTo(plen), columnName, columnNameTxn);
             this.charMem = Vm.getWholeMARWInstance(
                     ff,
-                    charFileName(path.trimTo(plen), columnName, columnNameTxn),
-                    mapPageSize,
+                    lpsz,
+                    Math.max(mapPageSize, ff.length(lpsz)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -267,14 +268,23 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             final int plen = path.size();
             int symbolCount = getSymbolCount();
             final FilesFacade ff = configuration.getFilesFacade();
-            final long mapPageSize = configuration.getMiscAppendPageSize();
+            final long mapPageSize = configuration.getSymbolTableAppendPageSize();
 
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             this.symbolCapacity = newCapacity;
             assert symbolCapacity > 0;
 
             // init key files, use offsetMem for that
-            this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
+            LPSZ name = BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+            this.offsetMem.close();
+            this.offsetMem = Vm.getWholeMARWInstance(
+                    ff,
+                    name,
+                    Math.max(mapPageSize, ff.length(name)),
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
+
             BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
             // we must close this file (key file), before it is re-opened by the indexWriter, not after
             // the after will be spurious close, initiated by offsetMem object reuse
@@ -305,7 +315,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem.of(
                     ff,
                     lpsz,
-                    mapPageSize,
+                    Math.max(mapPageSize, ff.length(lpsz)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -314,10 +324,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
             // this is the place where symbol values are stored
+            lpsz = charFileName(path.trimTo(plen), columnName, columnNameTxn);
             this.charMem.of(
                     ff,
-                    charFileName(path.trimTo(plen), columnName, columnNameTxn),
-                    mapPageSize,
+                    lpsz,
+                    Math.max(mapPageSize, ff.length(lpsz)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
