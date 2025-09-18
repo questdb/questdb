@@ -658,7 +658,7 @@ public class SqlParser {
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
                 if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
-                    tokenAlias = tokenAlias + "_ignore_nulls";
+                    tokenAlias += "_ignore_nulls";
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }

@@ -4681,13 +4681,8 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 CharSequence column = orderBy.token;
                 int dot = Chars.indexOfLastUnquoted(column, '.');
-                int bracketIndex = Chars.indexOf(column, '[');
-                if (bracketIndex >= 0) {
-                    CharSequence baseColumn = column.subSequence(0, bracketIndex);
-                    // Validate base column
-                    validateColumnAndGetAlias(base, baseColumn,
-                            Chars.indexOfLastUnquoted(baseColumn, '.'), orderBy.position);
-                } else if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
+                // is this a table reference?
+                if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
                     validateColumnAndGetModelIndex(base, null, column, dot, orderBy.position, false);
                     // good news, our column matched base model
@@ -6701,45 +6696,32 @@ public class SqlOptimiser implements Mutable {
     }
 
     private CharSequence validateColumnAndGetAlias(QueryModel model, CharSequence columnName, int dot, int position) throws SqlException {
-        int bracketIndex = Chars.indexOf(columnName, '[');
-        if (bracketIndex >= 0) {
-            // Extract the base column name (before the bracket)
-            CharSequence baseColumnName = columnName.subSequence(0, bracketIndex);
-
-            // Validate the base column exists
-            CharSequence alias = validateColumnAndGetAlias(model, baseColumnName,
-                    Chars.indexOfLastUnquoted(baseColumnName, '.'), position);
-
-            // Return the full expression if base column is valid
-            return alias != null ? columnName : null;
-        } else {
-            ObjList<QueryModel> joinModels = model.getJoinModels();
-            CharSequence alias = null;
-            if (dot == -1) {
-                for (int i = 0, n = joinModels.size(); i < n; i++) {
-                    final QueryModel jm = joinModels.getQuick(i);
-                    if (jm.getColumnNameToAliasMap().excludes(columnName)) {
-                        continue;
-                    }
-                    if (alias != null) {
-                        throw SqlException.ambiguousColumn(position, columnName);
-                    }
-                    alias = jm.getColumnNameToAliasMap().get(columnName);
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        CharSequence alias = null;
+        if (dot == -1) {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel jm = joinModels.getQuick(i);
+                if (jm.getColumnNameToAliasMap().excludes(columnName)) {
+                    continue;
                 }
-            } else {
-                for (int i = 0, n = joinModels.size(); i < n; i++) {
-                    final QueryModel jm = joinModels.getQuick(i);
-                    final ExpressionNode tableAlias = jm.getAlias() != null ? jm.getAlias() : jm.getTableNameExpr();
-                    if (Chars.equalsIgnoreCase(tableAlias.token, columnName, 0, dot)) {
-                        alias = jm.getColumnNameToAliasMap().get(columnName);
-                        if (alias == null) {
-                            alias = jm.getColumnNameToAliasMap().get(columnName, dot + 1, columnName.length());
-                        }
+                if (alias != null) {
+                    throw SqlException.ambiguousColumn(position, columnName);
+                }
+                alias = jm.getColumnNameToAliasMap().get(columnName);
+            }
+        } else {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel jm = joinModels.getQuick(i);
+                final ExpressionNode tableAlias = jm.getAlias() != null ? jm.getAlias() : jm.getTableNameExpr();
+                if (Chars.equalsIgnoreCase(tableAlias.token, columnName, 0, dot)) {
+                    alias = jm.getColumnNameToAliasMap().get(columnName);
+                    if (alias == null) {
+                        alias = jm.getColumnNameToAliasMap().get(columnName, dot + 1, columnName.length());
                     }
                 }
             }
-            return alias;
         }
+        return alias;
     }
 
     /**
