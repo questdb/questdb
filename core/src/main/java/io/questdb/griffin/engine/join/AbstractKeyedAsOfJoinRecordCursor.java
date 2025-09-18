@@ -90,18 +90,18 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (masterTimestamp >= lookaheadTimestamp) {
             nextSlave(masterTimestamp);
         }
-        // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
+        // Set `isMasterHasNextPending` only now because `nextSlave()` may throw DataUnavailableException,
         // and in such a case we don't want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-        // if we are here, it's clear that nextSlave() did not throw DataUnavailableException.
+        // If we are here, it's clear that nextSlave() did not throw DataUnavailableException.
         isMasterHasNextPending = true;
 
         boolean hasSlave = record.hasSlave();
         origHasSlave = hasSlave;
         if (!hasSlave) {
-            // the non-keyed algo did not find a matching record in the slave table.
-            // this means the slave table does not have a single record with a timestamp that is less than or equal
+            // The non-keyed algo did not find a matching record in the slave table.
+            // This means the slave table does not have a single record with a timestamp that is less than or equal
             // to the master record's timestamp.
-            // thus, it cannot possibly have a record with a matching key, since matching timestamps is a prerequisite
+            // Thus, it cannot possibly have a record with a matching key, since matching timestamps is a prerequisite
             // before we even try to match keys -> we can safely skip the key matching part and report no match.
             return true;
         }

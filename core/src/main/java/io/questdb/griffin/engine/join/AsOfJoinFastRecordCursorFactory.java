@@ -71,9 +71,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(), new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                masterFactory.getMetadata().getTimestampType(),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType(), new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                slaveFactory.getMetadata().getTimestampType(),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
@@ -161,16 +163,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             masterSinkTarget.clear();
             masterKeySink.copy(masterRecord, masterSinkTarget);
 
-            // reset the cursor to the frame corresponding to slaveRecB
-            // (earlier nextSlave() call might have moved it)
-            int slaveFrameIndex = Rows.toPartitionIndex(slaveRecB.getRowId());
-            slaveTimeFrameCursor.jumpTo(slaveFrameIndex);
-            slaveTimeFrameCursor.open();
-
+            // Reset slave cursor to the current timeframe (nextSlave() call might have moved it)
             TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
             slaveTimeFrameCursor.open();
-
             long rowLo = timeFrame.getRowLo();
             int keyedFrameIndex = timeFrame.getFrameIndex();
             long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());

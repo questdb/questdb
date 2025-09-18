@@ -144,7 +144,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget,
+                    slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
         }
 
         @Override
@@ -176,7 +177,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             } else {
                 slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
                 if (scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale) > masterTimestamp) {
-                    // slaveFrameRow points to row just beyond the one with timestamp <= masterTimestamp
+                    // slaveFrameRow points to row just beyond the last one with timestamp <= masterTimestamp
                     rowMax--;
                 }
             }
