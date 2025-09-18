@@ -177,8 +177,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected int getMaxWalFdCache(Rnd rnd) {
         // Generate 0s in 30% of the cases
         // 0 forces to bypass fd cache which is an important case to test
-        int max = Math.max(0, rnd.nextInt(1000) - 300);
-        return max;
+        return Math.max(0, rnd.nextInt(1000) - 300);
     }
 
     protected long getMaxWalSize(Rnd rnd) {
