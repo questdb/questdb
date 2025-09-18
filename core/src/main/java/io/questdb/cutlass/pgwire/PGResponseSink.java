@@ -103,7 +103,7 @@ public interface PGResponseSink extends Utf8Sink {
      * writing to ensure PGWire compatibility.
      *
      * @param address to write the value to
-     * @param value the int value to write
+     * @param value   the int value to write
      * @see #getSendBufferPtr() to retrieve a writable address
      */
     void putNetworkInt(long address, int value);
@@ -130,7 +130,7 @@ public interface PGResponseSink extends Utf8Sink {
      * writing to ensure PGWire compatibility.
      *
      * @param address to write the value to
-     * @param value the int value to write
+     * @param value   the int value to write
      * @see #getSendBufferPtr() to retrieve a writable address
      */
     void putNetworkShort(long address, short value);
