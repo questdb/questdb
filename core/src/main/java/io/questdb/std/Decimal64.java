@@ -230,21 +230,28 @@ public class Decimal64 implements Sinkable {
      * Compare this to another Decimal64
      */
     public int compareTo(Decimal64 other) {
-        if (this.scale == other.scale) {
-            return Long.compare(this.value, other.value);
+        return compareTo(other.value, other.scale);
+    }
+
+    /**
+     * Compare this to another Decimal64
+     */
+    public int compareTo(long otherValue, int otherScale) {
+        if (this.scale == otherScale) {
+            return Long.compare(this.value, otherValue);
         }
 
         // Different scales - need to align for comparison
         long thisScaled, otherScaled;
 
-        if (this.scale < other.scale) {
-            int scaleDiff = other.scale - this.scale;
+        if (this.scale < otherScale) {
+            int scaleDiff = otherScale - this.scale;
             thisScaled = scaleUp(this.value, scaleDiff);
-            otherScaled = other.value;
+            otherScaled = otherValue;
         } else {
-            int scaleDiff = this.scale - other.scale;
+            int scaleDiff = this.scale - otherScale;
             thisScaled = this.value;
-            otherScaled = scaleUp(other.value, scaleDiff);
+            otherScaled = scaleUp(otherValue, scaleDiff);
         }
 
         return Long.compare(thisScaled, otherScaled);

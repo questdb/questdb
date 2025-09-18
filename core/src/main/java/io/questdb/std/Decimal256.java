@@ -439,6 +439,59 @@ public class Decimal256 implements Sinkable {
         return result;
     }
 
+    /**
+     * Extracts the digit at a specific power-of-ten position from a 256-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
+     *
+     * @param hh highest 64 bits of the 256-bit decimal
+     * @param hl high-middle 64 bits of the 256-bit decimal
+     * @param lh low-middle 64 bits of the 256-bit decimal
+     * @param ll lowest 64 bits of the 256-bit decimal
+     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public static int getDigitAtPowerOfTen(long hh, long hl, long lh, long ll, int pow) {
+        // We do a binary search to retrieve the digit we need to display at a specific power
+        if (compareToPowerOfTen(hh, hl, lh, ll, pow, 5) >= 0) {
+            if (compareToPowerOfTen(hh, hl, lh, ll, pow, 7) >= 0) {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 9) >= 0) {
+                    return 9;
+                } else if (compareToPowerOfTen(hh, hl, lh, ll, pow, 8) >= 0) {
+                    return 8;
+                } else {
+                    return 7;
+                }
+            } else {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 6) >= 0) {
+                    return 6;
+                } else {
+                    return 5;
+                }
+            }
+        } else {
+            if (compareToPowerOfTen(hh, hl, lh, ll, pow, 3) >= 0) {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 4) >= 0) {
+                    return 4;
+                } else {
+                    return 3;
+                }
+            } else {
+                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 2) >= 0) {
+                    return 2;
+                } else if (compareToPowerOfTen(hh, hl, lh, ll, pow, 1) >= 0) {
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+
     @TestOnly
     public static long[][] getPowersTenTable() {
         return POWERS_TEN_TABLE;
@@ -613,125 +666,6 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Extracts the digit at a specific power-of-ten position from a 256-bit decimal number.
-     * <p>
-     * Uses binary search to efficiently determine which digit (0-9) should appear at the
-     * given power-of-ten position when the decimal is represented in base 10.
-     * <p>
-     * Prerequisites:
-     * - The decimal value must be positive
-     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
-     *
-     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
-     * @return the digit (0-9) at the specified power-of-ten position
-     */
-    public int getDigitAtPowerOfTen(int pow) {
-        return getDigitAtPowerOfTen(hh, hl, lh, ll, pow);
-    }
-
-    /**
-     * Extracts the digit at a specific power-of-ten position from a 256-bit decimal number.
-     * <p>
-     * Uses binary search to efficiently determine which digit (0-9) should appear at the 
-     * given power-of-ten position when the decimal is represented in base 10.
-     * <p>
-     * Prerequisites:
-     * - The decimal value must be positive
-     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
-     * 
-     * @param hh highest 64 bits of the 256-bit decimal
-     * @param hl high-middle 64 bits of the 256-bit decimal  
-     * @param lh low-middle 64 bits of the 256-bit decimal
-     * @param ll lowest 64 bits of the 256-bit decimal
-     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
-     * @return the digit (0-9) at the specified power-of-ten position
-     */
-    public static int getDigitAtPowerOfTen(long hh, long hl, long lh, long ll, int pow) {
-        // We do a binary search to retrieve the digit we need to display at a specific power
-        if (compareToPowerOfTen(hh, hl, lh, ll, pow, 5) >= 0) {
-            if (compareToPowerOfTen(hh, hl, lh, ll, pow, 7) >= 0) {
-                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 9) >= 0) {
-                    return 9;
-                } else if (compareToPowerOfTen(hh, hl, lh, ll, pow, 8) >= 0) {
-                    return 8;
-                } else {
-                    return 7;
-                }
-            } else {
-                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 6) >= 0) {
-                    return 6;
-                } else {
-                    return 5;
-                }
-            }
-        } else {
-            if (compareToPowerOfTen(hh, hl, lh, ll, pow, 3) >= 0) {
-                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 4) >= 0) {
-                    return 4;
-                } else {
-                    return 3;
-                }
-            } else {
-                if (compareToPowerOfTen(hh, hl, lh, ll, pow, 2) >= 0) {
-                    return 2;
-                } else if (compareToPowerOfTen(hh, hl, lh, ll, pow, 1) >= 0) {
-                    return 1;
-                }
-            }
-        }
-        return 0;
-    }
-
-    /**
-     * Subtracts a specific multiplier of a power of ten from the current 256-bit value.
-     * This method modifies the value in-place by subtracting (multiplier * 10^pow).
-     * 
-     * Used in conjunction with getDigitAtPowerOfTen to extract individual digits:
-     * 1. Call getDigitAtPowerOfTen to get the digit at a specific power
-     * 2. Call this method to subtract that digit's contribution
-     * 3. Repeat for the next lower power
-     *
-     * @param pow the power of ten position
-     * @param multiplier the digit to subtract (1-9, or 0 for no-op)
-     */
-    public void subtractPowerOfTenMultiple(int pow, int multiplier) {
-        if (multiplier == 0 || multiplier > 9) {
-            return;
-        }
-        
-        // Get the value to subtract from POWERS_TEN_TABLE
-        // Each power has 9 entries (for multipliers 1-9), each entry has 4 longs
-        int offset = (multiplier - 1) * 4;
-        
-        // Perform 256-bit subtraction using two's complement
-        // First, negate the value to subtract (two's complement)
-        long bLL = ~POWERS_TEN_TABLE[pow][offset + 3] + 1;
-        long c = bLL == 0L ? 1L : 0L;
-        long r = ll + bLL;
-        long carry = hasCarry(ll, r) ? 1L : 0L;
-        ll = r;
-        
-        long bLH = ~POWERS_TEN_TABLE[pow][offset + 2] + c;
-        c = (c == 1L && bLH == 0L) ? 1L : 0L;
-        long t = lh + carry;
-        carry = hasCarry(lh, t) ? 1L : 0L;
-        r = t + bLH;
-        carry |= hasCarry(t, r) ? 1L : 0L;
-        lh = r;
-        
-        long bHL = ~POWERS_TEN_TABLE[pow][offset + 1] + c;
-        c = (c == 1L && bHL == 0L) ? 1L : 0L;
-        t = hl + carry;
-        carry = hasCarry(hl, t) ? 1L : 0L;
-        r = t + bHL;
-        carry |= hasCarry(t, r) ? 1L : 0L;
-        hl = r;
-        
-        long bHH = ~POWERS_TEN_TABLE[pow][offset] + c;
-        hh = hh + carry + bHH;
-    }
-
-    /**
      * In-place addition.
      *
      * @throws NumericException if overflow occurs
@@ -780,13 +714,13 @@ public class Decimal256 implements Sinkable {
             final long thresholdHL = PRECISION_POSITIVE_THRESHOLD_HL[precision];
             final long thresholdLH = PRECISION_POSITIVE_THRESHOLD_LH[precision];
             final long thresholdLL = PRECISION_POSITIVE_THRESHOLD_LL[precision];
-            return compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) <= 0;
+            return compareTo0(thresholdHH, thresholdHL, thresholdLH, thresholdLL) <= 0;
         } else {
             final long thresholdHH = PRECISION_NEGATIVE_THRESHOLD_HH[precision];
             final long thresholdHL = PRECISION_NEGATIVE_THRESHOLD_HL[precision];
             final long thresholdLH = PRECISION_NEGATIVE_THRESHOLD_LH[precision];
             final long thresholdLL = PRECISION_NEGATIVE_THRESHOLD_LL[precision];
-            return compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) >= 0;
+            return compareTo0(thresholdHH, thresholdHL, thresholdLH, thresholdLL) >= 0;
         }
     }
 
@@ -797,26 +731,35 @@ public class Decimal256 implements Sinkable {
      * @return -1, 0, or 1 as this is less than, equal to, or greater than other
      */
     public int compareTo(Decimal256 other) {
+        return compareTo(other.hh, other.hl, other.lh, other.ll, other.scale);
+    }
+
+    /**
+     * Compare this Decimal256 with another.
+     *
+     * @return -1, 0, or 1 as this is less than, equal to, or greater than other
+     */
+        public int compareTo(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
         boolean aNeg = isNegative();
-        boolean bNeg = other.isNegative();
+        boolean bNeg = otherHH < 0;
         if (aNeg != bNeg) {
             return aNeg ? -1 : 1;
         }
 
         int diffQ = aNeg ? -1 : 1;
 
-        if (this.scale == other.scale) {
+        if (this.scale == otherScale) {
             // Same scale - direct comparison
-            if (this.hh != other.hh) {
-                return Long.compare(this.hh, other.hh);
+            if (this.hh != otherHH) {
+                return Long.compare(this.hh, otherHH);
             }
-            if (this.hl != other.hl) {
-                return Long.compareUnsigned(this.hl, other.hl) * diffQ;
+            if (this.hl != otherHL) {
+                return Long.compareUnsigned(this.hl, otherHL) * diffQ;
             }
-            if (this.lh != other.lh) {
-                return Long.compareUnsigned(this.lh, other.lh) * diffQ;
+            if (this.lh != otherLH) {
+                return Long.compareUnsigned(this.lh, otherLH) * diffQ;
             }
-            return Long.compareUnsigned(this.ll, other.ll) * diffQ;
+            return Long.compareUnsigned(this.ll, otherLL) * diffQ;
         }
 
         // Stores the coefficient to apply to the response, if both numbers are negative, then
@@ -825,12 +768,10 @@ public class Decimal256 implements Sinkable {
         long aHL = this.hl;
         long aLH = this.lh;
         long aLL = this.ll;
-        int aScale = this.scale;
-        long bHH = other.hh;
-        long bHL = other.hl;
-        long bLH = other.lh;
-        long bLL = other.ll;
-        int bScale = other.scale;
+        long bHH = otherHH;
+        long bHL = otherHL;
+        long bLH = otherLH;
+        long bLL = otherLL;
 
         if (aNeg) {
             aLL = ~aLL + 1;
@@ -852,16 +793,16 @@ public class Decimal256 implements Sinkable {
         }
 
         Decimal256 holder = tl.get();
-        if (aScale < bScale) {
-            holder.of(aHH, aHL, aLH, aLL, aScale);
-            holder.multiplyByPowerOf10InPlace(bScale - aScale);
+        if (this.scale < otherScale) {
+            holder.of(aHH, aHL, aLH, aLL, this.scale);
+            holder.multiplyByPowerOf10InPlace(otherScale - this.scale);
             aHH = holder.hh;
             aHL = holder.hl;
             aLH = holder.lh;
             aLL = holder.ll;
         } else {
-            holder.of(bHH, bHL, bLH, bLL, bScale);
-            holder.multiplyByPowerOf10InPlace(aScale - bScale);
+            holder.of(bHH, bHL, bLH, bLL, otherScale);
+            holder.multiplyByPowerOf10InPlace(this.scale - otherScale);
             bHH = holder.hh;
             bHL = holder.hl;
             bLH = holder.lh;
@@ -985,6 +926,23 @@ public class Decimal256 implements Sinkable {
             default:
                 return false;
         }
+    }
+
+    /**
+     * Extracts the digit at a specific power-of-ten position from a 256-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
+     *
+     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public int getDigitAtPowerOfTen(int pow) {
+        return getDigitAtPowerOfTen(hh, hl, lh, ll, pow);
     }
 
     /**
@@ -1535,6 +1493,55 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Subtracts a specific multiplier of a power of ten from the current 256-bit value.
+     * This method modifies the value in-place by subtracting (multiplier * 10^pow).
+     *
+     * Used in conjunction with getDigitAtPowerOfTen to extract individual digits:
+     * 1. Call getDigitAtPowerOfTen to get the digit at a specific power
+     * 2. Call this method to subtract that digit's contribution
+     * 3. Repeat for the next lower power
+     *
+     * @param pow the power of ten position
+     * @param multiplier the digit to subtract (1-9, or 0 for no-op)
+     */
+    public void subtractPowerOfTenMultiple(int pow, int multiplier) {
+        if (multiplier == 0 || multiplier > 9) {
+            return;
+        }
+
+        // Get the value to subtract from POWERS_TEN_TABLE
+        // Each power has 9 entries (for multipliers 1-9), each entry has 4 longs
+        int offset = (multiplier - 1) * 4;
+
+        // Perform 256-bit subtraction using two's complement
+        // First, negate the value to subtract (two's complement)
+        long bLL = ~POWERS_TEN_TABLE[pow][offset + 3] + 1;
+        long c = bLL == 0L ? 1L : 0L;
+        long r = ll + bLL;
+        long carry = hasCarry(ll, r) ? 1L : 0L;
+        ll = r;
+
+        long bLH = ~POWERS_TEN_TABLE[pow][offset + 2] + c;
+        c = (c == 1L && bLH == 0L) ? 1L : 0L;
+        long t = lh + carry;
+        carry = hasCarry(lh, t) ? 1L : 0L;
+        r = t + bLH;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        lh = r;
+
+        long bHL = ~POWERS_TEN_TABLE[pow][offset + 1] + c;
+        c = (c == 1L && bHL == 0L) ? 1L : 0L;
+        t = hl + carry;
+        carry = hasCarry(hl, t) ? 1L : 0L;
+        r = t + bHL;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        hl = r;
+
+        long bHH = ~POWERS_TEN_TABLE[pow][offset] + c;
+        hh = hh + carry + bHH;
+    }
+
+    /**
      * Convert to BigDecimal.
      *
      * @return BigDecimal representation
@@ -1716,7 +1723,7 @@ public class Decimal256 implements Sinkable {
         }
     }
 
-    private int compareTo(long bHH, long bHL, long bLH, long bLL) {
+    private int compareTo0(long bHH, long bHL, long bLH, long bLL) {
         if (hh != bHH) {
             return Long.compare(hh, bHH);
         }
@@ -1730,12 +1737,12 @@ public class Decimal256 implements Sinkable {
     }
 
     private boolean hasOverflowed() {
-        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0 ||
-                compareTo(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
+        return compareTo0(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0
+                || compareTo0(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
     }
 
     private boolean hasUnsignOverflowed() {
-        return compareTo(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0;
+        return compareTo0(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0;
     }
 
     private void multiply128(long h, long l) {
@@ -2595,7 +2602,7 @@ public class Decimal256 implements Sinkable {
         final long thresholdLH = n >= POWERS_TEN_TABLE_THRESHOLD_LH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_LH[n];
         final long thresholdLL = POWERS_TEN_TABLE_THRESHOLD_LL[n];
 
-        if (compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) > 0) {
+        if (compareTo0(thresholdHH, thresholdHL, thresholdLH, thresholdLL) > 0) {
             throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + n + " exceeds 256-bit capacity");
         }
 

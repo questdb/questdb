@@ -39,6 +39,7 @@ import java.math.RoundingMode;
  * Tests for the consolidated Decimal128 class
  */
 public class Decimal128Test {
+
     @Test(expected = NumericException.class)
     public void testAddOverflow() {
         Decimal128 a = new Decimal128(Long.MAX_VALUE, 0, 0);

@@ -72,89 +72,11 @@ public class Decimal64Test {
         }
     }
 
-    @Test
-    public void testModuloStatic() {
-        Decimal64 a = Decimal64.fromLong(10, 0);
-        Decimal64 b = Decimal64.fromLong(3, 0);
-        Decimal64 result = new Decimal64();
-        Decimal64.modulo(a, b, result);
-        Assert.assertEquals(1, result.getValue());
-        Assert.assertEquals(10, a.getValue());
-        Assert.assertEquals(3, b.getValue());
-    }
-
-    @Test
-    public void testAdditionScaleB() {
-        Decimal64 a = Decimal64.fromLong(10, 1);
-        Decimal64 b = Decimal64.fromLong(1, 0);
+    @Test(expected = NumericException.class)
+    public void testAdditionOverflowNegativeScale() {
+        Decimal64 a = Decimal64.fromLong(-10000000, 0);
+        Decimal64 b = Decimal64.fromLong(1, 15);
         a.add(b);
-        Assert.assertEquals(20, a.getValue());
-        Assert.assertEquals(1, a.getScale());
-    }
-
-    @Test
-    public void testDivideNegative() {
-        Decimal64 a = Decimal64.fromLong(-10, 0);
-        Decimal64 b = Decimal64.fromLong(-2, 0);
-        a.divide(b, 0, RoundingMode.HALF_UP);
-        Assert.assertEquals(5, a.getValue());
-        Assert.assertEquals(0, a.getScale());
-    }
-
-    @Test
-    public void testDivideNegativeResult() {
-        Decimal64 a = Decimal64.fromLong(-10, 0);
-        Decimal64 b = Decimal64.fromLong(2, 0);
-        a.divide(b, 0, RoundingMode.HALF_UP);
-        Assert.assertEquals(-5, a.getValue());
-        Assert.assertEquals(0, a.getScale());
-    }
-
-    @Test
-    public void testModuloScale() {
-        Decimal64 a = Decimal64.fromLong(10, 0);
-        Decimal64 b = Decimal64.fromLong(30, 1);
-        a.modulo(b);
-        Assert.assertEquals(10, a.getValue());
-        Assert.assertEquals(1, a.getScale());
-    }
-
-    @Test(expected = NumericException.class)
-    public void testMultiplyOverflowScale() {
-        Decimal64 a = Decimal64.fromLong(2, 10);
-        Decimal64 b = Decimal64.fromLong(2, 10);
-        a.multiply(b);
-    }
-
-    @Test
-    public void testRoundScale() {
-        Decimal64 a = Decimal64.fromLong(-10, 1);
-        a.round(2, RoundingMode.HALF_UP);
-        Assert.assertEquals(-100, a.getValue());
-        Assert.assertEquals(2, a.getScale());
-    }
-
-    @Test
-    public void testSubtractScaleB() {
-        Decimal64 a = Decimal64.fromLong(10, 1);
-        Decimal64 b = Decimal64.fromLong(1, 0);
-        a.subtract(b);
-        Assert.assertEquals(0, a.getValue());
-        Assert.assertEquals(1, a.getScale());
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDivisionOverflowScale() {
-        Decimal64 a = Decimal64.fromLong(1, 0);
-        Decimal64 b = Decimal64.fromLong(1, 10);
-        a.divide(b, 10, RoundingMode.HALF_UP);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDivisionOverflow() {
-        Decimal64 a = Decimal64.fromLong(10000000, 0);
-        Decimal64 b = Decimal64.fromLong(1, 10);
-        a.divide(b, 5, RoundingMode.HALF_UP);
     }
 
     @Test(expected = NumericException.class)
@@ -164,11 +86,13 @@ public class Decimal64Test {
         a.add(b);
     }
 
-    @Test(expected = NumericException.class)
-    public void testAdditionOverflowNegativeScale() {
-        Decimal64 a = Decimal64.fromLong(-10000000, 0);
-        Decimal64 b = Decimal64.fromLong(1, 15);
+    @Test
+    public void testAdditionScaleB() {
+        Decimal64 a = Decimal64.fromLong(10, 1);
+        Decimal64 b = Decimal64.fromLong(1, 0);
         a.add(b);
+        Assert.assertEquals(20, a.getValue());
+        Assert.assertEquals(1, a.getScale());
     }
 
     @Test
@@ -321,6 +245,24 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testDivideNegative() {
+        Decimal64 a = Decimal64.fromLong(-10, 0);
+        Decimal64 b = Decimal64.fromLong(-2, 0);
+        a.divide(b, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(5, a.getValue());
+        Assert.assertEquals(0, a.getScale());
+    }
+
+    @Test
+    public void testDivideNegativeResult() {
+        Decimal64 a = Decimal64.fromLong(-10, 0);
+        Decimal64 b = Decimal64.fromLong(2, 0);
+        a.divide(b, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(-5, a.getValue());
+        Assert.assertEquals(0, a.getScale());
+    }
+
+    @Test
     public void testDivision() {
         Decimal64 a = new Decimal64(12345, 2); // 123.45
         Decimal64 b = new Decimal64(5, 0);     // 5
@@ -381,6 +323,20 @@ public class Decimal64Test {
             // Test division accuracy
             testDivisionAccuracy(a, b, i);
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivisionOverflow() {
+        Decimal64 a = Decimal64.fromLong(10000000, 0);
+        Decimal64 b = Decimal64.fromLong(1, 10);
+        a.divide(b, 5, RoundingMode.HALF_UP);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivisionOverflowScale() {
+        Decimal64 a = Decimal64.fromLong(1, 0);
+        Decimal64 b = Decimal64.fromLong(1, 10);
+        a.divide(b, 10, RoundingMode.HALF_UP);
     }
 
     @Test(expected = NumericException.class)
@@ -510,6 +466,26 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testModuloScale() {
+        Decimal64 a = Decimal64.fromLong(10, 0);
+        Decimal64 b = Decimal64.fromLong(30, 1);
+        a.modulo(b);
+        Assert.assertEquals(10, a.getValue());
+        Assert.assertEquals(1, a.getScale());
+    }
+
+    @Test
+    public void testModuloStatic() {
+        Decimal64 a = Decimal64.fromLong(10, 0);
+        Decimal64 b = Decimal64.fromLong(3, 0);
+        Decimal64 result = new Decimal64();
+        Decimal64.modulo(a, b, result);
+        Assert.assertEquals(1, result.getValue());
+        Assert.assertEquals(10, a.getValue());
+        Assert.assertEquals(3, b.getValue());
+    }
+
+    @Test
     public void testMultiplication() {
         Decimal64 a = new Decimal64(123, 1);  // 12.3
         Decimal64 b = new Decimal64(456, 2);  // 4.56
@@ -531,6 +507,13 @@ public class Decimal64Test {
             // Test multiplication accuracy
             testMultiplicationAccuracy(a, b, i);
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testMultiplyOverflowScale() {
+        Decimal64 a = Decimal64.fromLong(2, 10);
+        Decimal64 b = Decimal64.fromLong(2, 10);
+        a.multiply(b);
     }
 
     @Test
@@ -750,6 +733,14 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testRoundScale() {
+        Decimal64 a = Decimal64.fromLong(-10, 1);
+        a.round(2, RoundingMode.HALF_UP);
+        Assert.assertEquals(-100, a.getValue());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test
     public void testRoundZero() {
         Decimal64 a = Decimal64.fromDouble(0, 3);
         a.round(0, java.math.RoundingMode.HALF_UP);
@@ -805,6 +796,15 @@ public class Decimal64Test {
         Decimal64 a = new Decimal64(Long.MAX_VALUE, 0);
         Decimal64 b = new Decimal64(Long.MIN_VALUE + 1, 0);
         a.subtract(b);
+    }
+
+    @Test
+    public void testSubtractScaleB() {
+        Decimal64 a = Decimal64.fromLong(10, 1);
+        Decimal64 b = Decimal64.fromLong(1, 0);
+        a.subtract(b);
+        Assert.assertEquals(0, a.getValue());
+        Assert.assertEquals(1, a.getScale());
     }
 
     @Test

@@ -40,6 +40,7 @@ import java.math.RoundingMode;
  * Tests for the consolidated Decimal256 class
  */
 public class Decimal256Test {
+
     @Test(expected = NumericException.class)
     public void testAddOverflow() {
         Decimal256 a = new Decimal256(Long.MAX_VALUE, 0, 0, 0, 0);

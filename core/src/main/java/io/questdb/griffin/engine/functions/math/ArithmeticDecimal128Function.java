@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
@@ -127,11 +126,6 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(left).val(getName()).val(right);
     }
 
     /**
