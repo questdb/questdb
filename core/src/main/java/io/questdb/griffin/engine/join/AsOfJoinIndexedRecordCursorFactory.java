@@ -152,13 +152,17 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // 1. Determine the integer key of the symbol to find in the slave table
             CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
             StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-            int symbolKey = symbolTable.keyOf(masterSymbolValue);
-            if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
-                record.hasSlave(false);
-                return;
+            int symbolKey;
+            if (masterSymbolValue == null) {
+                symbolKey = 0;
+            } else {
+                symbolKey = symbolTable.keyOf(masterSymbolValue);
+                if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
+                    record.hasSlave(false);
+                    return;
+                }
+                symbolKey++;
             }
-            // No idea why we have to increment symbolKey here... but that's what works.
-            symbolKey++;
 
             // 2. nextSlave() generally (but not always) finds the first row with timestamp > masterTimestamp.
             // Ensure rowMax points to a row with timestamp <= masterTimestamp.
