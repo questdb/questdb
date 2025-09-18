@@ -125,13 +125,13 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public long size() {
-            return -1;
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override
-        public long preComputedStateSize() {
-            return 0;
+        public long size() {
+            return -1;
         }
 
         @Override
@@ -206,7 +206,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(TABLE_NAME_COLUMN_INDEX, new TableColumnMetadata("table_name", ColumnType.STRING))
                 .add(OWNER_THREAD_COLUMN_INDEX, new TableColumnMetadata("owner_thread_id", ColumnType.LONG))
-                .add(LAST_ACCESS_TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("last_access_timestamp", ColumnType.TIMESTAMP))
+                .add(LAST_ACCESS_TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("last_access_timestamp", ColumnType.TIMESTAMP_MICRO))
                 .add(CURRENT_TXN_COLUMN_INDEX, new TableColumnMetadata("current_txn", ColumnType.LONG));
         METADATA = metadata;
     }

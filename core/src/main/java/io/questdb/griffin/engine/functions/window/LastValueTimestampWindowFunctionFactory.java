@@ -526,7 +526,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
     // Handles last_value() ignore nulls over (rows between unbounded preceding and current row); there's no partition by.
     public static class LastNotNullOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowTimestampFunction {
-
         private long lastValue = Numbers.LONG_NULL;
 
         /**
@@ -587,6 +586,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public long getTimestamp(Record rec) {
             return lastValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -655,7 +659,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
     // handle last_value() ignore nulls (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
     static class LastNotNullValueOverCurrentRowFunction extends BaseWindowFunction implements WindowTimestampFunction {
-
         private long value = Numbers.LONG_NULL;
 
         /**
@@ -713,6 +716,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return value;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Indicates that this window function ignores NULL input values.
          *
@@ -743,7 +751,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // handles last_value() ignore nulls over (partition by x)
     // order by is absent so default frame mode includes all rows in the partition
     static class LastNotNullValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         /**
          * Creates a partition-aware implementation of `last_value(...)` that ignores NULLs.
          *
@@ -781,6 +788,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -1020,7 +1032,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // handles last_value() ignore nulls over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
     public static class LastNotNullValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         //number of values we need to keep to compute over frame
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -1180,6 +1191,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public long getTimestamp(Record rec) {
             return lastValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -1561,6 +1577,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return lastValue;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Indicates that this window function ignores NULL input values.
          *
@@ -1675,7 +1696,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // - last_value(a) ignore nulls over (partition by x rows between unbounded preceding and [current row | x preceding ])
     // - last_value(a) ignore nulls over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     public static class LastNotNullValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         private long value = Numbers.LONG_NULL;
 
         /**
@@ -1759,6 +1779,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return value;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Indicates that this window function ignores NULL input values.
          *
@@ -1806,6 +1831,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
     // last_value() ignore nulls over () - empty clause, no partition by no order by
     public static class LastNotNullValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowTimestampFunction {
+
         private boolean found;
         private long value = Numbers.LONG_NULL;
 
@@ -1847,6 +1873,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public int getPassCount() {
             return TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -1924,7 +1955,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
 
     // Handles last_value() over (rows/range between [unbounded preceding x preceding] and current row); there's no partition by.
     public static class LastValueIncludeCurrentFrameFunction extends BaseWindowFunction implements WindowTimestampFunction {
-
         private final boolean isRange;
         private final long rowsLo;
         private long value = Numbers.LONG_NULL;
@@ -1983,6 +2013,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public long getTimestamp(Record rec) {
             return value;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -2059,7 +2094,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // - last_value(a) over (partition by x rows between [unbounded preceding | x preceding] and current row)
     // - last_value(a) over (partition by x order by ts range between  [unbounded preceding | x preceding] and current row)
     public static class LastValueIncludeCurrentPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         private final boolean isRange;
         private final long rowsLo;
         private long value = Numbers.LONG_NULL;
@@ -2127,6 +2161,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return value;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Advance the function's state for the given input record and write the resulting timestamp
          * to the output column at the provided record offset.
@@ -2179,7 +2218,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // handles last_value() over (partition by x)
     // order by is absent so default frame mode includes all rows in the partition
     static class LastValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         /**
          * Create a partitioned implementation of `last_value(TIMESTAMP)` that keeps the most
          * recent timestamp value for each partition.
@@ -2208,6 +2246,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public Pass1ScanDirection getPass1ScanDirection() {
             return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -2243,7 +2286,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // Handles last_value() over (partition by x order by ts range between y preceding and z preceding)
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     public static class LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -2452,6 +2494,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
@@ -2529,7 +2576,6 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
     // handles last_value() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
     public static class LastValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
@@ -2642,6 +2688,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public long getTimestamp(Record rec) {
             return lastValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -2917,6 +2968,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
@@ -3085,6 +3141,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             return lastValue;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Computes the next last_value for the current input record and writes it into the output column.
          * <p>
@@ -3214,6 +3275,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         @Override
         public Pass1ScanDirection getPass1ScanDirection() {
             return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**

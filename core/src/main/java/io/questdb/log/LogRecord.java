@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
@@ -106,6 +107,8 @@ public interface LogRecord extends Utf8Sink {
     LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence);
 
     LogRecord $ts(long x);
+
+    LogRecord $ts(TimestampDriver driver, long x);
 
     LogRecord $uuid(long lo, long hi);
 
