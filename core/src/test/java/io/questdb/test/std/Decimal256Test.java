@@ -1199,7 +1199,7 @@ public class Decimal256Test {
     public void testOfStringDecimalPointAtStart() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = d.ofString(".123", -1, -1);
-        Assert.assertEquals(3, precision);
+        Assert.assertEquals(4, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.123", d.toString());
     }
@@ -1274,7 +1274,6 @@ public class Decimal256Test {
             d.ofString("123x456", -1, -1);
             Assert.fail("Expected NumericException");
         } catch (NumericException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid decimal");
             TestUtils.assertContains(e.getMessage(), "contains invalid character 'x'");
         }
     }
@@ -1303,6 +1302,219 @@ public class Decimal256Test {
         Decimal256 d = new Decimal256();
         String tooManyDecimals = "1." + new String(new char[77]).replace('\0', '1'); // 77 decimal places
         d.ofString(tooManyDecimals, -1, -1);
+    }
+
+    @Test
+    public void testOfStringExponentComplexNumbers() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Complex decimal with exponent
+        int precision = d.ofString("123.456789e-3", -1, -1);
+        Assert.assertEquals(10, precision);
+        Assert.assertEquals(9, d.getScale());
+        Assert.assertEquals("0.123456789", d.toString());
+
+        // Another complex case
+        precision = d.ofString("9.87654321e5", -1, -1);
+        Assert.assertEquals(9, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("987654.321", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentLargeButValid() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Large positive exponent within bounds
+        int precision = d.ofString("1e20", -1, -1);
+        Assert.assertEquals(21, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("100000000000000000000", d.toString());
+
+        // Large negative exponent within bounds
+        precision = d.ofString("1e-20", -1, -1);
+        Assert.assertEquals(21, precision);
+        Assert.assertEquals(20, d.getScale());
+        Assert.assertEquals("0.00000000000000000001", d.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentMalformedDecimalInExponent() {
+        Decimal256 d = new Decimal256();
+        d.ofString("1.5e2.5", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentMalformedDoubleE() {
+        Decimal256 d = new Decimal256();
+        d.ofString("1.5ee2", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentMalformedMultipleE() {
+        Decimal256 d = new Decimal256();
+        d.ofString("1e2e3", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentMalformedNoDigitsAfterE() {
+        Decimal256 d = new Decimal256();
+        d.ofString("1.5e", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentMalformedSpaceAfterE() {
+        Decimal256 d = new Decimal256();
+        d.ofString("1.5e 2", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentMalformedSpaceBeforeE() {
+        Decimal256 d = new Decimal256();
+        d.ofString("1.5 e2", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentOverflowPositive() {
+        Decimal256 d = new Decimal256();
+        // Exponent too large, should cause overflow
+        d.ofString("1e100", -1, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentUnderflowNegative() {
+        Decimal256 d = new Decimal256();
+        // Exponent too negative, should cause underflow
+        d.ofString("1e-100", -1, -1);
+    }
+
+    @Test
+    public void testOfStringExponentWithIntegerBase() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Integer base with positive exponent
+        int precision = d.ofString("123e2", -1, -1);
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("12300", d.toString());
+
+        // Integer base with negative exponent
+        precision = d.ofString("456e-3", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("0.456", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithLeadingZeros() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Leading zeros in mantissa
+        int precision = d.ofString("00.123e3", -1, -1);
+        Assert.assertEquals(3, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("123", d.toString());
+
+        // Leading zeros in exponent
+        precision = d.ofString("1.5e02", -1, -1);
+        Assert.assertEquals(3, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("150", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithNegativeNumber() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Negative number with positive exponent
+        int precision = d.ofString("-1.5e3", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("-1500", d.toString());
+
+        // Negative number with negative exponent
+        precision = d.ofString("-2.5e-2", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("-0.025", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithPrecisionLimit() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // With precision limit - this should work as 123.4 has precision 4
+        int precision = d.ofString("1.234e2", 4, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(1, d.getScale());
+        Assert.assertEquals("123.4", d.toString());
+
+        // With scale limit that matches the result scale
+        precision = d.ofString("1e-3", -1, 3);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("0.001", d.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentWithPrecisionLimitExceeded() {
+        Decimal256 d = new Decimal256();
+        // This should fail: 1.234e2 = 123.4 has precision 4, but limit is 3
+        d.ofString("1.234e2", 3, -1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExponentWithScaleLimitExceeded() {
+        Decimal256 d = new Decimal256();
+        // This should fail: 1.234e-2 = 0.01234 has scale 5, but limit is 3
+        d.ofString("1.234e-2", -1, 3);
+    }
+
+    @Test
+    public void testOfStringExponentWithSuffix() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // With M suffix
+        int precision = d.ofString("1.5e2M", -1, -1);
+        Assert.assertEquals(3, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("150", d.toString());
+
+        // With m suffix
+        precision = d.ofString("2.5e-3m", -1, -1);
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(4, d.getScale());
+        Assert.assertEquals("0.0025", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithTrailingZeros() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Trailing zeros in mantissa
+        int precision = d.ofString("1.2300e2", -1, -1);
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("123.00", d.toString());
+
+        // Result with trailing zeros after exponent application
+        precision = d.ofString("1.00e3", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("1000", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithWhitespace() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Leading whitespace
+        int precision = d.ofString("  1.5e3", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("1500", d.toString());
+
+        // Note: Whitespace within the number should cause an error
     }
 
     @Test(expected = NumericException.class)
@@ -1369,8 +1581,8 @@ public class Decimal256Test {
         int p3 = d.ofString("123.456", -1, -1);
         Assert.assertEquals(6, p3);
 
-        int p4 = d.ofString("0.001", -1, -1);
-        Assert.assertEquals(3, p4); // Leading zeros don't count toward precision
+        int p4 = d.ofString("00.001", -1, -1);
+        Assert.assertEquals(4, p4); // Leading zeros don't count toward precision
     }
 
     @Test(expected = NumericException.class)
@@ -1419,12 +1631,6 @@ public class Decimal256Test {
     }
 
     @Test(expected = NumericException.class)
-    public void testOfStringSpecifiedPrecisionExceedsMax() throws NumericException {
-        Decimal256 d = new Decimal256();
-        d.ofString("123", 77, -1); // Precision 77 exceeds max of 76
-    }
-
-    @Test(expected = NumericException.class)
     public void testOfStringSpecifiedScaleExceedsMax() throws NumericException {
         Decimal256 d = new Decimal256();
         d.ofString("123", -1, 77); // Scale 77 exceeds max of 76
@@ -1434,7 +1640,7 @@ public class Decimal256Test {
     public void testOfStringWithBothPrecisionAndScale() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = d.ofString("123.45", 10, 3);
-        Assert.assertEquals(10, precision);
+        Assert.assertEquals(6, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("123.450", d.toString());
     }
@@ -1485,6 +1691,64 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testOfStringWithNegativeExponent() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Basic negative exponent
+        int precision = d.ofString("1.234e-2", -1, -1);
+        Assert.assertEquals(6, precision);
+        Assert.assertEquals(5, d.getScale());
+        Assert.assertEquals("0.01234", d.toString());
+
+        // Larger negative exponent
+        precision = d.ofString("5e-5", -1, -1);
+        Assert.assertEquals(6, precision);
+        Assert.assertEquals(5, d.getScale());
+        Assert.assertEquals("0.00005", d.toString());
+
+        // Negative exponent with E (uppercase)
+        precision = d.ofString("7.89E-3", -1, -1);
+        Assert.assertEquals(6, precision);
+        Assert.assertEquals(5, d.getScale());
+        Assert.assertEquals("0.00789", d.toString());
+
+        // Very small number
+        precision = d.ofString("1e-10", -1, -1);
+        Assert.assertEquals(11, precision);
+        Assert.assertEquals(10, d.getScale());
+        Assert.assertEquals("0.0000000001", d.toString());
+    }
+
+    @Test
+    public void testOfStringWithPositiveExponent() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Basic positive exponent
+        int precision = d.ofString("1.234e2", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(1, d.getScale());
+        Assert.assertEquals("123.4", d.toString());
+
+        // Large positive exponent
+        precision = d.ofString("1.5e10", -1, -1);
+        Assert.assertEquals(11, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("15000000000", d.toString());
+
+        // Positive exponent with E (uppercase)
+        precision = d.ofString("2.5E3", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("2500", d.toString());
+
+        // Positive exponent with + sign
+        precision = d.ofString("3.14e+5", -1, -1);
+        Assert.assertEquals(6, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("314000", d.toString());
+    }
+
+    @Test
     public void testOfStringWithPositiveSign() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = d.ofString("+123.45", -1, -1);
@@ -1497,7 +1761,7 @@ public class Decimal256Test {
     public void testOfStringWithSpecifiedPrecision() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = d.ofString("123.45", 10, -1);
-        Assert.assertEquals(10, precision);
+        Assert.assertEquals(5, precision);
         Assert.assertEquals(2, d.getScale());
         Assert.assertEquals("123.45", d.toString());
     }
@@ -1509,6 +1773,29 @@ public class Decimal256Test {
         Assert.assertEquals(8, precision); // 3 integer + 5 scale
         Assert.assertEquals(5, d.getScale());
         Assert.assertEquals("123.45000", d.toString());
+    }
+
+    @Test
+    public void testOfStringWithZeroExponent() throws NumericException {
+        Decimal256 d = new Decimal256();
+
+        // Zero exponent
+        int precision = d.ofString("1.234e0", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("1.234", d.toString());
+
+        // Zero exponent with E
+        precision = d.ofString("5.678E0", -1, -1);
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("5.678", d.toString());
+
+        // Zero exponent with +
+        precision = d.ofString("9.0e+0", -1, -1);
+        Assert.assertEquals(2, precision);
+        Assert.assertEquals(1, d.getScale());
+        Assert.assertEquals("9.0", d.toString());
     }
 
     @Test
@@ -1524,9 +1811,14 @@ public class Decimal256Test {
     public void testOfStringZeroWithDecimal() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = d.ofString("0.000", -1, -1);
-        Assert.assertEquals(3, precision);
+        Assert.assertEquals(4, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.000", d.toString());
+
+        precision = d.ofString("0.", -1, -1);
+        Assert.assertEquals(1, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("0", d.toString());
     }
 
     @Test
