@@ -26,8 +26,9 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
@@ -35,15 +36,29 @@ import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 
 /**
@@ -113,7 +128,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private long offset;
     private DateFormat partitionDirFormatMethod;
     // used to map timestamp to output file
-    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     // work dir path
     private Path path;
     private boolean rollBufferUnusable = false;
@@ -121,6 +136,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private long sortBufferPtr;
     // adapter used to parse timestamp column
     private TimestampAdapter timestampAdapter;
+    private TimestampDriver timestampDriver;
     // position of timestamp column in csv (0-based)
     private int timestampIndex;
     private long timestampValue;
@@ -294,7 +310,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         //  allowing for importing 256TB big files with rows up to 65kB long
         long lengthAndOffset = (length << 48 | lineStartOffset);
         long partitionKey = partitionFloorMethod.floor(timestampValue);
-        long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap
+        long mapKey = timestampDriver.toHours(partitionKey); //remove trailing zeros to avoid excessive collisions in hashmap
 
         final IndexOutputFile target;
         int keyIndex = outputFileLookupMap.keyIndex(mapKey);
@@ -321,6 +337,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             CharSequence inputFileName,
             CharSequence importRoot,
             int index,
+            int timestampType,
             int partitionBy,
             byte columnDelimiter,
             int timestampIndex,
@@ -331,8 +348,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
     ) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
-        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-        this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        this.partitionFloorMethod = timestampDriver.getPartitionFloorMethod(partitionBy);
+        this.partitionDirFormatMethod = timestampDriver.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
         this.columnDelimiterMask = SwarUtils.broadcast(columnDelimiter);
@@ -445,7 +463,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private Path getPartitionIndexDir(long partitionKey) {
         path.of(importRoot).slash();
-        partitionDirFormatMethod.format(partitionKey, DateFormatUtils.EN_LOCALE, null, path);
+        partitionDirFormatMethod.format(partitionKey, EN_LOCALE, null, path);
         return path;
     }
 

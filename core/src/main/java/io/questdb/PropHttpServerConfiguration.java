@@ -27,12 +27,12 @@ package io.questdb;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 
 class PropHttpContextConfiguration implements HttpContextConfiguration {
 
@@ -206,7 +206,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
-    public NanosecondClock getNanosecondClock() {
+    public Clock getNanosecondClock() {
         return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
     }
 

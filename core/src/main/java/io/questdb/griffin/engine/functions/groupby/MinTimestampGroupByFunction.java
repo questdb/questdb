@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -39,7 +38,8 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     private final Function arg;
     private int valueIndex;
 
-    public MinTimestampGroupByFunction(@NotNull Function arg) {
+    public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
+        super(timestampType);
         this.arg = arg;
     }
 
@@ -81,7 +81,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.TIMESTAMP);
+        columnTypes.add(timestampType);
     }
 
     @Override

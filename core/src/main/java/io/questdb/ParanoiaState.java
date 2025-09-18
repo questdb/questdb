@@ -60,7 +60,8 @@ public class ParanoiaState {
     public static final int LOG_PARANOIA_MODE_AGGRESSIVE = 2;
     public static final int LOG_PARANOIA_MODE_BASIC = 1;
     public static final int LOG_PARANOIA_MODE_NONE = 0;
-
+    // Set to true to enable Thread Local path instances created/closed stack trace logs.
+    public static final boolean THREAD_LOCAL_PATH_PARANOIA_MODE = false;
     // Set to true to enable stricter boundary checks on Vm memories implementations.
     public static final boolean VM_PARANOIA_MODE = false;
     // Set to true to enable stricter File Descriptor double close checks, trace closed usages.
