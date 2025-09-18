@@ -433,10 +433,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select timestamp_floor('1m', ts) as ts, avg(v) from " + TABLE1 + " order by ts";
+            final String query = "select timestamp_floor('1m', ts) as ts1, avg(v) from " + TABLE1 + " order by ts1";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery0("ts\tavg\n", "test", "ts");
+            assertQuery0("ts1\tavg\n", "test", "ts1");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
         });
@@ -447,10 +447,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts, avg(v) from " + TABLE1;
+            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts2, avg(v) from " + TABLE1;
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery0("ts\tavg\n", "test", "ts");
+            assertQuery0("ts2\tavg\n", "test", "ts2");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
         });
@@ -513,7 +513,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view testView as (" + query + ") timestamp(k) partition by week",
                     96,
-                    "materialized view query timestamp must match base table designated timestamp [base table timestamp=ts, materialized view timestamp=k]"
+                    "TIMESTAMP column expected [actual=SYMBOL]"
             );
             assertNull(getMatViewDefinition("testView"));
         });
@@ -1090,7 +1090,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewTsAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, ts as ts1, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
@@ -2292,72 +2292,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertEquals(periodDelay, matViewDefinition.getPeriodDelay());
             assertEquals(periodDelayUnit, matViewDefinition.getPeriodDelayUnit());
         }
-    }
-
-    @Test
-    public void testMatViewWithMatchingTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE y ( " +
-                    "x1 INT," +
-                    "s SYMBOL CAPACITY 256 CACHE," +
-                    "ts1 TIMESTAMP," +
-                    "ts2 TIMESTAMP" +
-                    ") timestamp(ts1) PARTITION BY DAY WAL");
-
-            execute("CREATE MATERIALIZED VIEW y_view_valid AS " +
-                    "SELECT ts1, sum(x1) as sum_x1 FROM y TIMESTAMP(ts1) SAMPLE BY 2s");
-        });
-    }
-
-    @Test
-    public void testMatViewWithMismatchedTimestamp() throws Exception {
-        //throw exception if mat view timestamp doesn't match base table designated timestamp
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE y ( " +
-                    "x1 INT," +
-                    "s SYMBOL CAPACITY 256 CACHE," +
-                    "ts1 TIMESTAMP," +
-                    "ts2 TIMESTAMP" +
-                    ") timestamp(ts1) PARTITION BY DAY WAL");
-
-            try {
-                execute("CREATE MATERIALIZED VIEW y_view_invalid AS " +
-                        "SELECT ts2, sum(x1) as sum_x1 FROM y TIMESTAMP(ts2) SAMPLE BY 2s");
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertTrue(e.getMessage().contains("materialized view query timestamp must match base table designated timestamp"));
-            }
-        });
-    }
-
-    @Test
-    public void testMatViewWithImplicitTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE y ( " +
-                    "x1 INT," +
-                    "s SYMBOL CAPACITY 256 CACHE," +
-                    "ts1 TIMESTAMP," +
-                    "ts2 TIMESTAMP" +
-                    ") timestamp(ts1) PARTITION BY DAY WAL");
-
-            execute("CREATE MATERIALIZED VIEW y_view_implicit AS " +
-                    "SELECT ts1, sum(x1) as sum_x1 FROM y SAMPLE BY 2s");
-        });
-    }
-
-    @Test
-    public void testMatViewWithNoBaseTableTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE y_no_ts ( " +
-                    "x1 INT," +
-                    "s SYMBOL CAPACITY 256 CACHE," +
-                    "ts1 TIMESTAMP," +
-                    "ts2 TIMESTAMP" +
-                    ") timestamp(ts1) PARTITION BY DAY WAL ");
-
-            execute("CREATE MATERIALIZED VIEW y_view_no_base_ts AS " +
-                    "SELECT ts1, sum(x1) as sum_x1 FROM y_no_ts TIMESTAMP(ts1) SAMPLE BY 2s");
-        });
     }
 
     private static MatViewDefinition getMatViewDefinition(String viewName) {
