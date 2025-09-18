@@ -311,6 +311,10 @@ public class RecordToRowCopierUtils {
                 timestampTypeRef = toColumnType_0 + 2 * i;
             }
 
+            if (fromColumnTypeTag == ColumnType.NULL) {
+                fromColumnTypeTag = toColumnTypeTag;
+            }
+
             // todo: this branch is not great, but we need parser
             // inside the stack building block, not sure how to do it better
             if (toColumnTypeTag == ColumnType.ARRAY &&
@@ -329,7 +333,7 @@ public class RecordToRowCopierUtils {
                 // Stack: [rowWriter, toColumnIndex, parser, record]
                 asm.iconst(i);
                 // Stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
-            } else if (ColumnType.isDecimal(toColumnType)) {
+            } else if (ColumnType.isDecimal(fromColumnTypeTag)) {
                 // Decimal stack building
                 asm.aload(3);
                 // stack: [rowWriter]
@@ -354,9 +358,6 @@ public class RecordToRowCopierUtils {
                 // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
             }
 
-            if (fromColumnTypeTag == ColumnType.NULL) {
-                fromColumnTypeTag = toColumnTypeTag;
-            }
             switch (fromColumnTypeTag) {
                 case ColumnType.INT: // from
                     // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
