@@ -448,6 +448,75 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetFromParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+            execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            execute("alter table test_table convert partition to parquet where ts < '2020-01-02T00:00:00.000000Z'");
+            drainWalQueue();
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> assertSql("files\tstatus\n" +
+                                    "test_table/2020-01-01.parquet,test_table/2020-01-02.parquet\tfinished\n",
+                            "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1"));
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetFromParquet1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+
+            drainWalQueue();
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> assertSql("files\tstatus\tmessage\n" +
+                                    "\tfinished\tEmpty Table\n",
+                            "SELECT files, status, message FROM \"sys.copy_export_log\" LIMIT -1"));
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetFromParquet2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+            execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("alter table test_table convert partition to parquet where ts < '2020-01-02T00:00:00.000000Z'");
+            drainWalQueue();
+            execute("insert into test_table values ('2020-01-01T00:00:01.000000Z', 10)");
+            drainWalQueue();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "test_table/2020-01-01.parquet,test_table/2020-01-02.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("ts\tx\n" +
+                                        "2020-01-01T00:00:00.000000Z\t0\n" +
+                                        "2020-01-01T00:00:01.000000Z\t10\n",
+                                "select * from read_parquet('" + exportRoot + "/test_table/2020-01-01.parquet')");
+                    });
+
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetLargeTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table large_table (id int, value string)");

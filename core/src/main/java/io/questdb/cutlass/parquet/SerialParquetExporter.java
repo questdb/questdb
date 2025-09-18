@@ -40,8 +40,10 @@ import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -62,6 +64,7 @@ public class SerialParquetExporter implements Closeable {
     private final FilesFacade ff;
     private final Utf8StringSink files = new Utf8StringSink();
     private final Path fromParquet;
+    private final Utf8StringSink nameSink = new Utf8StringSink();
     private final Path toParquet;
     private ExecutionCircuitBreaker circuitBreaker;
     private PhaseStatusReporter statusReporter;
@@ -139,118 +142,119 @@ public class SerialParquetExporter implements Closeable {
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
 
-                if (partitionCount == 0) {
-                    throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
-                } else {
-                    int fromParquetBaseLen = 0;
-                    final int toParquetBaseLen = toParquet.trimTo(0).concat(copyExportRoot).size();
-                    CopyExportResult exportResult = task.getResult();
+                int fromParquetBaseLen = 0;
+                final int toParquetBaseLen = toParquet.trimTo(0).concat(copyExportRoot).size();
+                CopyExportResult exportResult = task.getResult();
 
-                    try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
-                        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                            if (circuitBreaker.checkIfTripped()) {
-                                LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
-                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
+                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                        if (circuitBreaker.checkIfTripped()) {
+                            LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
+                            throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                        }
+                        final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+
+                        // skip parquet conversion if the partition is already in parquet format
+                        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                            if (userSpecifiedExportOptions) {
+                                LOG.infoW().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [table=").$(tableToken)
+                                        .$(", partition=").$(partitionTimestamp)
+                                        .$(", using direct file copy instead]").$();
                             }
-                            final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                            if (fromParquetBaseLen == 0) {
+                                fromParquetBaseLen = fromParquet.trimTo(0).concat(configuration.getDbRoot()).size();
+                            } else {
+                                fromParquet.trimTo(fromParquetBaseLen);
+                            }
+                            fromParquet.concat(tableToken.getDirName());
 
-                            // skip parquet conversion if the partition is already in parquet format
-                            if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-                                if (userSpecifiedExportOptions) {
-                                    LOG.infoW().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [table=").$(tableToken)
-                                            .$(", partition=").$(partitionTimestamp)
-                                            .$(", using direct file copy instead]").$();
-                                }
-                                if (fromParquetBaseLen == 0) {
-                                    fromParquetBaseLen = fromParquet.trimTo(0).concat(configuration.getDbRoot()).size();
-                                } else {
-                                    fromParquet.trimTo(fromParquetBaseLen);
-                                }
-                                fromParquet.concat(tableToken.getDirName());
-                                PartitionBy.getPartitionDirFormatMethod(partitionBy)
-                                        .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, fromParquet.slash());
-                                fromParquet.concat("data.parquet");
-                                if (exportResult != null) {
-                                    exportResult.addFilePath(fromParquet, false);
-                                    files.put(fromParquet.asAsciiCharSequence(fromParquetBaseLen + 1, fromParquet.size() - fromParquetBaseLen - 1));
-                                    if (partitionIndex < partitionCount - 1) {
-                                        files.put(',');
-                                    }
-                                    continue;
-                                }
-
-                                toParquet.trimTo(toParquetBaseLen);
-                                toParquet.concat(fileName);
-                                PartitionBy.getPartitionDirFormatMethod(partitionBy)
-                                        .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
-                                toParquet.put(".parquet");
-                                createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
-
-                                // copy file directly
-                                int copyResult = ff.copy(fromParquet.$(), toParquet.$());
-                                if (copyResult != 0) {
-                                    throw CopyExportException.instance(phase, copyResult)
-                                            .put("failed to copy parquet file [from=").put(fromParquet)
-                                            .put(", to=").put(toParquet).put(']');
-                                }
-                                files.put(toParquet.asAsciiCharSequence(toParquetBaseLen + 1, toParquet.size() - toParquetBaseLen - 1));
+                            // Find the directory with highest version number
+                            int partitionBaseLen = fromParquet.size();
+                            PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                    .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, fromParquet.slash());
+                            CharSequence basePartitionName = fromParquet.toString().substring(partitionBaseLen + 1);
+                            CharSequence actualPartitionDir = findHighestVersionedPartitionDir(ff, fromParquet.trimTo(partitionBaseLen), basePartitionName);
+                            fromParquet.concat(actualPartitionDir).slash().concat("data.parquet");
+                            if (exportResult != null) {
+                                exportResult.addFilePath(fromParquet, false);
+                                files.put(fromParquet.asAsciiCharSequence(fromParquetBaseLen + 1, fromParquet.size() - fromParquetBaseLen - 1));
                                 if (partitionIndex < partitionCount - 1) {
                                     files.put(',');
                                 }
-                                long parquetFileSize = ff.length(toParquet.$());
-                                LOG.info().$("copied parquet partition directly [table=").$(tableToken)
-                                        .$(", partition=").$(partitionTimestamp)
-                                        .$(", size=").$(parquetFileSize).$(']').$();
-
                                 continue;
                             }
 
-                            // native partition - convert to parquet
-                            if (reader.openPartition(partitionIndex) <= 0) {
-                                continue;
-                            }
-                            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                             toParquet.trimTo(toParquetBaseLen);
                             toParquet.concat(fileName);
                             PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                     .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
                             toParquet.put(".parquet");
-                            toParquetCs = toParquet.asAsciiCharSequence();
-                            CharSequence partitionName = toParquetCs.subSequence(toParquetBaseLen + fileName.length() + 2, toParquetCs.length() - 8);
-
-                            // log start
-                            LOG.info().$("converting partition to parquet [table=").$(tableToken)
-                                    .$(", partition=").$(partitionName)
-                                    .$(", path=").$(toParquetCs).$(']').$();
-
                             createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
-                            PartitionEncoder.encodeWithOptions(
-                                    partitionDescriptor,
-                                    toParquet,
-                                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                                    statisticsEnabled,
-                                    rawArrayEncoding,
-                                    rowGroupSize,
-                                    dataPageSize,
-                                    parquetVersion
-                            );
-                            long parquetFileSize = ff.length(toParquet.$());
-                            LOG.info().$("converted partition to parquet [table=").$(tableToken)
-                                    .$(", partition=").$(partitionName)
-                                    .$(", size=").$(parquetFileSize).$(']')
-                                    .$();
+
+                            // copy file directly
+                            int copyResult = ff.copy(fromParquet.$(), toParquet.$());
+                            if (copyResult != 0) {
+                                throw CopyExportException.instance(phase, copyResult)
+                                        .put("failed to copy parquet file [from=").put(fromParquet)
+                                        .put(", to=").put(toParquet).put(']');
+                            }
                             files.put(toParquet.asAsciiCharSequence(toParquetBaseLen + 1, toParquet.size() - toParquetBaseLen - 1));
                             if (partitionIndex < partitionCount - 1) {
                                 files.put(',');
                             }
-                            if (exportResult != null) {
-                                exportResult.addFilePath(toParquet, true);
-                            }
+                            long parquetFileSize = ff.length(toParquet.$());
+                            LOG.info().$("copied parquet partition directly [table=").$(tableToken)
+                                    .$(", partition=").$(partitionTimestamp)
+                                    .$(", size=").$(parquetFileSize).$(']').$();
+
+                            continue;
                         }
-                    } catch (CairoException e) {
-                        LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
-                        throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
+
+                        // native partition - convert to parquet
+                        if (reader.openPartition(partitionIndex) <= 0) {
+                            continue;
+                        }
+                        PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                        toParquet.trimTo(toParquetBaseLen);
+                        toParquet.concat(fileName);
+                        PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
+                        toParquet.put(".parquet");
+                        toParquetCs = toParquet.asAsciiCharSequence();
+                        CharSequence partitionName = toParquetCs.subSequence(toParquetBaseLen + fileName.length() + 2, toParquetCs.length() - 8);
+
+                        // log start
+                        LOG.info().$("converting partition to parquet [table=").$(tableToken)
+                                .$(", partition=").$(partitionName)
+                                .$(", path=").$(toParquetCs).$(']').$();
+
+                        createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+                        PartitionEncoder.encodeWithOptions(
+                                partitionDescriptor,
+                                toParquet,
+                                ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                                statisticsEnabled,
+                                rawArrayEncoding,
+                                rowGroupSize,
+                                dataPageSize,
+                                parquetVersion
+                        );
+                        long parquetFileSize = ff.length(toParquet.$());
+                        LOG.info().$("converted partition to parquet [table=").$(tableToken)
+                                .$(", partition=").$(partitionName)
+                                .$(", size=").$(parquetFileSize).$(']')
+                                .$();
+                        files.put(toParquet.asAsciiCharSequence(toParquetBaseLen + 1, toParquet.size() - toParquetBaseLen - 1));
+                        if (partitionIndex < partitionCount - 1) {
+                            files.put(',');
+                        }
+                        if (exportResult != null) {
+                            exportResult.addFilePath(toParquet, true);
+                        }
                     }
+                } catch (CairoException e) {
+                    LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                 }
             }
 
@@ -284,6 +288,48 @@ public class SerialParquetExporter implements Closeable {
             }
         }
         return phase;
+    }
+
+    private CharSequence findHighestVersionedPartitionDir(FilesFacade ff, Path basePath, CharSequence basePartitionName) {
+        long maxVersion = -1;
+        String bestMatch = null;
+        nameSink.clear();
+        int plimit = basePath.size();
+        long p = ff.findFirst(basePath.$());
+        if (p > 0) {
+            try {
+                do {
+                    if (ff.isDirOrSoftLinkDirNoDots(basePath, plimit, ff.findName(p), ff.findType(p), nameSink)) {
+                        CharSequence dirName = nameSink.asAsciiCharSequence();
+                        int dirLength = dirName.length();
+                        int partitionNameLength = basePartitionName.length();
+                        if (Chars.startsWith(dirName, basePartitionName) &&
+                                dirLength > partitionNameLength &&
+                                dirName.charAt(partitionNameLength) == '.') {
+                            try {
+                                CharSequence versionStr = dirName.subSequence(partitionNameLength + 1, dirLength);
+                                long version = Numbers.parseLong(versionStr);
+                                if (version > maxVersion) {
+                                    maxVersion = version;
+                                    bestMatch = dirName.toString();
+                                }
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+                        nameSink.clear();
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                basePath.trimTo(plimit).$();
+                ff.findClose(p);
+            }
+        }
+
+        if (bestMatch != null) {
+            return bestMatch;
+        }
+        throw CairoException.nonCritical().put("no versioned parquet partition directory found for [basePartitionName=")
+                .put(basePartitionName).put(']');
     }
 
     @FunctionalInterface
