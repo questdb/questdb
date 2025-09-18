@@ -1491,12 +1491,24 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         }
         final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForNativePartition(pathToOldPartition, tableWriter.getPartitionBy(), oldPartitionTimestamp, srcNameTxn);
+        TableUtils.setPathForNativePartition(
+                pathToOldPartition,
+                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getPartitionBy(),
+                oldPartitionTimestamp,
+                srcNameTxn
+        );
         int plen = pathToOldPartition.size();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
         boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
-        TableUtils.setPathForNativePartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcNameTxn : txn);
+        TableUtils.setPathForNativePartition(
+                pathToNewPartition,
+                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getPartitionBy(),
+                partitionTimestamp,
+                partitionAppend ? srcNameTxn : txn
+        );
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
 

@@ -90,6 +90,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private String timestampColumnName;
     private int timestampColumnNamePosition;
     private int timestampIndex = -1;
+    private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
     private String volumeAlias;
@@ -565,16 +566,17 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.columnBits.clear();
         if (this.timestampColumnName == null) {
             this.timestampIndex = metadata.getTimestampIndex();
+            timestampType = metadata.getTimestampType();
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
             if (this.timestampIndex == -1) {
                 throw SqlException.position(this.timestampColumnNamePosition)
                         .put("designated timestamp column doesn't exist [name=").put(this.timestampColumnName).put(']');
             }
-            int timestampColType = metadata.getColumnType(this.timestampIndex);
-            if (timestampColType != ColumnType.TIMESTAMP) {
+            timestampType = metadata.getColumnType(this.timestampIndex);
+            if (!ColumnType.isTimestamp(timestampType)) {
                 throw SqlException.position(this.timestampColumnNamePosition)
-                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
         }
         if (this.timestampIndex == -1 && this.partitionBy != PartitionBy.NONE) {
@@ -720,5 +722,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     int getTimestampColumnNamePosition() {
         return timestampColumnNamePosition;
+    }
+
+    int getTimestampType() {
+        return timestampType;
     }
 }

@@ -43,7 +43,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -55,7 +55,7 @@ import static io.questdb.cutlass.text.CopyImportTask.getStatusName;
 
 public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyImportRequestJob.class);
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final CopyImportContext copyImportContext;
     private final CairoEngine engine;
     private final int logRetentionDays;

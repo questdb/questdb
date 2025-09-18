@@ -24,21 +24,24 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 
 public class TimestampConstant extends TimestampFunction implements ConstantFunction {
-    public static final TimestampConstant NULL = new TimestampConstant(Numbers.LONG_NULL);
+    public static final TimestampConstant TIMESTAMP_MICRO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_MICRO);
+    public static final TimestampConstant TIMESTAMP_NANO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_NANO);
     private final long value;
 
-    public TimestampConstant(long value) {
+    public TimestampConstant(long value, int columnType) {
+        super(columnType);
         this.value = value;
     }
 
-    public static TimestampConstant newInstance(long value) {
-        return value != Numbers.LONG_NULL ? new TimestampConstant(value) : NULL;
+    public static TimestampConstant newInstance(long value, int timestampType) {
+        return value != Numbers.LONG_NULL ? new TimestampConstant(value, timestampType) : ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
     }
 
     @Override
@@ -53,6 +56,6 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(value);
+        sink.valISODate(timestampDriver, value);
     }
 }

@@ -1579,6 +1579,94 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportTimestampTypFormatMismatch() throws Exception {
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+            importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', "ts_ns", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+            importer.process(AllowAllSecurityContext.INSTANCE);
+            Assert.fail();
+        } catch (TextImportException e) {
+            Assert.assertEquals("All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testImportTimestampTypeToExist1() throws Exception {
+        executeWithPool(4, 8, (engine, compiler, sqlExecutionContext) -> testImportTimestampIntoExisting(
+                engine, compiler, sqlExecutionContext, "ts"
+        ));
+    }
+
+    @Test
+    public void testImportTimestampTypeToExist2() throws Exception {
+        executeWithPool(4, 8, (engine, compiler, sqlExecutionContext) -> testImportTimestampIntoExisting(
+                engine, compiler, sqlExecutionContext, "ts_ns"
+        ));
+    }
+
+    @Test
+    public void testImportTimestampTypeToExistWithTypeMismatch1() throws Exception {
+        executeWithPool(4, 8, (engine, compiler, sqlExecutionContext) -> testImportTimestampIntoExistingWithTypeMismatch(
+                engine, compiler, sqlExecutionContext, "ts"
+        ));
+    }
+
+    @Test
+    public void testImportTimestampTypeToExistWithTypeMismatch2() throws Exception {
+        executeWithPool(4, 8, (engine, compiler, sqlExecutionContext) -> testImportTimestampIntoExistingWithTypeMismatch(
+                engine, compiler, sqlExecutionContext, "ts_ns"
+        ));
+    }
+
+    @Test
+    public void testImportTimestampTypeToExistWithTypeMismatch3_specifyTimestampFormat() throws Exception {
+        execute(
+                "CREATE TABLE 'timestamp_test' ( \n" +
+                        "    id INT,\n" +
+                        "    ts TIMESTAMP_NS,\n" +
+                        "    ts_ns TIMESTAMP\n" +
+                        ") timestamp(ts_ns) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+            importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', "ts_ns", "yyyy-MM-ddTHH:mm:ss.SSSSSSNNNZ", true);
+            importer.process(AllowAllSecurityContext.INSTANCE);
+        }
+
+        refreshTablesInBaseEngine();
+        assertQueryNoLeakCheck(
+                "id\tts\tts_ns\n" +
+                        "1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z\n" +
+                        "2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z\n" +
+                        "3\t2025-08-07T00:00:00.000003000Z\t2025-08-07T00:00:00.000000Z\n" +
+                        "4\t2025-08-08T00:00:00.000004000Z\t2025-08-08T00:00:00.000000Z\n" +
+                        "5\t2025-08-09T00:00:00.000005000Z\t2025-08-09T00:00:00.000000Z\n" +
+                        "6\t2025-08-10T00:00:00.000006000Z\t2025-08-10T00:00:00.000000Z\n" +
+                        "7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z\n" +
+                        "8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z\n" +
+                        "9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z\n",
+                "select * from timestamp_test",
+                "ts_ns",
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testImportTimestampTypeToNew1() throws Exception {
+        executeWithPool(4, 8, (engine, compiler, sqlExecutionContext) -> testImportTimestampTypeToNew(
+                engine, compiler, sqlExecutionContext, "ts"
+        ));
+    }
+
+    @Test
+    public void testImportTimestampTypeToNew2() throws Exception {
+        executeWithPool(4, 8, (engine, compiler, sqlExecutionContext) -> testImportTimestampTypeToNew(
+                engine, compiler, sqlExecutionContext, "ts_ns"
+        ));
+    }
+
+    @Test
     public void testImportTooSmallFileBufferURing() throws Exception {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         testImportTooSmallFileBuffer0("tab32");
@@ -3092,6 +3180,115 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), expectedError);
                     }
                 }
+        );
+    }
+
+    private void testImportTimestampIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws SqlException {
+        execute(
+                compiler,
+                "CREATE TABLE 'timestamp_test' ( \n" +
+                        "    id INT,\n" +
+                        "    ts TIMESTAMP,\n" +
+                        "    ts_ns TIMESTAMP_NS\n" +
+                        ") timestamp(" + timestampColumn + ") PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+            importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', timestampColumn, null, true);
+            importer.process(AllowAllSecurityContext.INSTANCE);
+        }
+
+        refreshTablesInBaseEngine();
+        assertQueryNoLeakCheck(
+                "id\tts\tts_ns\n" +
+                        "1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z\n" +
+                        "2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z\n" +
+                        "3\t2025-08-07T00:00:00.000003Z\t2025-08-07T00:00:00.000000003Z\n" +
+                        "4\t2025-08-08T00:00:00.000004Z\t2025-08-08T00:00:00.000000004Z\n" +
+                        "5\t2025-08-09T00:00:00.000005Z\t2025-08-09T00:00:00.000000005Z\n" +
+                        "6\t2025-08-10T00:00:00.000006Z\t2025-08-10T00:00:00.000000006Z\n" +
+                        "7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z\n" +
+                        "8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z\n" +
+                        "9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z\n",
+                "select * from timestamp_test",
+                timestampColumn,
+                true,
+                false,
+                true
+        );
+    }
+
+    private void testImportTimestampIntoExistingWithTypeMismatch(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws SqlException {
+        execute(
+                compiler,
+                "CREATE TABLE 'timestamp_test' ( \n" +
+                        "    id INT,\n" +
+                        "    ts TIMESTAMP_NS,\n" +
+                        "    ts_ns TIMESTAMP\n" +
+                        ") timestamp(" + timestampColumn + ") PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+            importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', timestampColumn, null, true);
+            importer.process(AllowAllSecurityContext.INSTANCE);
+        }
+
+        refreshTablesInBaseEngine();
+        assertQueryNoLeakCheck(
+                "id\tts\tts_ns\n" +
+                        "1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z\n" +
+                        "2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z\n" +
+                        "3\t2025-08-07T00:00:00.000003000Z\t2025-08-07T00:00:00.000000Z\n" +
+                        "4\t2025-08-08T00:00:00.000004000Z\t2025-08-08T00:00:00.000000Z\n" +
+                        "5\t2025-08-09T00:00:00.000005000Z\t2025-08-09T00:00:00.000000Z\n" +
+                        "6\t2025-08-10T00:00:00.000006000Z\t2025-08-10T00:00:00.000000Z\n" +
+                        "7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z\n" +
+                        "8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z\n" +
+                        "9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z\n",
+                "select * from timestamp_test",
+                timestampColumn,
+                true,
+                false,
+                true
+        );
+    }
+
+    private void testImportTimestampTypeToNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampColumn) throws Exception {
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+            importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', timestampColumn, null, true);
+            importer.process(AllowAllSecurityContext.INSTANCE);
+        }
+
+        refreshTablesInBaseEngine();
+
+        assertQuery(
+                "id\tts\tts_ns\n" +
+                        "1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z\n" +
+                        "2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z\n" +
+                        "3\t2025-08-07T00:00:00.000003Z\t2025-08-07T00:00:00.000000003Z\n" +
+                        "4\t2025-08-08T00:00:00.000004Z\t2025-08-08T00:00:00.000000004Z\n" +
+                        "5\t2025-08-09T00:00:00.000005Z\t2025-08-09T00:00:00.000000005Z\n" +
+                        "6\t2025-08-10T00:00:00.000006Z\t2025-08-10T00:00:00.000000006Z\n" +
+                        "7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z\n" +
+                        "8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z\n" +
+                        "9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z\n",
+                "select * from timestamp_test",
+                timestampColumn,
+                true,
+                true
+        );
+
+        assertQueryNoLeakCheck(
+                compiler,
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\n" +
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\n",
+                "show columns from timestamp_test",
+                null,
+                sqlExecutionContext,
+                false,
+                false
         );
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -43,6 +44,8 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfLightJoinRecordCursor cursor;
@@ -75,7 +78,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     joinKeyMap,
                     NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                     masterFactory.getMetadata().getTimestampIndex(),
-                    slaveFactory.getMetadata().getTimestampIndex()
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
             close();
@@ -134,8 +139,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     private class AsOfLightJoinRecordCursor extends AbstractJoinCursor {
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
+        private final long masterTimestampScale;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
+        private final long slaveTimestampScale;
         private boolean isMasterHasNextPending;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
@@ -149,7 +156,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 Record nullRecord,
                 int masterTimestampIndex,
-                int slaveTimestampIndex
+                int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType
         ) {
             super(columnSplit);
             record = new OuterJoinRecord(columnSplit, nullRecord);
@@ -157,6 +166,12 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             isOpen = true;
+            if (masterTimestampType == slaveTimestampType) {
+                masterTimestampScale = slaveTimestampScale = 1L;
+            } else {
+                masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+                slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+            }
         }
 
         @Override
@@ -185,7 +200,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isMasterHasNextPending = false;
             }
             if (masterHasNext) {
-                final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
@@ -194,7 +209,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 if (slaveTimestamp <= masterTimestamp) {
                     if (lastSlaveRowID != Numbers.LONG_NULL) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
-                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp >= minSlaveTimestamp) {
                             key = joinKeyMap.withKey();
                             key.put(slaveRecord, slaveKeySink);
@@ -212,7 +227,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
                     final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {
-                        slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
+                        slaveTimestamp = scaleTimestamp(rec.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         slaveRowID = rec.getRowId();
                         if (slaveTimestamp <= masterTimestamp) {
                             if (slaveTimestamp >= minSlaveTimestamp) {
@@ -235,7 +250,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 value = key.findValue();
                 if (value != null) {
                     slaveCursor.recordAt(slaveRecord, value.getLong(0));
-                    slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                    slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     record.hasSlave(toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceInterval);
                 } else {
                     record.hasSlave(false);

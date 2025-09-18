@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -288,7 +294,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                    metadata.load(path.$());
+                    metadata.loadMetadata(path.$());
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
@@ -301,7 +307,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+                CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
 
                 String tableName = "all";
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -310,7 +316,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 long len = TestFilesFacadeImpl.INSTANCE.length(path.$());
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
-                    metadata.load();
+                    metadata.loadMetadata();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);

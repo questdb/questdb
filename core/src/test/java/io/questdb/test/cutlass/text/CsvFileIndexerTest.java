@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CsvFileIndexer;
@@ -210,6 +211,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
                         fileName,
                         inputWorkRoot,
                         0,
+                        ColumnType.TIMESTAMP,
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,
@@ -240,9 +242,9 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
     private TimestampAdapter getAdapter(DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
-        DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
+        DateFormat dateFormat = TypeManager.adaptiveGetTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSZ");
         return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                configuration.getTextConfiguration().getDefaultDateLocale()
+                configuration.getTextConfiguration().getDefaultDateLocale(), "yyyy-MM-ddTHH:mm:ss.SSSZ"
         );
     }
 }

@@ -24,16 +24,23 @@
 
 package io.questdb.cliutil;
 
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.JDBCType;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
 import java.time.temporal.ChronoUnit;
 import java.util.Properties;
 
@@ -42,7 +49,7 @@ public class Table2IlpCopier {
     public long copyTable(Table2Ilp.Table2IlpParams params) {
         LowerCaseCharSequenceHashSet symbols = createSymbolsSet(params);
 
-        MicrosecondClock microsecondClock = new MicrosecondClockImpl();
+        Clock microsecondClock = new MicrosecondClockImpl();
         long totalSentLines = 0;
         try (Connection connection = getConnection(params.getSourcePgConnectionString())) {
             connection.setAutoCommit(false);
@@ -71,7 +78,7 @@ public class Table2IlpCopier {
 
                                 if (totalSentLines % 10000 == 0) {
                                     long end = microsecondClock.getTicks();
-                                    long linesPerSec = 10000 * Timestamps.SECOND_MICROS / (end - start);
+                                    long linesPerSec = 10000 * Micros.SECOND_MICROS / (end - start);
                                     System.out.println(totalSentLines + " lines, " + linesPerSec + " lines/sec");
                                     start = microsecondClock.getTicks();
                                 }
@@ -137,16 +144,16 @@ public class Table2IlpCopier {
         return DriverManager.getConnection(connectionString, properties);
     }
 
-    private static long getMicroEpoch(ResultSet resultSet, int timestampIndex) throws SQLException {
+    private static long getNanoEpoch(ResultSet resultSet, int timestampIndex) throws SQLException {
         String ts = resultSet.getString(timestampIndex);
-        long microEpoch;
+        long nanoEpoch;
         if (ts != null) {
             try {
-                microEpoch = IntervalUtils.parseFloorPartialTimestamp(ts);
+                nanoEpoch = NanosTimestampDriver.floor(ts);
             } catch (NumericException e) {
                 throw new RuntimeException("Failed to parse designated timestamp: " + ts);
             }
-            return microEpoch;
+            return nanoEpoch;
         }
         return Numbers.LONG_NULL;
     }
@@ -213,9 +220,9 @@ public class Table2IlpCopier {
                     case Types.DATE:
                     case Types.TIMESTAMP:
                         if (i != timestampIndex) {
-                            long microEpoch = getMicroEpoch(resultSet, i + 1);
-                            if (microEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
-                                sender.timestampColumn(columnName, microEpoch, ChronoUnit.MICROS);
+                            long nanoEpoch = getNanoEpoch(resultSet, i + 1);
+                            if (nanoEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
+                                sender.timestampColumn(columnName, nanoEpoch, ChronoUnit.NANOS);
                             }
                         }
                         break;
@@ -236,7 +243,7 @@ public class Table2IlpCopier {
             }
         }
 
-        long microEpoch = getMicroEpoch(resultSet, timestampIndex + 1);
-        sender.at(microEpoch, ChronoUnit.MICROS);
+        long nanosEpoch = getNanoEpoch(resultSet, timestampIndex + 1);
+        sender.at(nanosEpoch, ChronoUnit.NANOS);
     }
 }

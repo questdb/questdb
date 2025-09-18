@@ -54,7 +54,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     public void setUp() {
         super.setUp();
         nWriterThreads = 2;
-        microSecondTicks = -1;
+        timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
         maxRecvBufferSize.set(1024);
