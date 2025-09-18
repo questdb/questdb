@@ -113,7 +113,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -355,6 +355,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (viewDefinition == null) {
                             viewDefinition = new MatViewDefinition();
                             MatViewDefinition.readFrom(
+                                    this,
                                     viewDefinition,
                                     reader,
                                     path,
@@ -1097,8 +1098,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (lockedReason == null) {
                     // not locked
                     if (readerPool.lock(tableToken)) {
-                        LOG.info().$("locked [table=`").$(tableToken)
-                                .$("`, thread=").$(Thread.currentThread().getId())
+                        LOG.info().$("locked [table=").$(tableToken)
+                                .$(", thread=").$(Thread.currentThread().getId())
                                 .I$();
                         return null;
                     }
@@ -1475,7 +1476,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         verifyTableToken(tableToken);
         unlockTableUnsafe(tableToken, writer, newTable);
-        LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+        LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
     }
 
     public void unlockReaders(TableToken tableToken) {
@@ -1684,7 +1685,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             // in concurrent threads
                             unlockTableUnsafe(tableToken, null, true);
                             locked = false;
-                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                            LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
@@ -1693,7 +1694,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     } finally {
                         if (!keepLock && locked) {
                             unlockTableUnsafe(tableToken, null, false);
-                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                            LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
                     }
                 } else {
@@ -1727,7 +1728,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), fromTableToken.isMatView(), fromTableToken.isWal());
         if (toTableToken == null) {
             LOG.error()
-                    .$("rename target exists [from='").$safe(fromTableToken.getTableName())
+                    .$("rename target exists [from='").$(fromTableToken)
                     .$("', to='").$safe(toTableName)
                     .I$();
             throw CairoException.nonCritical().put("Rename target exists");
@@ -1852,7 +1853,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private class EngineMaintenanceJob extends SynchronizedJob {
 
         private final long checkInterval;
-        private final MicrosecondClock clock;
+        private final Clock clock;
         private long last = 0;
 
         public EngineMaintenanceJob(CairoConfiguration configuration) {

@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -37,7 +39,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.o3.AbstractO3Test;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -45,9 +47,26 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class O3MaxLagFuzzTest extends AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3MaxLagFuzzTest.class);
+
+    public O3MaxLagFuzzTest(TestTimestampType timestampType) {
+        super(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testFuzzParallel() throws Exception {
@@ -84,6 +103,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName,
             Rnd rnd
     ) throws SqlException, NumericException {
         long microsBetweenRows = 1000000L;
@@ -94,7 +114,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -103,7 +123,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -119,15 +139,18 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
 
         TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
 
-        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
-        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
-        int txCount = Math.max(1, rnd.nextInt(50));
-        int rowCount = Math.min(2_000_000, Math.max(1, txCount * rnd.nextInt(200) * 1000));
+
         try (
                 TableWriter w = TestUtils.getWriter(engine, "x");
                 TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(w.getTableToken());
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
+            TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
+            long minTs = driver.parseFloorLiteral("2022-11-11T14:28:00.000000Z");
+            long maxTs = driver.parseFloorLiteral("2022-11-12T14:28:00.000000Z");
+            int txCount = Math.max(1, rnd.nextInt(50));
+            int rowCount = Math.min(2_000_000, Math.max(1, txCount * rnd.nextInt(200) * 1000));
+
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
                     nTotalRows,
                     sequencerMetadata,
@@ -178,7 +201,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
     }
 
     private void runRollbackRegression(
-            CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
+            CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName,
             int nTotalRows, long microsBetweenRows, double fraction
     ) throws SqlException {
 
@@ -186,7 +209,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         String sql = "create table x as (" +
                 "select" +
                 " rnd_short(10,1024) f," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L)::" + timestampTypeName + " ts," +
                 " from long_sequence(" + nTotalRows + ")" +
                 ") timestamp (ts) partition by DAY";
         engine.execute(sql, sqlExecutionContext);
@@ -221,12 +244,13 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
     private void testFuzz0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException, NumericException {
-        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG, 970596704993L, 1744736957813L));
+        testFuzz00(engine, compiler, sqlExecutionContext, timestampTypeName, TestUtils.generateRandom(LOG, 970596704993L, 1744736957813L));
     }
 
-    private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final int nTotalRows = rnd.nextInt(79000);
         final long microsBetweenRows = rnd.nextLong(3090985);
@@ -306,7 +330,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testRollbackRegression1(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testRollbackRegression1(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         // We used this commented-out code to find values that make this and the other regression test fail:
 //        final Rnd rnd = TestUtils.generateRandom(LOG);
 //        final int nTotalRows = rnd.nextInt(79000);
@@ -317,13 +341,13 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         final int nTotalRows = 51_555;
         final long microsBetweenRows = 2_267_870;
         final double fraction = 0.8;
-        runRollbackRegression(engine, compiler, sqlExecutionContext, nTotalRows, microsBetweenRows, fraction);
+        runRollbackRegression(engine, compiler, sqlExecutionContext, timestampTypeName, nTotalRows, microsBetweenRows, fraction);
     }
 
-    private void testRollbackRegression2(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testRollbackRegression2(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         final int nTotalRows = 10_795;
         final long microsBetweenRows = 1_970_536;
         final double fraction = 0.09;
-        runRollbackRegression(engine, compiler, sqlExecutionContext, nTotalRows, microsBetweenRows, fraction);
+        runRollbackRegression(engine, compiler, sqlExecutionContext, timestampTypeName, nTotalRows, microsBetweenRows, fraction);
     }
 }
