@@ -740,23 +740,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select *\n" +
                             "from trades t1\n" +
                             "join order_book t2 on t1.price = t2.bid_price\n" +
-                            "join order_book t3 on t1.price = t3.bid_price",
-                    "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: t3.bid_price=t1.price\n" +
-                            "        Hash Join Light\n" +
-                            "          condition: t2.bid_price=t1.price\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: trades\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: order_book\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: order_book\n"
+                            "join order_book t3 on t1.price = t3.bid_price\n" +
+                            "order by t1.price limit 6\n",
+                    "Limit lo: 6 skip-over-rows: 0 limit: 6\n" +
+                            "    Sort\n" +
+                            "      keys: [price]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t3.bid_price=t1.price\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.bid_price=t1.price\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: order_book\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
             );
         });
 
