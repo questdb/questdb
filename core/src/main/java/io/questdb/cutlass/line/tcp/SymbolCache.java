@@ -137,7 +137,6 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
             // from ILP TCP and TableUpdateDetails. So the latter owns this path and promises
             // to never mutate it. So that the cache can use it to re-open symbol map.
             Utf8Sequence pathToTableDir,
-            long columnNameTxn,
             TableWriterAPI writerAPI,
             TxReader txReader
     ) {
@@ -148,7 +147,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         this.txReader = txReader;
         int symCount = readSymbolCount(denseSymbolIndex, false);
         // hold on to the column name txn so that we know when to reload
-        this.columnNameTxn = columnNameTxn;
+        this.columnNameTxn = writerAPI.getColumnVersionReader().getDefaultColumnNameTxn(columnIndex);
         this.columnName = columnName;
         // yes, it is ok to store, ILP and this are friends
         this.pathToTableDir = pathToTableDir;

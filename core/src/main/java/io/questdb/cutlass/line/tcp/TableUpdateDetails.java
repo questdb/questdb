@@ -521,7 +521,6 @@ public class TableUpdateDetails implements Closeable {
                     this.clean = false;
                 }
 
-                long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
                 assert symIndex <= colWriterIndex;
                 symCache.of(
                         cairoConfiguration,
@@ -529,7 +528,6 @@ public class TableUpdateDetails implements Closeable {
                         colWriterIndex,
                         symIndex,
                         path,
-                        columnNameTxn,
                         writerAPI,
                         txReader
                 );
