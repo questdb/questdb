@@ -94,7 +94,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     @Override
     public void onChunk(long lo, long hi) {
         if (isGzipEncoded) {
-            this.state.inflate(lo, hi);
+            this.state.inflateAndParse(lo, hi);
         } else {
             this.state.parse(lo, hi);
         }

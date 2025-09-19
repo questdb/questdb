@@ -171,7 +171,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return sendStatus;
     }
 
-    public void inflate(long lo, long hi) {
+    public void inflateAndParse(long lo, long hi) {
         long inputLen = hi - lo;
         Zip.setInput(inflateStream, lo, (int) inputLen);
 
@@ -186,12 +186,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             recvBuffer.setBufPos(recvBuffer.getBufPos() + ret);
 
             if (ret > 0) {
-
                 currentStatus = processLocalBuffer();
                 if (stopParse()) {
                     return;
                 }
-//                parse(inflateBuffer, inflateBuffer + ret);
             }
 
             if (ret == Zip.Z_STREAM_END) {
