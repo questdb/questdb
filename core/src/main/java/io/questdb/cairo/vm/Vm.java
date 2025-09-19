@@ -118,7 +118,7 @@ public class Vm {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1, memoryTag, opts);
+    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, int memoryTag, int opts) {
+        return new MemoryCMARWImpl(ff, name, extendSegmentSizePow2, -1, memoryTag, opts);
     }
 }

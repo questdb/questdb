@@ -101,7 +101,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem = Vm.getWholeMARWInstance(
                     ff,
                     lpsz,
-                    Math.max(mapPageSize, ff.length(lpsz)),
+                    Numbers.floorPow2(Math.max(mapPageSize, len)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -118,10 +118,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // this is the place where symbol values are stored
             lpsz = charFileName(path.trimTo(plen), columnName, columnNameTxn);
+            len = ff.length(lpsz);
             this.charMem = Vm.getWholeMARWInstance(
                     ff,
                     lpsz,
-                    Math.max(mapPageSize, ff.length(lpsz)),
+                    Numbers.floorPow2(Math.max(mapPageSize, len)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -279,7 +280,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem.of(
                     ff,
                     name,
-                    Math.max(mapPageSize, ff.length(name)),
+                    Numbers.floorPow2(Math.max(mapPageSize, ff.length(name))),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -314,7 +315,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem.of(
                     ff,
                     lpsz,
-                    Math.max(mapPageSize, ff.length(lpsz)),
+                    Numbers.floorPow2(Math.max(mapPageSize, len)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -324,10 +325,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // this is the place where symbol values are stored
             lpsz = charFileName(path.trimTo(plen), columnName, columnNameTxn);
+            len = ff.length(lpsz);
             this.charMem.of(
                     ff,
                     lpsz,
-                    Math.max(mapPageSize, ff.length(lpsz)),
+                    Numbers.floorPow2(Math.max(mapPageSize, len)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );

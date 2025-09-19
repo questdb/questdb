@@ -554,6 +554,15 @@ public final class Numbers {
     public static long ceilPow2(long value) {
         long i = value;
         if ((i != 0) && (i & (i - 1)) > 0) {
+            // Check if value > 2^62 to prevent overflow
+            // For values > 2^62, the ceiling would be 2^63 which overflows
+            // in signed long arithmetic. We cap the result at 2^62.
+            if (i > (1L << 62)) {
+                // Cannot represent 2^63 as a positive signed long
+                // Return max representable power of 2
+                return 1L << 62;
+            }
+
             i |= (i >>> 1);
             i |= (i >>> 2);
             i |= (i >>> 4);
@@ -561,10 +570,6 @@ public final class Numbers {
             i |= (i >>> 16);
             i |= (i >>> 32);
             i++;
-
-            if (i < 0) {
-                i >>>= 1;
-            }
         }
         return i;
     }
@@ -660,6 +665,24 @@ public final class Numbers {
             }
         }
         return false;
+    }
+
+    public static long floorPow2(long value) {
+        if (value <= 0) {
+            return 0;
+        }
+
+        // Find the highest set bit (floor power of 2)
+        // This works by setting all bits to the right of the highest bit,
+        // then subtracting half to isolate just the highest bit
+        long v = value;
+        v |= v >>> 1;
+        v |= v >>> 2;
+        v |= v >>> 4;
+        v |= v >>> 8;
+        v |= v >>> 16;
+        v |= v >>> 32;
+        return v - (v >>> 1);
     }
 
     // returns lo | hi network address in a single long
@@ -838,7 +861,11 @@ public final class Numbers {
     }
 
     public static boolean isPow2(int value) {
-        return (value & (value - 1)) == 0;
+        return value > 0 && (value & (value - 1)) == 0;
+    }
+
+    public static boolean isPow2(long value) {
+        return value > 0 && (value & (value - 1)) == 0;
     }
 
     public static boolean lessThan(long a, long b, boolean negated) {
@@ -879,17 +906,6 @@ public final class Numbers {
 
     public static boolean notDigit(byte b) {
         return b < '0' || b > '9';
-    }
-
-    public static byte parseByte(Utf8Sequence sequence, int p, int lim) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        short n = parseShort0(sequence.asAsciiCharSequence(), p, lim);
-        if (n < Byte.MIN_VALUE || n > Byte.MAX_VALUE) {
-            throw NumericException.INSTANCE;
-        }
-        return (byte) n;
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
@@ -1026,7 +1042,7 @@ public final class Numbers {
 
     public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty IPv4 address string");
         }
 
         int hi;

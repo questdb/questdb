@@ -676,7 +676,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             writer.getColumnVersionReader().getDefaultColumnNameTxn(symColIndex),
-                            new TestTableWriterAPI(writer.getColumnVersionReader(),1),
+                            new TestTableWriterAPI(writer.getColumnVersionReader(), 1),
                             txReader
                     );
 
@@ -760,7 +760,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             -1,
-                            new TestTableWriterAPI(writer.getColumnVersionReader(),0),
+                            new TestTableWriterAPI(writer.getColumnVersionReader(), 0),
                             txReader
                     );
 

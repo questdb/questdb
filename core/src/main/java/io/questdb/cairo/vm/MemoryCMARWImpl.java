@@ -54,8 +54,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private long minMappedMemorySize = -1;
 
-    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
-        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
+    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts) {
+        of(ff, name, extendSegmentSizePow2, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
@@ -208,9 +208,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
-        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
-        this.minMappedMemorySize = extendSegmentSize;
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts, int madviseOpts) {
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSizePow2);
+        this.minMappedMemorySize = extendSegmentSizePow2;
         this.madviseOpts = madviseOpts;
         openFile(ff, name, opts);
         try {
@@ -257,9 +257,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, long fd, long extendSegmentSizePow2, long offset, boolean truncate, byte truncateMode) {
         this.ff = ff;
-        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSizePow2);
         close(truncate, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);
