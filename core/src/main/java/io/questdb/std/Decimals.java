@@ -118,25 +118,6 @@ public final class Decimals {
     }
 
     /**
-     * Returns the precision for a specific long decimal.
-     *
-     * @param value of the decimal
-     * @return the required precision to store the long.
-     */
-    public static int getLongPrecision(long value) {
-        if (value == Numbers.LONG_NULL) return 0;
-        if (value < 0) {
-            value = -value;
-        }
-        for (int i = 0, n = POW10_PRECISION.length; i < n; i++) {
-            if (value <= POW10_PRECISION[i]) {
-                return i + 1;
-            }
-        }
-        return 19;
-    }
-
-    /**
      * Returns the precision for a specific int decimal.
      *
      * @param value of the decimal
@@ -156,16 +137,35 @@ public final class Decimals {
     }
 
     /**
-     * Returns the maximum long value for a specific precision.
+     * Returns the precision for a specific long decimal.
+     *
+     * @param value of the decimal
+     * @return the required precision to store the long.
+     */
+    public static int getLongPrecision(long value) {
+        if (value == Numbers.LONG_NULL) return 0;
+        if (value < 0) {
+            value = -value;
+        }
+        for (int i = 0, n = POW10_PRECISION.length; i < n; i++) {
+            if (value <= POW10_PRECISION[i]) {
+                return i + 1;
+            }
+        }
+        return 19;
+    }
+
+    /**
+     * Returns the maximum byte value for a specific precision.
      *
      * @param precision to be used as reference
      */
-    public static long getMaxLong(int precision) {
+    public static byte getMaxByte(int precision) {
         assert precision > 0;
-        if (precision >= 19) {
-            return Long.MAX_VALUE;
+        if (precision >= 3) {
+            return Byte.MAX_VALUE;
         }
-        return POW10_PRECISION[precision - 1];
+        return (byte) POW10_PRECISION[precision - 1];
     }
 
     /**
@@ -179,6 +179,32 @@ public final class Decimals {
             return Integer.MAX_VALUE;
         }
         return (int) POW10_PRECISION[precision - 1];
+    }
+
+    /**
+     * Returns the maximum long value for a specific precision.
+     *
+     * @param precision to be used as reference
+     */
+    public static long getMaxLong(int precision) {
+        assert precision > 0;
+        if (precision >= 19) {
+            return Long.MAX_VALUE;
+        }
+        return POW10_PRECISION[precision - 1];
+    }
+
+    /**
+     * Returns the maximum short value for a specific precision.
+     *
+     * @param precision to be used as reference
+     */
+    public static short getMaxShort(int precision) {
+        assert precision > 0;
+        if (precision >= 5) {
+            return Short.MAX_VALUE;
+        }
+        return (short) POW10_PRECISION[precision - 1];
     }
 
     /**
