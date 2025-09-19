@@ -805,10 +805,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor = selector.select(headerParser);
-        if (processor == null) {
-            processor = selector.getDefaultProcessor();
-        }
+        final HttpRequestProcessor processor = selector.select(headerParser);
         return requestValidator.validateRequestType(processor, rejectProcessor);
     }
 

@@ -389,15 +389,10 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public HttpRequestProcessor getDefaultProcessor() {
-            return defaultRequestProcessor;
-        }
-
-        @Override
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
             final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
             final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
-            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : null;
+            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }
 }
