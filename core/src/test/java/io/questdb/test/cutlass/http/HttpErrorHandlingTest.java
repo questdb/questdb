@@ -40,6 +40,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8StringSink;
@@ -79,8 +80,10 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (counter.incrementAndGet() > 106) {
-                                            throw new RuntimeException("Test error");
+                                        if (!Chars.contains(name.asAsciiCharSequence(), "copy_export_log")) {
+                                            if (counter.incrementAndGet() > 78) {
+                                                throw new RuntimeException("Test error");
+                                            }
                                         }
                                         return super.openRW(name, opts);
                                     }

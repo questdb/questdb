@@ -2658,11 +2658,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     try {
                         executeCopy(compiler, sqlExecutionContext);
-                        engine.getCopyImportContext().clear();
                         executeCopy(compiler, sqlExecutionContext);
                         Assert.fail();
                     } catch (Exception e) {
-                        TestUtils.assertContains(e.getMessage(), "Unable to process the import request. Another import request may be in progress.");
+                        TestUtils.assertContains(e.getMessage(), "unable to process the import request - another import may be in progress");
                     }
                 }
         );
