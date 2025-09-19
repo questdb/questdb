@@ -25,6 +25,7 @@
 package io.questdb.std.datetime.microtime;
 
 import io.questdb.std.Os;
+import io.questdb.std.datetime.MicrosecondClock;
 
 public class MicrosecondClockImpl implements MicrosecondClock {
     public static final MicrosecondClock INSTANCE = new MicrosecondClockImpl();

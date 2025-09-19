@@ -37,6 +37,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
+
 public class ToPgDateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -67,7 +69,7 @@ public class ToPgDateFunctionFactory implements FunctionFactory {
             CharSequence value = arg.getStrA(rec);
             try {
                 if (value != null) {
-                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.EN_LOCALE);
+                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, EN_LOCALE);
                 }
             } catch (NumericException ignore) {
             }

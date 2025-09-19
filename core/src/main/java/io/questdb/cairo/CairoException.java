@@ -29,7 +29,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -364,8 +363,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         sink.putAscii('[').put(errno).putAscii("]: ").put(message);
     }
 
-    public CairoException ts(long timestamp) {
-        TimestampFormatUtils.appendDateTime(message, timestamp);
+    public CairoException ts(int timestampType, long timestamp) {
+        ColumnType.getTimestampDriver(timestampType).append(message, timestamp);
+        return this;
+    }
+
+    public CairoException ts(TimestampDriver driver, long timestamp) {
+        driver.append(message, timestamp);
         return this;
     }
 

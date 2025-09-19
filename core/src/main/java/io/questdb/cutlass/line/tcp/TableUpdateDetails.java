@@ -35,6 +35,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -79,6 +80,7 @@ public class TableUpdateDetails implements Closeable {
     private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
     private final TableToken tableToken;
+    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
     protected TableWriterAPI writerAPI;
@@ -115,6 +117,7 @@ public class TableUpdateDetails implements Closeable {
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         this.tableToken = writer.getTableToken();
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = configuration.getCommitInterval();
@@ -153,6 +156,7 @@ public class TableUpdateDetails implements Closeable {
         this.defaultMaxUncommittedRows = maxUncommittedRows;
         this.writerAPI = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         this.tableToken = writer.getTableToken();
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
@@ -399,6 +403,10 @@ public class TableUpdateDetails implements Closeable {
         return localDetailsArray[workerId];
     }
 
+    TimestampDriver getTimestampDriver() {
+        return timestampDriver;
+    }
+
     int getTimestampIndex() {
         return timestampIndex;
     }
@@ -508,7 +516,7 @@ public class TableUpdateDetails implements Closeable {
                         this.txReader = new TxReader(cairoConfiguration.getFilesFacade());
                     }
                     int pathLen = path.size();
-                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
+                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
                     path.trimTo(pathLen);
                     this.clean = false;
                 }

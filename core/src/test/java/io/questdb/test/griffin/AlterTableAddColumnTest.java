@@ -695,6 +695,56 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddTimestampNSColumn() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    execute("alter table x add column nscol timestamp_ns");
+                    drainWalQueue();
+
+                    assertSql("ddl\n" +
+                                    "CREATE TABLE 'x' ( \n" +
+                                    "\ti INT,\n" +
+                                    "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tamt DOUBLE,\n" +
+                                    "\ttimestamp TIMESTAMP,\n" +
+                                    "\tb BOOLEAN,\n" +
+                                    "\tc STRING,\n" +
+                                    "\td DOUBLE,\n" +
+                                    "\te FLOAT,\n" +
+                                    "\tf SHORT,\n" +
+                                    "\tg DATE,\n" +
+                                    "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tj LONG,\n" +
+                                    "\tk TIMESTAMP,\n" +
+                                    "\tl BYTE,\n" +
+                                    "\tm BINARY,\n" +
+                                    "\tn STRING,\n" +
+                                    "\tnscol TIMESTAMP_NS\n" +
+                                    ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
+                                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                            "show create table x;");
+
+                    assertQueryNoLeakCheck(
+                            "c\tnscol\n" +
+                                    "XYZ\t\n" +
+                                    "ABC\t\n" +
+                                    "ABC\t\n" +
+                                    "XYZ\t\n" +
+                                    "\t\n" +
+                                    "CDE\t\n" +
+                                    "CDE\t\n" +
+                                    "ABC\t\n" +
+                                    "\t\n" +
+                                    "XYZ\t\n",
+                            "select c, nscol from x"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testAddTwoColumns() throws Exception {
         assertMemoryLeak(
                 () -> {

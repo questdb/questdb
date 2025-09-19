@@ -35,7 +35,8 @@ import io.questdb.std.Vect;
 
 import java.util.Arrays;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
     private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
@@ -57,9 +58,12 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         this.sum = new double[workerCount * SUM_PADDING];
         this.count = new long[workerCount * COUNT_PADDING];
         this.workerCount = workerCount;
-        if (keyKind == GKK_HOUR_INT) {
-            this.distinctFunc = Rosti::keyedHourDistinct;
-            this.keyValueFunc = Rosti::keyedHourNSumDouble;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedMicroHourDistinct;
+            this.keyValueFunc = Rosti::keyedMicroHourNSumDouble;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedNanoHourDistinct;
+            this.keyValueFunc = Rosti::keyedNanoHourNSumDouble;
         } else {
             this.distinctFunc = Rosti::keyedIntDistinct;
             this.keyValueFunc = Rosti::keyedIntNSumDouble;

@@ -24,13 +24,13 @@
 
 package org.questdb;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
 
@@ -63,7 +63,7 @@ public class PingMain {
             long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             DirectUtf8String flyweight = new DirectUtf8String();
 
-            long durationUs = durationSec * Timestamps.SECOND_MICROS;
+            long durationUs = MicrosTimestampDriver.INSTANCE.fromSeconds(durationSec);
             long startUs = Os.currentTimeMicros();
             while (Os.currentTimeMicros() - durationUs < startUs) {
                 Utf8s.strCpyAscii(PING, buf);

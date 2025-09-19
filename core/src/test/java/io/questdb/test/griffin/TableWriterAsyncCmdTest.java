@@ -41,7 +41,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -256,7 +256,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                         writer.tick(true);
 
                         try {
-                            fut.await(Timestamps.SECOND_MILLIS);
+                            fut.await(Micros.SECOND_MILLIS);
                             Assert.fail();
                         } catch (SqlException e) {
                             Assert.assertNotNull(e);

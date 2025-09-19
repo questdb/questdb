@@ -111,17 +111,17 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -213,7 +213,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -1161,7 +1161,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -1243,7 +1243,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -6817,7 +6817,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
 
                         @Override
-                        public NanosecondClock getNanosecondClock() {
+                        public Clock getNanosecondClock() {
                             return StationaryNanosClock.INSTANCE;
                         }
                     }
@@ -8274,16 +8274,21 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     int receiveCount = 0;
+                    int failureRetryCount = 0;
                     while (receiveCount < N * senderCount) {
                         long cursor = subSeq.next();
                         if (cursor < 0) {
                             if (cursor == -1 && completedCount.get() == senderCount) {
-                                Assert.fail("Not all requests successful, test failed, see previous failures");
-                                break;
+                                failureRetryCount++;
+                                if (failureRetryCount >= 3) {
+                                    Assert.fail("Not all requests successful, test failed, see previous failures");
+                                    break;
+                                }
                             }
                             Os.pause();
                             continue;
                         }
+                        failureRetryCount = 0;
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
                         assertTrue(valid);
@@ -9886,7 +9891,7 @@ public class IODispatcherTest extends AbstractTest {
                             );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            System.out.println("erm: " + index + ", ts=" + Micros.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }

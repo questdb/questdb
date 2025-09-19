@@ -55,6 +55,7 @@ public enum AttachDetachStatus {
             int position,
             AttachDetachStatus status,
             TableToken tableToken,
+            int timestampType,
             int partitionBy,
             long partitionTs
     ) {
@@ -67,7 +68,7 @@ public enum AttachDetachStatus {
         exception.put("could not ").put(operation)
                 .put(" partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                 .put(", detachStatus=").put(statusName)
-                .put(", partitionTimestamp=").ts(partitionTs)
+                .put(", partitionTimestamp=").ts(timestampType, partitionTs)
                 .put(", partitionBy=").put(PartitionBy.toString(partitionBy))
                 .put(']')
                 .position(position);

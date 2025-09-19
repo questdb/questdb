@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -38,14 +39,13 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -219,7 +219,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             // Check txn file is upgraded
             try (TxReader txReader = new TxReader(config.getFilesFacade())) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
                 txReader.unsafeLoadAll();
 
                 Assert.assertNotEquals(0, txReader.getLagRowCount());
@@ -241,12 +241,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
             CairoConfiguration config = engine.getConfiguration();
             try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
 
                 txWriter.setLagRowCount(100);
                 txWriter.setLagTxnCount(1);
-                txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
-                txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+                txWriter.setLagMinTimestamp(MicrosTimestampDriver.floor("2022-02-24"));
+                txWriter.setLagMaxTimestamp(MicrosTimestampDriver.floor("2023-03-20"));
 
                 txWriter.commit(new ObjList<>());
             }
@@ -255,7 +255,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
             // Check txn file not upgraded
-            checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+            checkTxnFile(config.getFilesFacade(), config, token, 100, 1, MicrosTimestampDriver.floor("2022-02-24"), MicrosTimestampDriver.floor("2023-03-20"));
 
             TestUtils.messTxnUnallocated(
                     config.getFilesFacade(),
@@ -396,11 +396,19 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private static void checkTxnFile(FilesFacade ff, CairoConfiguration config, TableToken tokenDef, int rowCount, int lagTxnCount, long maxValue, long minValue) {
+    private static void checkTxnFile(
+            FilesFacade ff,
+            CairoConfiguration config,
+            TableToken tokenDef,
+            int rowCount,
+            int lagTxnCount,
+            long maxValue,
+            long minValue
+    ) {
         // Check txn file is upgraded
         try (TxReader txReader = new TxReader(ff)) {
             Path p = Path.getThreadLocal(config.getDbRoot());
-            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
             txReader.unsafeLoadAll();
 
             Assert.assertEquals(rowCount, txReader.getLagRowCount());
@@ -432,7 +440,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-05T02:30', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(10),"
@@ -442,7 +450,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-01T01:30', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(36)"
@@ -459,7 +467,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-05T04:25', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(10),"
@@ -469,7 +477,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-01T01:27', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(36)"
@@ -1675,7 +1683,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             TableWriter.Row r;
 
             // insert day 1
-            long t = TimestampFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
+            long t = MicrosFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
             for (int i = 0; i < 100; i++) {
                 r = w.newRow(t);
                 r.putStr(0, null);
@@ -1685,7 +1693,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             }
 
             // day 2
-            t = TimestampFormatUtils.parseTimestamp("2014-09-11T01:00:00.000000Z");
+            t = MicrosFormatUtils.parseTimestamp("2014-09-11T01:00:00.000000Z");
             for (int i = 0; i < 100; i++) {
                 r = w.newRow(t);
                 r.putStr(0, null);
@@ -1695,7 +1703,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             }
 
             // O3
-            t = TimestampFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
+            t = MicrosFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
             r = w.newRow(t);
             r.putStr(0, null);
             r.putBin(1, null);
@@ -1760,7 +1768,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 "select " +
                 " x" +
                 ", rnd_symbol('a', 'b', 'c', null) m" +
-                ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
                 " from long_sequence(96)," +
                 "), index(m) timestamp(ts) partition by DAY", "t_col_top_ooo_day");
 
@@ -1769,7 +1777,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
                         " from long_sequence(96)," +
                         "), index(m) timestamp(ts) partition by DAY WAL",
                 "t_col_top_ooo_day_wal"

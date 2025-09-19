@@ -47,6 +47,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
             ColumnType.INT,
             ColumnType.LONG,
             ColumnType.TIMESTAMP,
+            ColumnType.TIMESTAMP_NANO,
             ColumnType.DATE,
             ColumnType.SYMBOL,
             ColumnType.FLOAT,
@@ -188,6 +189,10 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         return timestamp;
     }
 
+    private int nextVariableColumnLen(Rnd rnd) {
+        return (int) Math.pow(strLen, rnd.nextDouble());
+    }
+
     protected void appendColumnValue(Rnd rnd, int type, TableWriter.Row row, int columnIndex, boolean isNull, Utf8StringSink utf8StringSink, TestRecord.ArrayBinarySequence binarySequence) {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.CHAR:
@@ -296,9 +301,5 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
             default:
                 throw new UnsupportedOperationException();
         }
-    }
-
-    private int nextVariableColumnLen(Rnd rnd) {
-        return (int) Math.pow(strLen, rnd.nextDouble());
     }
 }
