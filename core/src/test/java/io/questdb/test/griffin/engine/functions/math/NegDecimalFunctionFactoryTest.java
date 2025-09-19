@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.math.NegDecimalFunctionFactory;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
@@ -48,8 +49,8 @@ public class NegDecimalFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNegDecimal128MinValue() {
         createFunctionAndAssert(
-                new Decimal128Constant(Long.MIN_VALUE, 0, ColumnType.getDecimalType(37, 0)),
-                Long.MIN_VALUE, 0, 0, 0,
+                new Decimal128Constant(Decimal128.MIN_VALUE.getHigh(), Decimal128.MIN_VALUE.getLow(), ColumnType.getDecimalType(37, 0)),
+                0, 0, Decimal128.MAX_VALUE.getHigh(), Decimal128.MAX_VALUE.getLow(),
                 ColumnType.getDecimalType(37, 0)
         );
     }
