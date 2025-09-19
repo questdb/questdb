@@ -720,6 +720,49 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithJoinModelsGreaterThanTwo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select *\n" +
+                            "from trades t1\n" +
+                            "join order_book t2 on t1.price = t2.bid_price\n" +
+                            "join order_book t3 on t1.price = t3.bid_price",
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: t3.bid_price=t1.price\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: t2.bid_price=t1.price\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            Hash\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: order_book\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+
+    }
+
+    @Test
     public void testAsofJoinOptimisationShouldNotWorkWithOrderByClauseOnChildTableWithAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
