@@ -365,7 +365,7 @@ public class CopyImportTest extends AbstractCairoTest {
                                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Another import request is in progress");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "another import may be in progress");
                     }
 
                     // cancel request should succeed

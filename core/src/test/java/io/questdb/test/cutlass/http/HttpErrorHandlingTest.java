@@ -79,7 +79,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (counter.incrementAndGet() > 110) {
+                                        if (counter.incrementAndGet() > 106) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);
