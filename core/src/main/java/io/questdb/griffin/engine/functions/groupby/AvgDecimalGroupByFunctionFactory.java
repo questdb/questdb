@@ -195,7 +195,7 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "sum";
+            return "avg";
         }
 
         @Override

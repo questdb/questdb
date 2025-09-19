@@ -204,11 +204,12 @@ public class Decimal256 implements Sinkable {
     // holders for in-place mutations that doesn't have a mutable structure available
     private static final ThreadLocal<Decimal256> tl = new ThreadLocal<>(Decimal256::new);
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
-    private long hh; // Highest 64 bits (bits 192-255)
+    private long hh;    // Highest 64 bits (bits 192-255)
     private long hl;    // High 64 bits (bits 128-191)
-    private long lh;     // Mid 64 bits (bits 64-127)
-    private long ll;     // Low 64 bits (bits 0-63)
-    private int scale;    // Number of decimal places
+    private long lh;    // Mid 64 bits (bits 64-127)
+    private long ll;    // Low 64 bits (bits 0-63)
+    private int scale;  // Number of decimal places
+    // @formatter:on
 
     /**
      * Default constructor - creates zero with scale 0
@@ -468,10 +469,10 @@ public class Decimal256 implements Sinkable {
      * - The decimal value must be positive
      * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 1000)
      *
-     * @param hh highest 64 bits of the 256-bit decimal
-     * @param hl high-middle 64 bits of the 256-bit decimal
-     * @param lh low-middle 64 bits of the 256-bit decimal
-     * @param ll lowest 64 bits of the 256-bit decimal
+     * @param hh  highest 64 bits of the 256-bit decimal
+     * @param hl  high-middle 64 bits of the 256-bit decimal
+     * @param lh  low-middle 64 bits of the 256-bit decimal
+     * @param ll  lowest 64 bits of the 256-bit decimal
      * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
      * @return the digit (0-9) at the specified power-of-ten position
      */
@@ -758,7 +759,7 @@ public class Decimal256 implements Sinkable {
      *
      * @return -1, 0, or 1 as this is less than, equal to, or greater than other
      */
-        public int compareTo(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
+    public int compareTo(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
         boolean aNeg = isNegative();
         boolean bNeg = otherHH < 0;
         if (aNeg != bNeg) {
@@ -1282,9 +1283,9 @@ public class Decimal256 implements Sinkable {
     /**
      * Parses a CharSequence decimal and store the result into the given Decimal256.
      *
-     * @param cs is the CharSequence to be parsed
+     * @param cs        is the CharSequence to be parsed
      * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
-     * @param scale is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
+     * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
      * @return the precision of the decimal
      */
     public int ofString(CharSequence cs, int precision, int scale) throws NumericException {
@@ -1333,7 +1334,7 @@ public class Decimal256 implements Sinkable {
         boolean digitFound = false;
         int digitLo = lo;
         for (; lo < hi; lo++) {
-            char c  = cs.charAt(lo);
+            char c = cs.charAt(lo);
             if (isDigit(c)) {
                 digitFound = true;
                 continue;
@@ -1347,9 +1348,9 @@ public class Decimal256 implements Sinkable {
             if (skippedZeroes) {
                 digitLo--;
             } else {
-            throw NumericException.instance()
-                    .put("invalid decimal: '").put(cs)
-                    .put("' contains no digits");
+                throw NumericException.instance()
+                        .put("invalid decimal: '").put(cs)
+                        .put("' contains no digits");
             }
         }
         int digitHi = lo;
@@ -1562,13 +1563,13 @@ public class Decimal256 implements Sinkable {
     /**
      * Subtracts a specific multiplier of a power of ten from the current 256-bit value.
      * This method modifies the value in-place by subtracting (multiplier * 10^pow).
-     *
+     * <p>
      * Used in conjunction with getDigitAtPowerOfTen to extract individual digits:
      * 1. Call getDigitAtPowerOfTen to get the digit at a specific power
      * 2. Call this method to subtract that digit's contribution
      * 3. Repeat for the next lower power
      *
-     * @param pow the power of ten position
+     * @param pow        the power of ten position
      * @param multiplier the digit to subtract (1-9, or 0 for no-op)
      */
     public void subtractPowerOfTenMultiple(int pow, int multiplier) {

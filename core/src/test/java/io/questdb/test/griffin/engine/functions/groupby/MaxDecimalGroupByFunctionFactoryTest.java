@@ -27,19 +27,19 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class AvgDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
+public class MaxDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAvg() throws Exception {
+    public void testMax() throws Exception {
         assertQuery(
-                "key\ta8\ta16\ta32\ta64\ta128\ta256\n" +
-                        "4\t48\t502.6\t494244.3\t4981441046664.13\t9060521021983552060173214255.211\t31304833156629889693497042595209754441918805445080974369080014084.85358\n" +
-                        "3\t49\t485.3\t492251.2\t4997580785107.12\t9052893851427734152001930119.428\t30416293450185336623817302560742325189774224037945935861577153935.39918\n" +
-                        "2\t48\t499.5\t502127.0\t4963120473043.90\t9171745243146077598389913473.635\t31453177765311683962656058347834093327429020565452336159500533098.52220\n" +
-                        "1\t50\t494.4\t504102.8\t4970590450825.09\t9218679827218681817113584004.012\t30821997753191027869449119701652787675399873875822051937682996696.05940\n" +
-                        "0\t49\t502.0\t501313.0\t4839510335333.02\t9200353642033472407119323164.002\t31609444379365793148224424272849410604357248203045640530705472887.81686\n",
-                "select id%5 key, avg(d8) a8, avg(d16) a16, avg(d32) a32, " +
-                        "avg(d64) a64, avg(d128) a128, avg(d256) a256 " +
+                "key\tm8\tm16\tm32\tm64\tm128\tm256\n" +
+                        "4\t98\t999.6\t996519.1\t9996706980009.09\t18438116870105300071299057341.748\t62768662572617782789411637750252540600463143391413031101720390843.02695\n" +
+                        "3\t98\t999.4\t999293.4\t9995304091750.47\t18445907049965428836184027650.544\t62695361596829930762746263372106158875223197903912027699958711281.60863\n" +
+                        "2\t98\t998.5\t999538.2\t9990581500662.18\t18418677987608525892467469731.068\t62735651907801120481573277943721313295427224023316414377330145029.34803\n" +
+                        "1\t98\t999.7\t999740.2\t9999997684267.21\t18432329569787485012589911950.901\t62754505182666656532937752284481109802819894709260977303861282809.57981\n" +
+                        "0\t98\t999.2\t999956.5\t9987078655347.41\t18439524792393733125371110516.979\t62769047116838768558379187806699415465311881011361766441286822461.81219\n",
+                "select id%5 key, max(d8) m8, max(d16) m16, max(d32) m32, " +
+                        "max(d64) m64, max(d128) m128, max(d256) m256 " +
                         "from x " +
                         "order by key desc",
                 "create table x as (" +
@@ -61,26 +61,13 @@ public class AvgDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAvgAllNull() throws Exception {
+    public void testMaxAllNull() throws Exception {
         assertQuery(
-                "avg\n\n",
-                "select avg(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                "max\n\n",
+                "select max(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
                 null,
                 false,
                 true
-        );
-    }
-
-    @Test
-    public void testAvgOverflow() throws Exception {
-        assertException(
-                "select avg(d) from x",
-                "create table x as (" +
-                        "select cast('9999999999999999999999999999999999999999999999999999999999999999999999999999' as decimal(76,0)) d " +
-                        "from long_sequence(10)" +
-                        ")",
-                7,
-                "sum aggregation failed: Overflow in addition: result exceeds maximum precision"
         );
     }
 }
