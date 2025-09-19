@@ -24,34 +24,34 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
+public class CountUuidGroupByFunctionFactory implements FunctionFactory {
 
-    public CountLong256GroupByFunction(@NotNull Function arg) {
-        super(arg);
+    @Override
+    public String getSignature() {
+        return "count(Z)";
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final Long256 value = arg.getLong256A(record);
-        if (!Long256Impl.isNull(value)) {
-            mapValue.putLong(valueIndex, 1);
-        } else {
-            mapValue.putLong(valueIndex, 0);
-        }
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final Long256 value = arg.getLong256A(record);
-        if (!Long256Impl.isNull(value)) {
-            mapValue.addLong(valueIndex, 1);
-        }
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CountUuidGroupByFunction(args.getQuick(0));
     }
 }

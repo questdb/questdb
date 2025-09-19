@@ -108,5 +108,4 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
             return true;
         }
     }
-
 }
