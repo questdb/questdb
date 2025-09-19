@@ -1492,7 +1492,7 @@ public class Decimal256Test {
         Decimal256 d = new Decimal256();
 
         // Trailing zeros in mantissa
-        int precision = d.ofString("1.2300e2", -1, -1);
+        int precision = d.ofString("1.2300e2m", -1, -1);
         Assert.assertEquals(5, precision);
         Assert.assertEquals(2, d.getScale());
         Assert.assertEquals("123.00", d.toString());
@@ -1526,7 +1526,7 @@ public class Decimal256Test {
     @Test
     public void testOfStringLargeNumber() throws NumericException {
         Decimal256 d = new Decimal256();
-        String largeNumber = "123456789012345678901234567890.123456789012345678901234567890";
+        String largeNumber = "123456789012345678901234567890.123456789012345678901234567898";
         int precision = d.ofString(largeNumber, -1, -1);
         Assert.assertEquals(60, precision);
         Assert.assertEquals(30, d.getScale());
@@ -1793,9 +1793,9 @@ public class Decimal256Test {
 
         // Zero exponent with +
         precision = d.ofString("9.0e+0", -1, -1);
-        Assert.assertEquals(2, precision);
-        Assert.assertEquals(1, d.getScale());
-        Assert.assertEquals("9.0", d.toString());
+        Assert.assertEquals(1, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("9", d.toString());
     }
 
     @Test
@@ -1811,6 +1811,11 @@ public class Decimal256Test {
     public void testOfStringZeroWithDecimal() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = d.ofString("0.000", -1, -1);
+        Assert.assertEquals(1, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("0", d.toString());
+
+        precision = d.ofString("0.000m", -1, -1);
         Assert.assertEquals(4, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.000", d.toString());
