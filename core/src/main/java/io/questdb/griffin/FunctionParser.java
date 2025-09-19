@@ -1168,9 +1168,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final int targetPrecision;
                 if (arg.isConstant()) {
                     int value = arg.getInt(null);
-                    targetPrecision = Math.max(Decimals.getIntPrecision(value), 1);
+                    targetPrecision = Math.max(Numbers.getPrecision(value), 1);
                 } else {
-                    targetPrecision = Decimals.getIntPrecision(Integer.MAX_VALUE);
+                    targetPrecision = Numbers.getPrecision(Integer.MAX_VALUE);
                 }
                 args.setQuick(k, CastIntToDecimalFunctionFactory.newInstance(position, arg, ColumnType.getDecimalType(targetPrecision, 0), sqlExecutionContext));
             } else if (argTypeTag == ColumnType.LONG && sigArgTypeTag == ColumnType.DECIMAL) {
@@ -1178,9 +1178,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final int targetPrecision;
                 if (arg.isConstant()) {
                     long value = arg.getLong(null);
-                    targetPrecision = Math.max(Decimals.getLongPrecision(value), 1);
+                    targetPrecision = Math.max(Numbers.getPrecision(value), 1);
                 } else {
-                    targetPrecision = Decimals.getLongPrecision(Long.MAX_VALUE);
+                    targetPrecision = Numbers.getPrecision(Long.MAX_VALUE);
                 }
                 args.setQuick(k, CastLongToDecimalFunctionFactory.newInstance(position, arg, ColumnType.getDecimalType(targetPrecision, 0), sqlExecutionContext));
             }

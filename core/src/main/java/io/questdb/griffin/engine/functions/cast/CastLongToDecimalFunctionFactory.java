@@ -61,7 +61,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
 
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        long maxUnscaledValue = targetScale >= targetPrecision ? 0L : Decimals.getMaxLong(targetPrecision - targetScale);
+        long maxUnscaledValue = targetScale >= targetPrecision ? 0L : Numbers.getMaxValue(targetPrecision - targetScale);
         return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
@@ -90,17 +90,17 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         final int targetScale = ColumnType.getDecimalScale(targetType);
 
+        if (value == Numbers.LONG_NULL) {
+            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
+        }
+
         // Ensures that the value fits in the decimal target
-        if (value != 0 && Decimals.getLongPrecision(value) + targetScale > ColumnType.getDecimalPrecision(targetType)) {
+        if (value != 0 && Numbers.getPrecision(value) + targetScale > ColumnType.getDecimalPrecision(targetType)) {
             throw ImplicitCastException.inconvertibleValue(
                     value,
                     ColumnType.LONG,
                     targetType
             ).position(valuePosition);
-        }
-
-        if (value == Numbers.LONG_NULL) {
-            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
         }
 
         Decimal256 d = sqlExecutionContext.getDecimal256();
@@ -122,7 +122,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL16:
             case ColumnType.DECIMAL32:
             case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Decimals.getMaxLong(targetPrecision), value);
+                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
             case ColumnType.DECIMAL128:
                 return new CastDecimal128UnscaledFunc(targetType, value);
             default:
