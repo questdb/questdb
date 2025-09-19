@@ -28,45 +28,58 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
-public class CopyContext implements Mutable {
+public class CopyExportContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
-    private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
+    private final AtomicLong activeExportID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
-    // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final LongSupplier copyIDSupplier;
-    private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private SerialParquetExporter.PhaseStatusReporter reporter;
 
-    public CopyContext(CairoConfiguration configuration) {
+    public CopyExportContext(CairoConfiguration configuration) {
         this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
-    public long assignActiveImportId(SecurityContext securityContext) {
+    public long assignActiveExportId(SecurityContext securityContext) {
         final long id = copyIDSupplier.getAsLong();
-        activeCopyID.set(id);
-        this.originatorSecurityContext = securityContext;
-        return id;
+        if (activeExportID.compareAndSet(INACTIVE_COPY_ID, id)) {
+            this.exportOriginatorSecurityContext = securityContext;
+            return id;
+        }
+        return INACTIVE_COPY_ID;
     }
 
     @Override
     public void clear() {
-        activeCopyID.set(INACTIVE_COPY_ID);
-        originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+        activeExportID.set(INACTIVE_COPY_ID);
+        exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
-    public long getActiveCopyID() {
-        return activeCopyID.get();
+    public long getActiveExportID() {
+        return activeExportID.get();
     }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
-    public SecurityContext getOriginatorSecurityContext() {
-        return originatorSecurityContext;
+    public SecurityContext getExportOriginatorSecurityContext() {
+        return exportOriginatorSecurityContext;
+    }
+
+    public SerialParquetExporter.PhaseStatusReporter getReporter() {
+        return reporter;
+    }
+
+    public void setReporter(SerialParquetExporter.PhaseStatusReporter reporter) {
+        this.reporter = reporter;
     }
 }
+
+
