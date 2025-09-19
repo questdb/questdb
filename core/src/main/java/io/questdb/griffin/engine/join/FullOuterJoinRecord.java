@@ -62,13 +62,9 @@ public class FullOuterJoinRecord extends JoinRecord {
 
     void hasSlave(boolean value) {
         if (value) {
-            if (flappingSlave != slave) {
-                slave = flappingSlave;
-            }
+            slave = flappingSlave;
         } else {
-            if (slave != slaveNullRecord) {
-                slave = slaveNullRecord;
-            }
+            slave = slaveNullRecord;
         }
     }
 }

@@ -71,7 +71,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
     public static final int JOIN_MAX = JOIN_CROSS_FULL;
-    public static final int JOIN_ONE = 7;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
     public static final int LATEST_BY_DEPRECATED = 1;

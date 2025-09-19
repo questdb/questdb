@@ -995,7 +995,7 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInterval1() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 "i\tcount\n" +
                         "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\t2\n" +
                         "\t1\n",
@@ -1011,7 +1011,7 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInterval2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 "i\ts\tcount\n" +
                         "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoobar\t2\n" +
                         "\t\t1\n",
@@ -1486,7 +1486,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertSql(expectedResult, query1);
+                assertQueryNoLeakCheck(expectedResult, query1);
                 assertPlanNoLeakCheck(
                         query1,
                         "Sort light lo: 10000\n" +
@@ -1524,7 +1524,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertSql(expectedResult, query2);
+                assertQueryNoLeakCheck(expectedResult, query2);
                 assertPlanNoLeakCheck(
                         query2,
                         "Sort light lo: 10000\n" +
@@ -1562,7 +1562,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertSql(expectedResult, query3);
+                assertQueryNoLeakCheck(expectedResult, query3);
                 assertPlanNoLeakCheck(
                         query3,
                         "Sort light lo: 10000\n" +
@@ -1597,7 +1597,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertSql(expectedResult, query4);
+                assertQueryNoLeakCheck(expectedResult, query4);
                 assertPlanNoLeakCheck(
                         query4,
                         "Sort light lo: 10000\n" +
@@ -1829,7 +1829,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "order by i ";
 
             // cross-check with re-write using aggregate functions
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\ti\tavg\tsum\tfirst_value\n" +
                             "1970-01-01T00:00:01.099967Z\tnull\t495.40261282660333\t1668516.0\t481.0\n" +
                             "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tnull\n" +
@@ -2482,7 +2482,7 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(
+        assertQueryNoLeakCheck(
                 expected,
                 "WITH x_sample AS (\n" +
                         "  SELECT id, uuid, url, sum(metric) m_sum\n" +

@@ -76,8 +76,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        masterDetermined = true;
-        return masterFactory.followedOrderByAdvice();
+        boolean followOrderBy = masterFactory.followedOrderByAdvice();
+        masterDetermined |= followOrderBy;
+        return followOrderBy;
     }
 
     @Override
@@ -112,8 +113,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        masterDetermined = true;
-        return masterFactory.getScanDirection();
+        int scanDirection = masterFactory.getScanDirection();
+        masterDetermined |= scanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER;
+        return scanDirection;
     }
 
     @Override

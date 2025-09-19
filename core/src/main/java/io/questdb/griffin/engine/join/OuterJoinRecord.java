@@ -42,13 +42,9 @@ public class OuterJoinRecord extends JoinRecord {
 
     void hasSlave(boolean value) {
         if (value) {
-            if (flappingSlave != slave) {
-                slave = flappingSlave;
-            }
+            slave = flappingSlave;
         } else {
-            if (slave != nullRecord) {
-                slave = nullRecord;
-            }
+            slave = nullRecord;
         }
     }
 

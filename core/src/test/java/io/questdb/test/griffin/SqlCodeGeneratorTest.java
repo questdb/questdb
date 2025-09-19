@@ -2295,11 +2295,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("create table l as( select x from long_sequence(100) )");
             execute("create table rr as( select x + 50 as y from long_sequence(100) )");
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "select x, y from l left join rr on l.x = rr.y and (y > 0 or y > 10)",
-                    sink,
+            assertQueryNoLeakCheck(
                     "x\ty\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
@@ -2400,14 +2396,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "97\t97\n" +
                             "98\t98\n" +
                             "99\t99\n" +
-                            "100\t100\n"
+                            "100\t100\n",
+                    "select x, y from l left join rr on l.x = rr.y and (y > 0 or y > 10)",
+                    null
             );
-
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "select x, y from l right join rr on l.x = rr.y and (y > 0 or y > 10)",
-                    sink,
+            assertQueryNoLeakCheck(
                     "x\ty\n" +
                             "51\t51\n" +
                             "52\t52\n" +
@@ -2508,7 +2501,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "null\t114\n" +
                             "null\t108\n" +
                             "null\t104\n" +
-                            "null\t142\n"
+                            "null\t142\n",
+                    "select x, y from l right join rr on l.x = rr.y and (y > 0 or y > 10)",
+                    null,
+                    false,
+                    false,
+                    false
             );
         });
     }

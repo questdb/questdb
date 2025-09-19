@@ -42,13 +42,9 @@ public class RightOuterJoinRecord extends JoinRecord {
 
     void hasMaster(boolean value) {
         if (value) {
-            if (flappingMaster != master) {
-                master = flappingMaster;
-            }
+            master = flappingMaster;
         } else {
-            if (master != nullRecord) {
-                master = nullRecord;
-            }
+            master = nullRecord;
         }
     }
 

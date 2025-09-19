@@ -94,7 +94,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         if (cursor == null) {
             switch (joinType) {
                 case QueryModel.JOIN_LEFT_OUTER:
-                    cursor = new HashLeftOuterJoinLightLightRecordCursor(
+                    cursor = new HashLeftOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                             joinKeyMap,
@@ -103,7 +103,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                     );
                     break;
                 case QueryModel.JOIN_RIGHT_OUTER:
-                    cursor = new HashRightOuterJoinLightLightRecordCursor(
+                    cursor = new HashRightOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
                             joinKeyMap,
@@ -111,7 +111,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                     );
                     break;
                 case QueryModel.JOIN_FULL_OUTER:
-                    cursor = new HashFullOuterJoinLightLightRecordCursor(
+                    cursor = new HashFullOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -145,7 +145,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                     }
                 }
                 if (swapped) {
-                    ((HashFullOuterJoinLightLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
+                    ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
                     return cursor;
                 }
             }
@@ -186,14 +186,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         Misc.free(slaveChain);
     }
 
-    private class HashFullOuterJoinLightLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+    private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
         private final FullOuterJoinRecord record;
         private MapRecordCursor mapCursor;
         private RecordSink masterCursorSink;
         private RecordSink slaveCursorSink;
         private boolean swapped = false;
 
-        public HashFullOuterJoinLightLightRecordCursor(
+        public HashFullOuterJoinLightRecordCursor(
                 int columnSplit,
                 Record masterNullRecord,
                 Record slaveNullRecord,
@@ -240,7 +240,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 return true;
             }
 
-            while (masterCursor.hasNext()) {
+            if (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -328,10 +328,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         }
     }
 
-    private class HashLeftOuterJoinLightLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+    private class HashLeftOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
         private final OuterJoinRecord record;
 
-        public HashLeftOuterJoinLightLightRecordCursor(
+        public HashLeftOuterJoinLightRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 Map joinKeyMap,
@@ -385,11 +385,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         }
     }
 
-    private class HashRightOuterJoinLightLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
+    private class HashRightOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
         private final RightOuterJoinRecord record;
         private MapRecordCursor mapCursor;
 
-        public HashRightOuterJoinLightLightRecordCursor(
+        public HashRightOuterJoinLightRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 Map joinKeyMap,
