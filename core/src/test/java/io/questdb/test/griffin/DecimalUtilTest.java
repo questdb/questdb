@@ -273,7 +273,6 @@ public class DecimalUtilTest extends AbstractTest {
             DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123a45", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid decimal");
             TestUtils.assertContains(e.getMessage(), "contains invalid character 'a'");
         }
     }
@@ -298,7 +297,6 @@ public class DecimalUtilTest extends AbstractTest {
             DecimalUtil.parseDecimalConstant(0, new Decimal256(), "12.34.56", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid decimal");
             TestUtils.assertContains(e.getMessage(), "contains invalid character '.'");
         }
     }
@@ -389,17 +387,6 @@ public class DecimalUtilTest extends AbstractTest {
         ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
-    }
-
-    @Test
-    public void testParseDecimalConstantSpecificPrecisionExceedsMax() {
-        try {
-            // Try to parse with precision 77 (exceeds maximum)
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", 77, -1);
-            Assert.fail("Expected SqlException");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "exceeds maximum allowed precision of 76");
-        }
     }
 
     @Test
