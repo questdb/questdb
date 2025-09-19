@@ -466,7 +466,7 @@ public class Decimal256 implements Sinkable {
      * <p>
      * Prerequisites:
      * - The decimal value must be positive
-     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 1000)
      *
      * @param hh highest 64 bits of the 256-bit decimal
      * @param hl high-middle 64 bits of the 256-bit decimal
@@ -935,7 +935,7 @@ public class Decimal256 implements Sinkable {
      * <p>
      * Prerequisites:
      * - The decimal value must be positive
-     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be < 1000)
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 1000)
      *
      * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
      * @return the digit (0-9) at the specified power-of-ten position

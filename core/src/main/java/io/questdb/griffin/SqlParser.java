@@ -1680,7 +1680,7 @@ public class SqlParser {
     /**
      * Parses a DECIMAL[(precision[, scale])] type from the lexer.
      * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
-     * precision of 18 and a scale of 3 (or 0 if precision < 8) so that the underlying type will be a DECIMAL64.
+     * precision of 18 and a scale of 3 (or 0 if precision &lt; 8) so that the underlying type will be a DECIMAL64.
      *
      * @return the concrete DECIMAL type with proper precision/scale set.
      */
