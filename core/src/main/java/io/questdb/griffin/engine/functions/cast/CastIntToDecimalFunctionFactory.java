@@ -64,6 +64,22 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         return new CastDecimalScaledFunc(position, targetType, (int) Math.min(maxUnscaledValue, Integer.MAX_VALUE), arg);
     }
 
+    public static Function newInstance(
+            int position,
+            Function arg,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        int targetPrecision;
+        if (arg.isConstant()) {
+            int value = arg.getInt(null);
+            targetPrecision = Math.max(Numbers.getPrecision(value), 1);
+        } else {
+            targetPrecision = Numbers.getPrecision(Integer.MAX_VALUE);
+        }
+        int targetType = ColumnType.getDecimalType(targetPrecision, 0);
+        return newInstance(position, arg, targetType, sqlExecutionContext);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Iξ)";

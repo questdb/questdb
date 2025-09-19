@@ -65,6 +65,22 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
+    public static Function newInstance(
+            int position,
+            Function arg,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        int targetPrecision;
+        if (arg.isConstant()) {
+            long value = arg.getLong(null);
+            targetPrecision = Math.max(Numbers.getPrecision(value), 1);
+        } else {
+            targetPrecision = Numbers.getPrecision(Long.MAX_VALUE);
+        }
+        int targetType = ColumnType.getDecimalType(targetPrecision, 0);
+        return newInstance(position, arg, targetType, sqlExecutionContext);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Lξ)";
