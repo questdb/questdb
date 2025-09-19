@@ -256,6 +256,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final StringSink utf16Sink = new StringSink();
+    private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -335,7 +337,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private WalTxnDetails walTxnDetails;
     private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
     private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments;
-
+    private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -890,39 +892,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                DirectUtf8StringZ name = new DirectUtf8StringZ();
-                StringSink sink = new StringSink();
-
                 // pin column versions
-                // todo: address GC
-                ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                    if (Files.notDots(pUtf8NameZ) && type == DT_FILE) {
-                        name.of(pUtf8NameZ);
-                        int firstDot = Utf8s.indexOfAscii(name, '.');
-                        if (firstDot != -1) {
-                            sink.clear();
-                            sink.put(name, 0, firstDot);
-                            // all our column files have .d (or such) extensions
-                            int columnIndex = metadata.getColumnIndexQuiet(sink);
-                            if (columnIndex != -1) {
-                                // not a random file, we have column by this name
-                                int lastDot = Utf8s.lastIndexOfAscii(name, '.');
-                                int len = Utf8s.length(name);
-                                if (lastDot > 1 && lastDot < len - 1) {
-                                    // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
-                                    try {
-                                        long nameTxn = Numbers.parseLong(name, lastDot + 1, len);
-                                        if (nameTxn > 0) {
-                                            // column tops are not supported (this is to make sure "copy" command can attach partitions
-                                            columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
-                                        }
-                                    } catch (NumericException ignore) {
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
+                ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
 
                 checkPassed = true;
             } else {
@@ -6666,6 +6637,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void o3TimestampSetter(long timestamp) {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
+    }
+
+    private void attachPartitionPinColumnVersions(long pUtf8NameZ, int type) {
+        if (notDots(pUtf8NameZ) && type == DT_FILE) {
+            tmpDirectUtf8StringZ.of(pUtf8NameZ);
+            int firstDot = Utf8s.indexOfAscii(tmpDirectUtf8StringZ, '.');
+            if (firstDot != -1) {
+                utf16Sink.clear();
+                utf16Sink.put(tmpDirectUtf8StringZ, 0, firstDot);
+                // all our column files have .d (or such) extensions
+                int columnIndex = metadata.getColumnIndexQuiet(utf16Sink);
+                if (columnIndex != -1) {
+                    // not a random file, we have column by this name
+                    int lastDot = Utf8s.lastIndexOfAscii(tmpDirectUtf8StringZ, '.');
+                    int len = Utf8s.length(tmpDirectUtf8StringZ);
+                    if (lastDot > 1 && lastDot < len - 1) {
+                        // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
+                        try {
+                            long nameTxn = Numbers.parseLong(tmpDirectUtf8StringZ, lastDot + 1, len);
+                            if (nameTxn > 0) {
+                                // column tops are not supported (this is to make sure "copy" command can attach partitions
+                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                            }
+                        } catch (NumericException ignore) {
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
