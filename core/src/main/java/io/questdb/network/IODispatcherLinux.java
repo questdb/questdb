@@ -172,7 +172,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         final SuspendEvent suspendEvent = context.getSuspendEvent();
         assert suspendEvent != null;
 
-
         resumeOperation(context, opId, operation);
         pendingEvents.deleteRow(eventsRow);
     }

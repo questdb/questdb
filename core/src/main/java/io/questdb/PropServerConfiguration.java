@@ -857,7 +857,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyWorkRoot = null;
         }
 
-        // todo: config tests
         String configuredCairoSqlCopyExportRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "export");
         if (!Chars.empty(configuredCairoSqlCopyExportRoot)) {
             if (new File(configuredCairoSqlCopyExportRoot).isAbsolute()) {

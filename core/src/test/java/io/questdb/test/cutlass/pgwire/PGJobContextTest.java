@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -2916,7 +2916,7 @@ if __name__ == "__main__":
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
-                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
                             sink, rs
                     );
                 }
@@ -2927,7 +2927,7 @@ if __name__ == "__main__":
 
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
-                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                                    "4,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
                             sink, rs
                     );
                 }
@@ -9049,6 +9049,7 @@ nodejs code:
                         assertResultSet(
                                 "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]\n" +
                                         "null,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
+                                        "null,public,sys.copy_export_log,TABLE,null,,,,,\n" +
                                         "null,public,sys.text_import_log,TABLE,null,,,,,\n" +
                                         "null,public,test,TABLE,null,,,,,\n" +
                                         "null,public,test2,TABLE,null,,,,,\n",
