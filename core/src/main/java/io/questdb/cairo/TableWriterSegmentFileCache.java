@@ -53,7 +53,6 @@ import static io.questdb.std.Files.SEPARATOR;
 // This class also reduces file open/close operations by caching file descriptors.
 // when the segment is marked as not last segment usage.
 public class TableWriterSegmentFileCache {
-    private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final Log LOG = LogFactory.getLog(TableWriterSegmentFileCache.class);
     private final CairoConfiguration configuration;
     private final TableToken tableToken;
@@ -68,9 +67,12 @@ public class TableWriterSegmentFileCache {
     public TableWriterSegmentFileCache(TableToken tableToken, CairoConfiguration configuration) {
         this.tableToken = tableToken;
         this.configuration = configuration;
+        ObjectFactory<MemoryCMOR> memoryFactory = configuration.getBypassWalFdCache()
+                ? TableWriterSegmentFileCache::openMemoryCMORBypassFdCache
+                : TableWriterSegmentFileCache::openMemoryCMORNormal;
 
         FilesFacade ff = configuration.getFilesFacade();
-        walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
+        walColumnMemoryPool = new WeakClosableObjectPool<>(memoryFactory, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
         walFdCloseCachedFdAction = (key, fdList) -> {
             for (int i = 0, n = fdList.size(); i < n; i++) {
                 long fd = fdList.get(i);
@@ -347,5 +349,13 @@ public class TableWriterSegmentFileCache {
         } finally {
             path.trimTo(pathSize1);
         }
+    }
+
+    private static MemoryCMOR openMemoryCMORBypassFdCache() {
+        return Vm.getMemoryCMOR(true);
+    }
+
+    private static MemoryCMOR openMemoryCMORNormal() {
+        return Vm.getMemoryCMOR(false);
     }
 }

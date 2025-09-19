@@ -46,10 +46,10 @@ public class WalEventReader implements Closeable {
     private final MemoryCMR eventMem;
     private final FilesFacade ff;
 
-    public WalEventReader(FilesFacade ff) {
+    public WalEventReader(FilesFacade ff, boolean bypassFdCache) {
         this.ff = ff;
-        eventIndexMem = Vm.getCMRInstance();
-        eventMem = Vm.getCMRInstance();
+        eventIndexMem = Vm.getCMRInstance(bypassFdCache);
+        eventMem = Vm.getCMRInstance(bypassFdCache);
         eventCursor = new WalEventCursor(eventMem);
     }
 

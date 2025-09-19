@@ -101,7 +101,7 @@ public class WalTxnDetails implements QuietCloseable {
     private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
 
     public WalTxnDetails(FilesFacade ff, CairoConfiguration configuration, long maxLookaheadRows) {
-        walEventReader = new WalEventReader(ff);
+        walEventReader = new WalEventReader(ff, configuration.getBypassWalFdCache());
         this.config = configuration;
         this.maxLookaheadRows = maxLookaheadRows;
     }

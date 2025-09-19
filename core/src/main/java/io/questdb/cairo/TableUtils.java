@@ -1291,6 +1291,16 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
+    public static long openRONoCache(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+        final int rootLen = path.size();
+        path.concat(fileName);
+        try {
+            return TableUtils.openRONoCache(ff, path.$(), log);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRONoCache(path);
         if (fd > -1) {
