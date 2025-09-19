@@ -8,7 +8,7 @@ schedules:
     branches:
       include:
         - master
-        - ent-next
+        - master-ent-next
     always: true
 
 variables:
