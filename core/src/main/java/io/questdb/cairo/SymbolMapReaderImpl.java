@@ -39,9 +39,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -69,8 +71,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public SymbolMapReaderImpl() {
     }
 
-    public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, int symbolCount) {
-        of(configuration, path, name, columnNameTxn, symbolCount);
+    public SymbolMapReaderImpl(
+            CairoConfiguration configuration,
+            @Transient Utf8Sequence pathToTableDir,
+            @Transient CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount
+    ) {
+        of(configuration, pathToTableDir, columnName, columnNameTxn, symbolCount);
     }
 
     @Override
@@ -148,10 +156,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return new SymbolTableView();
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
+    public void of(
+            CairoConfiguration configuration,
+            @Transient Utf8Sequence pathToTableDir,
+            @Transient CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         this.configuration = configuration;
-        this.path.of(path);
+        this.path.of(pathToTableDir);
         this.columnNameSink.clear();
         this.columnNameSink.put(columnName);
         this.columnNameTxn = columnNameTxn;

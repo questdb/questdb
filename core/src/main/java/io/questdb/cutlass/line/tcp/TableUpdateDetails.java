@@ -525,13 +525,13 @@ public class TableUpdateDetails implements Closeable {
                 assert symIndex <= colWriterIndex;
                 symCache.of(
                         cairoConfiguration,
-                        writerAPI,
-                        colWriterIndex,
-                        path,
                         symbolNameTemp,
+                        colWriterIndex,
                         symIndex,
-                        txReader,
-                        columnNameTxn
+                        path,
+                        columnNameTxn,
+                        writerAPI,
+                        txReader
                 );
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;

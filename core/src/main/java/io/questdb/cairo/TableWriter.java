@@ -2280,6 +2280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    @Override
     public ColumnVersionReader getColumnVersionReader() {
         return columnVersionWriter;
     }

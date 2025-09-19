@@ -276,8 +276,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // init key files, use offsetMem for that
             LPSZ name = BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
-            this.offsetMem.close();
-            this.offsetMem = Vm.getWholeMARWInstance(
+            this.offsetMem.of(
                     ff,
                     name,
                     Math.max(mapPageSize, ff.length(name)),
