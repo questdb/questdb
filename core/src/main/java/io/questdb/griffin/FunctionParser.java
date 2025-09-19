@@ -1220,16 +1220,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return new CastCharToSymbolFunctionFactory.Func(function);
                 }
                 break;
-            case ColumnType.LONG:
-                if (ColumnType.isDecimal(toType)) {
-                    return CastLongToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-                }
-                break;
-            case ColumnType.INT:
-                if (ColumnType.isDecimal(toType)) {
-                    return CastIntToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-                }
-                break;
             default:
                 if (ColumnType.isGeoHash(fromType)) {
                     int fromGeoBits = ColumnType.getGeoHashBits(fromType);
@@ -1237,10 +1227,27 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
                         return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
                     }
-                } else if (ColumnType.isDecimal(fromType) && ColumnType.isDecimal(toType)) {
-                    return CastDecimalToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
                 }
                 break;
+        }
+        if (ColumnType.isDecimal(toType)) {
+            switch (ColumnType.tagOf(fromType)) {
+                case ColumnType.DECIMAL8:
+                case ColumnType.DECIMAL16:
+                case ColumnType.DECIMAL32:
+                case ColumnType.DECIMAL64:
+                case ColumnType.DECIMAL128:
+                case ColumnType.DECIMAL256:
+                    return CastDecimalToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
+                case ColumnType.BYTE:
+                    return CastByteToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
+                case ColumnType.SHORT:
+                    return CastShortToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
+                case ColumnType.INT:
+                    return CastIntToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
+                case ColumnType.LONG:
+                    return CastLongToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
+            }
         }
         return null;
     }
