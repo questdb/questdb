@@ -327,6 +327,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelDecimalKeyGroupBy() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        testParallelDecimalKeyGroupBy(
+                "SELECT key, sum(price), avg(price) FROM tab order by key",
+                "key\tsum\tavg\n" +
+                        "0\t1602000.00\t2002.50\n" +
+                        "1\t1598800.00\t1998.50\n" +
+                        "2\t1599600.00\t1999.50\n" +
+                        "3\t1600400.00\t2000.50\n" +
+                        "4\t1601200.00\t2001.50\n"
+        );
+    }
+
+    @Test
     public void testParallelFunctionKeyExplicitGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -3246,6 +3260,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         // Compare the results.
                         TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelDecimalKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key DECIMAL(2,0)," +
+                                        "  price DECIMAL(32,2)" +
+                                        ") timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select (x * 864000000)::timestamp, cast((x % 5) as decimal(2,0)), cast(x as decimal(32,2)) from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
                     LOG

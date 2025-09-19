@@ -193,6 +193,56 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
+        public long getDecimal128Hi(int columnIndex) {
+            return baseRecord.getDecimal128Hi(columnIndex);
+        }
+
+        @Override
+        public long getDecimal128Lo(int columnIndex) {
+            return baseRecord.getDecimal128Lo(columnIndex);
+        }
+
+        @Override
+        public short getDecimal16(int columnIndex) {
+            return baseRecord.getDecimal16(columnIndex);
+        }
+
+        @Override
+        public long getDecimal256HH(int columnIndex) {
+            return baseRecord.getDecimal256HH(columnIndex);
+        }
+
+        @Override
+        public long getDecimal256HL(int columnIndex) {
+            return baseRecord.getDecimal256HL(columnIndex);
+        }
+
+        @Override
+        public long getDecimal256LH(int columnIndex) {
+            return baseRecord.getDecimal256LH(columnIndex);
+        }
+
+        @Override
+        public long getDecimal256LL(int columnIndex) {
+            return baseRecord.getDecimal256LL(columnIndex);
+        }
+
+        @Override
+        public int getDecimal32(int columnIndex) {
+            return baseRecord.getDecimal32(columnIndex);
+        }
+
+        @Override
+        public long getDecimal64(int columnIndex) {
+            return baseRecord.getDecimal64(columnIndex);
+        }
+
+        @Override
+        public byte getDecimal8(int columnIndex) {
+            return baseRecord.getDecimal8(columnIndex);
+        }
+
+        @Override
         public double getDouble(int columnIndex) {
             return baseRecord.getDouble(columnIndex);
         }
