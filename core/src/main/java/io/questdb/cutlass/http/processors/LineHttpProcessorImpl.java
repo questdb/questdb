@@ -40,6 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
@@ -60,6 +61,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     private final CairoEngine engine;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
+    private boolean isGzipEncoded;
     private LineHttpProcessorState state;
 
     public LineHttpProcessorImpl(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
@@ -91,7 +93,11 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
     @Override
     public void onChunk(long lo, long hi) {
-        this.state.parse(lo, hi);
+        if (isGzipEncoded) {
+            this.state.inflate(lo, hi);
+        } else {
+            this.state.parse(lo, hi);
+        }
     }
 
     @Override
@@ -116,9 +122,14 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
-        if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
-            state.reject(ENCODING_NOT_SUPPORTED, "gzip encoding is not supported", context.getFd());
-            return;
+        isGzipEncoded = encoding != null && Utf8s.endsWithAscii(encoding, "gzip");
+        if (isGzipEncoded) {
+            long inflateStream = Zip.inflateInitGzip();
+            if (inflateStream == 0) {
+                state.reject(ENCODING_NOT_SUPPORTED, "failed to initialise gzip decompression", context.getFd());
+                return;
+            }
+            state.setInflateStream(inflateStream);
         }
 
         byte timestampPrecision;
@@ -179,6 +190,8 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
             sendErrorContent(context);
         }
         engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
+        state.cleanupGzip();
+        isGzipEncoded = false;
     }
 
     @Override

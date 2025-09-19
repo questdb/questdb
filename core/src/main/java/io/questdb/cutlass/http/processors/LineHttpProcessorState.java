@@ -44,12 +44,15 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakClosableObjectPool;
+import io.questdb.std.Zip;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
 
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
@@ -63,15 +66,16 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
     private final AdaptiveRecvBuffer recvBuffer;
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     int errorLine = -1;
     private Status currentStatus = Status.OK;
     private long errorId;
     private long fd = -1;
+    private long inflateStream;
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
-    private DirectUtf8Sink sink = new DirectUtf8Sink(16);
 
     public LineHttpProcessorState(
             int initRecvBufSize,
@@ -106,6 +110,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 5
         );
         this.logMessageOnError = configuration.logMessageOnError();
+    }
+
+    public void cleanupGzip() {
+        if (inflateStream != 0) {
+            Zip.inflateEnd(inflateStream);
+            inflateStream = 0;
+        }
     }
 
     public void clear() {
@@ -158,6 +169,36 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     public SendStatus getSendStatus() {
         return sendStatus;
+    }
+
+    public void inflate(long lo, long hi) {
+        long inputLen = hi - lo;
+        Zip.setInput(inflateStream, lo, (int) inputLen);
+
+        while (Zip.availIn(inflateStream) > 0) {
+            int ret = Zip.inflate(inflateStream, recvBuffer.getBufPos(), (int) ((int) recvBuffer.getCurrentBufSize() - (recvBuffer.getBufPos() - recvBuffer.getBufStart())), false);
+            if (ret < 0 && ret != Zip.Z_BUF_ERROR) {
+                reject(ENCODING_NOT_SUPPORTED, "gzip decompression error: " + ret, -1);
+                cleanupGzip();
+                return;
+            }
+
+            recvBuffer.setBufPos(recvBuffer.getBufPos() + ret);
+
+            if (ret > 0) {
+
+                currentStatus = processLocalBuffer();
+                if (stopParse()) {
+                    return;
+                }
+//                parse(inflateBuffer, inflateBuffer + ret);
+            }
+
+            if (ret == Zip.Z_STREAM_END) {
+                cleanupGzip();
+                break;
+            }
+        }
     }
 
     public boolean isOk() {
@@ -215,6 +256,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         error.put(errorText);
         this.fd = fd;
         logError();
+    }
+
+    public void setInflateStream(long streamAddr) {
+        this.inflateStream = streamAddr;
     }
 
     public void setSendStatus(SendStatus sendStatus) {
