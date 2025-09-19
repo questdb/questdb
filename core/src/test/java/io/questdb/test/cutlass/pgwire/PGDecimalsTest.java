@@ -234,11 +234,11 @@ public class PGDecimalsTest extends BasePGTest {
     // Test high scale values
     @Test
     public void testHighScaleValues() throws Exception {
-        assertDecimalConversion("0.99", 2, 2);
-        assertDecimalConversion("0.9999", 4, 4);
-        assertDecimalConversion("0.999999999", 9, 9);
-        assertDecimalConversion("0.999999999999999999", 18, 18);
-        assertDecimalConversion("1.23456789012345678901234567890123456789", 40, 38);
+        assertDecimalConversion("0.99", 3, 2);
+        assertDecimalConversion("0.9999", 5, 4);
+        assertDecimalConversion("0.999999999", 10, 9);
+        assertDecimalConversion("0.999999999999999999", 19, 18);
+        assertDecimalConversion("1.23456789012345678901234567890123456789", 39, 38);
     }
 
     // Test mixed integer and fractional parts
