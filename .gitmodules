@@ -10,3 +10,6 @@
 [submodule "core/src/main/c/share/zlib"]
 	path = core/src/main/c/share/zlib
 	url = https://github.com/madler/zlib/
+[submodule "core/src/main/c/share/async-profiler"]
+	path = core/src/main/c/share/async-profiler
+	url = https://github.com/async-profiler/async-profiler.git

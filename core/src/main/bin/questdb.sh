@@ -54,6 +54,15 @@ export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
 
+# Async profiler configuration
+export PROFILER_EVENT="cpu,wall"              # Event to profile: cpu, alloc, lock, wall, itimer
+export PROFILER_INTERVAL="5ms"          # Sampling interval
+export PROFILER_ALLOC_INTERVAL="512k"    # Allocation profiling interval (for alloc event)
+export PROFILER_LOCK_THRESHOLD="10ms"     # Lock profiling threshold (for lock event)
+export PROFILE_NAME="profile-%n{48}.jfr"     # Profile file name; %n{MAX} is expanded as a sequence number
+export PROFILER_LOOP="30m"                # Loop duration for continuous profiling (e.g., 1h, 30m, 86400s)
+export PROFILER_EXTRA_OPTS=""             # Additional profiler options
+
 case $QDB_OS in
    Darwin|FreeBSD)
        export PS_CMD="ps aux"
@@ -70,7 +79,12 @@ case $QDB_OS in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-n] [-d path] [-t tag]"
+    echo "Usage: $0 start|status|stop [-f] [-n] [-p] [-d path] [-t tag]"
+    echo "  -f    Force overwrite public directory"
+    echo "  -n    Disable HUP handler"
+    echo "  -p    Enable async profiler (requires libasyncProfiler.so)"
+    echo "  -d    Set QuestDB root directory"
+    echo "  -t    Set process tag for identification"
     echo
     exit 55
 }
@@ -128,6 +142,7 @@ function export_args {
     export QDB_OVERWRITE_PUBLIC=""
     export QDB_DISABLE_HUP_HANDLER=""
     export QDB_CONTAINER_MODE=""
+    export QDB_PROFILING_ENABLED=""
     export QDB_ROOT=${QDB_DEFAULT_ROOT}
 
     while [[ $# -gt 0 ]]; do
@@ -142,6 +157,9 @@ function export_args {
                 ;;
             -c)
                 export QDB_CONTAINER_MODE="-c"
+                ;;
+            -p)
+                export QDB_PROFILING_ENABLED="true"
                 ;;
             -d)
                 if [[ $# -eq 1 ]]; then
@@ -180,6 +198,31 @@ function start {
     export_java
     export_jemalloc
 
+    # Check for async profiler if profiling is enabled
+    if [ "$QDB_PROFILING_ENABLED" = "true" ]; then
+        LIB_DIR_CANDIDATE="$BASE/../lib"
+        if [ -d "$LIB_DIR_CANDIDATE" ]; then
+            if command -v realpath >/dev/null 2>&1; then
+                PROFILER_LIB_DIR=$(realpath "$LIB_DIR_CANDIDATE")
+            else
+                # fallback for systems without 'realpath'
+                PROFILER_LIB_DIR=$(cd "$LIB_DIR_CANDIDATE" && pwd)
+            fi
+        else
+            echo "Error: Library directory not found: $LIB_DIR_CANDIDATE"
+            echo "Profiling was requested with -p flag but the lib directory is missing."
+            exit 55
+        fi
+
+        ASYNC_PROFILER_LIB="$PROFILER_LIB_DIR/libasyncProfiler.so"
+        if [ ! -f "$ASYNC_PROFILER_LIB" ]; then
+            echo "Error: Async profiler library not found at: $ASYNC_PROFILER_LIB"
+            echo "Profiling was requested with -p flag but the profiler library is missing."
+            exit 55
+        fi
+        echo "Async profiler enabled: $ASYNC_PROFILER_LIB"
+    fi
+
     # create root directory if it does not exist
     if [ ! -d "$QDB_ROOT" ]; then
         echo "Created QuestDB ROOT directory: $QDB_ROOT"
@@ -188,6 +231,12 @@ function start {
 
     QDB_LOG=${QDB_ROOT}/log
     mkdir -p ${QDB_LOG}
+
+    if [ "$QDB_PROFILING_ENABLED" = "true" ]; then
+        QDB_PROFILES=${QDB_ROOT}/profiles
+        mkdir -p ${QDB_PROFILES}
+        echo "Profile output directory: $QDB_PROFILES"
+    fi
 
     JAVA_LIB="$BASE/questdb.jar"
 
@@ -212,6 +261,34 @@ function start {
         fi
     fi
 
+    PROFILER_AGENT=""
+    if [ "$QDB_PROFILING_ENABLED" = "true" ]; then
+        PROFILE_FILE="${QDB_PROFILES}/${PROFILE_NAME}"
+
+        AGENT_PARAMS="start,event=${PROFILER_EVENT}"
+        AGENT_PARAMS="${AGENT_PARAMS},file=${PROFILE_FILE}"
+        AGENT_PARAMS="${AGENT_PARAMS},jfr"  # Enable JFR format output
+        AGENT_PARAMS="${AGENT_PARAMS},loop=${PROFILER_LOOP}"
+
+        if [[ ",$PROFILER_EVENT," == *",cpu,"* ]] || [[ ",$PROFILER_EVENT," == *",wall,"* ]] || [[ ",$PROFILER_EVENT," == *",itimer,"* ]]; then
+            AGENT_PARAMS="${AGENT_PARAMS},interval=${PROFILER_INTERVAL}"
+        fi
+        if [[ ",$PROFILER_EVENT," == *",alloc,"* ]]; then
+            AGENT_PARAMS="${AGENT_PARAMS},alloc=${PROFILER_ALLOC_INTERVAL}"
+        fi
+        if [[ ",$PROFILER_EVENT," == *",lock,"* ]]; then
+            AGENT_PARAMS="${AGENT_PARAMS},lock=${PROFILER_LOCK_THRESHOLD}"
+        fi
+
+        if [ "$PROFILER_EXTRA_OPTS" != "" ]; then
+            AGENT_PARAMS="${AGENT_PARAMS},${PROFILER_EXTRA_OPTS}"
+        fi
+
+        PROFILER_AGENT="-agentpath:${ASYNC_PROFILER_LIB}=${AGENT_PARAMS}"
+        echo "Profiler parameters: ${AGENT_PARAMS}"
+        echo "Continuous profiling enabled: new profile every ${PROFILER_LOOP}"
+    fi
+
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -Dcontainerized=$([ "${QDB_CONTAINER_MODE}" != '' ] && echo "true" || echo "false" )
@@ -221,6 +298,7 @@ function start {
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
+    ${PROFILER_AGENT}
     ${JVM_PREPEND}
     "
 
