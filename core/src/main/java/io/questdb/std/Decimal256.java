@@ -254,6 +254,25 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Compares 2 Decimal256, ignoring scaling.
+     */
+    public static int compare(long aHH, long aHL, long aLH, long aLL, long bHH, long bHL, long bLH, long bLL) {
+        int s = Long.compare(aHH, bHH);
+        if (s != 0) {
+            return s;
+        }
+        s = Long.compareUnsigned(aHL, bHL);
+        if (s != 0) {
+            return s;
+        }
+        s = Long.compareUnsigned(aLH, bLH);
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(aLL, bLL);
+    }
+
+    /**
      * Static division method.
      *
      * @param dividend     the dividend
@@ -548,25 +567,6 @@ public class Decimal256 implements Sinkable {
     public static void multiply(Decimal256 a, Decimal256 b, Decimal256 result) {
         result.copyFrom(a);
         result.multiply(b);
-    }
-
-    /**
-     * Compares 2 Decimal256, ignoring scaling.
-     */
-    public static int compare(long aHH, long aHL, long aLH, long aLL, long bHH, long bHL, long bLH, long bLL) {
-        int s = Long.compare(aHH, bHH);
-        if (s != 0) {
-            return s;
-        }
-        s = Long.compareUnsigned(aHL, bHL);
-        if (s != 0) {
-            return s;
-        }
-        s = Long.compareUnsigned(aLH, bLH);
-        if (s != 0) {
-            return s;
-        }
-        return Long.compareUnsigned(aLL, bLL);
     }
 
     /**
@@ -1283,6 +1283,8 @@ public class Decimal256 implements Sinkable {
      * Parses a CharSequence decimal and store the result into the given Decimal256.
      *
      * @param cs is the CharSequence to be parsed
+     * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
+     * @param scale is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
      * @return the precision of the decimal
      */
     public int ofString(CharSequence cs, int precision, int scale) throws NumericException {
@@ -1294,6 +1296,7 @@ public class Decimal256 implements Sinkable {
             hi--;
         }
 
+        // Skip leading whitespaces
         while (lo < hi && cs.charAt(lo) == ' ') {
             lo++;
         }
@@ -1316,21 +1319,76 @@ public class Decimal256 implements Sinkable {
         }
 
         // Remove leading zeros
+        boolean skippedZeroes = false;
         while (lo < hi - 1 && cs.charAt(lo) == '0') {
             lo++;
+            skippedZeroes = true;
         }
 
         // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
         // measure the given precision/scale.
-        int dot = validateDecimalLiteral(cs, lo, hi);
+        int dot = -1;
+        boolean digitFound = false;
+        int digitLo = lo;
+        for (; lo < hi; lo++) {
+            char c  = cs.charAt(lo);
+            if (isDigit(c)) {
+                digitFound = true;
+                continue;
+            } else if (c == '.' && dot == -1) {
+                dot = lo;
+                continue;
+            }
+            break;
+        }
+        if (!digitFound) {
+            if (skippedZeroes) {
+                digitLo--;
+            } else {
+            throw NumericException.instance()
+                    .put("invalid decimal: '").put(cs)
+                    .put("' contains no digits");
+            }
+        }
+        final int digitHi = lo;
 
-        int s = dot == -1 ? 0 : (hi - dot - 1);
+        // Compute the scale of the given literal (e.g. '1.234' -> 3) and the total number of digits
+        final int literalScale = dot == -1 ? 0 : (digitHi - dot - 1);
+        final int literalDigits = digitHi - digitLo - (dot == -1 ? 0 : 1);
+
+        int virtualScale = literalScale;
+
+        int exp = 0;
+        if (lo != hi) {
+            // Parses exponent
+            if ((cs.charAt(lo) | 32) == 'e') {
+                exp = Numbers.parseInt(cs, lo + 1, hi);
+                // Depending on whether exp is positive or negative, we have to virtually move the dot to the right
+                // or to the left respectively
+                if (exp >= 0 && exp > literalScale) {
+                    exp -= literalScale;
+                    virtualScale = 0;
+                } else {
+                    virtualScale -= exp;
+                    exp = 0;
+                }
+            } else {
+                throw NumericException.instance()
+                        .put("decimal '").put(cs)
+                        .put("' contains invalid character '")
+                        .put(cs.charAt(digitHi)).put('\'');
+            }
+        }
+
+        // We still need to adjust the exponent if the user specifies a target scale.
         if (scale == -1) {
-            scale = s;
-        } else if (s > scale) {
+            scale = virtualScale;
+        } else if (virtualScale <= scale) {
+            exp += scale - virtualScale;
+        } else {
             throw NumericException.instance()
                     .put("decimal '").put(cs)
-                    .put("' has ").put(s).put(" decimal places but scale is limited to ").put(scale);
+                    .put("' has ").put(virtualScale).put(" decimal places but scale is limited to ").put(scale);
         }
         if (scale > Decimals.MAX_SCALE) {
             throw NumericException.instance()
@@ -1338,26 +1396,29 @@ public class Decimal256 implements Sinkable {
                     .put("' exceeds maximum allowed scale of ").put(Decimals.MAX_SCALE);
         }
 
-        int prec = hi - lo - (dot == -1 ? 0 : 1) - s + scale;
-        if (precision == -1) {
-            precision = prec;
-        } else if (prec > precision) {
+        // At this point, the exponent might add zeroes (but not remove them, we've handled this case right before).
+        // Knowing that the scale is right and that we have the correct amount of digits, computing the final precision
+        // is trivial.
+        // Note that contrary to the scale, it's alright to have a precision that is different than the user provided
+        // precision, as long as it's lower.
+
+        // Compute the final precision of the decimal
+        int pow = literalDigits + exp;
+        final int finalPrecision = Math.max(pow, scale + 1);
+        if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)
-                    .put("' requires precision of ").put(prec)
+                    .put("' requires precision of ").put(finalPrecision)
                     .put(" but is limited to ").put(precision);
         }
-        if (precision > Decimals.MAX_PRECISION) {
+        if (finalPrecision > Decimals.MAX_PRECISION) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)
                     .put("' exceeds maximum allowed precision of ").put(Decimals.MAX_PRECISION);
         }
 
         of(0, 0, 0, 0, 0);
-        // Actual parsing of the number on a second pass, we're relying on Decimal256 to do
-        // the proper scaling.
-        int pow = prec;
-        for (int p = lo; p < hi; p++) {
+        for (int p = digitLo; p < digitHi; p++) {
             if (p == dot) {
                 continue;
             }
@@ -1381,7 +1442,7 @@ public class Decimal256 implements Sinkable {
             negate();
         }
 
-        return precision;
+        return finalPrecision;
     }
 
     /**
@@ -1680,34 +1741,6 @@ public class Decimal256 implements Sinkable {
         carry |= hasCarry(t, r) ? 1L : 0L;
         result.hl = r;
         result.hh = result.hh + carry + bHH;
-    }
-
-    /**
-     * Pass over a literal and validates that it only contains digits and at most 1 dot.
-     * If a dot is found, it returns its position, -1 otherwise.
-     */
-    private static int validateDecimalLiteral(CharSequence cs, int lo, int hi) throws NumericException {
-        int dot = -1;
-        boolean digitFound = false;
-        for (int p = lo; p < hi; p++) {
-            char c  = cs.charAt(p);
-            if (isDigit(c)) {
-                digitFound = true;
-                continue;
-            } else if (c == '.' && dot == -1) {
-                dot = p;
-                continue;
-            }
-            throw NumericException.instance()
-                    .put("invalid decimal: '").put(cs)
-                    .put("' contains invalid character '").put(c).put("'");
-        }
-        if (!digitFound) {
-            throw NumericException.instance()
-                    .put("invalid decimal: '").put(cs)
-                    .put("' contains no digits");
-        }
-        return dot;
     }
 
     /**
