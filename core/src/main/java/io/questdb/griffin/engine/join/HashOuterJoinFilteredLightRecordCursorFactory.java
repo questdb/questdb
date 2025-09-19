@@ -275,7 +275,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            if (slaveChainCursor != null) {
+            if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     if (record.hasMaster()) {
@@ -514,7 +514,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            if (slaveChainCursor != null) {
+            if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     if (record.hasMaster()) {
