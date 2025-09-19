@@ -28,6 +28,7 @@ import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.Rows;
 
@@ -110,6 +111,11 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         long rowId = slaveRecB.getRowId();
         origSlaveFrameIndex = Rows.toPartitionIndex(rowId);
         origSlaveRowId = Rows.toLocalRowID(rowId);
+
+        // Reset slave cursor to the current timeframe (nextSlave() call might have moved it)
+        TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
+        slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
+        slaveTimeFrameCursor.open();
 
         // subclasses implement their specific key matching strategy
         performKeyMatching(masterTimestamp);

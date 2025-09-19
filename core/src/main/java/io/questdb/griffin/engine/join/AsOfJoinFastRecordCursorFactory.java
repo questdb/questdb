@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -163,12 +162,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             masterSinkTarget.clear();
             masterKeySink.copy(masterRecord, masterSinkTarget);
 
-            // Reset slave cursor to the current timeframe (nextSlave() call might have moved it)
-            TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
-            slaveTimeFrameCursor.jumpTo(timeFrame.getFrameIndex());
-            slaveTimeFrameCursor.open();
-            long rowLo = timeFrame.getRowLo();
-            int keyedFrameIndex = timeFrame.getFrameIndex();
+            long rowLo = slaveTimeFrame.getRowLo();
+            int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
             long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
 
             for (; ; ) {
@@ -199,9 +194,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     }
                     slaveTimeFrameCursor.open();
 
-                    keyedFrameIndex = timeFrame.getFrameIndex();
-                    keyedRowId = timeFrame.getRowHi() - 1;
-                    rowLo = timeFrame.getRowLo();
+                    keyedFrameIndex = slaveTimeFrame.getFrameIndex();
+                    keyedRowId = slaveTimeFrame.getRowHi() - 1;
+                    rowLo = slaveTimeFrame.getRowLo();
                 }
                 slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
                 circuitBreaker.statefulThrowExceptionIfTripped();

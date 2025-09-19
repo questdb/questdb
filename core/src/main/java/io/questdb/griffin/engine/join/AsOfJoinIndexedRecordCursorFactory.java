@@ -150,7 +150,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            // 1. Determine the integer key of the symbol to find in the slave table
+            // determine the integer key of the symbol to find in the slave table
             CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
             StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             int symbolKey;
@@ -165,34 +165,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 symbolKey++;
             }
 
-            // 2. nextSlave() generally (but not always) finds the first row with timestamp > masterTimestamp.
-            // Ensure rowMax points to a row with timestamp <= masterTimestamp.
-            int frameIndex = slaveFrameIndex;
-            slaveTimeFrameCursor.jumpTo(frameIndex);
-            slaveTimeFrameCursor.open();
-            long rowMax = slaveFrameRow;
-            if (rowMax == slaveTimeFrame.getRowHi()) {
-                // slaveFrameRow points to just beyond the end of current frame
-                rowMax--;
-            } else {
-                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, rowMax));
-                if (scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale) > masterTimestamp) {
-                    // slaveFrameRow points to row just beyond the last one with timestamp <= masterTimestamp
-                    rowMax--;
-                }
-            }
-            if (rowMax < slaveTimeFrame.getRowLo()) {
-                // Not a valid row in this frame, jump to the previous frame
-                if (!slaveTimeFrameCursor.prev()) {
-                    record.hasSlave(false);
-                    return;
-                }
-                slaveTimeFrameCursor.open();
-                rowMax = slaveTimeFrame.getRowHi() - 1;
-            }
-
-            // 3. Go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
+            // go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
             final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
+            long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
+            int frameIndex = slaveTimeFrame.getFrameIndex();
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
                         physicalSlaveSymbolColumnIndex,
@@ -200,14 +176,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 );
                 // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
                 // the first row within the BETWEEN ... AND ... range selected by the query.
-                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, 0));
-                final long rowOffset = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
-                RowCursor rowCursor = indexReader.getCursor(
-                        false,
-                        symbolKey,
-                        slaveTimeFrame.getRowLo() + rowOffset,
-                        rowMax + rowOffset
-                );
+                // Use Record.getUpdateRowId() to get the absolute row ID.
+                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
+                final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
+                RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowLo, rowMax + rowLo);
 
                 // Check the first entry only. They are sorted descending by timestamp, so other entries are older.
                 if (rowCursor.hasNext()) {
@@ -223,7 +195,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     }
                 }
 
-                // No match in this frame, try the previous frame
+                // no match in this frame, try the previous frame
                 if (!slaveTimeFrameCursor.prev()) {
                     record.hasSlave(false);
                     return;
