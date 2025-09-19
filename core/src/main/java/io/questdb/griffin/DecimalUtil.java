@@ -110,26 +110,6 @@ public final class DecimalUtil {
     }
 
     /**
-     * Returns a decimal type that is fitting for the original type or 0 if it cannot be implicitly cast.
-     */
-    public static int getImplicitCastType(int fromType) {
-        if (ColumnType.isDecimal(fromType)) {
-            return fromType;
-        }
-        switch (fromType) {
-            case ColumnType.LONG:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Long.MAX_VALUE), 0);
-            case ColumnType.INT:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Integer.MAX_VALUE), 0);
-            case ColumnType.SHORT:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Short.MAX_VALUE), 0);
-            case ColumnType.BYTE:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Byte.MAX_VALUE), 0);
-        }
-        return 0;
-    }
-
-    /**
      * Returns a function that can cast a type to a specific decimal through implicit casting.
      * It may return null if the type cannot be implicitly cast.
      */
@@ -152,6 +132,26 @@ public final class DecimalUtil {
                 return CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
         }
         return null;
+    }
+
+    /**
+     * Returns a decimal type that is fitting for the original type or 0 if it cannot be implicitly cast.
+     */
+    public static int getImplicitCastType(int fromType) {
+        if (ColumnType.isDecimal(fromType)) {
+            return fromType;
+        }
+        switch (fromType) {
+            case ColumnType.LONG:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Long.MAX_VALUE), 0);
+            case ColumnType.INT:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Integer.MAX_VALUE), 0);
+            case ColumnType.SHORT:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Short.MAX_VALUE), 0);
+            case ColumnType.BYTE:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Byte.MAX_VALUE), 0);
+        }
+        return 0;
     }
 
     /**
