@@ -29,26 +29,6 @@ import io.questdb.std.str.CharSink;
 public final class Decimals {
     public static final int MAX_PRECISION = 76;
     public static final int MAX_SCALE = MAX_PRECISION;
-    private static final long[] POW10_PRECISION = { // maps the maximum positive value to the precision
-            9L,
-            99L,
-            999L,
-            9999L,
-            99999L,
-            999999L,
-            9999999L,
-            99999999L,
-            999999999L,
-            9999999999L,
-            99999999999L,
-            999999999999L,
-            9999999999999L,
-            99999999999999L,
-            999999999999999L,
-            9999999999999999L,
-            99999999999999999L,
-            999999999999999999L,
-    };
     private static final int[] PRECISION_SIZE_POW2 = {
             0, 0, 0, // precision 0-2 -> 1 byte
             1, 1, // precision 3-4 -> 2 byte
@@ -62,12 +42,12 @@ public final class Decimals {
             5, 5, // precision 39-76 -> 32 bytes
     };
     public static long DECIMAL128_HI_NULL = Long.MIN_VALUE;
-    public static long DECIMAL128_LO_NULL = 0L;
+    public static long DECIMAL128_LO_NULL = -1L;
     public static short DECIMAL16_NULL = Short.MIN_VALUE;
     public static long DECIMAL256_HH_NULL = Long.MIN_VALUE;
-    public static long DECIMAL256_HL_NULL = 0L;
-    public static long DECIMAL256_LH_NULL = 0L;
-    public static long DECIMAL256_LL_NULL = 0L;
+    public static long DECIMAL256_HL_NULL = -1L;
+    public static long DECIMAL256_LH_NULL = -1L;
+    public static long DECIMAL256_LL_NULL = -1L;
     public static int DECIMAL32_NULL = Integer.MIN_VALUE;
     public static long DECIMAL64_NULL = Long.MIN_VALUE;
     public static byte DECIMAL8_NULL = Byte.MIN_VALUE;
