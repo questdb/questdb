@@ -66,6 +66,26 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalSimple() throws Exception {
+        assertQuery(
+                "dec\tnullif\n" +
+                        "0.1\t0.1\n" +
+                        "0.2\t0.2\n" +
+                        "0.3\t\n" +
+                        "0.4\t0.4\n" +
+                        "0.5\t0.5\n",
+                "select dec, nullif(dec,0.3m) from x",
+                "create table x as (" +
+                        "select x / 10.0m as dec\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDoubleNonConstant() throws Exception {
         assertQuery(
                 "nullif\n" +

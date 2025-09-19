@@ -28,18 +28,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.ToDecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 
-public abstract class CastToDecimalFunction extends DecimalFunction implements UnaryFunction {
+public abstract class CastToDecimalFunction extends ToDecimalFunction implements UnaryFunction {
     protected final Function arg;
-    protected final Decimal256 decimal = new Decimal256();
     protected final int position;
     protected final int precision;
     protected final int scale;
-    private boolean isNull;
 
     public CastToDecimalFunction(Function arg, int targetType, int position) {
         super(targetType);
@@ -54,88 +50,8 @@ public abstract class CastToDecimalFunction extends DecimalFunction implements U
         return arg;
     }
 
-    @Override
-    public long getDecimal128Hi(Record rec) {
-        if (!cast(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL128_HI_NULL;
-        }
-        isNull = false;
-        return decimal.getLh();
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL128_LO_NULL;
-        }
-        return decimal.getLl();
-    }
-
-    @Override
-    public short getDecimal16(Record rec) {
-        if (!cast(rec)) {
-            return Decimals.DECIMAL16_NULL;
-        }
-        return (short) decimal.getLl();
-    }
-
-    @Override
-    public long getDecimal256HH(Record rec) {
-        if (!cast(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL256_HH_NULL;
-        }
-        isNull = false;
-        return decimal.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_HL_NULL;
-        }
-        return decimal.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LH_NULL;
-        }
-        return decimal.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LL_NULL;
-        }
-        return decimal.getLl();
-    }
-
-    @Override
-    public int getDecimal32(Record rec) {
-        if (!cast(rec)) {
-            return Decimals.DECIMAL32_NULL;
-        }
-        return (int) decimal.getLl();
-    }
-
-    @Override
-    public long getDecimal64(Record rec) {
-        if (!cast(rec)) {
-            return Decimals.DECIMAL64_NULL;
-        }
-        return decimal.getLl();
-    }
-
-    @Override
-    public byte getDecimal8(Record rec) {
-        if (!cast(rec)) {
-            return Decimals.DECIMAL8_NULL;
-        }
-        return (byte) decimal.getLl();
+    public boolean store(Record rec) {
+        return cast(rec);
     }
 
     @Override
