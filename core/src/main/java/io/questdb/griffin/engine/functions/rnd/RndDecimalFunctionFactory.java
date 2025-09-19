@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -128,7 +129,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal128Func(int type, int nanRate) {
             super(type, nanRate);
-            this.highRange = Decimals.getMaxLong(Math.max(ColumnType.getDecimalPrecision(type) - Decimals.getLongPrecision(Long.MAX_VALUE) - 1, 1));
+            this.highRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - Numbers.getPrecision(Long.MAX_VALUE) - 1, 1));
         }
 
         @Override
@@ -155,7 +156,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal16Func(int type, int nanRate) {
             super(type, nanRate);
-            this.range = Decimals.getMaxShort(ColumnType.getDecimalPrecision(type));
+            this.range = (short) Numbers.getMaxValue(ColumnType.getDecimalPrecision(type));
         }
 
         @Override
@@ -176,10 +177,10 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal256Func(int type, int nanRate) {
             super(type, nanRate);
-            final int maxLongPrecision = Decimals.getLongPrecision(Long.MAX_VALUE);
+            final int maxLongPrecision = Numbers.getPrecision(Long.MAX_VALUE);
             final int hhPrecision = Math.max(ColumnType.getDecimalPrecision(type) - 3 * maxLongPrecision - 1, 0);
-            this.hhRange = hhPrecision > 0 ? Decimals.getMaxLong(hhPrecision) : 0;
-            this.hlRange = Decimals.getMaxLong(Math.max(ColumnType.getDecimalPrecision(type) - 2 * maxLongPrecision - 1, 1));
+            this.hhRange = hhPrecision > 0 ? Numbers.getMaxValue(hhPrecision) : 0;
+            this.hlRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - 2 * maxLongPrecision - 1, 1));
         }
 
         @Override
@@ -220,7 +221,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal32Func(int type, int nanRate) {
             super(type, nanRate);
-            this.range = Decimals.getMaxInt(ColumnType.getDecimalPrecision(type));
+            this.range = (int) Numbers.getMaxValue(ColumnType.getDecimalPrecision(type));
         }
 
         @Override
@@ -237,7 +238,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal64Func(int type, int nanRate) {
             super(type, nanRate);
-            this.range = Decimals.getMaxLong(ColumnType.getDecimalPrecision(type));
+            this.range = Numbers.getMaxValue(ColumnType.getDecimalPrecision(type));
         }
 
         @Override
@@ -254,7 +255,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal8Func(int type, int nanRate) {
             super(type, nanRate);
-            this.range = Decimals.getMaxByte(ColumnType.getDecimalPrecision(type));
+            this.range = (byte) Numbers.getMaxValue(ColumnType.getDecimalPrecision(type));
         }
 
         @Override
