@@ -33,6 +33,7 @@ import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
@@ -113,9 +114,11 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -253,6 +256,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final StringSink utf16Sink = new StringSink();
+    private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -332,7 +337,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private WalTxnDetails walTxnDetails;
     private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
     private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments;
-
+    private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -887,6 +892,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
+                // pin column versions
+                ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+
                 checkPassed = true;
             } else {
                 LOG.info().$("attach partition command failed, partition to attach does not exist [path=").$(detachedPath).I$();
@@ -1008,7 +1016,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
-                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, columnIndex);
             } else {
                 // maintain a sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
@@ -2243,6 +2251,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    @Override
+    public ColumnVersionReader getColumnVersionReader() {
+        return columnVersionWriter;
+    }
+
     public long getDataAppendPageSize() {
         return dataAppendPageSize;
     }
@@ -3236,7 +3249,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (replaceColumnIndex < 0) {
             if (ColumnType.isSymbol(columnType)) {
                 try {
-                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag, metadata.getColumnCount() - 1);
                 } catch (CairoException e) {
                     try {
                         recoverFromSymbolMapWriterFailure(columnName);
@@ -4023,16 +4036,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (type > -1) {
                 if (ColumnType.isSymbol(type)) {
-                    final int symbolIndex = denseSymbolMapWriters.size();
+                    final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
                     long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
                     SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                             configuration,
                             path.trimTo(pathSize),
                             metadata.getColumnName(i),
                             columnNameTxn,
-                            txWriter.getSymbolValueCount(symbolIndex),
-                            symbolIndex,
-                            txWriter
+                            txWriter.getSymbolValueCount(symbolIndexInTxWriter),
+                            symbolIndexInTxWriter,
+                            txWriter,
+                            i
                     );
 
                     symbolMapWriters.extendAndSet(i, symbolMapWriter);
@@ -4194,7 +4208,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void createSymbolMapWriter(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
+    private void createSymbolMapWriter(
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            int columnIndex
+    ) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
@@ -4203,7 +4223,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnNameTxn,
                 0,
                 denseSymbolMapWriters.size(),
-                txWriter
+                txWriter,
+                columnIndex
         );
 
         try {
@@ -5449,15 +5470,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ColumnType.isSymbol(columnType)) {
                 // Link .o, .c, .k, .v symbol files in the table root folder
                 try {
-                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    linkFile(
+                            ff,
+                            charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                            charFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                    );
                     if (!symbolCapacityChange) {
-                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(
+                                ff,
+                                offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                        );
+                        linkFile(
+                                ff,
+                                keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                        );
+                        linkFile(
+                                ff,
+                                valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                        );
                     } else {
                         // in case it's symbol capacity rebuild copy symbol offset file.
                         // it's almost the same but the capacity in the file header is changed
-                        ff.copy(offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        if (
+                                ff.copy(
+                                        offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                                        offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)) < 0
+                        ) {
+                            throw CairoException.critical(ff.errno())
+                                    .put("Could not copy [from=").put(path)
+                                    .put(", to=").put(path)
+                                    .put(']');
+
+                        }
                     }
                 } catch (Throwable e) {
                     ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
@@ -5506,6 +5553,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
             enforceTtl();
+            scaleSymbolCapacities();
         } catch (Throwable e) {
             // Log the exception stack.
             LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
@@ -6589,6 +6637,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void o3TimestampSetter(long timestamp) {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
+    }
+
+    private void attachPartitionPinColumnVersions(long pUtf8NameZ, int type) {
+        if (notDots(pUtf8NameZ) && type == DT_FILE) {
+            tmpDirectUtf8StringZ.of(pUtf8NameZ);
+            int firstDot = Utf8s.indexOfAscii(tmpDirectUtf8StringZ, '.');
+            if (firstDot != -1) {
+                utf16Sink.clear();
+                utf16Sink.put(tmpDirectUtf8StringZ, 0, firstDot);
+                // all our column files have .d (or such) extensions
+                int columnIndex = metadata.getColumnIndexQuiet(utf16Sink);
+                if (columnIndex != -1) {
+                    // not a random file, we have column by this name
+                    int lastDot = Utf8s.lastIndexOfAscii(tmpDirectUtf8StringZ, '.');
+                    int len = Utf8s.length(tmpDirectUtf8StringZ);
+                    if (lastDot > 1 && lastDot < len - 1) {
+                        // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
+                        try {
+                            long nameTxn = Numbers.parseLong(tmpDirectUtf8StringZ, lastDot + 1, len);
+                            if (nameTxn > 0) {
+                                // column tops are not supported (this is to make sure "copy" command can attach partitions
+                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                            }
+                        } catch (NumericException ignore) {
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
@@ -9434,6 +9511,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
+    private void scaleSymbolCapacities() {
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            var w = denseSymbolMapWriters.getQuick(i);
+            var columnIndex = w.getColumnIndex();
+            // ignore null writers, if they are present in the list
+            if (columnIndex > -1) {
+                int symbolCount = w.getSymbolCount();
+                int symbolCapacity = w.getSymbolCapacity();
+                if (symbolCount * 0.8 > symbolCapacity) {
+                    changeSymbolCapacity(
+                            metadata.getColumnName(w.getColumnIndex()),
+                            symbolCapacity * 2, // symbol capacity is power of 2
+                            AllowAllSecurityContext.INSTANCE // this is internal housekeeping task, triggered by WAL apply job
+                    );
+                }
+            }
+        }
+    }
+
     private void scheduleRemoveAllPartitions() {
         for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -10362,10 +10458,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     long getColumnTop(int columnIndex) {
         assert lastOpenPartitionTs != Long.MIN_VALUE;
         return columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex);
-    }
-
-    ColumnVersionReader getColumnVersionReader() {
-        return columnVersionWriter;
     }
 
     CairoConfiguration getConfiguration() {

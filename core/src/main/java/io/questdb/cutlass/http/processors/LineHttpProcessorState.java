@@ -71,7 +71,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
-    private DirectUtf8Sink sink = new DirectUtf8Sink(16);
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
 
     public LineHttpProcessorState(
             int initRecvBufSize,

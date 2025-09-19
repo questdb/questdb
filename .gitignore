@@ -35,7 +35,8 @@ core/rust/qdbr/parquet2/target
 .vscode
 core/rust/qdb-core/target
 core/rust/qdbr/target
-
+core/rust/qdbr/parquet2/parquet-tools/target/
+core/rust/qdbr/parquet2/parquet-tools/Cargo.lock
 # pgwire compatibility tests - build artifacts
 compat/src/test/rust/scenarios/target/
 compat/src/test/rust/scenarios/Cargo.lock
@@ -49,3 +50,4 @@ compat/src/test/nodejs-postgres/node_modules
 compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
+

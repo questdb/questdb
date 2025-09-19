@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -146,13 +147,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration));
                             symbolCache.of(
                                     engine.getConfiguration(),
-                                    new TestTableWriterAPI(),
+                                    "col" + col,
+                                    col + 1,
                                     col,
                                     path,
-                                    "col" + col,
-                                    col,
-                                    txReader,
-                                    rdr.getColumnVersionReader().getDefaultColumnNameTxn(col + 1)
+                                    new TestTableWriterAPI(rdr.getColumnVersionReader()),
+                                    txReader
                             );
                             symbolCacheObjList.add(symbolCache);
                         }
@@ -229,13 +229,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     cache.of(
                             configuration,
-                            writer,
-                            symColIndex,
-                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
-                            txReader,
-                            -1
+                            symColIndex,
+                            path.of(configuration.getDbRoot()).concat(tableToken),
+                            writer,
+                            txReader
                     );
 
                     final int initialCapacity = cache.getCacheCapacity();
@@ -247,6 +246,17 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         r.append();
                     }
                     writer.commit();
+
+                    // after writer commit column name txn could have changed, we MUST re-initialize the "cache"
+
+                    cache.of(
+                            configuration,
+                            "symCol",
+                            symColIndex,
+                            symColIndex, path.of(configuration.getDbRoot()).concat(tableToken),
+                            writer,
+                            txReader
+                    );
 
                     for (int i = 0; i < N; i++) {
                         copyUtf8StringChars("sym" + i, mem, dus);
@@ -291,10 +301,19 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                             ColumnType.TIMESTAMP,
                             PartitionBy.DAY
-                    )
+                    );
+                    TableReader reader = engine.getReader(tableToken)
             ) {
                 path.of(configuration.getDbRoot()).concat(tableToken);
-                symbolCache.of(configuration, new TestTableWriterAPI(), 1, path, "b", 1, txReader, -1);
+                symbolCache.of(
+                        configuration,
+                        "b",
+                        1,
+                        1,
+                        path,
+                        new TestTableWriterAPI(reader.getColumnVersionReader()),
+                        txReader
+                );
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
@@ -412,13 +431,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     cache.of(
                             configuration,
-                            writer,
-                            symColIndex,
-                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
-                            txReader,
-                            -1
+                            symColIndex,
+                            path.of(configuration.getDbRoot()).concat(tableToken),
+                            writer,
+                            txReader
                     );
 
                     final int initialCapacity = cache.getCacheCapacity();
@@ -430,6 +448,17 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         r.append();
                     }
                     writer.commit();
+
+                    // writer commit can change symbol capacities and move column versions, we need to re-init the cache
+                    cache.of(
+                            configuration,
+                            "symCol",
+                            symColIndex,
+                            symColIndex,
+                            path.of(configuration.getDbRoot()).concat(tableToken),
+                            writer,
+                            txReader
+                    );
 
                     for (int i = 0; i < N; i++) {
                         copyUtf8StringChars(symbolPrefix + i, mem, dus);
@@ -488,13 +517,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     cache.of(
                             configuration,
-                            new TestTableWriterAPI(),
-                            symColIndex2,
-                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol2",
                             symColIndex2,
-                            txReader,
-                            -1
+                            symColIndex2,
+                            path.of(configuration.getDbRoot()).concat(tableToken),
+                            new TestTableWriterAPI(writer.getColumnVersionReader()),
+                            txReader
                     );
 
                     TableWriter.Row r = writer.newRow();
@@ -576,13 +604,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     cache.of(
                             configuration,
-                            new TestTableWriterAPI(),
-                            0,
-                            path,
                             "symCol2",
                             0,
-                            txReader,
-                            -1
+                            0,
+                            path,
+                            new TestTableWriterAPI(writer.getColumnVersionReader()),
+                            txReader
                     );
 
                     rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dus));
@@ -655,13 +682,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     cache.of(
                             configuration,
-                            new TestTableWriterAPI(1),
-                            symColIndex,
-                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
-                            txReader,
-                            -1
+                            symColIndex,
+                            path.of(configuration.getDbRoot()).concat(tableToken),
+                            new TestTableWriterAPI(writer.getColumnVersionReader(), 1),
+                            txReader
                     );
 
                     int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dus));
@@ -739,13 +765,12 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     cache.of(
                             configuration,
-                            new TestTableWriterAPI(0),
-                            symColIndex,
-                            path.of(configuration.getDbRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
-                            txReader,
-                            -1
+                            symColIndex,
+                            path.of(configuration.getDbRoot()).concat(tableToken),
+                            new TestTableWriterAPI(writer.getColumnVersionReader(), 0),
+                            txReader
                     );
 
                     int rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dus));
@@ -787,13 +812,15 @@ public class SymbolCacheTest extends AbstractCairoTest {
     private static class TestTableWriterAPI implements TableWriterAPI {
 
         private final static TableToken emptyTableToken = new TableToken("", "", null, 0, false, false, false);
+        private final ColumnVersionReader columnVersionReader;
         private final int watermark;
 
-        public TestTableWriterAPI() {
-            this(-1);
+        public TestTableWriterAPI(ColumnVersionReader columnVersionReader) {
+            this(columnVersionReader, -1);
         }
 
-        public TestTableWriterAPI(int watermark) {
+        public TestTableWriterAPI(ColumnVersionReader columnVersionReader, int watermark) {
+            this.columnVersionReader = columnVersionReader;
             this.watermark = watermark;
         }
 
@@ -821,6 +848,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
         @Override
         public void commit() {
+        }
+
+        @Override
+        public ColumnVersionReader getColumnVersionReader() {
+            return columnVersionReader;
         }
 
         @Override

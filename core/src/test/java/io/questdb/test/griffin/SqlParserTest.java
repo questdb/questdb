@@ -539,8 +539,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     ("select-window a, b, f(c) f over (partition by b order by ts range between 10 preceding and current row exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
                             .replace("#unit", expectedUnit),
-                    "select a,b, f(c) over (partition by b order by ts range 10 preceding) from xyz"
-                            .replace("#unit", unitsAndValues[i]),
+                    "select a,b, f(c) over (partition by b order by ts range 10 preceding) from xyz",
                     modelOf("xyz")
                             .col("a", ColumnType.INT)
                             .col("b", ColumnType.INT)
@@ -552,8 +551,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     ("select-window a, b, f(c) f over (partition by b order by ts range between 10 preceding and 1 following exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
                             .replace("#unit", expectedUnit),
-                    "select a,b, f(c) over (partition by b order by ts range between 10 preceding and 1 following) from xyz"
-                            .replace("#unit", unitsAndValues[i]),
+                    "select a,b, f(c) over (partition by b order by ts range between 10 preceding and 1 following) from xyz",
                     modelOf("xyz")
                             .col("a", ColumnType.INT)
                             .col("b", ColumnType.INT)
@@ -3092,7 +3090,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "f DOUBLE, " +
                         "g DATE, " +
                         "h BINARY, " +
-                        "x SYMBOL index capacity 2, " +
+                        "x SYMBOL index capacity 1, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +

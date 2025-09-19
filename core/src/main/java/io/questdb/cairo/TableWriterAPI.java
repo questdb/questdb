@@ -89,6 +89,8 @@ public interface TableWriterAPI extends Closeable {
 
     void commit();
 
+    ColumnVersionReader getColumnVersionReader();
+
     TableRecordMetadata getMetadata();
 
     /**

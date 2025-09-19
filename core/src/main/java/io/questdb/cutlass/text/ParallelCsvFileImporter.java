@@ -1184,7 +1184,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
             if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
                 final CharSequence symbolColumnName = metadata.getColumnName(columnIndex);
-                int tmpTableSymbolColumnIndex = targetTableStructure.getSymbolColumnIndex(symbolColumnName);
+                int tempTableDenseSymbolIndex = targetTableStructure.getDenseSymbolIndex(symbolColumnName);
+                int tempTableColumnIndex = targetTableStructure.getColumnIndex(symbolColumnName);
 
                 while (true) {
                     final long seq = pubSeq.next();
@@ -1198,7 +1199,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 tableToken,
                                 symbolColumnName,
                                 metadata.getWriterIndex(columnIndex),
-                                tmpTableSymbolColumnIndex,
+                                tempTableDenseSymbolIndex,
+                                tempTableColumnIndex,
                                 tmpTableCount,
                                 partitionBy,
                                 metadata.getTimestampType()
@@ -1225,9 +1227,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         final int tmpTableCount = getTaskCount();
         int queuedCount = 0;
         int collectedCount = 0;
-        for (int t = 0; t < tmpTableCount; ++t) {
+        for (int tempTableIndex = 0; tempTableIndex < tmpTableCount; ++tempTableIndex) {
 
-            tmpPath.of(importRoot).concat(tableToken.getTableName()).put('_').put(t);
+            tmpPath.of(importRoot).concat(tableToken.getTableName()).put('_').put(tempTableIndex);
 
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), metadata.getTimestampType(), partitionBy)) {
                 txFile.unsafeLoadAll();
@@ -1251,12 +1253,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 final long seq = pubSeq.next();
                                 if (seq > -1) {
                                     final CopyTask task = queue.get(seq);
-                                    task.setChunkIndex(t);
+                                    task.setChunkIndex(tempTableIndex);
                                     task.setCircuitBreaker(circuitBreaker);
                                     task.ofPhaseUpdateSymbolKeys(
                                             cairoEngine,
                                             targetTableStructure,
-                                            t,
+                                            tempTableIndex,
                                             partitionSize,
                                             partitionTimestamp,
                                             importRoot,
@@ -1603,6 +1605,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             return columnNames.size();
         }
 
+        public int getColumnIndex(CharSequence symbolColumnName) {
+            int index = -1;
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                index++;
+                if (symbolColumnName.equals(columnNames.get(i))) {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
         @Override
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
@@ -1611,6 +1624,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getColumnType(int columnIndex) {
             return Numbers.decodeLowInt(columnBits.getQuick(columnIndex));
+        }
+
+        public int getDenseSymbolIndex(CharSequence symbolColumnName) {
+            int index = -1;
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (getColumnType(i) == ColumnType.SYMBOL) {
+                    index++;
+                }
+                if (symbolColumnName.equals(columnNames.get(i))) {
+                    return index;
+                }
+            }
+            return -1;
         }
 
         @Override
@@ -1642,19 +1668,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         public int getSymbolCapacity(int columnIndex) {
             final int capacity = symbolCapacities.getQuick(columnIndex);
             return capacity != -1 ? capacity : configuration.getDefaultSymbolCapacity();
-        }
-
-        public int getSymbolColumnIndex(CharSequence symbolColumnName) {
-            int index = -1;
-            for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (getColumnType(i) == ColumnType.SYMBOL) {
-                    index++;
-                }
-                if (symbolColumnName.equals(columnNames.get(i))) {
-                    return index;
-                }
-            }
-            return -1;
         }
 
         @Override
