@@ -39,7 +39,6 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
@@ -1231,23 +1230,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 break;
         }
         if (ColumnType.isDecimal(toType)) {
-            switch (ColumnType.tagOf(fromType)) {
-                case ColumnType.DECIMAL8:
-                case ColumnType.DECIMAL16:
-                case ColumnType.DECIMAL32:
-                case ColumnType.DECIMAL64:
-                case ColumnType.DECIMAL128:
-                case ColumnType.DECIMAL256:
-                    return CastDecimalToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-                case ColumnType.BYTE:
-                    return CastByteToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-                case ColumnType.SHORT:
-                    return CastShortToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-                case ColumnType.INT:
-                    return CastIntToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-                case ColumnType.LONG:
-                    return CastLongToDecimalFunctionFactory.newInstance(position, function, toType, sqlExecutionContext);
-            }
+            return DecimalUtil.getImplicitCastFunction(function, position, toType, sqlExecutionContext);
         }
         return null;
     }

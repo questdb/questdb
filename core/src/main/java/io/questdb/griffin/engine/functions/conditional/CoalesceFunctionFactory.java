@@ -33,6 +33,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.Decimal16Function;
+import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.Decimal32Function;
+import io.questdb.griffin.engine.functions.Decimal64Function;
+import io.questdb.griffin.engine.functions.Decimal8Function;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
@@ -44,6 +50,9 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -135,6 +144,18 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case CHAR:
                 // Null on these data types not supported
                 return args.getQuick(0);
+            case DECIMAL8:
+                return argsSize == 2 ? new TwoDecimal8CoalesceFunction(returnType, args) : new Decimal8CoalesceFunction(returnType, args, argsSize);
+            case DECIMAL16:
+                return argsSize == 2 ? new TwoDecimal16CoalesceFunction(returnType, args) : new Decimal16CoalesceFunction(returnType, args, argsSize);
+            case DECIMAL32:
+                return argsSize == 2 ? new TwoDecimal32CoalesceFunction(returnType, args) : new Decimal32CoalesceFunction(returnType, args, argsSize);
+            case DECIMAL64:
+                return argsSize == 2 ? new TwoDecimal64CoalesceFunction(returnType, args) : new Decimal64CoalesceFunction(returnType, args, argsSize);
+            case DECIMAL128:
+                return argsSize == 2 ? new TwoDecimal128CoalesceFunction(returnType, args) : new Decimal128CoalesceFunction(returnType, args, argsSize);
+            case DECIMAL256:
+                return argsSize == 2 ? new TwoDecimal256CoalesceFunction(returnType, args) : new Decimal256CoalesceFunction(returnType, args, argsSize);
             default:
                 throw SqlException.$(position, "coalesce cannot be used with ")
                         .put(nameOf(returnType))
@@ -192,6 +213,202 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.LONG_NULL;
+        }
+    }
+
+    private static class Decimal128CoalesceFunction extends Decimal128Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+        private long lo = Decimals.DECIMAL128_LO_NULL;
+
+        public Decimal128CoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getDecimal128Hi(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final Function arg = args.getQuick(i);
+                long hi = arg.getDecimal128Hi(rec);
+                long lo = arg.getDecimal128Lo(rec);
+                if (!Decimal128.isNull(hi, lo)) {
+                    this.lo = lo;
+                    return hi;
+                }
+            }
+            return Decimals.DECIMAL128_HI_NULL;
+        }
+
+        @Override
+        public long getDecimal128Lo(Record rec) {
+            return lo;
+        }
+    }
+
+    private static class Decimal16CoalesceFunction extends Decimal16Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public Decimal16CoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            for (int i = 0; i < size; i++) {
+                short value = args.getQuick(i).getDecimal16(rec);
+                if (value != Decimals.DECIMAL16_NULL) {
+                    return value;
+                }
+            }
+            return Decimals.DECIMAL16_NULL;
+        }
+    }
+
+    private static class Decimal256CoalesceFunction extends Decimal256Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+        private long hl = Decimals.DECIMAL256_HL_NULL;
+        private long lh = Decimals.DECIMAL256_LH_NULL;
+        private long ll = Decimals.DECIMAL256_LL_NULL;
+
+        public Decimal256CoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getDecimal256HH(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final Function arg = args.getQuick(i);
+                long hh = arg.getDecimal256HH(rec);
+                long hl = arg.getDecimal256HL(rec);
+                long lh = arg.getDecimal256LH(rec);
+                long ll = arg.getDecimal256LL(rec);
+                if (!Decimal256.isNull(hh, hl, lh, ll)) {
+                    this.hl = hl;
+                    this.lh = lh;
+                    this.ll = ll;
+                    return hh;
+                }
+            }
+            return Decimals.DECIMAL256_HH_NULL;
+        }
+
+        @Override
+        public long getDecimal256HL(Record rec) {
+            return hl;
+        }
+
+        @Override
+        public long getDecimal256LH(Record rec) {
+            return lh;
+        }
+
+        @Override
+        public long getDecimal256LL(Record rec) {
+            return ll;
+        }
+    }
+
+    private static class Decimal32CoalesceFunction extends Decimal32Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public Decimal32CoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            for (int i = 0; i < size; i++) {
+                int value = args.getQuick(i).getDecimal32(rec);
+                if (value != Decimals.DECIMAL32_NULL) {
+                    return value;
+                }
+            }
+            return Decimals.DECIMAL32_NULL;
+        }
+    }
+
+    private static class Decimal64CoalesceFunction extends Decimal64Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public Decimal64CoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            for (int i = 0; i < size; i++) {
+                long value = args.getQuick(i).getDecimal64(rec);
+                if (value != Decimals.DECIMAL64_NULL) {
+                    return value;
+                }
+            }
+            return Decimals.DECIMAL64_NULL;
+        }
+    }
+
+    private static class Decimal8CoalesceFunction extends Decimal8Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public Decimal8CoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            for (int i = 0; i < size; i++) {
+                byte value = args.getQuick(i).getDecimal8(rec);
+                if (value != Decimals.DECIMAL8_NULL) {
+                    return value;
+                }
+            }
+            return Decimals.DECIMAL8_NULL;
         }
     }
 
@@ -463,6 +680,230 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getDate(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDecimal128CoalesceFunction extends Decimal128Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+        private long lo = Decimals.DECIMAL128_LO_NULL;
+
+        public TwoDecimal128CoalesceFunction(int type, ObjList<Function> args) {
+            super(type);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public long getDecimal128Hi(Record rec) {
+            long hi = args0.getDecimal128Hi(rec);
+            long lo = args0.getDecimal128Lo(rec);
+            if (!Decimal128.isNull(hi, lo)) {
+                this.lo = lo;
+                return hi;
+            }
+            hi = args1.getDecimal128Hi(rec);
+            this.lo = args1.getDecimal128Lo(rec);
+            return hi;
+        }
+
+        @Override
+        public long getDecimal128Lo(Record rec) {
+            return lo;
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDecimal16CoalesceFunction extends Decimal16Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDecimal16CoalesceFunction(int type, ObjList<Function> args) {
+            super(type);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            short value = args0.getDecimal16(rec);
+            if (value != Decimals.DECIMAL16_NULL) {
+                return value;
+            }
+            return args1.getDecimal16(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDecimal256CoalesceFunction extends Decimal256Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+        private long hl = Decimals.DECIMAL256_HL_NULL;
+        private long lh = Decimals.DECIMAL256_LH_NULL;
+        private long ll = Decimals.DECIMAL256_LL_NULL;
+
+        public TwoDecimal256CoalesceFunction(int type, ObjList<Function> args) {
+            super(type);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public long getDecimal256HH(Record rec) {
+            long hh = args0.getDecimal256HH(rec);
+            long hl = args0.getDecimal256HL(rec);
+            long lh = args0.getDecimal256LH(rec);
+            long ll = args0.getDecimal256LL(rec);
+            if (!Decimal256.isNull(hh, hl, lh, ll)) {
+                this.hl = hl;
+                this.lh = lh;
+                this.ll = ll;
+                return hh;
+            }
+            hh = args1.getDecimal256HH(rec);
+            this.hl = args1.getDecimal256HL(rec);
+            this.lh = args1.getDecimal256LH(rec);
+            this.ll = args1.getDecimal256LL(rec);
+            return hh;
+        }
+
+        @Override
+        public long getDecimal256HL(Record rec) {
+            return hl;
+        }
+
+        @Override
+        public long getDecimal256LH(Record rec) {
+            return lh;
+        }
+
+        @Override
+        public long getDecimal256LL(Record rec) {
+            return ll;
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDecimal32CoalesceFunction extends Decimal32Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDecimal32CoalesceFunction(int type, ObjList<Function> args) {
+            super(type);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            int value = args0.getDecimal32(rec);
+            if (value != Decimals.DECIMAL32_NULL) {
+                return value;
+            }
+            return args1.getDecimal32(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDecimal64CoalesceFunction extends Decimal64Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDecimal64CoalesceFunction(int type, ObjList<Function> args) {
+            super(type);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            long value = args0.getDecimal64(rec);
+            if (value != Decimals.DECIMAL64_NULL) {
+                return value;
+            }
+            return args1.getDecimal64(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDecimal8CoalesceFunction extends Decimal8Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDecimal8CoalesceFunction(int type, ObjList<Function> args) {
+            super(type);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            byte value = args0.getDecimal8(rec);
+            if (value != Decimals.DECIMAL8_NULL) {
+                return value;
+            }
+            return args1.getDecimal8(rec);
         }
 
         @Override

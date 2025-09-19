@@ -28,6 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
@@ -105,10 +110,62 @@ public final class DecimalUtil {
     }
 
     /**
+     * Returns a decimal type that is fitting for the original type or 0 if it cannot be implicitly cast.
+     */
+    public static int getImplicitCastType(int fromType) {
+        if (ColumnType.isDecimal(fromType)) {
+            return fromType;
+        }
+        switch (fromType) {
+            case ColumnType.LONG:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Long.MAX_VALUE), 0);
+            case ColumnType.INT:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Integer.MAX_VALUE), 0);
+            case ColumnType.SHORT:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Short.MAX_VALUE), 0);
+            case ColumnType.BYTE:
+                return ColumnType.getDecimalType(Numbers.getPrecision(Byte.MAX_VALUE), 0);
+        }
+        return 0;
+    }
+
+    /**
+     * Returns a function that can cast a type to a specific decimal through implicit casting.
+     * It may return null if the type cannot be implicitly cast.
+     */
+    public static Function getImplicitCastFunction(Function arg, int position, int toType, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        switch (ColumnType.tagOf(arg.getType())) {
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                return CastDecimalToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.BYTE:
+                return CastByteToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.SHORT:
+                return CastShortToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.INT:
+                return CastIntToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.LONG:
+                return CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+        }
+        return null;
+    }
+
+    /**
      * Load any decimal value from a Function into a Decimal256
      */
     public static void load(Decimal256 decimal, Function value, @Nullable Record rec) {
         final int fromType = value.getType();
+        load(decimal, value, rec, fromType);
+    }
+
+    /**
+     * Load any decimal value from a Function into a Decimal256
+     */
+    public static void load(Decimal256 decimal, Function value, @Nullable Record rec, int fromType) {
         final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
         final int fromScale = ColumnType.getDecimalScale(fromType);
 
