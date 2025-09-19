@@ -24,39 +24,27 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.ObjList;
 
-public class ArrayColumnTypes implements ColumnTypes, Mutable {
-    public static final ArrayColumnTypes EMPTY = new ArrayColumnTypes();
-    private final IntList types = new IntList();
+public class RecordIdSink implements RecordSink {
+    public static final ArrayColumnTypes RECORD_ID_COLUMN_TYPE = new ArrayColumnTypes();
+    public static final RecordSink RECORD_ID_SINK = new RecordIdSink();
 
-    public ArrayColumnTypes add(int type) {
-        types.add(type);
-        return this;
-    }
-
-    public ArrayColumnTypes add(int index, int type) {
-        types.extendAndSet(index, type);
-        return this;
-    }
-
-    public ArrayColumnTypes addAll(ArrayColumnTypes that) {
-        types.addAll(that.types);
-        return this;
-    }
-
-    public void clear() {
-        types.clear();
+    private RecordIdSink() {
     }
 
     @Override
-    public int getColumnCount() {
-        return types.size();
+    public void copy(Record r, RecordSinkSPI w) {
+        w.putLong(r.getRowId());
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return types.getQuick(columnIndex);
+    public void setFunctions(ObjList<Function> keyFunctions) {
+    }
+
+    static {
+        RECORD_ID_COLUMN_TYPE.add(ColumnType.LONG);
     }
 }

@@ -793,7 +793,7 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
             execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
-            assertSql(
+            assertQueryNoLeakCheckWithFatJoin(
                     "select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip",
                     "count\tip\tip2\tcount2\n" +
                             "1\t12.5.9.227\t12.5.9.227\t2\n" +
@@ -828,6 +828,9 @@ public class IPv4Test extends AbstractCairoTest {
                             "1\t12.5.9.28\t12.5.9.28\t2\n" +
                             "1\t12.5.9.20\t12.5.9.20\t2\n" +
                             "1\t12.5.9.20\t12.5.9.20\t2\n",
+                    null,
+                    true,
+                    false,
                     true
             );
         });

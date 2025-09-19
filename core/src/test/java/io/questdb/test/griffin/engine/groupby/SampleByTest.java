@@ -5952,7 +5952,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar) b on(sym) ",
                     "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
+                            "    Hash Left Outer Join Light\n" +
                             "      condition: b.sym=a.sym\n" +
                             "        SelectedRecord\n" +
                             "            Radix sort light\n" +

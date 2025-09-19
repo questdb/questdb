@@ -35,6 +35,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.List;
 
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
@@ -55,6 +57,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T01:00:00.000Z')," +
                     " ('c', '2023-09-01T02:00:00.000Z')," +
                     " ('c', '2023-09-01T03:00:00.000Z')";
+    private static final List<String> outerJoinTypes = Arrays.asList("left", "right", "full");
     private static final String tradesDdl = "CREATE TABLE 'trades' (\n" +
             "  symbol SYMBOL,\n" +
             "  side SYMBOL,\n" +
@@ -428,51 +431,53 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             execute("create table y1 ( x int, ts timestamp) timestamp(ts);");
             execute("create table y2 ( x int, ts timestamp) timestamp(ts);");
-            final String query = "select  * from y \n" +
-                    "left join \n" +
-                    "y1 on \n" +
-                    "y1.x = y.x\n" +
-                    "INNER join (select LAST(ts) from y2) as y2 \n" +
-                    "on y2.LAST = y1.ts";
-            String queryNew = query + " union \n" + query;
-            final QueryModel model = compileModel(queryNew);
-            assertEquals(
-                    "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
-                            "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
-                            "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
-                            "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
-                            "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
-                            " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
-                            "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
-                            "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                            "limit 1) y2 on y2.LAST = y1.ts)",
-                    model.toString0()
-            );
-            // TODO: there's a forward scan on y2 whereas it should be a backward scan;
-            //       it could have something to do with SqlOptimiser.optimiseOrderBy()
-            assertPlanNoLeakCheck(
-                    query,
-                    "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: y2.LAST=y1.ts\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: y1.x=y.x\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: y\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: y1\n" +
-                            "        Hash\n" +
-                            "            Async Top K lo: 1 workers: 1\n" +
-                            "              filter: null\n" +
-                            "              keys: [LAST desc]\n" +
-                            "                SelectedRecord\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: y2\n"
-            );
+            for (String joinType : outerJoinTypes) {
+                final String query = ("select  * from y \n" +
+                        "#JOIN_TYPE join \n" +
+                        "y1 on \n" +
+                        "y1.x = y.x\n" +
+                        "INNER join (select LAST(ts) from y2) as y2 \n" +
+                        "on y2.LAST = y1.ts").replaceAll("#JOIN_TYPE", joinType);
+                String queryNew = query + " union \n" + query;
+                final QueryModel model = compileModel(queryNew);
+                assertEquals(
+                        ("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
+                                "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) #JOIN_TYPE join " +
+                                "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
+                                "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
+                                "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
+                                " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
+                                "#JOIN_TYPE join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
+                                "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
+                                "limit 1) y2 on y2.LAST = y1.ts)").replaceAll("#JOIN_TYPE", joinType),
+                        model.toString0()
+                );
+                // TODO: there's a forward scan on y2 whereas it should be a backward scan;
+                //       it could have something to do with SqlOptimiser.optimiseOrderBy()
+                assertPlanNoLeakCheck(
+                        query,
+                        "SelectedRecord\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: y2.LAST=y1.ts\n" +
+                                "        Hash #JOIN_TYPE Outer Join Light\n".replaceAll("#JOIN_TYPE", Character.toUpperCase(joinType.charAt(0)) + joinType.substring(1)) +
+                                "          condition: y1.x=y.x\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: y\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: y1\n" +
+                                "        Hash\n" +
+                                "            Async Top K lo: 1 workers: 1\n" +
+                                "              filter: null\n" +
+                                "              keys: [LAST desc]\n" +
+                                "                SelectedRecord\n" +
+                                "                    PageFrame\n" +
+                                "                        Row forward scan\n" +
+                                "                        Frame forward scan on: y2\n"
+                );
+            }
         });
     }
 
@@ -976,10 +981,88 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  and   el.CreateDate <= to_timestamp('2016-01-01T10:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')",
                     "VirtualRecord\n" +
                             "  functions: [1]\n" +
-                            "    Hash Outer Join Light\n" +
+                            "    Hash Left Outer Join Light\n" +
                             "      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate\n" +
                             "      filter: ep.ActionTypeId=8\n" +
-                            "        Hash Outer Join Light\n" +
+                            "        Hash Left Outer Join Light\n" +
+                            "          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate\n" +
+                            "          filter: (ep0.ActionTypeId=13 and ep0.Message='2')\n" +
+                            "            Empty table\n" +
+                            "            Hash\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: WorkflowEventAction\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: WorkflowEventAction\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT  1\n" +
+                            "FROM    WorkflowEvent el\n" +
+                            "\n" +
+                            "Right JOIN WorkflowEventAction ep0\n" +
+                            "  ON    el.CreateDate = ep0.CreateDate\n" +
+                            "  and   el.Id = ep0.WorkflowEventId\n" +
+                            "  and   ep0.ActionTypeId = 13\n" +
+                            "  and   ep0.Message = '2'\n" +
+                            "\n" +
+                            "Right JOIN    WorkflowEventAction ep\n" +
+                            "  on    el.CreateDate = ep.CreateDate\n" +
+                            "  and   el.Id = ep.WorkflowEventId\n" +
+                            "  and   ep.ActionTypeId = 8\n" +
+                            "\n" +
+                            "WHERE   el.UserId = 19\n" +
+                            "  and   el.TenantId = 24024\n" +
+                            "  and   el.EventTypeId = 1\n" +
+                            "  and   el.CreateDate >= to_timestamp('2016-01-01T00:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')\n" +
+                            "  and   el.CreateDate <= to_timestamp('2016-01-01T10:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')",
+                    "VirtualRecord\n" +
+                            "  functions: [1]\n" +
+                            "    Hash Right Outer Join Light\n" +
+                            "      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate\n" +
+                            "      filter: ep.ActionTypeId=8\n" +
+                            "        Hash Right Outer Join Light\n" +
+                            "          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate\n" +
+                            "          filter: (ep0.ActionTypeId=13 and ep0.Message='2')\n" +
+                            "            Empty table\n" +
+                            "            Hash\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: WorkflowEventAction\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: WorkflowEventAction\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT  1\n" +
+                            "FROM    WorkflowEvent el\n" +
+                            "\n" +
+                            "FULL JOIN WorkflowEventAction ep0\n" +
+                            "  ON    el.CreateDate = ep0.CreateDate\n" +
+                            "  and   el.Id = ep0.WorkflowEventId\n" +
+                            "  and   ep0.ActionTypeId = 13\n" +
+                            "  and   ep0.Message = '2'\n" +
+                            "\n" +
+                            "FULL JOIN    WorkflowEventAction ep\n" +
+                            "  on    el.CreateDate = ep.CreateDate\n" +
+                            "  and   el.Id = ep.WorkflowEventId\n" +
+                            "  and   ep.ActionTypeId = 8\n" +
+                            "\n" +
+                            "WHERE   el.UserId = 19\n" +
+                            "  and   el.TenantId = 24024\n" +
+                            "  and   el.EventTypeId = 1\n" +
+                            "  and   el.CreateDate >= to_timestamp('2016-01-01T00:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')\n" +
+                            "  and   el.CreateDate <= to_timestamp('2016-01-01T10:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')",
+                    "VirtualRecord\n" +
+                            "  functions: [1]\n" +
+                            "    Hash Full Outer Join Light\n" +
+                            "      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate\n" +
+                            "      filter: ep.ActionTypeId=8\n" +
+                            "        Hash Full Outer Join Light\n" +
                             "          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate\n" +
                             "          filter: (ep0.ActionTypeId=13 and ep0.Message='2')\n" +
                             "            Empty table\n" +
@@ -1050,6 +1133,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  on    el.CreateDate = ep.CreateDate\n" +
                             "  and   el.Id = ep.WorkflowEventId\n" +
                             "  and   ep.ActionTypeId = 8\n" +
+                            "\n" +
+                            "WHERE   el.UserId = 19\n" +
+                            "  and   el.TenantId = 24024\n" +
+                            "  and   el.EventTypeId = 1\n" +
+                            "  and   el.CreateDate >= '2016-01-01T00:00:00Z'\n" +
+                            "  and   el.CreateDate <= '2016-01-01T10:00:00Z'");
+
+            assertSql("CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage\n" +
+                            "2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2\n",
+
+                    "SELECT  *\n" +
+                            "FROM    WorkflowEvent el\n" +
+                            "\n" +
+                            "RIGHT JOIN WorkflowEventAction ep0\n" +
+                            "  ON    el.CreateDate = ep0.CreateDate\n" +
+                            "  and   el.Id = ep0.WorkflowEventId\n" +
+                            "  and   ep0.ActionTypeId = 13\n" +
+                            "  and   ep0.Message = '2'\n" +
                             "\n" +
                             "WHERE   el.UserId = 19\n" +
                             "  and   el.TenantId = 24024\n" +
@@ -2127,7 +2228,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Hash Join Light\n" +
                             "      condition: y2.LAST=y1.ts\n" +
-                            "        Hash Outer Join Light\n" +
+                            "        Hash Left Outer Join Light\n" +
                             "          condition: y1.x=y.x\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
