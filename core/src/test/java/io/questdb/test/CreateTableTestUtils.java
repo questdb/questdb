@@ -53,6 +53,11 @@ public class CreateTableTestUtils {
         TestUtils.createTable(engine, model);
     }
 
+    public static void createDecimalsTable(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
+        TableModel model = getDecimalTypesModel(engine.getConfiguration(), partitionBy, timestampType);
+        TestUtils.createTable(engine, model);
+    }
+
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
         TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
         if (tableToken == null) {
@@ -268,6 +273,17 @@ public class CreateTableTestUtils {
                 .col("uuid", ColumnType.UUID)
                 .col("ipv4", ColumnType.IPv4)
                 .col("varchar", ColumnType.VARCHAR)
+                .timestamp(timestampType);
+    }
+
+    public static TableModel getDecimalTypesModel(CairoConfiguration configuration, int partitionBy, int timestampType) throws Exception {
+        return new TableModel(configuration, "decimals", partitionBy)
+                .col("dec8", ColumnType.getDecimalType(2, 1))
+                .col("dec16", ColumnType.getDecimalType(4, 2))
+                .col("dec32", ColumnType.getDecimalType(9, 3))
+                .col("dec64", ColumnType.getDecimalType(18, 4))
+                .col("dec128", ColumnType.getDecimalType(38, 5))
+                .col("dec256", ColumnType.getDecimalType(76, 6))
                 .timestamp(timestampType);
     }
 

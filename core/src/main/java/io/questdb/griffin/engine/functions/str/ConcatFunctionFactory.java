@@ -37,6 +37,9 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -116,6 +119,70 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
     private static void sinkDate(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getDate(record));
+    }
+
+    private static void sinkDecimal128(Utf16Sink sink, Function function, Record record) {
+        long hi = function.getDecimal128Hi(record);
+        long lo = function.getDecimal128Lo(record);
+        if (Decimal128.isNull(hi, lo)) {
+            sink.putAscii("null");
+        } else {
+            final int type = function.getType();
+            Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void sinkDecimal16(Utf16Sink sink, Function function, Record record) {
+        short value = function.getDecimal16(record);
+        if (value == Decimals.DECIMAL16_NULL) {
+            sink.putAscii("null");
+        } else {
+            sinkDecimalLong(sink, value, function.getType());
+        }
+    }
+
+    private static void sinkDecimal256(Utf16Sink sink, Function function, Record record) {
+        long hh = function.getDecimal256HH(record);
+        long hl = function.getDecimal256HL(record);
+        long lh = function.getDecimal256LH(record);
+        long ll = function.getDecimal256LL(record);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            sink.putAscii("null");
+        } else {
+            final int type = function.getType();
+            Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void sinkDecimal32(Utf16Sink sink, Function function, Record record) {
+        int value = function.getDecimal32(record);
+        if (value == Decimals.DECIMAL32_NULL) {
+            sink.putAscii("null");
+        } else {
+            sinkDecimalLong(sink, value, function.getType());
+        }
+    }
+
+    private static void sinkDecimal64(Utf16Sink sink, Function function, Record record) {
+        long value = function.getDecimal64(record);
+        if (value == Decimals.DECIMAL64_NULL) {
+            sink.putAscii("null");
+        } else {
+            sinkDecimalLong(sink, value, function.getType());
+        }
+    }
+
+    private static void sinkDecimal8(Utf16Sink sink, Function function, Record record) {
+        byte value = function.getDecimal8(record);
+        if (value == Decimals.DECIMAL8_NULL) {
+            sink.putAscii("null");
+        } else {
+            sinkDecimalLong(sink, value, function.getType());
+        }
+    }
+
+    private static void sinkDecimalLong(Utf16Sink sink, long value, int type) {
+        Decimals.append(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
     }
 
     private static void sinkDouble(Utf16Sink sink, Function function, Record record) {
@@ -283,6 +350,12 @@ public class ConcatFunctionFactory implements FunctionFactory {
         adapterReferences.extendAndSet(DATE, ConcatFunctionFactory::sinkDate);
         adapterReferences.extendAndSet(TIMESTAMP, ConcatFunctionFactory::sinkTimestamp);
         adapterReferences.extendAndSet(UUID, ConcatFunctionFactory::sinkUuid);
+        adapterReferences.extendAndSet(DECIMAL8, ConcatFunctionFactory::sinkDecimal8);
+        adapterReferences.extendAndSet(DECIMAL16, ConcatFunctionFactory::sinkDecimal16);
+        adapterReferences.extendAndSet(DECIMAL32, ConcatFunctionFactory::sinkDecimal32);
+        adapterReferences.extendAndSet(DECIMAL64, ConcatFunctionFactory::sinkDecimal64);
+        adapterReferences.extendAndSet(DECIMAL128, ConcatFunctionFactory::sinkDecimal128);
+        adapterReferences.extendAndSet(DECIMAL256, ConcatFunctionFactory::sinkDecimal256);
         adapterReferences.extendAndSet(NULL, ConcatFunctionFactory::sinkNull);
     }
 }
