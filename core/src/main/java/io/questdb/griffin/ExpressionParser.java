@@ -1513,7 +1513,7 @@ public class ExpressionParser {
                         ExpressionNode last = this.opStack.peek();
                         // Handle `timestamp with time zone`
                         if (last != null) {
-                            if (SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
+                            if ((SqlKeywords.isTimestampKeyword(last.token) || SqlKeywords.isTimestampNsKeyword(last.token)) && SqlKeywords.isWithKeyword(tok)) {
                                 CharSequence withTok = GenericLexer.immutableOf(tok);
                                 int withTokPosition = lexer.getPosition();
                                 tok = SqlUtil.fetchNext(lexer);

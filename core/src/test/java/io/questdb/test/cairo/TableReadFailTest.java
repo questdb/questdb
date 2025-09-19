@@ -221,7 +221,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(FilesFacade ff) throws Exception {
-        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY, ColumnType.TIMESTAMP_MICRO);
         assertMemoryLeak(() -> {
             try {
                 newOffPoolReader(
