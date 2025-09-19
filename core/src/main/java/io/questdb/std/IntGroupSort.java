@@ -56,12 +56,74 @@ public class IntGroupSort {
         return i;
     }
 
-    private static void quickSortImpl(int[] array, int low, int high, int n) {
-        if (low + 1 < high) {
-            int pi = partition(array, low, high, n);
+    private static void quickSortImpl(IntList intList, int low, int high, int n) {
+        // Use the tail of the IntList (unused capacity) as a stack to avoid StackOverflowError
+        // Stack stores pairs of (low, high) bounds for segments to sort
 
-            quickSortImpl(array, low, pi, n);  // Before pi
-            quickSortImpl(array, pi + 1, high, n); // After pi
+        // Stack grows from the end of the data
+        int stackStart = intList.size();
+        int stackPos = stackStart;
+
+        //   Quicksort Stack Depth Analysis
+        //
+        //  Best/Average Case: O(log n)
+        //  - With good pivot selection, each partition roughly halves the data
+        //  - For n elements: log₂(n) recursion levels
+        //  - Each level needs 2 stack entries (low, high)
+        //  - So stack size ≈ 2 × log₂(n)
+        //
+        //  Worst Case: O(n)
+        // But our algorithm uses a key optimization: "process smaller partition immediately"
+        // We push the larger partition first (defer it), then smaller partition last (process next)
+        // This ensures the stack depth stays logarithmic even in worst case!
+        //
+        //  Concrete Examples:
+        //
+        //  | Data Size     | log₂(n) | Stack Pairs Needed | Stack Entries (×2) |
+        //  |---------------|---------|--------------------|--------------------|
+        //  | 1,000         | ~10     | ~10                | ~20                |
+        //  | 1,000,000     | ~20     | ~20                | ~40                |
+        //  | 1,000,000,000 | ~30     | ~30                | ~60                |
+        //
+        //  Why 64 is Safe:
+        //
+        //  - 64 ÷ 2 = 32 partition pairs
+        //  - This handles up to 2³² = 4+ billion elements
+        int[] array = intList.resetCapacityInternal(stackPos + 64); // Ensures that we have enough space
+
+        try {
+            // Push initial range onto stack
+            array[stackPos++] = low;
+            array[stackPos++] = high;
+
+            while (stackPos > stackStart) {
+                // Pop range from stack
+                high = array[--stackPos];
+                low = array[--stackPos];
+
+                if (low + 1 < high) {
+                    int pi = partition(array, low, high, n);
+
+                    // Push the larger partition first, then smaller one
+                    // This ensures the stack depth remains logarithmic
+                    if (pi - low > high - pi - 1) {
+                        // Left partition is larger
+                        array[stackPos++] = low;
+                        array[stackPos++] = pi;
+                        array[stackPos++] = pi + 1;
+                        array[stackPos++] = high;
+                    } else {
+                        // Right partition is larger or equal
+                        array[stackPos++] = pi + 1;
+                        array[stackPos++] = high;
+                        array[stackPos++] = low;
+                        array[stackPos++] = pi;
+                    }
+                }
+            }
+        } finally {
+            // Restore original size of IntList
+            intList.setPos(stackStart);
         }
     }
 
@@ -77,16 +139,17 @@ public class IntGroupSort {
     }
 
     /**
-     * Sort an integer array which is actually intrusively storing a group (tuple) of N integers.
+     * Sort an integer list which is actually intrusively storing a group (tuple) of N integers.
+     * Uses the unused capacity of the IntList as temporary stack space to avoid StackOverflowError.
      *
      * @param n       number of integers in a group
-     * @param array   array to sort
+     * @param intList IntList containing the data to sort
      * @param groupLo start index of the group
      * @param groupHi end index of the group
      */
-    static void quickSort(int n, int[] array, int groupLo, int groupHi) {
+    static void quickSort(int n, IntList intList, int groupLo, int groupHi) {
         assert groupHi >= groupLo;
-        quickSortImpl(array, groupLo, groupHi, n);
+        quickSortImpl(intList, groupLo, groupHi, n);
     }
 }
 
