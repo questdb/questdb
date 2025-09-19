@@ -34,7 +34,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 
-public class InfluxDBv2ClientCombatTest extends AbstractTest {
+public class InfluxDBv2ClientCompatTest extends AbstractTest {
     @Test
     public void testTimestampPrecisionSupport() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{

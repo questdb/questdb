@@ -94,6 +94,10 @@ public class AdaptiveRecvBuffer implements QuietCloseable {
         return bufStartOfMeasurement;
     }
 
+    public long getCurrentBufSize() {
+        return currentBufSize;
+    }
+
     public long getMaxBufSize() {
         return maxBufSize;
     }
@@ -145,6 +149,7 @@ public class AdaptiveRecvBuffer implements QuietCloseable {
      *
      * @return true if operation succeeded, false if buffer exceeded max size
      */
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public boolean tryCompactOrGrowBuffer() {
         if (bufPos != bufEnd) {
             return true;

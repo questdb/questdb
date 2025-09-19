@@ -98,7 +98,8 @@ public final class MemoryTag {
     public static final int NATIVE_ND_ARRAY_DBG1 = NATIVE_ND_ARRAY + 1;
     public static final int NATIVE_ND_ARRAY_DBG2 = NATIVE_ND_ARRAY_DBG1 + 1;
     public static final int NATIVE_PATH_THREAD_LOCAL = NATIVE_ND_ARRAY_DBG2 + 1;
-    public static final int SIZE = NATIVE_PATH_THREAD_LOCAL + 1;
+    public static final int NATIVE_ZLIB_INFLATE = NATIVE_PATH_THREAD_LOCAL + 1;
+    public static final int SIZE = NATIVE_ZLIB_INFLATE + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
@@ -178,5 +179,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_ND_ARRAY_DBG1, "NATIVE_ND_ARRAY_DBG1");
         tagNameMap.extendAndSet(NATIVE_ND_ARRAY_DBG2, "NATIVE_ND_ARRAY_DBG2");
         tagNameMap.extendAndSet(NATIVE_PATH_THREAD_LOCAL, "NATIVE_PATH_THREAD_LOCAL");
+        tagNameMap.extendAndSet(NATIVE_ZLIB_INFLATE, "NATIVE_ZLIB_INFLATE");
     }
 }
