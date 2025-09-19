@@ -29,30 +29,6 @@ import org.junit.Test;
 
 public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
-    private void testConstantCast(long inputValue, String expectedOutput, String targetType) throws Exception {
-        assertMemoryLeak(
-                () -> assertSql(
-                        "cast\n" + expectedOutput + "\n",
-                        "select cast(" + inputValue + "L as " + targetType + ")"
-                )
-        );
-    }
-
-    private void testConstantCastWithNull(long inputValue, String expectedOutput, String targetType) throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    assertSql(
-                            "cast\n" + expectedOutput + "\n",
-                            "select cast(" + inputValue + "L as " + targetType + ")"
-                    );
-                    assertSql(
-                            "cast\n\n",
-                            "select cast(cast(null as long) as " + targetType + ")"
-                    );
-                }
-        );
-    }
-
     @Test
     public void testCastExplains() throws Exception {
         assertMemoryLeak(
@@ -624,6 +600,27 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitCast() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // Constant folded
+                    assertSql(
+                            "column\n" +
+                                    "8888888\n",
+                            "select 1234567::long + 7654321m"
+                    );
+
+                    // Runtime discovered
+                    assertSql(
+                            "column\n" +
+                                    "8888888\n",
+                            "with data as (select 1234567::long x) select x + 7654321m from data"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testRuntimeCastOverflowScaled() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -865,6 +862,30 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "null\t\n",
                             "WITH data AS (SELECT 99L value UNION ALL SELECT -99L UNION ALL SELECT 0L UNION ALL SELECT null) " +
                                     "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    private void testConstantCast(long inputValue, String expectedOutput, String targetType) throws Exception {
+        assertMemoryLeak(
+                () -> assertSql(
+                        "cast\n" + expectedOutput + "\n",
+                        "select cast(" + inputValue + "L as " + targetType + ")"
+                )
+        );
+    }
+
+    private void testConstantCastWithNull(long inputValue, String expectedOutput, String targetType) throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "cast\n" + expectedOutput + "\n",
+                            "select cast(" + inputValue + "L as " + targetType + ")"
+                    );
+                    assertSql(
+                            "cast\n\n",
+                            "select cast(cast(null as long) as " + targetType + ")"
                     );
                 }
         );

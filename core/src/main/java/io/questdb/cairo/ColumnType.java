@@ -771,8 +771,8 @@ public final class ColumnType {
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN    */, {BOOLEAN}
-                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
+                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
+                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
                 /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
                 /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
                 /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}

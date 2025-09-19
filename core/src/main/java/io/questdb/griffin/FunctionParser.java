@@ -37,12 +37,14 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
@@ -1164,25 +1166,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {
-                int position = argPositions.getQuick(k);
-                final int targetPrecision;
-                if (arg.isConstant()) {
-                    int value = arg.getInt(null);
-                    targetPrecision = Math.max(Numbers.getPrecision(value), 1);
-                } else {
-                    targetPrecision = Numbers.getPrecision(Integer.MAX_VALUE);
-                }
-                args.setQuick(k, CastIntToDecimalFunctionFactory.newInstance(position, arg, ColumnType.getDecimalType(targetPrecision, 0), sqlExecutionContext));
+                args.setQuick(k, CastIntToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
             } else if (argTypeTag == ColumnType.LONG && sigArgTypeTag == ColumnType.DECIMAL) {
-                int position = argPositions.getQuick(k);
-                final int targetPrecision;
-                if (arg.isConstant()) {
-                    long value = arg.getLong(null);
-                    targetPrecision = Math.max(Numbers.getPrecision(value), 1);
-                } else {
-                    targetPrecision = Numbers.getPrecision(Long.MAX_VALUE);
-                }
-                args.setQuick(k, CastLongToDecimalFunctionFactory.newInstance(position, arg, ColumnType.getDecimalType(targetPrecision, 0), sqlExecutionContext));
+                args.setQuick(k, CastLongToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
+            } else if (argTypeTag == ColumnType.SHORT && sigArgTypeTag == ColumnType.DECIMAL) {
+                args.setQuick(k, CastShortToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
+            } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.DECIMAL) {
+                args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);

@@ -30,52 +30,57 @@ import org.junit.Test;
 public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCastSimpleValues() throws Exception {
+    public void testCastExplains() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "123\n",
-                            "select cast(123::short as DECIMAL(5,0))"
-                    );
+                    // Runtime value needs scaling
+                    assertSql("QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [value::DECIMAL(5,2)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [123]\n" +
+                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::short AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-123\n",
-                            "select cast(-123::short as DECIMAL(5,0))"
-                    );
+                    // Runtime value doesn't need scaling
+                    assertSql("QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [value::DECIMAL(5,0)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [123]\n" +
+                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::short AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
 
-                    // 0 is the null value for short, so this should return null
-                    assertSql(
-                            "cast\n" +
-                                    "\n",
-                            "select cast(0::short as DECIMAL(5,0))"
-                    );
+                    // Expression should be constant folded
+                    assertSql("QUERY PLAN\n" +
+                                    "VirtualRecord\n" +
+                                    "  functions: [1.00]\n" +
+                                    "    long_sequence count: 1\n",
+                            "EXPLAIN SELECT cast(1::short as DECIMAL(5, 2))");
                 }
         );
     }
 
     @Test
-    public void testCastWithScale() throws Exception {
+    public void testCastHighScaleLowPrecision() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "123.00\n",
-                            "select cast(123::short as DECIMAL(5,2))"
-                    );
-
-                    assertSql(
-                            "cast\n" +
-                                    "-99.00\n",
-                            "select cast(-99::short as DECIMAL(4,2))"
-                    );
-
-                    // 0 is null for short
+                    // 0 is null for short, so this should return null
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(0::short as DECIMAL(5,3))"
+                            "select cast(0::short as DECIMAL(2,2))"
+                    );
+
+                    // Any non-zero value should overflow
+                    assertException(
+                            "select cast(1::short as DECIMAL(2,2))",
+                            13,
+                            "inconvertible value: 1 [SHORT -> DECIMAL(2,2)]"
+                    );
+
+                    assertException(
+                            "select cast(-1::short as DECIMAL(2,2))",
+                            12,
+                            "inconvertible value: -1 [SHORT -> DECIMAL(2,2)]"
                     );
                 }
         );
@@ -110,25 +115,6 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastOverflowDecimal8() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    assertException(
-                            "select cast(128::short as DECIMAL(2))",
-                            15,
-                            "inconvertible value: 128 [SHORT -> DECIMAL(2,0)]"
-                    );
-
-                    assertException(
-                            "select cast(-129::short as DECIMAL(2))",
-                            12,
-                            "inconvertible value: -129 [SHORT -> DECIMAL(2,0)]"
-                    );
-                }
-        );
-    }
-
-    @Test
     public void testCastOverflowDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -142,6 +128,25 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "select cast(-10000::short as DECIMAL(4))",
                             12,
                             "inconvertible value: -10000 [SHORT -> DECIMAL(4,0)]"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testCastOverflowDecimal8() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertException(
+                            "select cast(128::short as DECIMAL(2))",
+                            15,
+                            "inconvertible value: 128 [SHORT -> DECIMAL(2,0)]"
+                    );
+
+                    assertException(
+                            "select cast(-129::short as DECIMAL(2))",
+                            12,
+                            "inconvertible value: -129 [SHORT -> DECIMAL(2,0)]"
                     );
                 }
         );
@@ -169,52 +174,51 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastHighScaleLowPrecision() throws Exception {
+    public void testCastSimpleValues() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    // 0 is null for short, so this should return null
+                    assertSql(
+                            "cast\n" +
+                                    "123\n",
+                            "select cast(123::short as DECIMAL(5,0))"
+                    );
+
+                    assertSql(
+                            "cast\n" +
+                                    "-123\n",
+                            "select cast(-123::short as DECIMAL(5,0))"
+                    );
+
+                    // 0 is the null value for short, so this should return null
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(0::short as DECIMAL(2,2))"
-                    );
-
-                    // Any non-zero value should overflow
-                    assertException(
-                            "select cast(1::short as DECIMAL(2,2))",
-                            13,
-                            "inconvertible value: 1 [SHORT -> DECIMAL(2,2)]"
-                    );
-
-                    assertException(
-                            "select cast(-1::short as DECIMAL(2,2))",
-                            12,
-                            "inconvertible value: -1 [SHORT -> DECIMAL(2,2)]"
+                            "select cast(0::short as DECIMAL(5,0))"
                     );
                 }
         );
     }
 
     @Test
-    public void testCastToDecimal8() throws Exception {
+    public void testCastToDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> {
                     assertSql(
                             "cast\n" +
-                                    "99\n",
-                            "select cast(99::short as DECIMAL(2))"
+                                    "32767\n",
+                            "select cast(32767::short as DECIMAL(19))"
                     );
 
                     assertSql(
                             "cast\n" +
-                                    "-99\n",
-                            "select cast(-99::short as DECIMAL(2))"
+                                    "-32768\n",
+                            "select cast(-32768::short as DECIMAL(19))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as short) as DECIMAL(2))"
+                            "select cast(cast(null as short) as DECIMAL(19))"
                     );
                 }
         );
@@ -240,6 +244,31 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "cast\n" +
                                     "\n",
                             "select cast(cast(null as short) as DECIMAL(4))"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testCastToDecimal256() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "cast\n" +
+                                    "32767\n",
+                            "select cast(32767::short as DECIMAL(40))"
+                    );
+
+                    assertSql(
+                            "cast\n" +
+                                    "-32768\n",
+                            "select cast(-32768::short as DECIMAL(40))"
+                    );
+
+                    assertSql(
+                            "cast\n" +
+                                    "\n",
+                            "select cast(cast(null as short) as DECIMAL(40))"
                     );
                 }
         );
@@ -296,84 +325,72 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastToDecimal128() throws Exception {
+    public void testCastToDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> {
                     assertSql(
                             "cast\n" +
-                                    "32767\n",
-                            "select cast(32767::short as DECIMAL(19))"
+                                    "99\n",
+                            "select cast(99::short as DECIMAL(2))"
                     );
 
                     assertSql(
                             "cast\n" +
-                                    "-32768\n",
-                            "select cast(-32768::short as DECIMAL(19))"
+                                    "-99\n",
+                            "select cast(-99::short as DECIMAL(2))"
                     );
 
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as short) as DECIMAL(19))"
+                            "select cast(cast(null as short) as DECIMAL(2))"
                     );
                 }
         );
     }
 
     @Test
-    public void testCastToDecimal256() throws Exception {
+    public void testCastWithScale() throws Exception {
         assertMemoryLeak(
                 () -> {
                     assertSql(
                             "cast\n" +
-                                    "32767\n",
-                            "select cast(32767::short as DECIMAL(40))"
+                                    "123.00\n",
+                            "select cast(123::short as DECIMAL(5,2))"
                     );
 
                     assertSql(
                             "cast\n" +
-                                    "-32768\n",
-                            "select cast(-32768::short as DECIMAL(40))"
+                                    "-99.00\n",
+                            "select cast(-99::short as DECIMAL(4,2))"
                     );
 
+                    // 0 is null for short
                     assertSql(
                             "cast\n" +
                                     "\n",
-                            "select cast(cast(null as short) as DECIMAL(40))"
+                            "select cast(0::short as DECIMAL(5,3))"
                     );
                 }
         );
     }
 
     @Test
-    public void testRuntimeCastUnscaledDecimal8() throws Exception {
+    public void testImplicitCast() throws Exception {
         assertMemoryLeak(
                 () -> {
+                    // Constant folded
                     assertSql(
-                            "value\tdecimal_value\n" +
-                                    "99\t99\n" +
-                                    "-99\t-99\n" +
-                                    "1\t1\n" +
-                                    "0\t\n",
-                            "WITH data AS (SELECT 99::short value UNION ALL SELECT -99::short UNION ALL SELECT 1::short UNION ALL SELECT 0::short) " +
-                                    "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data"
+                            "column\n" +
+                                    "2468\n",
+                            "select 1234::short + 1234m"
                     );
-                }
-        );
-    }
 
-    @Test
-    public void testRuntimeCastScaledDecimal16() throws Exception {
-        assertMemoryLeak(
-                () -> {
+                    // Runtime discovered
                     assertSql(
-                            "value\tdecimal_value\n" +
-                                    "99\t99.00\n" +
-                                    "-99\t-99.00\n" +
-                                    "12\t12.00\n" +
-                                    "0\t\n",
-                            "WITH data AS (SELECT 99::short value UNION ALL SELECT -99::short UNION ALL SELECT 12::short UNION ALL SELECT 0::short) " +
-                                    "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data"
+                            "column\n" +
+                                    "2468\n",
+                            "with data as (select 1234::short x) select x + 1234m from data"
                     );
                 }
         );
@@ -401,31 +418,35 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastExplains() throws Exception {
+    public void testRuntimeCastScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    // Runtime value needs scaling
-                    assertSql("QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [value::DECIMAL(5,2)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [123]\n" +
-                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::short AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "99\t99.00\n" +
+                                    "-99\t-99.00\n" +
+                                    "12\t12.00\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 99::short value UNION ALL SELECT -99::short UNION ALL SELECT 12::short UNION ALL SELECT 0::short) " +
+                                    "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
 
-                    // Runtime value doesn't need scaling
-                    assertSql("QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [value::DECIMAL(5,0)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [123]\n" +
-                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::short AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
-
-                    // Expression should be constant folded
-                    assertSql("QUERY PLAN\n" +
-                                    "VirtualRecord\n" +
-                                    "  functions: [1.00]\n" +
-                                    "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast(1::short as DECIMAL(5, 2))");
+    @Test
+    public void testRuntimeCastUnscaledDecimal8() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "99\t99\n" +
+                                    "-99\t-99\n" +
+                                    "1\t1\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 99::short value UNION ALL SELECT -99::short UNION ALL SELECT 1::short UNION ALL SELECT 0::short) " +
+                                    "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data"
+                    );
                 }
         );
     }

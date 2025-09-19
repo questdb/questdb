@@ -64,6 +64,22 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         return new CastDecimalScaledFunc(position, targetType, (byte) Math.min(maxUnscaledValue, Byte.MAX_VALUE), arg);
     }
 
+    public static Function newInstance(
+            int position,
+            Function arg,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        int targetPrecision;
+        if (arg.isConstant()) {
+            byte value = arg.getByte(null);
+            targetPrecision = Math.max(Numbers.getPrecision(value), 1);
+        } else {
+            targetPrecision = Numbers.getPrecision(Byte.MAX_VALUE);
+        }
+        int targetType = ColumnType.getDecimalType(targetPrecision, 0);
+        return newInstance(position, arg, targetType, sqlExecutionContext);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Bξ)";
