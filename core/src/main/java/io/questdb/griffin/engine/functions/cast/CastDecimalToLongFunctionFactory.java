@@ -41,7 +41,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
+public class CastDecimalToLongFunctionFactory implements FunctionFactory {
 
     public static Function newInstance(
             int position,

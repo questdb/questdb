@@ -1291,8 +1291,10 @@ public class Decimal256 implements Sinkable {
         int lo = 0;
         int hi = cs.length();
 
+        boolean strict = false;
         // We don't want to parse the m suffix, we can safely skip it
-        if (hi > 0 && (cs.charAt(hi - 1) == 'm' || cs.charAt(hi - 1) == 'M')) {
+        if (hi > 0 && ((cs.charAt(hi - 1) | 32) == 'm')) {
+            strict = true;
             hi--;
         }
 
@@ -1350,7 +1352,12 @@ public class Decimal256 implements Sinkable {
                     .put("' contains no digits");
             }
         }
-        final int digitHi = lo;
+        int digitHi = lo;
+        if (!strict && dot != -1) {
+            while (digitHi > dot && cs.charAt(digitHi - 1) == '0') {
+                digitHi--;
+            }
+        }
 
         // Compute the scale of the given literal (e.g. '1.234' -> 3) and the total number of digits
         final int literalScale = dot == -1 ? 0 : (digitHi - dot - 1);
