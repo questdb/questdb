@@ -572,7 +572,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     // handles first_value() ignore nulls over (partition by x)
     // order by is absent so default frame mode includes all rows in the partition
     static class FirstNotNullValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         /**
          * Construct a function that computes the first non-null timestamp value for each partition.
          * <p>
@@ -606,6 +605,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return WindowFunction.TWO_PASS;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
 
         /**
          * Indicates that this window function ignores NULL input values.
@@ -992,7 +995,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
     // Handles first_value() ignore nulls over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
     public static class FirstNotNullValueOverRangeFrameFunction extends FirstValueOverRangeFrameFunction implements Reopenable, WindowTimestampFunction {
-
         /**
          * Constructs a FirstNotNullValueOverRangeFrameFunction for a RANGE-based, non-partitioned
          * window that returns the first non-null timestamp within the moving time window.
@@ -1109,6 +1111,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             }
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
 
         /**
          * Indicates that this window function ignores NULL input values.
@@ -1204,6 +1210,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             }
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
 
         /**
          * Indicates that this window function ignores NULL input values.
@@ -1429,7 +1439,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
     static class FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowTimestampFunction {
-
         private final boolean ignoreNulls;
         private long value;
 
@@ -1491,6 +1500,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return value;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Returns whether this function is configured to ignore NULL input values.
          *
@@ -1522,7 +1536,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     // handles first_value() over (partition by x)
     // order by is absent so default frame mode includes all rows in the partition
     static class FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         private long firstValue;
 
         /**
@@ -1596,6 +1609,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return firstValue;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Advance internal state for the current input record and write the current first-value
          * timestamp into the window SPI output column.
@@ -1617,7 +1635,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     // Handles first_value() over (partition by x order by ts range between y preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -1860,6 +1877,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
@@ -1936,7 +1958,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     // handles first_value() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
     public static class FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         protected final int bufferSize;
@@ -2100,6 +2121,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public long getTimestamp(Record rec) {
             return firstValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -2402,6 +2428,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
@@ -2615,6 +2646,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return firstValue;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Advance internal state for the current input record and write the current first-value
          * timestamp into the window SPI output column.
@@ -2723,7 +2759,6 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     // - first_value(a) over (partition by x rows between unbounded preceding and [current row | x preceding ])
     // - first_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     static class FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         protected long value;
 
         /**
@@ -2799,6 +2834,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public long getTimestamp(Record rec) {
             return value;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -2906,6 +2946,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public long getTimestamp(Record rec) {
             return this.value;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**

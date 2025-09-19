@@ -36,7 +36,8 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MinTimestampVectorAggregateFunction extends TimestampFunction implements VectorAggregateFunction {
 
@@ -57,11 +58,15 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MinTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount, int timestampType) {
+        super(timestampType);
         this.columnIndex = columnIndex;
-        if (keyKind == GKK_HOUR_INT) {
-            this.distinctFunc = Rosti::keyedHourDistinct;
-            this.keyValueFunc = Rosti::keyedHourMinLong;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedMicroHourDistinct;
+            this.keyValueFunc = Rosti::keyedMicroHourMinLong;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedNanoHourDistinct;
+            this.keyValueFunc = Rosti::keyedNanoHourMinLong;
         } else {
             this.distinctFunc = Rosti::keyedIntDistinct;
             this.keyValueFunc = Rosti::keyedIntMinLong;

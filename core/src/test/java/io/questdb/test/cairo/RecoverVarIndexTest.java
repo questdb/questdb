@@ -25,7 +25,9 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RebuildColumnBase;
 import io.questdb.cairo.RecoverVarIndex;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -34,7 +36,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
@@ -72,7 +74,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 createTableSql,
                 (tablePath) -> {
                 },
-                RecoverVarIndex::rebuildAll
+                RebuildColumnBase::rebuildAll
         );
     }
 
@@ -115,10 +117,12 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     "alter table xxx add column str1 string;" +
                     "alter table xxx add column str2 string";
 
-            checkRecoverVarIndex(createAlterInsertSql,
+            checkRecoverVarIndex(
+                    createAlterInsertSql,
                     tablePath -> {
                     },
-                    RecoverVarIndex::rebuildAll);
+                    RebuildColumnBase::rebuildAll
+            );
 
             engine.releaseAllWriters();
             execute("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
@@ -163,7 +167,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
                         removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
                     },
-                    RecoverVarIndex::rebuildAll
+                    RebuildColumnBase::rebuildAll
             );
         });
     }
@@ -186,7 +190,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
                         removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
                     },
-                    RecoverVarIndex::rebuildAll
+                    RebuildColumnBase::rebuildAll
             );
         });
     }
@@ -249,7 +253,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     "from long_sequence(5000)";
 
             checkRecoverVarIndex(createAlterInsertSql,
-                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
+                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Micros.DAY_MICROS * 11, 1L),
                     rebuildIndex -> rebuildIndex.reindexColumn("str2"));
         });
     }
@@ -379,7 +383,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
-            TableUtils.setPathForNativePartition(path, partitionBy, partitionTs, partitionNameTxn);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));

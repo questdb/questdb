@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
@@ -41,10 +42,9 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -55,7 +55,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -132,7 +132,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testBadInterval() throws Exception {
         assertException(
-                "select b, sum(a), k from x sample by 1min",
+                "select b, sum(a), k from x sample by 1hour",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -143,7 +143,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 37,
-                "Invalid unit: 1min"
+                "Invalid unit: 1hour"
         );
     }
 
@@ -3216,7 +3216,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalAllVirtual() throws Exception {
-        setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-01-01T11:22:33.000000Z"));
+        setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T11:22:33.000000Z"));
         assertMemoryLeak(() -> assertSql(
                 "first\tcount\tts\n" +
                         "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T00:00:00.000000Z\n" +
@@ -4248,7 +4248,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = "Radix sort light\n" +
                 "  keys: [tstmp]\n" +
-                "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "    Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
                 "        Async JIT Group By workers: 1\n" +
                 "          keys: [tstmp,sym]\n" +
                 "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -4277,7 +4277,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym,ts1]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -4452,7 +4452,7 @@ public class SampleByTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4469,7 +4469,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4489,7 +4489,7 @@ public class SampleByTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4557,7 +4557,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
-                    "Filter filter: 1669857000000000<ts\n" +
+                    "Filter filter: 2022-12-01T01:10:00.000000Z<ts\n" +
                             "    Sample By\n" +
                             "      fill: prev\n" +
                             "      values: [first(v)]\n" +
@@ -4974,7 +4974,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new MicroTimestampSampler(100L),
+                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
                     columns,
                     meta,
@@ -5015,7 +5015,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new MicroTimestampSampler(100L),
+                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
                     columns,
                     meta,
@@ -6252,7 +6252,7 @@ public class SampleByTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: (timestamp_floor('day',now()),null)\n" +
+                    "  range: (timestamp_floor('day',now()),)\n" +
                     "  values: [count(*)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
@@ -14524,8 +14524,8 @@ public class SampleByTest extends AbstractCairoTest {
                                 row.putDouble(0, 42);
                                 row.putDouble(1, 42);
                                 row.putSym(2, (char) ('a' + i % 3));
-                                ts += Timestamps.SECOND_MICROS;
-                                row.putLong(3, ts / Timestamps.MILLI_MICROS);
+                                ts += Micros.SECOND_MICROS;
+                                row.putLong(3, ts / Micros.MILLI_MICROS);
                                 row.append();
                                 if ((i % batchSize) == 0) {
                                     writer.commit();
