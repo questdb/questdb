@@ -39,6 +39,7 @@ import java.math.RoundingMode;
  * Tests for the consolidated Decimal128 class
  */
 public class Decimal128Test {
+
     @Test(expected = NumericException.class)
     public void testAddOverflow() {
         Decimal128 a = new Decimal128(Long.MAX_VALUE, 0, 0);
@@ -123,6 +124,14 @@ public class Decimal128Test {
             } catch (NumericException ignore) {
             }
         }
+    }
+
+    @Test
+    public void testCompareToMinValue() {
+        Decimal128 a = new Decimal128();
+        a.copyFrom(Decimal128.MIN_VALUE);
+        a.add(Decimal128.fromLong(1, 0));
+        Assert.assertEquals(1, a.compareTo(Decimal128.MIN_VALUE));
     }
 
     @Test
@@ -726,6 +735,11 @@ public class Decimal128Test {
         } catch (NumericException e) {
             Assert.assertTrue(e.getMessage().contains("Overflow"));
         }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOverflowCtor() {
+        new Decimal128(Long.MAX_VALUE, -1L, 0);
     }
 
     @Test

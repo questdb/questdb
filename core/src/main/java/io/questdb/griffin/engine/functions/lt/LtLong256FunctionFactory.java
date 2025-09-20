@@ -71,13 +71,13 @@ public class LtLong256FunctionFactory implements FunctionFactory {
                 return false;
             }
             if (lv.getLong3() != rv.getLong3()) {
-                return negated == (Long.compareUnsigned(lv.getLong3(), rv.getLong3()) >= 0);
+                return negated == (Long.compareUnsigned(lv.getLong3(), rv.getLong3()) > 0);
             }
             if (lv.getLong2() != rv.getLong2()) {
-                return negated == (Long.compareUnsigned(lv.getLong2(), rv.getLong2()) >= 0);
+                return negated == (Long.compareUnsigned(lv.getLong2(), rv.getLong2()) > 0);
             }
             if (lv.getLong1() != rv.getLong1()) {
-                return negated == (Long.compareUnsigned(lv.getLong1(), rv.getLong1()) >= 0);
+                return negated == (Long.compareUnsigned(lv.getLong1(), rv.getLong1()) > 0);
             }
             return negated == (Long.compareUnsigned(lv.getLong0(), rv.getLong0()) >= 0);
         }

@@ -175,7 +175,9 @@ public class SingleRecordSinkTest extends AbstractTest {
         PUT_TIMESTAMP,
         PUT_VARCHAR,
         PUT_LONG256_DIRECT,
-        PUT_LONG256_WRAPPED;
+        PUT_LONG256_WRAPPED,
+        PUT_DECIMAL128,
+        PUT_DECIMAL256;
 
         private void put(SingleRecordSink sink, Rnd rnd, boolean badValue) {
             switch (this) {
@@ -409,6 +411,24 @@ public class SingleRecordSinkTest extends AbstractTest {
                     if (badValue) {
                         rnd.reset(s0, s1);
                     }
+                    break;
+                case PUT_DECIMAL128:
+                    long rndDecimal128Hi = rnd.nextLong();
+                    long rndDecimal128Lo = rnd.nextLong();
+                    if (badValue) {
+                        rndDecimal128Hi++;
+                    }
+                    sink.putDecimal128(rndDecimal128Hi, rndDecimal128Lo);
+                    break;
+                case PUT_DECIMAL256:
+                    long rndDecimal256HH = rnd.nextLong();
+                    long rndDecimal256HL = rnd.nextLong();
+                    long rndDecimal256LH = rnd.nextLong();
+                    long rndDecimal256LL = rnd.nextLong();
+                    if (badValue) {
+                        rndDecimal256HH++;
+                    }
+                    sink.putDecimal256(rndDecimal256HH, rndDecimal256HL, rndDecimal256LH, rndDecimal256LL);
                     break;
                 default:
                     throw new UnsupportedOperationException();

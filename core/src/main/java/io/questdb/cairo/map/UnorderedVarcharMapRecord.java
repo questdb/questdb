@@ -178,6 +178,56 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     }
 
     @Override
+    public long getDecimal128Hi(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 8L);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return Unsafe.getUnsafe().getShort(addressOfColumn(col));
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 8L);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 16L);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 24L);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(col));
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return Unsafe.getUnsafe().getByte(addressOfColumn(col));
+    }
+
+    @Override
     public double getDouble(int columnIndex) {
         return Unsafe.getUnsafe().getDouble(addressOfColumn(columnIndex));
     }

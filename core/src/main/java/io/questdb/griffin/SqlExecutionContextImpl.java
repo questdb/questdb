@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
+import io.questdb.std.Decimal256;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
@@ -56,6 +57,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final Decimal256 decimal256 = new Decimal256();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -201,6 +203,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean getCloneSymbolTables() {
         return cloneSymbolTables;
+    }
+
+    public Decimal256 getDecimal256() {
+        return decimal256;
     }
 
     @Override
@@ -452,8 +458,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
     }
 
-    public void with(SqlExecutionCircuitBreaker circuitBreaker) {
+    public SqlExecutionContext with(SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
+        return this;
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext) {

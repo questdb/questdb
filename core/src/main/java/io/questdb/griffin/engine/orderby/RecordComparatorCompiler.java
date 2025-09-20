@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.log.Log;
@@ -34,6 +35,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256Util;
@@ -50,11 +53,29 @@ public class RecordComparatorCompiler {
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList fieldIndices = new IntList();
     private final IntList fieldNameIndices = new IntList();
-    private final IntList fieldRecordAccessorIndicesA = new IntList();
-    private final IntList fieldRecordAccessorIndicesB = new IntList();
+    // We store the pooled method indices for record accessor in 2 separate lists to separate
+    // records that are stored (left) and those that are directly used in comparison (right).
+    // This is mandatory for accessors that relies on objects to give a representation of their
+    // values (for example, `getStrA` and `getStrB`).
+    // As there can be multiple indices for a single methods (if we need to pull multiple
+    // values for a single column), we store the number of accessors in a separate list and the indices in the
+    // order they will be called.
+    //
+    // For example, in Long128 case, we will have:
+    // accessorCount: [2]
+    // indicesLeft: [x, y]
+    // indicesRight: [x, y]
+    // While for something like String, we will have:
+    // accessorCount: [1]
+    // indicesLeft: [x]
+    // indicesRight: [y]
+    private final IntList fieldRecordAccessorCount = new IntList(); // Stores the number of accessors for a given column.
+    private final IntList fieldRecordAccessorIndicesLeft = new IntList();
+    private final IntList fieldRecordAccessorIndicesRight = new IntList();
     private final IntList fieldTypeIndices = new IntList();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
+    private int maxColumnSize = 0; // Maximum used stack-size by a column.
 
     public RecordComparatorCompiler(BytecodeAssembler asm) {
         this.asm = asm;
@@ -70,7 +91,7 @@ public class RecordComparatorCompiler {
      *                         positive - ascending.
      * @return generated class.
      */
-    public Class<RecordComparator> compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
+    public Class<RecordComparator> compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) throws SqlException {
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
 
         asm.init(RecordComparator.class);
@@ -99,8 +120,8 @@ public class RecordComparatorCompiler {
         }
         asm.methodCount(3);
         asm.defineDefaultConstructor();
-        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, keyColumnIndices, columnTypes);
-        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, keyColumnIndices, columnTypes);
+        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, keyColumnIndices);
+        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, keyColumnIndices);
 
         // class attribute count
         asm.putShort(0);
@@ -118,7 +139,7 @@ public class RecordComparatorCompiler {
      *                         positive - ascending.
      * @return RecordComparator instance.
      */
-    public RecordComparator newInstance(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
+    public RecordComparator newInstance(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) throws SqlException {
         final Class<RecordComparator> clazz = compile(columnTypes, keyColumnIndices);
         return newInstance(clazz);
     }
@@ -135,33 +156,36 @@ public class RecordComparatorCompiler {
         }
     }
 
-    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes) {
+    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns) {
         branches.clear();
         int sz = keyColumns.size();
-        int maxStack = sz + (fieldIndices.size() > sz ? 4 : 0) + 3;
+        int maxStack = maxColumnSize * 2 + 3;
         asm.startMethod(nameIndex, descIndex, maxStack, 3);
 
         int fieldIndex = 0;
+        int accessorIndex = 0;
         for (int i = 0; i < sz; i++) {
             if (i > 0) {
                 asm.iload(2);
                 // last one does not jump
                 branches.add(asm.ifne());
             }
-            asm.aload(0);
-            asm.getfield(fieldIndices.getQuick(fieldIndex++));
-            asm.aload(1);
-            int index = keyColumns.getQuick(i);
-            int columnIndex = (index > 0 ? index : -index) - 1;
-            asm.iconst(columnIndex);
-            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
 
-            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128 || columnTypes.getColumnType(columnIndex) == ColumnType.UUID) {
+            int accessorCount = fieldRecordAccessorCount.getQuick(i);
+            // Loads left side of comparator
+            for (int j = 0; j < accessorCount; j++) {
                 asm.aload(0);
                 asm.getfield(fieldIndices.getQuick(fieldIndex++));
+            }
+
+            int index = keyColumns.getQuick(i);
+            int columnIndex = (index > 0 ? index : -index) - 1;
+
+            // Loads right side of comparator
+            for (int j = 0; j < accessorCount; j++) {
                 asm.aload(1);
                 asm.iconst(columnIndex);
-                asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
+                asm.invokeInterface(fieldRecordAccessorIndicesRight.getQuick(accessorIndex++), 1);
             }
 
             asm.invokeStatic(comparatorAccessorIndices.getQuick(i));
@@ -224,25 +248,27 @@ public class RecordComparatorCompiler {
      * all this complicated dancing around is to have class names, method names, field names
      * method signatures in constant pool in bytecode.
      */
-    private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes) {
+    private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns) {
         asm.startMethod(nameIndex, descIndex, 3, 2);
         int fieldIndex = 0;
+        int accessorIndex = 0;
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
-            asm.aload(0);
-            asm.aload(1);
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
             int columnIndex = (index > 0 ? index : -index) - 1;
-            asm.iconst(columnIndex);
-            asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
-            asm.putfield(fieldIndices.getQuick(fieldIndex++));
-
-            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128 || columnTypes.getColumnType(columnIndex) == ColumnType.UUID) {
+            int accessorCount = fieldRecordAccessorCount.getQuick(i);
+            for (int j = 0; j < accessorCount; j++) {
+                // stack: []
                 asm.aload(0);
+                // stack: [RecordComparator]
                 asm.aload(1);
+                // stack: [RecordComparator, Record]
                 asm.iconst(columnIndex);
-                asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
+                // stack: [RecordComparator, Record, columnIndex]
+                asm.invokeInterface(fieldRecordAccessorIndicesLeft.getQuick(accessorIndex++), 1);
+                // stack: [RecordComparator, field]
                 asm.putfield(fieldIndices.getQuick(fieldIndex++));
+                // stack: []
             }
         }
         asm.return_();
@@ -260,21 +286,21 @@ public class RecordComparatorCompiler {
             int recordClassIndex,
             ColumnTypes columnTypes,
             IntList keyColumnIndices
-    ) {
+    ) throws SqlException {
         typeMap.clear();
         fieldIndices.clear();
         fieldNameIndices.clear();
         fieldTypeIndices.clear();
-        fieldRecordAccessorIndicesA.clear();
-        fieldRecordAccessorIndicesB.clear();
+        fieldRecordAccessorIndicesLeft.clear();
+        fieldRecordAccessorIndicesRight.clear();
+        fieldRecordAccessorCount.clear();
         comparatorAccessorIndices.clear();
         methodMap.clear();
+        maxColumnSize = 0;
 
         // define names and types
         for (int i = 0, n = keyColumnIndices.size(); i < n; i++) {
             String fieldType;
-            String getterNameA;
-            String getterNameB = null;
             @SuppressWarnings("rawtypes") Class comparatorClass;
             String comparatorDesc = null;
             int index = keyColumnIndices.getQuick(i);
@@ -283,127 +309,171 @@ public class RecordComparatorCompiler {
                 index = -index;
             }
 
-
             // decrement to get real column index
             index--;
 
+            int accessorCount = fieldRecordAccessorIndicesLeft.size();
+
             int columnType = columnTypes.getColumnType(index);
+            int getterSigIndex;
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                     fieldType = "Z";
-                    getterNameA = "getBool";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)Z"), "getBool");
                     comparatorClass = Boolean.class;
                     break;
                 case ColumnType.BYTE:
                     fieldType = "B";
-                    getterNameA = "getByte";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)B"), "getByte");
                     comparatorClass = Byte.class;
                     break;
                 case ColumnType.DOUBLE:
                     fieldType = "D";
-                    getterNameA = "getDouble";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)D"), "getDouble");
                     comparatorClass = Numbers.class;
                     break;
                 case ColumnType.FLOAT:
                     fieldType = "F";
-                    getterNameA = "getFloat";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)F"), "getFloat");
                     comparatorClass = Numbers.class;
                     break;
                 case ColumnType.GEOBYTE:
                     fieldType = "B";
-                    getterNameA = "getGeoByte";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)B"), "getGeoByte");
                     comparatorClass = Byte.class;
                     break;
                 case ColumnType.GEOSHORT:
                     fieldType = "S";
-                    getterNameA = "getGeoShort";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)S"), "getGeoShort");
                     comparatorClass = Short.class;
                     break;
                 case ColumnType.GEOINT:
                     fieldType = "I";
-                    getterNameA = "getGeoInt";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)I"), "getGeoInt");
                     comparatorClass = Integer.class;
                     break;
                 case ColumnType.GEOLONG:
                     fieldType = "J";
-                    getterNameA = "getGeoLong";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getGeoLong");
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.INT:
                     fieldType = "I";
-                    getterNameA = "getInt";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)I"), "getInt");
                     comparatorClass = Integer.class;
                     break;
                 case ColumnType.IPv4:
                     fieldType = "J";
-                    getterNameA = "getLongIPv4";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getLongIPv4");
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.LONG:
                     fieldType = "J";
-                    getterNameA = "getLong";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getLong");
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.DATE:
                     fieldType = "J";
-                    getterNameA = "getDate";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getDate");
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.TIMESTAMP:
                     fieldType = "J";
-                    getterNameA = "getTimestamp";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getTimestamp");
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.SHORT:
                     fieldType = "S";
-                    getterNameA = "getShort";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)S"), "getShort");
                     comparatorClass = Short.class;
                     break;
                 case ColumnType.CHAR:
                     fieldType = "C";
-                    getterNameA = "getChar";
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)C"), "getChar");
                     comparatorClass = Character.class;
                     break;
                 case ColumnType.STRING:
-                    getterNameA = "getStrA";
-                    getterNameB = "getStrB";
+                    getterSigIndex = asm.poolUtf8("(I)Ljava/lang/CharSequence;");
+                    poolFieldRecordObjectAccessor(recordClassIndex, getterSigIndex, "getStr");
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     break;
                 case ColumnType.LONG256:
-                    getterNameA = "getLong256A";
-                    getterNameB = "getLong256B";
+                    getterSigIndex = asm.poolUtf8("(I)Lio/questdb/std/Long256;");
+                    poolFieldRecordObjectAccessor(recordClassIndex, getterSigIndex, "getLong256");
                     fieldType = "Lio/questdb/std/Long256;";
                     comparatorClass = Long256Util.class;
                     break;
                 case ColumnType.UUID:
-                    getterNameA = "getLong128Hi";
-                    getterNameB = "getLong128Lo";
+                    getterSigIndex = asm.poolUtf8("(I)J");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Hi");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Lo");
                     fieldType = "J";
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Uuid.class;
                     break;
                 case ColumnType.LONG128:
-                    getterNameA = "getLong128Hi";
-                    getterNameB = "getLong128Lo";
+                    getterSigIndex = asm.poolUtf8("(I)J");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Hi");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Lo");
                     fieldType = "J";
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128.class;
                     break;
                 case ColumnType.VARCHAR:
-                    getterNameA = "getVarcharA";
-                    getterNameB = "getVarcharB";
+                    getterSigIndex = asm.poolUtf8("(I)Lio/questdb/std/str/Utf8Sequence;");
+                    poolFieldRecordObjectAccessor(recordClassIndex, getterSigIndex, "getVarchar");
                     fieldType = "Lio/questdb/std/str/Utf8Sequence;";
                     comparatorClass = Utf8s.class;
                     break;
-                default:
+                case ColumnType.DECIMAL8:
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)B"), "getDecimal8");
+                    fieldType = "B";
+                    comparatorClass = Byte.class;
+                    break;
+                case ColumnType.DECIMAL16:
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)S"), "getDecimal16");
+                    fieldType = "S";
+                    comparatorClass = Short.class;
+                    break;
+                case ColumnType.DECIMAL32:
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)I"), "getDecimal32");
+                    fieldType = "I";
+                    comparatorClass = Integer.class;
+                    break;
+                case ColumnType.DECIMAL64:
+                    poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getDecimal64");
+                    fieldType = "J";
+                    comparatorClass = Long.class;
+                    break;
+                case ColumnType.DECIMAL128:
+                    getterSigIndex = asm.poolUtf8("(I)J");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getDecimal128Hi");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getDecimal128Lo");
+                    fieldType = "J";
+                    comparatorClass = Decimal128.class;
+                    comparatorDesc = "(JJJJ)I";
+                    break;
+                case ColumnType.DECIMAL256:
+                    getterSigIndex = asm.poolUtf8("(I)J");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getDecimal256HH");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getDecimal256HL");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getDecimal256LH");
+                    poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getDecimal256LL");
+                    fieldType = "J";
+                    comparatorClass = Decimal256.class;
+                    comparatorDesc = "(JJJJJJJJ)I";
+                    break;
+                case ColumnType.SYMBOL:
                     // SYMBOL
-                    getterNameA = "getSymA";
-                    getterNameB = "getSymB";
+                    getterSigIndex = asm.poolUtf8("(I)Ljava/lang/CharSequence;");
+                    poolFieldRecordObjectAccessor(recordClassIndex, getterSigIndex, "getSym");
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
+                default:
+                    throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
             }
 
             int keyIndex;
@@ -417,34 +487,21 @@ public class RecordComparatorCompiler {
                 typeIndex = typeMap.valueAt(keyIndex);
             }
 
-            fieldTypeIndices.add(typeIndex);
-            fieldNameIndices.add(nameIndex = asm.poolUtf8().putAscii('f').put(i).$());
-            fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
+            accessorCount = fieldRecordAccessorIndicesLeft.size() - accessorCount;
+            fieldRecordAccessorCount.add(accessorCount);
 
-            int methodIndex;
-            String getterType = fieldType;
-            if (columnType == ColumnType.LONG128 || columnType == ColumnType.UUID) {
-                // Special case, Long128 is 2 longs of type J on comparison
+            // We assume that if the type needs multiple accessors to retrieve its values, all these accessor will return
+            // the same type. For example, Long128 returns longs for getLong128Hi and getLong128Lo.
+            for (int j = 0; j < accessorCount; j++) {
                 fieldTypeIndices.add(typeIndex);
-                int nameIndex2 = asm.poolUtf8().putAscii('f').put(i).put(i).$();
-                fieldNameIndices.add(nameIndex2);
-                int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
-                fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
+                fieldNameIndices.add(nameIndex = asm.poolUtf8().putAscii('f').put(i).putAscii('_').put(j).$());
+                fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
             }
 
-            int getterNameIndex = asm.poolUtf8(getterNameA);
-            int getterSigIndex = asm.poolUtf8().putAscii("(I)").put(getterType).$();
-            int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
-            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
-            fieldRecordAccessorIndicesA.add(methodIndex);
+            // Longs counts for twice the size of other fields
+            final int columnSize = accessorCount * (Chars.equals(fieldType, 'J') ? 2 : 1);
+            maxColumnSize = Math.max(maxColumnSize, columnSize);
 
-            if (getterNameB != null) {
-                getterNameIndex = asm.poolUtf8(getterNameB);
-                getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
-                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
-            }
-
-            fieldRecordAccessorIndicesB.add(methodIndex);
             comparatorAccessorIndices.add(
                     asm.poolMethod(asm.poolClass(comparatorClass),
                             asm.poolNameAndType(
@@ -454,5 +511,28 @@ public class RecordComparatorCompiler {
                                             : asm.poolUtf8(comparatorDesc))
                     ));
         }
+    }
+
+    private void poolFieldRecordAccessor(int recordClassIndex, int getterSigIndex, CharSequence getterName) {
+        int getterNameIndex = asm.poolUtf8(getterName);
+        int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+        int methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex);
+        methodMap.putIfAbsent(getterName, methodIndex);
+        fieldRecordAccessorIndicesLeft.add(methodIndex);
+        fieldRecordAccessorIndicesRight.add(methodIndex);
+    }
+
+    private void poolFieldRecordObjectAccessor(int recordClassIndex, int getterSigIndex, CharSequence getterName) {
+        int getterNameIndex = asm.poolUtf8().put(getterName).putAscii('A').$();
+        int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+        int methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex);
+        methodMap.putIfAbsent(getterName, methodIndex);
+        fieldRecordAccessorIndicesLeft.add(methodIndex);
+
+        getterNameIndex = asm.poolUtf8().put(getterName).putAscii('B').$();
+        getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+        methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex);
+        methodMap.putIfAbsent(getterName, methodIndex);
+        fieldRecordAccessorIndicesRight.add(methodIndex);
     }
 }

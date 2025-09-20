@@ -1014,6 +1014,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE UUID[]", 38, "unsupported array element type [type=UUID]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]", 38, "unsupported array element type [type=LONG128]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]", 38, "unsupported array element type [type=GEOHASH]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE DECIMAL[]", 38, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -1160,6 +1161,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("CREATE TABLE tango (arr UUID[])", 24, "unsupported array element type [type=UUID]");
             assertException("CREATE TABLE tango (arr LONG128[])", 24, "unsupported array element type [type=LONG128]");
             assertException("CREATE TABLE tango (arr GEOHASH[])", 24, "unsupported array element type [type=GEOHASH]");
+            assertException("CREATE TABLE tango (arr DECIMAL[])", 24, "unsupported array element type [type=DECIMAL]");
         });
     }
 

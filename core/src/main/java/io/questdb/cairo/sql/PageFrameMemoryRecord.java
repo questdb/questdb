@@ -222,6 +222,96 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public long getDecimal128Hi(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal128Hi(0);
+    }
+
+    @Override
+    public long getDecimal128Lo(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal128Lo(0);
+    }
+
+    @Override
+    public short getDecimal16(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal16(0);
+    }
+
+    @Override
+    public long getDecimal256HH(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal256HH(0);
+    }
+
+    @Override
+    public long getDecimal256HL(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5) + Long.BYTES);
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal256HL(0);
+    }
+
+    @Override
+    public long getDecimal256LH(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5) + (Long.BYTES << 1));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal256LH(0);
+    }
+
+    @Override
+    public long getDecimal256LL(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5) + 3 * Long.BYTES);
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal256LL(0);
+    }
+
+    @Override
+    public int getDecimal32(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal32(0);
+    }
+
+    @Override
+    public long getDecimal64(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal64(0);
+    }
+
+    @Override
+    public byte getDecimal8(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getByte(address + rowIndex);
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal8(0);
+    }
+
+    @Override
     public double getDouble(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {

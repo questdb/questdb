@@ -159,7 +159,7 @@ public class Decimal256AddBenchmark {
             case "MIXED_256_128":
                 // Addition of 256-bit and 128-bit values: large 256-bit + normal 128-bit
                 decimal256Addend1 = new Decimal256();
-                decimal256Addend1.setFromLong(123456789098765432L, 6);
+                decimal256Addend1.ofLong(123456789098765432L, 6);
                 decimal256Addend2 = Decimal256.fromDouble(789.123, 3);
                 bigDecimalAddend1 = new BigDecimal("123456789098.765432");
                 bigDecimalAddend2 = new BigDecimal("789.123");
