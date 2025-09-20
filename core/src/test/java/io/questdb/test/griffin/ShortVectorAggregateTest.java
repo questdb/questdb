@@ -37,7 +37,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
 
             assertSql(
                     "x\ty\n" +
-                            "25.1492699999998\t25.1492699999998\n",
+                            "25.1492699999998\t25.14927\n",
                     "select avg(x) x, avg(y) y from abc"
             );
         });
