@@ -729,6 +729,27 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSqlJitMaxInListSizeThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                int oldCapacity = serverMain.getConfiguration().getCairoConfiguration().getSqlJitMaxInListSizeThreshold();
+                Assert.assertEquals(10, oldCapacity);
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.jit.max.in.list.size.threshold=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlJitMaxInListSizeThreshold();
+                Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
     public void testUnknownPropertyAdditionIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {

@@ -29,7 +29,7 @@ import com.influxdb.client.WriteApi;
 import com.influxdb.client.domain.WritePrecision;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.cairo.NanosTimestampDriver;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -44,19 +44,19 @@ public class InfluxDBv2ClientCombatTest extends AbstractTest {
 
             try (final InfluxDBClient client = InfluxDBUtils.getV2Connection(serverMain);
                  WriteApi writeApi = client.makeWriteApi()) {
-                long nanoTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T06:00:00.000001") * 1000L;
+                long nanoTime = NanosTimestampDriver.floor("2022-02-24T06:00:00.000001");
                 String record = "t1,location=north value=60.0 " + nanoTime;
                 writeApi.writeRecord("my-bucket", "my-org", WritePrecision.NS, record);
 
-                long microTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
+                long microTime = NanosTimestampDriver.floor("2022-02-24T04:00:00.000001Z") / 1000L;
                 String record1 = "t1,location=north value=60.0 " + microTime;
                 writeApi.writeRecord("my-bucket", "my-org", WritePrecision.US, record1);
 
-                long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.001001Z") / 1000L;
+                long milliTime = NanosTimestampDriver.floor("2022-02-24T05:00:00.001001Z") / 1000_000L;
                 String record2 = "t1,location=north value=60.0 " + milliTime;
                 writeApi.writeRecord("my-bucket", "my-org", WritePrecision.MS, record2);
 
-                long secondTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T07:00:01") / 1000L / 1000L;
+                long secondTime = NanosTimestampDriver.floor("2022-02-24T07:00:01") / 1000_000_000L;
                 String record3 = "t1,location=north value=60.0 " + secondTime;
                 writeApi.writeRecord("my-bucket", "my-org", WritePrecision.S, record3);
             }

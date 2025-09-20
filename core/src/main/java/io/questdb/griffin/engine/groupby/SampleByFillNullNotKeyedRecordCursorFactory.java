@@ -53,6 +53,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             @Transient @NotNull IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -75,6 +76,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     peeker,
                     timestampIndex,
+                    timestampType,
                     timestampSampler,
                     simpleMapValue,
                     timezoneNameFunc,
@@ -97,7 +99,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("null");
-        if (cursor.sampleFromFunc != TimestampConstant.NULL || cursor.sampleToFunc != TimestampConstant.NULL)
+        if (cursor.sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || cursor.sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL)
             sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);

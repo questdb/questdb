@@ -69,12 +69,17 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 // let's make CAIRO_WAL_MAX_LAG_SIZE a fraction of our max RSS
                 // it's 75MB by default and that's fraction of RSS in the real world
                 // this test has max RSS in 10s of MB, so let's make the MAX LAG size a fraction of that
-                PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "10")
+                PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "10",
+                PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1")
         ) {
             serverMain.start();
-            serverMain.ddl("create table " + tn +
+            serverMain.execute("create table " + tn +
                     "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp" +
                     ") timestamp(ts) partition by HOUR WAL");
+
+            // Warm up server apply jobs to allocate necessary resources
+            serverMain.compile("insert into " + tn + "(b, ts) values (1, '2023-01-01T00:00:00Z')");
+            serverMain.awaitTable(tn);
 
             int port = serverMain.getHttpServerPort();
             try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -95,7 +100,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                                 .doubleColumn("f", rnd.nextFloat())
                                 .doubleColumn("d", rnd.nextDouble())
                                 .stringColumn("v", rnd.nextString(50))
-                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
+                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong() / 1000))
                                 .at(rnd.nextLong(numPartitions * hourAsMillis), ChronoUnit.MILLIS);
                     }
                     sender.flush();

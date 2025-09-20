@@ -49,6 +49,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+
 public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final LtJoinRecordCursor cursor;
     private final int mapEvacuationThreshold;
@@ -92,6 +94,8 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     NullRecordFactory.getInstance(slaveColumnTypes),
                     masterFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
                     slaveValueSink,
                     masterTableKeyColumns,
                     slaveWrappedOverMaster,
@@ -178,12 +182,14 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
                 RecordValueSink valueSink,
                 ColumnFilter masterTableKeyColumns,
                 int slaveWrappedOverMaster,
                 IntList slaveColumnIndex
         ) {
-            super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
+            super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex, masterTimestampType, slaveTimestampType);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
             this.joinKeyMapA = joinKeyMapA;
             this.joinKeyMapB = joinKeyMapB;
@@ -223,7 +229,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 isMasterHasNextPending = false;
             }
             if (masterHasNext) {
-                final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
                 MapKey key;
                 MapValue value;
@@ -242,7 +248,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     evacuateJoinKeyMap(masterTimestamp);
 
                     while (slaveCursor.hasNext()) {
-                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp < masterTimestamp) {
                             if (slaveTimestamp >= minSlaveTimestamp) {
                                 key = currentJoinKeyMap.withKey();
@@ -266,7 +272,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     if (toleranceInterval == Numbers.LONG_NULL) {
                         record.hasSlave(true);
                     } else {
-                        long slaveRecordTimestamp = value.getTimestamp(slaveValueTimestampIndex);
+                        long slaveRecordTimestamp = scaleTimestamp(value.getTimestamp(slaveValueTimestampIndex), slaveTimestampScale);
                         long minTimestamp = masterTimestamp - toleranceInterval;
                         record.hasSlave(slaveRecordTimestamp >= minTimestamp);
                     }
@@ -321,7 +327,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             long minTimestamp = masterTimestamp - toleranceInterval;
             while (srcMapCursor.hasNext()) {
                 MapValue srcValue = srcRecord.getValue();
-                long srcTimestamp = srcValue.getTimestamp(slaveValueTimestampIndex);
+                long srcTimestamp = scaleTimestamp(srcValue.getTimestamp(slaveValueTimestampIndex), slaveTimestampScale);
                 if (srcTimestamp < minTimestamp) {
                     continue; // skip records that are too old
                 }

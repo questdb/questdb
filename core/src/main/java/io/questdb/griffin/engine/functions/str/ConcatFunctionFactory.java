@@ -159,7 +159,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkTimestamp(Utf16Sink sink, Function function, Record record) {
-        sink.put(function.getTimestamp(record));
+        ColumnType.getTimestampDriver(function.getType()).append(sink, function.getTimestamp(record));
     }
 
     private static void sinkUuid(Utf16Sink sink, Function function, Record record) {

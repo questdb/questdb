@@ -43,7 +43,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -564,8 +564,8 @@ public class WriterPool extends AbstractPool {
         }
 
         if (e.owner != UNALLOCATED) {
-            LOG.debug().$("<< [table=`").$(tableToken)
-                    .$("`, thread=").$(thread).$(']').$();
+            LOG.debug().$("<< [table=").$(tableToken)
+                    .$(", thread=").$(thread).$(']').$();
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
