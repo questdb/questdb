@@ -49,6 +49,20 @@ public class CastByteToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "      functions: [123]\n" +
                             "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::byte AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
 
+                    assertSql("QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [value::DECIMAL(26,0)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [123]\n" +
+                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::byte AS value) SELECT cast(value as DECIMAL(26, 0)) FROM data");
+
+                    assertSql("QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [value::DECIMAL(55,0)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [123]\n" +
+                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123::byte AS value) SELECT cast(value as DECIMAL(55, 0)) FROM data");
+
                     // Expression should be constant folded
                     assertSql("QUERY PLAN\n" +
                                     "VirtualRecord\n" +
@@ -399,6 +413,23 @@ public class CastByteToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeCastScaledDecimal128() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127.0000000000\n" +
+                                    "-128\t-128.0000000000\n" +
+                                    "100\t100.0000000000\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 100::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(25,10)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testRuntimeCastScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -410,6 +441,159 @@ public class CastByteToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "0\t\n",
                             "WITH data AS (SELECT 99::byte value UNION ALL SELECT -99::byte UNION ALL SELECT 12::byte UNION ALL SELECT 0::byte) " +
                                     "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastScaledDecimal256() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127.00000000000000\n" +
+                                    "-128\t-128.00000000000000\n" +
+                                    "100\t100.00000000000000\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 100::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(50,14)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastScaledDecimal32() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127.000\n" +
+                                    "-128\t-128.000\n" +
+                                    "50\t50.000\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 50::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(6,3)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastScaledDecimal64() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127.00000\n" +
+                                    "-128\t-128.00000\n" +
+                                    "75\t75.00000\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 75::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(12,5)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastScaledDecimal8() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "9\t9.0\n" +
+                                    "-9\t-9.0\n" +
+                                    "1\t1.0\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 9::byte value UNION ALL SELECT -9::byte UNION ALL SELECT 1::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastUnscaledDecimal128() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127\n" +
+                                    "-128\t-128\n" +
+                                    "100\t100\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 100::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(20)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastUnscaledDecimal16() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127\n" +
+                                    "-128\t-128\n" +
+                                    "50\t50\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 50::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(3)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastUnscaledDecimal256() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127\n" +
+                                    "-128\t-128\n" +
+                                    "100\t100\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 100::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastUnscaledDecimal32() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127\n" +
+                                    "-128\t-128\n" +
+                                    "75\t75\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 75::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(5)) as decimal_value FROM data"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testRuntimeCastUnscaledDecimal64() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertSql(
+                            "value\tdecimal_value\n" +
+                                    "127\t127\n" +
+                                    "-128\t-128\n" +
+                                    "100\t100\n" +
+                                    "0\t\n",
+                            "WITH data AS (SELECT 127::byte value UNION ALL SELECT -128::byte UNION ALL SELECT 100::byte UNION ALL SELECT 0::byte) " +
+                                    "SELECT value, cast(value as DECIMAL(10)) as decimal_value FROM data"
                     );
                 }
         );

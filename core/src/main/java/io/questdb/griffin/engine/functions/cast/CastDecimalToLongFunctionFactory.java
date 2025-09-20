@@ -79,7 +79,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Ξξ)";
+        return "cast(Ξl)";
     }
 
     @Override

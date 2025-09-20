@@ -61,7 +61,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
 
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         long maxUnscaledValue = targetScale >= targetPrecision ? 0 : Numbers.getMaxValue(targetPrecision - targetScale);
-        return new CastDecimalScaledFunc(position, targetType, (int) Math.min(maxUnscaledValue, Integer.MAX_VALUE), arg);
+        return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
     public static Function newInstance(
@@ -137,7 +137,7 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL16:
             case ColumnType.DECIMAL32:
             case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, (int) Math.min(Numbers.getMaxValue(targetPrecision), Integer.MAX_VALUE), value);
+                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
             case ColumnType.DECIMAL128:
                 return new CastDecimal128UnscaledFunc(targetType, value);
             default:
@@ -246,11 +246,11 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         private final int position;
         private final Function value;
 
-        public CastDecimal64UnscaledFunc(int position, int targetType, int maxValue, Function value) {
+        public CastDecimal64UnscaledFunc(int position, int targetType, long maxValue, Function value) {
             super(targetType);
             this.position = position;
-            this.maxValue = maxValue;
-            this.minValue = maxValue == Integer.MAX_VALUE ? Integer.MIN_VALUE : -maxValue;
+            this.maxValue = (int) Math.min(maxValue, Integer.MAX_VALUE);
+            this.minValue = (int) Math.max(-maxValue, Integer.MIN_VALUE);
             this.value = value;
         }
 
@@ -320,10 +320,10 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         private final int maxUnscaledValue;
         private final int minUnscaledValue;
 
-        public CastDecimalScaledFunc(int position, int targetType, int maxUnscaledValue, Function value) {
+        public CastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
             super(value, targetType, position);
-            this.maxUnscaledValue = maxUnscaledValue;
-            this.minUnscaledValue = -maxUnscaledValue;
+            this.maxUnscaledValue = (int) Math.min(maxUnscaledValue, Integer.MAX_VALUE);
+            this.minUnscaledValue = (int) Math.max(-maxUnscaledValue, Integer.MIN_VALUE);
         }
 
         protected boolean cast(Record rec) {
