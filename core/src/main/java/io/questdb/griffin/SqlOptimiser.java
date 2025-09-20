@@ -3432,7 +3432,7 @@ public class SqlOptimiser implements Mutable {
          target-model is the model containing asof join, where-clause, limit-clause, order-by-clause.
          parent-model is the parent of target-model
          */
-        while (targetModel != null && targetModel.getJoinModels().size() != 2) {
+        while (targetModel != null && targetModel.getJoinModels().size() < 2) {
             parentModel = targetModel;
             targetModel = targetModel.getNestedModel();
         }
