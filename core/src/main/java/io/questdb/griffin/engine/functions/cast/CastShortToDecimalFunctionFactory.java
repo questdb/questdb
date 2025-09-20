@@ -61,7 +61,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
 
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         long maxUnscaledValue = targetScale >= targetPrecision ? 0 : Numbers.getMaxValue(targetPrecision - targetScale);
-        return new CastDecimalScaledFunc(position, targetType, (short) Math.min(maxUnscaledValue, Short.MAX_VALUE), arg);
+        return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
     public static Function newInstance(
@@ -137,7 +137,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL16:
             case ColumnType.DECIMAL32:
             case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, (short) Math.min(Numbers.getMaxValue(targetPrecision), Short.MAX_VALUE), value);
+                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
             case ColumnType.DECIMAL128:
                 return new CastDecimal128UnscaledFunc(targetType, value);
             default:
@@ -246,11 +246,11 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         private final int position;
         private final Function value;
 
-        public CastDecimal64UnscaledFunc(int position, int targetType, short maxValue, Function value) {
+        public CastDecimal64UnscaledFunc(int position, int targetType, long maxValue, Function value) {
             super(targetType);
             this.position = position;
-            this.maxValue = maxValue;
-            this.minValue = (short) (maxValue == Short.MAX_VALUE ? Short.MIN_VALUE : -maxValue);
+            this.maxValue = (short) Math.min(maxValue, Short.MAX_VALUE);
+            this.minValue = (short) Math.max(-maxValue, Short.MIN_VALUE);
             this.value = value;
         }
 
@@ -306,7 +306,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
             sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
 
-        private void overflowCheck(int value) {
+        private void overflowCheck(short value) {
             if (value < minValue || value > maxValue) {
                 throw ImplicitCastException.inconvertibleValue(
                         value,
@@ -321,10 +321,10 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         private final short maxUnscaledValue;
         private final short minUnscaledValue;
 
-        public CastDecimalScaledFunc(int position, int targetType, short maxUnscaledValue, Function value) {
+        public CastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
             super(value, targetType, position);
-            this.maxUnscaledValue = maxUnscaledValue;
-            this.minUnscaledValue = (short) -maxUnscaledValue;
+            this.maxUnscaledValue = (short) Math.min(maxUnscaledValue, Short.MAX_VALUE);
+            this.minUnscaledValue = (short) Math.max(-maxUnscaledValue, Short.MIN_VALUE);
         }
 
         protected boolean cast(Record rec) {

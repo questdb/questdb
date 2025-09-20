@@ -61,7 +61,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
 
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         long maxUnscaledValue = targetScale >= targetPrecision ? 0 : Numbers.getMaxValue(targetPrecision - targetScale);
-        return new CastDecimalScaledFunc(position, targetType, (byte) Math.min(maxUnscaledValue, Byte.MAX_VALUE), arg);
+        return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
     public static Function newInstance(
@@ -137,7 +137,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL16:
             case ColumnType.DECIMAL32:
             case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, (byte) Math.min(Numbers.getMaxValue(targetPrecision), Byte.MAX_VALUE), value);
+                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
             case ColumnType.DECIMAL128:
                 return new CastDecimal128UnscaledFunc(targetType, value);
             default:
@@ -168,7 +168,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
                 return Decimals.DECIMAL128_HI_NULL;
             }
             // No need for overflow check, if the precision was lower than
-            // 19 it wouldn't be a Decimal128, otherwise, any long can fit.
+            // 19 it wouldn't be a Decimal128, otherwise, any byte can fit.
             lo = value;
             return value < 0 ? -1 : 0;
         }
@@ -241,16 +241,16 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class CastDecimal64UnscaledFunc extends DecimalFunction implements UnaryFunction {
-        private final short maxValue;
-        private final short minValue;
+        private final byte maxValue;
+        private final byte minValue;
         private final int position;
         private final Function value;
 
-        public CastDecimal64UnscaledFunc(int position, int targetType, short maxValue, Function value) {
+        public CastDecimal64UnscaledFunc(int position, int targetType, long maxValue, Function value) {
             super(targetType);
             this.position = position;
-            this.maxValue = maxValue;
-            this.minValue = (byte) (maxValue == Byte.MAX_VALUE ? Byte.MIN_VALUE : -maxValue);
+            this.maxValue = (byte) Math.min(maxValue, Byte.MAX_VALUE);
+            this.minValue = (byte) Math.max(-maxValue, Byte.MIN_VALUE);
             this.value = value;
         }
 
@@ -307,7 +307,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
             sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
 
-        private void overflowCheck(int value) {
+        private void overflowCheck(byte value) {
             if (value < minValue || value > maxValue) {
                 throw ImplicitCastException.inconvertibleValue(
                         value,
@@ -322,10 +322,10 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         private final byte maxUnscaledValue;
         private final byte minUnscaledValue;
 
-        public CastDecimalScaledFunc(int position, int targetType, byte maxUnscaledValue, Function value) {
+        public CastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
             super(value, targetType, position);
-            this.maxUnscaledValue = maxUnscaledValue;
-            this.minUnscaledValue = (byte) -maxUnscaledValue;
+            this.maxUnscaledValue = (byte) Math.min(maxUnscaledValue, Byte.MAX_VALUE);
+            this.minUnscaledValue = (byte) Math.max(-maxUnscaledValue, Byte.MIN_VALUE);
         }
 
         protected boolean cast(Record rec) {

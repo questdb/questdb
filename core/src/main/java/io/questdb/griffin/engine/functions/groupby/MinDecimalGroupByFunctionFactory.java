@@ -328,7 +328,6 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             final long hl = arg.getDecimal256HL(record);
             final long lh = arg.getDecimal256LH(record);
             final long ll = arg.getDecimal256LL(record);
-
             if (!Decimal256.isNull(hh, hl, lh, ll)) {
                 mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
             } else {
