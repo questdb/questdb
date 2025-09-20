@@ -2843,12 +2843,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
-        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
-        MatViewState state = matViewStateStore.getViewState(matViewToken);
-        if (state == null) {
+
+        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        if (matViewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
         }
-        TimestampDriver driver = state.getViewDefinition().getBaseTableTimestampDriver();
+        final TimestampDriver driver = matViewDefinition.getBaseTableTimestampDriver();
 
         tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
         final boolean fullRefresh = isFullKeyword(tok);
@@ -2882,6 +2882,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
+
+        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         if (fullRefresh) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
         } else if (from != Numbers.LONG_NULL) {
