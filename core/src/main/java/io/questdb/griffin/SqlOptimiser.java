@@ -2661,8 +2661,14 @@ public class SqlOptimiser implements Mutable {
                                                            QueryModel parent, QueryModel sourceModel) throws SqlException {
         boolean isOrderByPresent = false;
         slaveTableColumnFinder.resetValues();
-        if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
-                targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
+
+        if (targetModel != null && targetModel.getJoinModels().size() > 1) {
+
+            for (int i = 1; i < targetModel.getJoinModels().size(); i++) {
+                if (targetModel.getJoinModels().getQuick(i).getJoinType() != QueryModel.JOIN_ASOF) {
+                    return false;
+                }
+            }
 
             for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
                 isOrderByPresent = true;

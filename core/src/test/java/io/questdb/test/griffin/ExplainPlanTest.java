@@ -720,6 +720,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShoulNotdWorkWithMoreNonAsofJoinModels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select *\n" +
+                            "from trades t1\n" +
+                            "asof join order_book t2 on t1.price = t2.bid_price\n" +
+                            "inner join order_book t3 on t1.price = t3.bid_price\n" +
+                            "order by t1.price limit 4\n",
+                    "Limit lo: 4 skip-over-rows: 0 limit: 4\n" +
+                            "    Sort\n" +
+                            "      keys: [price]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t3.bid_price=t1.price\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                  condition: t2.bid_price=t1.price\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
+            );
+        });
+
+    }
+
+    @Test
     public void testAsofJoinOptimisationShouldNotWorkWithOrderByClauseOnChildTableWithAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
@@ -964,7 +1010,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsofJoinOptimisationShouldWorkWithMoreThanOneJoinModels() throws Exception {
+    public void testAsofJoinOptimisationShouldWorkWithMoreThanOneAsofJoinModels() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
                     "\ttimestamp TIMESTAMP,\n" +
