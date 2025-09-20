@@ -2838,6 +2838,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyedGroupByWithShortFunctions() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT key, sum(ashort), avg(ashort), min(ashort), max(ashort) FROM tab ORDER BY key",
+                "key\tsum\tavg\tmin\tmax\n" +
+                        "k0\t417840\t522.3\t11\t1024\n" +
+                        "k1\t415661\t519.57625\t10\t1022\n" +
+                        "k2\t393469\t491.83625\t10\t1022\n" +
+                        "k3\t412591\t515.73875\t10\t1023\n" +
+                        "k4\t410579\t513.22375\t14\t1024\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyedGroupByWithUnionAll() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT * " +
