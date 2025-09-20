@@ -25,10 +25,13 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -53,12 +56,60 @@ public class MaxDecimalGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        final Function func = args.getQuick(0);
+        switch (Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(func.getType()))) {
+            case 0:
+                return new Decimal8Func(func);
+            case 1:
+                return new Decimal16Func(func);
+            case 2:
+                return new Decimal32Func(func);
+            case 3:
+                return new Decimal64Func(func);
+            case 4:
+                return new Decimal128Func(func);
+            default:
+                return new Decimal256Func(func);
+        }
     }
 
-    private static class Func extends AbstractMinMaxDecimalFunction {
+    private static class Decimal128Func extends MinDecimalGroupByFunctionFactory.MinMaxDecimal128Func {
 
-        public Func(Function arg) {
+        public Decimal128Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return "max";
+        }
+
+        @Override
+        protected boolean shouldStoreA(long aHigh, long aLow, long bHigh, long bLow) {
+            return Decimal128.compare(aHigh, aLow, bHigh, bLow) > 0;
+        }
+    }
+
+    private static class Decimal16Func extends MinDecimalGroupByFunctionFactory.MinMaxDecimal16Func {
+
+        public Decimal16Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return "max";
+        }
+
+        @Override
+        protected boolean shouldStoreA(short aValue, short bValue) {
+            return aValue > bValue;
+        }
+    }
+
+    private static class Decimal256Func extends MinDecimalGroupByFunctionFactory.MinMaxDecimal256Func {
+
+        public Decimal256Func(Function arg) {
             super(arg);
         }
 
@@ -70,6 +121,57 @@ public class MaxDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         protected boolean shouldStoreA(long aHH, long aHL, long aLH, long aLL, long bHH, long bHL, long bLH, long bLL) {
             return Decimal256.compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) > 0;
+        }
+    }
+
+    private static class Decimal32Func extends MinDecimalGroupByFunctionFactory.MinMaxDecimal32Func {
+
+        public Decimal32Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return "max";
+        }
+
+        @Override
+        protected boolean shouldStoreA(int aValue, int bValue) {
+            return aValue > bValue;
+        }
+    }
+
+    private static class Decimal64Func extends MinDecimalGroupByFunctionFactory.MinMaxDecimal64Func {
+
+        public Decimal64Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return "max";
+        }
+
+        @Override
+        protected boolean shouldStoreA(long aValue, long bValue) {
+            return aValue > bValue;
+        }
+    }
+
+    private static class Decimal8Func extends MinDecimalGroupByFunctionFactory.MinMaxDecimal8Func {
+
+        public Decimal8Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public String getName() {
+            return "max";
+        }
+
+        @Override
+        protected boolean shouldStoreA(byte aValue, byte bValue) {
+            return aValue > bValue;
         }
     }
 }

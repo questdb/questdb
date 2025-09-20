@@ -158,6 +158,11 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     // to be used when doing interpolation
+    default void setDecimal128(MapValue mapValue, long high, long low) {
+        throw new UnsupportedOperationException();
+    }
+
+    // to be used when doing interpolation
     default void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
         throw new UnsupportedOperationException();
     }

@@ -97,6 +97,14 @@ public interface MapValue extends Record {
 
     void putDecimal128(int index, long hi, long lo);
 
+    default void putDecimal128Null(int index) {
+        putDecimal128(
+                index,
+                Decimals.DECIMAL128_HI_NULL,
+                Decimals.DECIMAL128_LO_NULL
+        );
+    }
+
     void putDecimal256(int index, long hh, long hl, long lh, long ll);
 
     default void putDecimal256(int index, Decimal256 decimal) {
