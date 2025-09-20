@@ -682,6 +682,795 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShoulNotdWorkWithAggregateFunctionIncludedInBaseQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select size, price, count() from trades a ASOF JOIN order_book o\n" +
+                            "order by a.price\n" +
+                            "limit 5",
+                    "Sort light lo: 5\n" +
+                            "  keys: [price]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [size,price]\n" +
+                            "      values: [count(*)]\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShoulNotdWorkWithMoreNonAsofJoinModels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select *\n" +
+                            "from trades t1\n" +
+                            "asof join order_book t2 on t1.price = t2.bid_price\n" +
+                            "inner join order_book t3 on t1.price = t3.bid_price\n" +
+                            "order by t1.price limit 4\n",
+                    "Limit lo: 4 skip-over-rows: 0 limit: 4\n" +
+                            "    Sort\n" +
+                            "      keys: [price]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t3.bid_price=t1.price\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                  condition: t2.bid_price=t1.price\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
+            );
+        });
+
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithOrderByClauseOnChildTableWithAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select  a.size, o.bid_price, a.timestamp from trades a ASOF JOIN order_book o\n" +
+                            "order by o.bid_size limit 5",
+                    "SelectedRecord\n" +
+                            "    Limit lo: 5 skip-over-rows: 0 limit: 0\n" +
+                            "        Sort\n" +
+                            "          keys: [bid_size]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithOrderByClauseOnChildTableWithoutAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select  a.size, o.bid_price, a.timestamp from trades a ASOF JOIN order_book o\n" +
+                            "order by bid_size limit 5",
+                    "SelectedRecord\n" +
+                            "    Limit lo: 5 skip-over-rows: 0 limit: 0\n" +
+                            "        Sort\n" +
+                            "          keys: [bid_size]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    //This case will be handled later when we extend support of asof join
+    // optimisation for complex expressions in order by clause
+    @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithOrderByContainingExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 't1' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 't2' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                            "                    FROM t1 \n" +
+                            "                    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                            "                    WHERE \n" +
+                            "                    t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' and\n" +
+                            "                    t1.ts = '2023-09-01T00:00:00.000Z' and\n" +
+                            "                     t1.ts IN ('2023-09-01T00:00:00.000Z')\n" +
+                            "                    and t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' \n" +
+                            "                    ORDER BY t1.s+45\n" +
+                            "                    LIMIT 5;",
+                    "SelectedRecord\n" +
+                            "    Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "        Sort\n" +
+                            "          keys: [column]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [s,ts,s1,ts1,s+45]\n" +
+                            "                SelectedRecord\n" +
+                            "                    AsOf Join Fast Scan\n" +
+                            "                      condition: t2.s=t1.s\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Interval forward scan on: t1\n" +
+                            "                              intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithWhereClauseColumnFromSlaveTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 't1' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 't2' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                            "                    FROM t1 \n" +
+                            "                    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                            "                    WHERE \n" +
+                            "                    t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' and\n" +
+                            "                    t1.ts = '2023-09-01T00:00:00.000Z' and\n" +
+                            "                     t2.ts IN ('2023-09-01T00:00:00.000Z')\n" +
+                            "                    and t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' \n" +
+                            "                    ORDER BY t1.s, t1.ts\n" +
+                            "                    LIMIT 5;",
+                    "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            Filter filter: t2.ts in [1693526400000000,1693526400000000]\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                  condition: t2.s=t1.s\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Interval forward scan on: t1\n" +
+                            "                          intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithAggregateFunctionOverSimpleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select size, price, count() from (\n" +
+                            "select a.size, a.price from trades a ASOF JOIN order_book o\n" +
+                            "order by a.price\n" +
+                            "limit 5)  order by size limit 4",
+                    "Sort light lo: 4\n" +
+                            "  keys: [size]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [size,price]\n" +
+                            "      values: [count(*)]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "                SelectedRecord\n" +
+                            "                    Async Top K lo: 5 workers: 1\n" +
+                            "                      filter: null\n" +
+                            "                      keys: [price]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithAliasOnOrderByExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select o.bid_price,  size as s , a.price as pr\n" +
+                            "from trades a asof join order_book o\n" +
+                            "order by size, a.price limit 5",
+                    "Sort\n" +
+                            "  keys: [s, pr]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            SelectedRecord\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: null\n" +
+                            "                  keys: [size, price]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithMoreThanOneAsofJoinModels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select *\n" +
+                            "from trades t1\n" +
+                            "asof join order_book t2 on t1.price = t2.bid_price\n" +
+                            "asof join order_book t3 on t1.price = t3.bid_price\n" +
+                            "order by t1.price limit 4\n",
+                    "Sort\n" +
+                            "  keys: [price]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "          condition: t3.bid_price=t1.price\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "              condition: t2.bid_price=t1.price\n" +
+                            "                Radix sort light\n" +
+                            "                  keys: [timestamp]\n" +
+                            "                    Async Top K lo: 4 workers: 1\n" +
+                            "                      filter: null\n" +
+                            "                      keys: [price]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: order_book\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithNestedJoinClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select * from trades cross join (\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 5) cross join\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 7));",
+                    "SelectedRecord\n" +
+                            "    Cross Join\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                Sort\n" +
+                            "                  keys: [size]\n" +
+                            "                    SelectedRecord\n" +
+                            "                        AsOf Join Fast Scan\n" +
+                            "                            Radix sort light\n" +
+                            "                              keys: [timestamp]\n" +
+                            "                                Async Top K lo: 5 workers: 1\n" +
+                            "                                  filter: null\n" +
+                            "                                  keys: [size]\n" +
+                            "                                    PageFrame\n" +
+                            "                                        Row forward scan\n" +
+                            "                                        Frame forward scan on: trades\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: order_book\n" +
+                            "                Sort\n" +
+                            "                  keys: [size]\n" +
+                            "                    SelectedRecord\n" +
+                            "                        AsOf Join Fast Scan\n" +
+                            "                            Radix sort light\n" +
+                            "                              keys: [timestamp]\n" +
+                            "                                Async Top K lo: 7 workers: 1\n" +
+                            "                                  filter: null\n" +
+                            "                                  keys: [size]\n" +
+                            "                                    PageFrame\n" +
+                            "                                        Row forward scan\n" +
+                            "                                        Frame forward scan on: trades\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithNestedUnionClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select * from trades union (\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 5) union\n" +
+                            "  (select trades.* from trades ASOF JOIN order_book\n" +
+                            "                            order by \n" +
+                            "                            size limit 7));",
+                    "Union\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    Union\n" +
+                            "        Sort\n" +
+                            "          keys: [size]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    Radix sort light\n" +
+                            "                      keys: [timestamp]\n" +
+                            "                        Async Top K lo: 5 workers: 1\n" +
+                            "                          filter: null\n" +
+                            "                          keys: [size]\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n" +
+                            "        Sort\n" +
+                            "          keys: [size]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    Radix sort light\n" +
+                            "                      keys: [timestamp]\n" +
+                            "                        Async Top K lo: 7 workers: 1\n" +
+                            "                          filter: null\n" +
+                            "                          keys: [size]\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithOrderByClauseOnMasterTableWithAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select  a.size, o.bid_price, a.timestamp from trades a ASOF JOIN order_book o\n" +
+                            "order by a.timestamp limit 5",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        Limit lo: 5 skip-over-rows: 0 limit: 0\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithOrderByClauseOnMasterTableWithoutAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "select  a.size, o.bid_price, a.timestamp from trades a ASOF JOIN order_book o\n" +
+                            "order by size limit 5",
+                    "Sort\n" +
+                            "  keys: [size]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: null\n" +
+                            "                  keys: [size]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithWhereClauseColumnFromMasterTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 't1' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 't2' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                            "                    FROM t1 \n" +
+                            "                    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                            "                    WHERE \n" +
+                            "                    t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' and\n" +
+                            "                    t1.ts = '2023-09-01T00:00:00.000Z' and\n" +
+                            "                     t1.ts IN ('2023-09-01T00:00:00.000Z')\n" +
+                            "                    and t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' \n" +
+                            "                    ORDER BY t1.s, t1.ts\n" +
+                            "                    LIMIT 5;",
+                    "Sort\n" +
+                            "  keys: [s, ts]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "          condition: t2.s=t1.s\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [ts]\n" +
+                            "                Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "                    SortedSymbolIndex\n" +
+                            "                        Index forward scan on: s\n" +
+                            "                          symbolOrder: asc\n" +
+                            "                        Interval forward scan on: t1\n" +
+                            "                          intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationWithSimpleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    " select * from trades ASOF JOIN order_book\n" +
+                            " where price = '184.0'\n" +
+                            "order by price, size, trades.timestamp limit 5",
+                    "Sort\n" +
+                            "  keys: [price, size, timestamp]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: price='184.0'\n" +
+                            "                  keys: [price, size, timestamp]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationWithSimpleQueryWithSelectExcludingTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    " select price, size from trades ASOF JOIN order_book\n" +
+                            " where price = '184.0'\n" +
+                            "order by price, size limit 5",
+                    "Sort\n" +
+                            "  keys: [price, size]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            SelectedRecord\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: price='184.0'\n" +
+                            "                  keys: [price, size]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithOptimisationInNestedQueryWithAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select * from (select price,size, timestamp from trades order by trades.timestamp) a \n" +
+                            "  asof join (select bid_price,bid_size,ask_price from order_book where bid_price = 189.4 order by timestamp) b \n" +
+                            "  where a.price = 184.0\n" +
+                            "  order by a.size, a.price asc limit 6",
+                    "Sort\n" +
+                            "  keys: [size, price]\n" +
+                            "    SelectedRecord\n" +
+                            "        Filtered AsOf Join Fast Scan\n" +
+                            "          filter: bid_price=189.4\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Async JIT Top K lo: 6 workers: 1\n" +
+                            "                  filter: price=184.0\n" +
+                            "                  keys: [size, price]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithOptimisationInNestedQueryWithAliasWithoutTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "select a.price, b.bid_price from (select price,size from trades order by trades.timestamp) a \n" +
+                            "  asof join (select bid_price,bid_size,ask_price from order_book where bid_price = 189.4 order by timestamp) b \n" +
+                            "  order by a.size, a.price asc limit 6",
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [size, price]\n" +
+                            "        SelectedRecord\n" +
+                            "            Filtered AsOf Join Fast Scan\n" +
+                            "              filter: bid_price=189.4\n" +
+                            "                SelectedRecord\n" +
+                            "                    Async Top K lo: 6 workers: 1\n" +
+                            "                      filter: null\n" +
+                            "                      keys: [size, price]\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
     public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as ( " +
