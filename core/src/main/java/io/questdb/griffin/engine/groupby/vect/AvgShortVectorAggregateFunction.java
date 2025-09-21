@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -63,8 +64,11 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            sum.add(Vect.sumShort(address, frameRowCount));
-            count.add(frameRowCount);
+            final long value = Vect.sumShort(address, frameRowCount);
+            if (value != Numbers.LONG_NULL) {
+                sum.add(value);
+                count.add(frameRowCount);
+            }
         }
     }
 
