@@ -1996,6 +1996,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "FROM tab " +
                         "ORDER BY key",
                 "key\tavg_s\tavg_i\tavg_l\tavg_d\n" +
+                        "\t11.0\t12.0\t13.0\t15.0\n" +
                         "k0\t-859.98\t128.27631578947367\t469.4625\t1.0\n" +
                         "k1\t-2783.67\t113.6375\t548.2073170731708\t0.0\n" +
                         "k2\t1722.65\t133.21686746987953\t557.6623376623377\t0.0\n" +
@@ -2011,6 +2012,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "FROM tab " +
                         "ORDER BY key",
                 "key\tcount_i\tcount_l\tcount_d\n" +
+                        "\t3\t3\t3\n" +
                         "k0\t76\t80\t88\n" +
                         "k1\t80\t82\t86\n" +
                         "k2\t83\t77\t87\n" +
@@ -2026,6 +2028,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "FROM tab " +
                         "ORDER BY key",
                 "key\tksum_d\tnsum_d\n" +
+                        "\t45.0\t45.0\n" +
                         "k0\t48.0\t48.0\n" +
                         "k1\t43.0\t43.0\n" +
                         "k2\t39.0\t39.0\n" +
@@ -2042,6 +2045,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "FROM tab " +
                         "ORDER BY key",
                 "key\tmin_s\tmax_s\tmin_i\tmax_i\tmin_l\tmax_l\tmin_d\tmax_d\tmin_dd\tmax_dd\tmin_t\tmax_t\n" +
+                        "\t1\t21\t2\t22\t3\t23\t5.0\t25.0\t1992-01-01T00:00:00.000Z\t2102-01-01T00:00:00.000Z\t1991-01-01T00:00:00.000000Z\t2101-01-01T00:00:00.000000Z\n" +
                         "k0\t-32314\t32650\t5\t255\t1\t982\t0.023600615130049185\t0.9924997596095891\t1980-01-13T19:56:55.619Z\t1989-12-11T15:05:57.581Z\t1980-05-16T15:35:09.991442Z\t1989-12-01T00:45:38.931160Z\n" +
                         "k1\t-31947\t32139\t0\t251\t12\t1022\t0.030997441190531494\t0.9869813021229126\t1980-01-27T20:04:53.149Z\t1989-11-09T23:54:33.595Z\t1980-01-20T15:13:30.780056Z\t1989-12-25T11:06:35.080985Z\n" +
                         "k2\t-32474\t32378\t3\t256\t18\t1020\t0.0031075670450616544\t0.9887681426881507\t1980-02-06T21:12:31.508Z\t1989-10-14T12:01:28.825Z\t1980-01-09T11:42:16.059075Z\t1989-12-02T07:02:03.165501Z\n" +
@@ -2057,6 +2061,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "FROM tab " +
                         "ORDER BY key",
                 "key\tsum_s\tsum_i\tsum_l\tsum_l256\tsum_d\n" +
+                        "\t33\t36\t39\t0x2a\t45.0\n" +
                         "k0\t-85998\t9749\t37557\t0x248af96495cafa7d5c4dbe79c86d46054af590066639cabfb780bce1c77ea11c\t48.0\n" +
                         "k1\t-278367\t9091\t44953\t0x50b8e23533380471b205e4a7adeb9498426e85e7cf92558e9ca39604592ccea6\t43.0\n" +
                         "k2\t172265\t11057\t42940\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t39.0\n" +
@@ -3595,6 +3600,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
                                         "(x * 864000000)::timestamp ts " +
                                         "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        execute(
+                                compiler,
+                                "insert into tab values (null, 1, 2, 3, 4::long256, 5.0, '1991-01-01', '1992-01-01', 0::timestamp)," +
+                                        "(null, 11, 12, 13, 14::long256, 15.0, '2001-01-01', '2002-01-01', (250L*864000000)::timestamp)," +
+                                        "(null, 21, 22, 23, 24::long256, 25.0, '2101-01-01', '2102-01-01', (500L*864000000)::timestamp)",
                                 sqlExecutionContext
                         );
                         if (convertToParquet) {
