@@ -1299,6 +1299,11 @@ public class Decimal256 implements Sinkable {
             hi--;
         }
 
+        // We also need to skip 'd' and 'f' when parsing doubles/floats
+        if (hi > 0 && ((cs.charAt(hi - 1) | 32) == 'f' || (cs.charAt(hi - 1) | 32) == 'd')) {
+            hi--;
+        }
+
         // Skip leading whitespaces
         while (lo < hi && cs.charAt(lo) == ' ') {
             lo++;

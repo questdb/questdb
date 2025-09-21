@@ -113,14 +113,14 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertException(
                             "select cast(123.456f as DECIMAL(5,2))",
                             12,
-                            "decimal '123.456' has 3 decimal places but scale is limited to 2"
+                            "decimal '123.456f' has 3 decimal places but scale is limited to 2"
                     );
 
                     // This should fail because 0.001 has 3 decimal places but target scale is 2
                     assertException(
                             "select cast(0.001f as DECIMAL(4,2))",
                             12,
-                            "decimal '0.001' has 3 decimal places but scale is limited to 2"
+                            "decimal '0.001f' has 3 decimal places but scale is limited to 2"
                     );
                 }
         );
@@ -134,7 +134,7 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertException(
                             "select cast(1000.0f as DECIMAL(4,2))",
                             12,
-                            "decimal '1000.0' requires precision of 6 but is limited to 4"
+                            "decimal '1000.0f' requires precision of 6 but is limited to 4"
                     );
 
                     // 99999.0 should overflow DECIMAL(4)
@@ -142,7 +142,7 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "select cast(99999.0f" +
                                     " as DECIMAL(4,0))",
                             12,
-                            "decimal '99999.0' requires precision of 5 but is limited to 4"
+                            "decimal '99999.0f' requires precision of 5 but is limited to 4"
                     );
                 }
         );
@@ -196,7 +196,7 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "VirtualRecord\n" +
                             "  functions: [value::DECIMAL(5,2)]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [123.45]\n" +
+                            "      functions: [123.44999694824219f]\n" +
                             "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123.45f AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
 
                     // Constant folding

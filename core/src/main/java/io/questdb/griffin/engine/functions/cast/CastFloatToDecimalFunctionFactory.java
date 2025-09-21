@@ -64,7 +64,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
 
         protected boolean cast(Record rec) {
             float f = this.arg.getFloat(rec);
-            if (!Numbers.isNull(f)) {
+            if (Numbers.isNull(f)) {
                 return false;
             }
             sink.clear();
