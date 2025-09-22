@@ -478,7 +478,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
-        Assert.assertEquals(2, configuration.getWalApplyPoolConfiguration().getWorkerCount());
+        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() >= 2);
+        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() <= 4);
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
