@@ -1732,6 +1732,7 @@ public class ExpressionParser {
         nonLiteralBranches.add(BRANCH_LITERAL);
         nonLiteralBranches.add(BRANCH_LAMBDA);
         nonLiteralBranches.add(BRANCH_ARRAY_TYPE_QUALIFIER_END);
+        nonLiteralBranches.add(BRANCH_DECIMAL);
 
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);
