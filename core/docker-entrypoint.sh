@@ -18,7 +18,7 @@ PROFILER_EVENT="${PROFILER_EVENT:-cpu,wall}"           # cpu, alloc, lock, wall,
 PROFILER_INTERVAL="${PROFILER_INTERVAL:-5ms}"          # sampling interval
 PROFILER_ALLOC_INTERVAL="${PROFILER_ALLOC_INTERVAL:-512k}"
 PROFILER_LOCK_THRESHOLD="${PROFILER_LOCK_THRESHOLD:-10ms}"
-PROFILE_NAME="${PROFILE_NAME:-profile-%n{48}.jfr}"     # %n{MAX} = seq#
+PROFILE_NAME="${PROFILE_NAME:-"profile-%n{48}.jfr"}"     # %n{MAX} = seq#
 PROFILER_LOOP="${PROFILER_LOOP:-30m}"
 PROFILER_EXTRA_OPTS="${PROFILER_EXTRA_OPTS:-}"         # comma-separated, no spaces
 PROFILER_OUTPUT_DIR="${PROFILER_OUTPUT_DIR:-${QUESTDB_DATA_DIR}/profiles}"

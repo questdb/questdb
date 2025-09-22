@@ -59,7 +59,7 @@ export PROFILER_EVENT="${PROFILER_EVENT:-cpu,wall}"           # cpu, alloc, lock
 export PROFILER_INTERVAL="${PROFILER_INTERVAL:-5ms}"          # sampling interval
 export PROFILER_ALLOC_INTERVAL="${PROFILER_ALLOC_INTERVAL:-512k}"
 export PROFILER_LOCK_THRESHOLD="${PROFILER_LOCK_THRESHOLD:-10ms}"
-export PROFILE_NAME="${PROFILE_NAME:-profile-%n{48}.jfr}"     # %n{MAX} = seq#
+export PROFILE_NAME="${PROFILE_NAME:-"profile-%n{48}.jfr"}"     # %n{MAX} = seq#
 export PROFILER_LOOP="${PROFILER_LOOP:-30m}"
 export PROFILER_EXTRA_OPTS="${PROFILER_EXTRA_OPTS:-}"         # comma-separated, no spaces
 
