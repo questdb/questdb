@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalEventCursor;
@@ -50,8 +51,8 @@ public class WalTxnRangeLoader implements QuietCloseable {
     private long minTimestamp;
     private DirectLongList txnDetails = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_READER);
 
-    public WalTxnRangeLoader(FilesFacade ff, boolean bypassFdCache) {
-        walEventReader = new WalEventReader(ff, bypassFdCache);
+    public WalTxnRangeLoader(CairoConfiguration configuration) {
+        walEventReader = new WalEventReader(configuration);
     }
 
     @Override

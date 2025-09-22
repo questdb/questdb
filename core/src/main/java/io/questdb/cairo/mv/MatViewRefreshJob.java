@@ -96,7 +96,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.graph = engine.getMatViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
-            this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade(), configuration.getBypassWalFdCache());
+            this.txnRangeLoader = new WalTxnRangeLoader(configuration);
             this.microsecondClock = configuration.getMicrosecondClock();
         } catch (Throwable th) {
             close();

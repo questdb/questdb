@@ -110,7 +110,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         operationExecutor = new OperationExecutor(engine, sharedQueryWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
-        walEventReader = new WalEventReader(configuration.getFilesFacade(), configuration.getBypassWalFdCache());
+        walEventReader = new WalEventReader(configuration);
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
         config = engine.getConfiguration();

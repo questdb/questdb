@@ -2371,7 +2371,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (Path path = new Path();
                  MemoryCMR txnMem = Vm.getCMRInstance();
                  BlockFileReader reader = new BlockFileReader(configuration);
-                 WalEventReader walEventReader = new WalEventReader(ff, false)
+                 WalEventReader walEventReader = new WalEventReader(configuration)
             ) {
                 MatViewStateReader matViewStateReader = new MatViewStateReader();
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -2412,7 +2412,7 @@ public class WalWriterTest extends AbstractCairoTest {
                  MemoryCMR txnMem = Vm.getCMRInstance();
                  MemoryCMARW txnLogMem = Vm.getCMARWInstance();
                  BlockFileReader reader = new BlockFileReader(configuration);
-                 WalEventReader walEventReader = new WalEventReader(ff, false)
+                 WalEventReader walEventReader = new WalEventReader(configuration)
             ) {
                 MatViewStateReader matViewStateReader = new MatViewStateReader();
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -4108,7 +4108,7 @@ public class WalWriterTest extends AbstractCairoTest {
     @SuppressWarnings("SameParameterValue")
     private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
         try (Path path = new Path();
-             WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade(), false);
+             WalEventReader walEventReader = new WalEventReader(configuration);
              TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
             path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
             int pathLen = path.size();
@@ -4179,7 +4179,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 Path path = new Path();
                 MemoryCMR txnMem = Vm.getCMRInstance();
                 BlockFileReader reader = new BlockFileReader(configuration);
-                WalEventReader walEventReader = new WalEventReader(ff, false)
+                WalEventReader walEventReader = new WalEventReader(configuration)
         ) {
             MatViewStateReader matViewStateReader = new MatViewStateReader();
             path.of(configuration.getDbRoot()).concat(tableToken.getDirName());

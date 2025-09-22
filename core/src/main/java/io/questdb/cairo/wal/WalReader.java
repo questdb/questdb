@@ -78,10 +78,10 @@ public class WalReader implements Closeable {
         rootLen = path.size();
 
         try {
-            metadata = new SequencerMetadata(ff, configuration.getCommitMode(), true, configuration.getBypassWalFdCache());
+            metadata = new SequencerMetadata(configuration, true);
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
-            events = new WalEventReader(ff, configuration.getBypassWalFdCache());
+            events = new WalEventReader(configuration);
             LOG.debug().$("open [table=").$(tableToken).I$();
             int pathLen = path.size();
             eventCursor = events.of(path.slash().put(segmentId), -1);

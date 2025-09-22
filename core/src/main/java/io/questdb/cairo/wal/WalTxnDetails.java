@@ -34,7 +34,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -100,8 +99,8 @@ public class WalTxnDetails implements QuietCloseable {
     private long totalRowsLoadedToApply = 0;
     private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
 
-    public WalTxnDetails(FilesFacade ff, CairoConfiguration configuration, long maxLookaheadRows) {
-        walEventReader = new WalEventReader(ff, configuration.getBypassWalFdCache());
+    public WalTxnDetails(CairoConfiguration configuration, long maxLookaheadRows) {
+        walEventReader = new WalEventReader(configuration);
         this.config = configuration;
         this.maxLookaheadRows = maxLookaheadRows;
     }

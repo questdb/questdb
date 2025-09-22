@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
@@ -62,19 +63,19 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private int tableId;
     private TableToken tableToken;
 
-    public SequencerMetadata(FilesFacade ff, int commitMode) {
-        this(ff, commitMode, false, false);
+    public SequencerMetadata(CairoConfiguration configuration) {
+        this(configuration, false);
     }
 
-    public SequencerMetadata(FilesFacade ff, int commitMode, boolean readonly, boolean bypassFdCache) {
-        this.ff = ff;
-        this.commitMode = commitMode;
+    public SequencerMetadata(CairoConfiguration configuration, boolean readonly) {
+        this.ff = configuration.getFilesFacade();
+        this.commitMode = configuration.getCommitMode();
         this.readonly = readonly;
         if (!readonly) {
             roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
-            roMetaMem = Vm.getCMRInstance(bypassFdCache);
+            roMetaMem = Vm.getCMRInstance(configuration.getBypassWalFdCache());
         }
     }
 

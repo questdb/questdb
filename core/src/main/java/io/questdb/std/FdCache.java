@@ -182,14 +182,6 @@ public class FdCache {
     }
 
     /**
-     * Removes file path from cache without closing underlying OS descriptor.
-     * Used when file is replaced or deleted externally to QuestDB FileFacade API.
-     */
-    public void invalidateFile(LPSZ lpsz) {
-        openFdMapByPath.remove(lpsz);
-    }
-
-    /**
      * Opens file in read-only mode with caching support.
      */
     public synchronized long openROCached(LPSZ lpsz) {

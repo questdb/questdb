@@ -341,7 +341,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try (
                 Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
-                WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade(), configuration.getBypassWalFdCache());
+                WalEventReader walEventReader = new WalEventReader(configuration);
                 MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
         ) {
             path.of(configuration.getDbRoot());

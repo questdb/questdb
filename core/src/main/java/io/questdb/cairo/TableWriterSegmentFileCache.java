@@ -91,8 +91,9 @@ public class TableWriterSegmentFileCache {
                 .I$();
 
         int key = walFdCache.keyIndex(walSegmentId);
+        boolean cacheIsDisabled = configuration.getBypassWalFdCache();
         boolean cacheIsFull = walFdCacheSize >= configuration.getWalMaxSegmentFileDescriptorsCache();
-        if (isLastSegmentUsage || cacheIsFull) {
+        if (isLastSegmentUsage || cacheIsFull || cacheIsDisabled) {
             if (key < 0) {
                 LongList fds = walFdCache.valueAt(key);
                 walFdCache.removeAt(key);
