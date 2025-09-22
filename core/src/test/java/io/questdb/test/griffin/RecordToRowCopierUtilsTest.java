@@ -40,6 +40,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
@@ -53,6 +54,18 @@ import java.math.BigDecimal;
 
 public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     @Test
+    public void testCopierByteToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.BYTE, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.BYTE, 123), getLongAsserter(123000));
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testCopierByteToDecimalOverflow() {
+        RecordToRowCopier copier = generateCopier(ColumnType.BYTE, ColumnType.getDecimalType(4, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.BYTE, 99), new RowAsserter());
+    }
+
+    @Test
     public void testCopierDecimal8ToDecimal32() {
         // Converting 1.2 from a Decimal8 with a scale of 1 (1.2) to a Decimal32 with a scale of 3 (1.200)
         int fromType = ColumnType.getDecimalType(2, 1);
@@ -60,14 +73,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         int toType = ColumnType.getDecimalType(8, 3);
         Assert.assertEquals("Unexpected to type", ColumnType.DECIMAL32, ColumnType.tagOf(toType));
 
-        ArrayColumnTypes from = new ArrayColumnTypes();
-        from.add(fromType);
-        GenericRecordMetadata to = new GenericRecordMetadata();
-        TableColumnMetadata toCol = new TableColumnMetadata("x", toType);
-        to.add(toCol);
-        ListColumnFilter mapping = new ListColumnFilter();
-        mapping.add(1);
-        RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), from, to, mapping);
+        RecordToRowCopier copier = generateCopier(fromType, toType);
 
         Record rec = new Record() {
             @Override
@@ -76,13 +82,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             }
         };
 
-        TableWriter.Row row = new RowAsserter() {
-            @Override
-            public void putInt(int col, int value) {
-                Assert.assertEquals(1200, value);
-            }
-        };
-        copier.copy(sqlExecutionContext, rec, row);
+        copier.copy(sqlExecutionContext, rec, getIntAsserter(1200));
     }
 
     @Test
@@ -122,6 +122,66 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testCopierIntToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.INT, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.INT, 123456), getLongAsserter(123456000));
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testCopierIntToDecimalOverflow() {
+        RecordToRowCopier copier = generateCopier(ColumnType.INT, ColumnType.getDecimalType(8, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.INT, 999999), new RowAsserter());
+    }
+
+    @Test
+    public void testCopierLongToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.LONG, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.LONG, 123456L), getLongAsserter(123456000L));
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testCopierLongToDecimalOverflow() {
+        RecordToRowCopier copier = generateCopier(ColumnType.LONG, ColumnType.getDecimalType(8, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.LONG, 999999L), new RowAsserter());
+    }
+
+    @Test
+    public void testCopierNullByteToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.BYTE, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.BYTE, Numbers.BYTE_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
+    }
+
+    @Test
+    public void testCopierNullIntToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.INT, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.INT, Numbers.INT_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
+    }
+
+    @Test
+    public void testCopierNullLongToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.LONG, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.LONG, Numbers.LONG_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
+    }
+
+    @Test
+    public void testCopierNullShortToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, Numbers.SHORT_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
+    }
+
+    @Test
+    public void testCopierShortToDecimal() {
+        RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(16, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, 1234), getLongAsserter(1234000));
+    }
+
+    @Test(expected = ImplicitCastException.class)
+    public void testCopierShortToDecimalOverflow() {
+        RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(5, 3));
+        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, 9999), new RowAsserter());
     }
 
     private static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
@@ -258,11 +318,68 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         };
     }
 
+    private static @NotNull Record getLongRecord(int fromType, long value) {
+        return new Record() {
+            @Override
+            public byte getByte(int col) {
+                Assert.assertEquals(ColumnType.BYTE, fromType);
+                return (byte) value;
+            }
+
+            @Override
+            public int getInt(int col) {
+                Assert.assertEquals(ColumnType.INT, fromType);
+                return (int) value;
+            }
+
+            @Override
+            public long getLong(int col) {
+                Assert.assertEquals(ColumnType.LONG, fromType);
+                return value;
+            }
+
+            @Override
+            public short getShort(int col) {
+                Assert.assertEquals(ColumnType.SHORT, fromType);
+                return (short) value;
+            }
+        };
+    }
+
+    private RecordToRowCopier generateCopier(int fromType, int toType) {
+        ArrayColumnTypes from = new ArrayColumnTypes();
+        from.add(fromType);
+        GenericRecordMetadata to = new GenericRecordMetadata();
+        TableColumnMetadata toCol = new TableColumnMetadata("x", toType);
+        to.add(toCol);
+        ListColumnFilter mapping = new ListColumnFilter();
+        mapping.add(1);
+        return RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), from, to, mapping);
+    }
+
     private void generateValue(Decimal256 d, int precision, int scale) {
         String maxValue = "98765432109876543210987654321098765432109876543210987654321098765432109876543210";
         BigDecimal value = new BigDecimal(maxValue.substring(0, precision));
         Decimal256 v = Decimal256.fromBigDecimal(value);
         d.of(v.getHh(), v.getHl(), v.getLh(), v.getLl(), scale);
+    }
+
+    private TableWriter.Row getIntAsserter(int expected) {
+        return new RowAsserter() {
+            @Override
+            public void putInt(int col, int value) {
+                Assert.assertEquals(expected, value);
+            }
+        };
+    }
+
+    private TableWriter.Row getLongAsserter(long expected) {
+        return new RowAsserter() {
+            @Override
+            public void putLong(int col, long value) {
+                Assert.assertEquals(expected, value);
+            }
+        };
     }
 
     private void testDecimalCast(BytecodeAssembler asm, int fromPrecision, int toPrecision, int toScale, Decimal256 value, boolean fitInTargetType) {

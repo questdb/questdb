@@ -705,12 +705,14 @@ public final class ColumnType {
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
+        final boolean isTargetDecimal = isDecimal(toType);
         return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
                 || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
-                || (fromType == LONG && toType >= BYTE && toType <= INT)
+                || (fromType == LONG && ((toType >= BYTE && toType <= INT)))
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
+                || (fromType >= BYTE && fromType <= LONG && isTargetDecimal)
                 || isStringyType(fromType) && (
                 toType == BYTE ||
                         toType == SHORT ||
@@ -724,7 +726,7 @@ public final class ColumnType {
                         toType == CHAR ||
                         toType == UUID ||
                         ColumnType.isArray(toType) ||
-                        isDecimalType(tagOf(toType)));
+                        isTargetDecimal);
     }
 
     private static boolean isStringCast(int fromType, int toType) {

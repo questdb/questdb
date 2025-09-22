@@ -50,6 +50,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class DecimalUtil {
+    public static final int BYTE_TYPE = ColumnType.getDecimalType(3, 0);
+    public static final int INT_TYPE = ColumnType.getDecimalType(10, 0);
+    public static final int LONG_TYPE = ColumnType.getDecimalType(19, 0);
+    public static final int SHORT_TYPE = ColumnType.getDecimalType(5, 0);
 
     private DecimalUtil() {
     }
