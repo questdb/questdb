@@ -182,7 +182,7 @@ public class WalUtils {
                 final long partSize = mem.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
                 if (txnCount > 0 && partSize > 0) {
                     final long partCount = (txnCount + partSize - 1) / partSize;
-                    try (MemoryCMR partMem = Vm.getCMRInstance()) {
+                    try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
                         for (long part = partCount - 1; part >= 0; part--) {
                             tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
                             partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
