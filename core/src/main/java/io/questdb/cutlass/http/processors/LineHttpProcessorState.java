@@ -89,9 +89,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
-                configuration.getTimestampUnit(),
+                configuration.getTimestampAdapter(),
                 sink,
-                engine.getConfiguration().getMaxFileNameLength()
+                engine.getConfiguration().getMaxFileNameLength(),
+                configuration.getMicrosecondClock()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(

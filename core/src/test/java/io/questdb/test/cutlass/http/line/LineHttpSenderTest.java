@@ -1003,7 +1003,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "binary_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y varchar, a1 DOUBLE," +
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y varchar, a1 DOUBLE," +
                         " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
