@@ -38,12 +38,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -59,6 +61,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
@@ -989,6 +992,140 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.awaitTxn(tableName, 2);
                 serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
                 serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertBinaryToOtherColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                String tableName = "binary_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y varchar, a1 DOUBLE," +
+                        " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V2)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // insert binary double to symbol column
+                    sender.table(tableName)
+                            .stringColumn("y", "ystr")
+                            .doubleColumn("x", 9991.0)
+                            .doubleColumn("a1", 1)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTxn(tableName, 1);
+                    serverMain.assertSql("select * from " + tableName,
+                            "x\ty\ta1\tts\n" +
+                                    "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n");
+
+                    // insert binary double to string column
+                    try {
+                        sender.table(tableName)
+                                .symbol("x", "x1")
+                                .doubleColumn("y", 9999.0)
+                                .doubleColumn("a1", 1)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), " cast error from protocol type: FLOAT to column type: VARCHAR");
+                    }
+
+                    // insert string column to double
+                    try {
+                        sender.table(tableName)
+                                .symbol("x", "x1")
+                                .stringColumn("y", "ystr")
+                                .stringColumn("a1", "11.u")
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), " cast error from protocol type: STRING to column type: DOUBLE");
+                    }
+
+                    // insert array column to double
+                    try {
+                        sender.table(tableName)
+                                .symbol("x", "x1")
+                                .stringColumn("y", "ystr")
+                                .doubleArray("a1", new double[]{1.0, 2.0})
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail();
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), " cast error from protocol type: ARRAY to column type: DOUBLE");
+                    }
+                }
+
+                // send text double to symbol column
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .protocolVersion(PROTOCOL_VERSION_V1)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .stringColumn("y", "ystr")
+                            .doubleColumn("x", 9999.0)
+                            .doubleColumn("a1", 1)
+                            .at(100000000001L, ChronoUnit.MICROS);
+
+                    try (DirectUtf8Sink sink = new DirectUtf8Sink(128);) {
+                        for (int i = 0; i < 10; i++) {
+                            sink.clear();
+                            double v = 10000 + i;
+                            sink.put(tableName).put(' ').put("x=");
+                            if (i % 2 == 0) {
+                                Numbers.append(sink, v);
+                            } else {
+                                sink.put('=');
+                                sink.putAny((byte) 16);
+                                sink.putDouble(v);
+                            }
+                            double a2 = 2 + i;
+                            sink.put(",y=\"ystr\",a1=");
+                            if (i % 2 != 0) {
+                                Numbers.append(sink, a2);
+                            } else {
+                                sink.put('=');
+                                sink.putAny((byte) 16);
+                                sink.putDouble(a2);
+                            }
+                            long ts = 100000000002000L + i * 1000;
+                            sink.put(" ").put(ts).put('\n');
+                            ((AbstractLineHttpSender) sender).putRawMessage(sink);
+                        }
+                    }
+
+                    sender.flush();
+                    serverMain.awaitTxn(tableName, 2);
+
+                    serverMain.assertSql("select * from " + tableName,
+                            "x\ty\ta1\tts\n" +
+                                    "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
+                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n" +
+                                    "10000.0\tystr\t2.0\t1970-01-02T03:46:40.000002Z\n" +
+                                    "10001.0\tystr\t3.0\t1970-01-02T03:46:40.000003Z\n" +
+                                    "10002.0\tystr\t4.0\t1970-01-02T03:46:40.000004Z\n" +
+                                    "10003.0\tystr\t5.0\t1970-01-02T03:46:40.000005Z\n" +
+                                    "10004.0\tystr\t6.0\t1970-01-02T03:46:40.000006Z\n" +
+                                    "10005.0\tystr\t7.0\t1970-01-02T03:46:40.000007Z\n" +
+                                    "10006.0\tystr\t8.0\t1970-01-02T03:46:40.000008Z\n" +
+                                    "10007.0\tystr\t9.0\t1970-01-02T03:46:40.000009Z\n" +
+                                    "10008.0\tystr\t10.0\t1970-01-02T03:46:40.000010Z\n" +
+                                    "10009.0\tystr\t11.0\t1970-01-02T03:46:40.000011Z\n");
+                }
             }
         });
     }

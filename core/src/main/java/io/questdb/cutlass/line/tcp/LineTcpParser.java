@@ -391,6 +391,7 @@ public class LineTcpParser implements QuietCloseable {
     private boolean expectBinaryFormat(long bufHi) {
         assert binaryFormatStreamStep != BinaryFormatStreamStep.NotINBinaryFormat;
         if (binaryFormatStreamStep == BinaryFormatStreamStep.INBinaryFormat) {
+            currentEntity.binaryFormat = true;
             if (!currentEntity.parseBinaryFormat(bufHi)) {
                 return false;
             }
@@ -713,6 +714,7 @@ public class LineTcpParser implements QuietCloseable {
         private final ArrayBinaryFormatParser arrayBinaryParser = new ArrayBinaryFormatParser();
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
+        private boolean binaryFormat;
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
@@ -756,6 +758,10 @@ public class LineTcpParser implements QuietCloseable {
             return value;
         }
 
+        public boolean isBinaryFormat() {
+            return binaryFormat;
+        }
+
         public void shl(long shl) {
             name.shl(shl);
             value.shl(shl);
@@ -765,10 +771,12 @@ public class LineTcpParser implements QuietCloseable {
         private void clear() {
             type = ENTITY_TYPE_NONE;
             unit = ENTITY_UNIT_NONE;
+            value.clear();
         }
 
         private boolean parse(byte last, int valueLen) {
             // System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
+            binaryFormat = false;
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {

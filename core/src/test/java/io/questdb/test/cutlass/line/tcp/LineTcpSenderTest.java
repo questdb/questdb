@@ -64,6 +64,7 @@ import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
@@ -440,6 +441,76 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertBadStringIntoUuidColumn() throws Exception {
         testValueCannotBeInsertedToUuidColumn("totally not a uuid");
+    }
+
+    @Test
+    public void testInsertBinaryToOtherColumns() throws Exception {
+        runInContext(r -> {
+            TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
+                    .col("x", ColumnType.SYMBOL)
+                    .col("y", ColumnType.VARCHAR)
+                    .col("a1", ColumnType.DOUBLE)
+                    .timestamp();
+            AbstractCairoTest.create(model);
+            CountDownLatch released = createTableCommitNotifier("mytable", walEnabled ? 2 : 1);
+            // send text double to symbol column
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V1)
+                    .build()) {
+                sender.table("mytable")
+                        .doubleColumn("x", 9999.0)
+                        .stringColumn("y", "ystr")
+                        .doubleColumn("a1", 1)
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
+                    .build()) {
+                // insert binary double to symbol column
+                sender.table("mytable")
+                        .doubleColumn("x", 10000.0)
+                        .stringColumn("y", "ystr")
+                        .doubleColumn("a1", 1)
+                        .at(100000000001L, ChronoUnit.MICROS);
+                sender.flush();
+                waitTableWriterFinish(released);
+
+                // insert binary double to string column
+                sender.table("mytable")
+                        .symbol("x", "x1")
+                        .doubleColumn("y", 9999.0)
+                        .doubleColumn("a1", 1)
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+                // insert string to double column
+                sender.table("mytable")
+                        .symbol("x", "x1")
+                        .stringColumn("y", "ystr")
+                        .stringColumn("a1", "11.u")
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+                // insert array column to double
+                sender.table("mytable")
+                        .symbol("x", "x1")
+                        .stringColumn("y", "ystr")
+                        .doubleArray("a1", new double[]{1.0, 2.0})
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 2);
+            try (TableReader reader = getReader("mytable")) {
+                TestUtils.assertReader("x\ty\ta1\ttimestamp\n" +
+                        "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
+                        "10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n", reader, new StringSink());
+            }
+
+        });
     }
 
     @Test

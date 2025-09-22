@@ -43,6 +43,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -60,6 +61,7 @@ public class LineTcpMeasurementEvent implements Closeable {
     private final DefaultColumnTypes defaultColumnTypes;
     private final int maxColumnNameLength;
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final boolean stringToCharCastAllowed;
     private final LineTcpTimestampAdapter timestampAdapter;
     private boolean commitOnWriterClose;
@@ -90,6 +92,7 @@ public class LineTcpMeasurementEvent implements Closeable {
     public void close() {
         // this is concurrent writer release
         tableUpdateDetails = Misc.free(tableUpdateDetails);
+        Misc.free(sink);
     }
 
     public TableUpdateDetails getTableUpdateDetails() {
@@ -280,6 +283,7 @@ public class LineTcpMeasurementEvent implements Closeable {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
                     .$(", message=").$safe(th.getMessage())
+                    .$(", trace: ")
                     .$(th)
                     .I$();
             if (row != null) {
@@ -394,11 +398,19 @@ public class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addFloat(offset, entity.getLongValue());
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                Numbers.append(sink, entity.getLongValue());
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            }
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "integer", colType, entity.getName());
@@ -414,12 +426,23 @@ public class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addFloat(offset, (float) entity.getFloatValue());
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                Numbers.append(sink, entity.getFloatValue());
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            }
                             break;
+                        // fall through
                         default:
                             throw castError(tud.getTableNameUtf16(), "float", colType, entity.getName());
                     }
@@ -522,11 +545,19 @@ public class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addDouble(offset, entityValue);
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                sink.put(entity.getBooleanValue() ? 't' : 'f');
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            }
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "boolean", colType, entity.getName());
@@ -544,11 +575,21 @@ public class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addDate(offset, dateValue / 1000);
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                Numbers.append(sink, entity.getLongValue());
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            }
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "timestamp", colType, entity.getName());
@@ -577,12 +618,15 @@ public class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_ARRAY:
-                    BorrowedArray array = entity.getArray();
-                    if (array.getType() != colType && !array.isNull()) {
-                        throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
+                    if (ColumnType.isArray(colType)) {
+                        BorrowedArray array = entity.getArray();
+                        if (array.getType() != colType && !array.isNull()) {
+                            throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
+                        }
+                        offset = buffer.addArray(offset, array);
+                        break;
                     }
-                    offset = buffer.addArray(offset, array);
-                    break;
+                    throw castError(tud.getTableNameUtf16(), "array", colType, entity.getName());
                 case ENTITY_TYPE_NULL:
                     offset = buffer.addNull(offset);
                     break;
