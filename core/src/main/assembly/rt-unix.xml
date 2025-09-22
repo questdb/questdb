@@ -48,12 +48,21 @@
             <outputDirectory>${runtime.name}/lib</outputDirectory>
         </fileSet>
 
-        <!-- async profiler agent -->
+        <!-- async profiler agent library -->
         <fileSet>
             <directory>src/main/bin/${platform.dir.name}/</directory>
             <includes>
                 <include>libasyncProfiler.so</include>
             </includes>
+            <outputDirectory>${runtime.name}/lib</outputDirectory>
+        </fileSet>
+        <fileSet>
+            <directory>src/main/bin/${platform.dir.name}/</directory>
+            <includes>
+                <include>asprof</include>
+                <include>jfrconv</include>
+            </includes>
+            <fileMode>0755</fileMode>
             <outputDirectory>${runtime.name}/lib</outputDirectory>
         </fileSet>
 
