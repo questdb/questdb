@@ -25,14 +25,21 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.Rnd;
+import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.ByteArrayOutputStream;
+import java.time.Instant;
+import java.util.zip.GZIPOutputStream;
 
 public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
 
@@ -88,6 +95,53 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                         totalCount + "\n");
             }
         });
+    }
+
+    @Test
+    public void testGzipEncoding() throws Exception {
+        try (final TestServerMain serverMain = startWithEnvVariables()) {
+            serverMain.start();
+            try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;protocol_version=1;auto_flush=off;")) {
+                sender.table("m1")
+                        .symbol("tag1", "value1")
+                        .doubleColumn("f1", 1)
+                        .longColumn("x", 12)
+                        .at(Instant.ofEpochSecond(123456));
+                DirectByteSlice rawBuffer = sender.bufferView();
+                byte[] b = new byte[rawBuffer.size()];
+                for (int i = 0; i < rawBuffer.size(); i++) {
+                    b[i] = rawBuffer.byteAt(i);
+                }
+
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                GZIPOutputStream strm = new GZIPOutputStream(out);
+                strm.write(b);
+                strm.finish();
+                byte[] outBytes = out.toByteArray();
+
+                try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                    HttpClient.Request request = client
+                            .newRequest("localhost", serverMain.getHttpServerPort()).POST()
+                            .url("/write ")
+                            .header("User-Agent", "QuestDB/java/gzip_test")
+                            .header("Content-Encoding", "gzip");
+                    request.withContent();
+
+                    for (int i = 0; i < outBytes.length; i++) {
+                        request.put(outBytes[i]);
+                    }
+                    HttpClient.ResponseHeaders response = request.send();
+                    response.await();
+                    Assert.assertEquals("204", response.getStatusCode().asAsciiCharSequence().toString());
+                    response.close();
+                }
+
+                serverMain.awaitTable("m1");
+                serverMain.assertSql("m1",
+                        "tag1\tf1\tx\ttimestamp\n" +
+                                "value1\t1.0\t12\t1970-01-02T10:17:36.000000Z\n");
+            }
+        }
     }
 
     @Test
