@@ -3595,6 +3595,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final LowerCaseCharSequenceIntHashMap orderByColumnNameToIndexMap = model.getOrderHash();
                 final ObjList<CharSequence> orderByColumnNames = orderByColumnNameToIndexMap.keys();
+                final int orderByColumnNamesCount = orderByColumnNames.size();
 
                 listColumnFilterA.clear();
                 intHashSet.clear();
@@ -3602,7 +3603,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int orderedByTimestampIndex = -1;
                 // column index sign indicates a direction;
                 // therefore, 0 index is not allowed
-                for (int i = 0; i < orderByColumnCount; i++) {
+                // update: we now use -1 for DESC and +1 for ASC
+                for (int i = 0; i < orderByColumnNamesCount; i++) {
                     final CharSequence column = orderByColumnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
@@ -3622,7 +3624,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         // If this is an array access expression
                         if (orderByNode != null && orderByNode.type == ExpressionNode.ARRAY_ACCESS) {
-                            throw SqlException.$(position, "Array access expressions in ORDER BY are not yet supported");
+                            throw SqlException.$(position,
+                                    "Array access expressions in ORDER BY are not yet supported");
                         }
 
                         throw SqlException.invalidColumn(position, column);
