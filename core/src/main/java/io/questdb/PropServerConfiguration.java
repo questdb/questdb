@@ -730,7 +730,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
-        this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, true);
+        this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
         this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
