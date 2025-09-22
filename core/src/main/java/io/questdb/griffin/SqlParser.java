@@ -2714,7 +2714,7 @@ public class SqlParser {
             if (tok != null && SqlKeywords.isOnKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'ON' clause must precede 'TOLERANCE' clause. " +
                         "Hint: put the ON condition right after the JOIN, then add TOLERANCE, " +
-                        "e.g. ... ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h");
+                        "e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h");
             }
             lexer.unparseLast();
         }
