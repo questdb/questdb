@@ -1283,6 +1283,16 @@ public class Decimal256 implements Sinkable {
     /**
      * Parses a CharSequence decimal and store the result into the given Decimal256.
      *
+     * @param cs is the CharSequence to be parsed
+     * @return the precision of the decimal
+     */
+    public int ofString(CharSequence cs) throws NumericException {
+        return ofString(cs, -1, -1);
+    }
+
+    /**
+     * Parses a CharSequence decimal and store the result into the given Decimal256.
+     *
      * @param cs        is the CharSequence to be parsed
      * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
      * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
