@@ -33,18 +33,17 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 import java.math.RoundingMode;
 
-public class CastDecimalToLongFunctionFactory implements FunctionFactory {
+public class CastDecimalToIntFunctionFactory implements FunctionFactory {
 
     public static Function newInstance(
             int position,
@@ -66,7 +65,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Ξl)";
+        return "cast(Ξi)";
     }
 
     @Override
@@ -92,7 +91,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
         DecimalUtil.load(decimal, value, null, fromType);
 
         if (decimal.isNull()) {
-            return LongConstant.NULL;
+            return IntConstant.NULL;
         }
 
         long hh = decimal.getHh();
@@ -103,13 +102,13 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             decimal.round(0, RoundingMode.DOWN);
         }
 
-        // Ensures that the value fits in a long
-        if (overflowsLong(decimal)) {
+        // Ensures that the value fits in an int
+        if (overflowsInt(decimal)) {
             decimal.of(hh, hl, lh, ll, fromScale);
-            throw ImplicitCastException.inconvertibleValue(decimal, fromType, ColumnType.LONG).position(valuePosition);
+            throw ImplicitCastException.inconvertibleValue(decimal, fromType, ColumnType.INT).position(valuePosition);
         }
 
-        return LongConstant.newInstance(decimal.getLl());
+        return IntConstant.newInstance((int) decimal.getLl());
     }
 
     private static Function newUnscaledInstance(int valuePosition, int fromType, Function value) {
@@ -122,7 +121,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             case 2:
                 return new UnscaledDecimal32Func(value);
             case 3:
-                return new UnscaledDecimal64Func(value);
+                return new UnscaledDecimal64Func(value, valuePosition);
             case 4:
                 return new UnscaledDecimal128Func(value, valuePosition);
             default:
@@ -130,16 +129,16 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static boolean overflowsLong(Decimal256 decimal) {
-        return decimal.compareTo(0, 0, 0, Long.MAX_VALUE, 0) > 0 ||
-                decimal.compareTo(-1, -1, -1, Long.MIN_VALUE, 0) < 0;
+    private static boolean overflowsInt(Decimal256 decimal) {
+        return decimal.compareTo(0, 0, 0, Integer.MAX_VALUE, 0) > 0 ||
+                decimal.compareTo(-1, -1, -1, Integer.MIN_VALUE, 0) < 0;
     }
 
-    private static class ScaledDecimalFunction extends AbstractCastToLongFunction {
+    private static class ScaledDecimalFunction extends AbstractCastToIntFunction {
         private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
         private final int fromType;
         private final int position;
-        private final int fromScale;
 
         public ScaledDecimalFunction(Function arg, int position) {
             super(arg);
@@ -148,63 +147,63 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             this.fromScale = ColumnType.getDecimalScale(fromType);
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             DecimalUtil.load(decimal256, arg, rec, fromType);
             if (decimal256.isNull()) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
             long hh = decimal256.getHh();
             long hl = decimal256.getHl();
             long lh = decimal256.getLh();
             long ll = decimal256.getLl();
             decimal256.round(0, RoundingMode.DOWN);
-            if (overflowsLong(decimal256)) {
+            if (overflowsInt(decimal256)) {
                 decimal256.of(hh, hl, lh, ll, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
             }
-            return decimal256.getLl();
+            return (int) decimal256.getLl();
         }
     }
 
-    private static class UnscaledDecimal128Func extends AbstractCastToLongFunction {
-        private final int position;
+    private static class UnscaledDecimal128Func extends AbstractCastToIntFunction {
         private final Decimal256 decimal256 = new Decimal256();
+        private final int position;
 
         public UnscaledDecimal128Func(Function value, int position) {
             super(value);
             this.position = position;
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             long hi = this.arg.getDecimal128Hi(rec);
             long lo = this.arg.getDecimal128Lo(rec);
             if (Decimal128.isNull(hi, lo)) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
             long s = hi < 0 ? -1 : 0;
             decimal256.of(s, s, hi, lo, 0);
-            if (overflowsLong(decimal256)) {
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
+            if (overflowsInt(decimal256)) {
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
             }
-            return lo;
+            return (int) lo;
         }
     }
 
-    private static class UnscaledDecimal16Func extends AbstractCastToLongFunction {
+    private static class UnscaledDecimal16Func extends AbstractCastToIntFunction {
         public UnscaledDecimal16Func(Function value) {
             super(value);
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             short value = this.arg.getDecimal16(rec);
             if (value == Decimals.DECIMAL16_NULL) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
             return value;
         }
     }
 
-    private static class UnscaledDecimal256Func extends AbstractCastToLongFunction {
+    private static class UnscaledDecimal256Func extends AbstractCastToIntFunction {
         private final Decimal256 decimal256 = new Decimal256();
         private final int position;
 
@@ -213,59 +212,65 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             this.position = position;
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             long hh = this.arg.getDecimal256HH(rec);
             long hl = this.arg.getDecimal256HL(rec);
             long lh = this.arg.getDecimal256LH(rec);
             long ll = this.arg.getDecimal256LL(rec);
             decimal256.of(hh, hl, lh, ll, 0);
             if (decimal256.isNull()) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
-            if (overflowsLong(decimal256)) {
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
+            if (overflowsInt(decimal256)) {
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
             }
-            return ll;
+            return (int) ll;
         }
     }
 
-    private static class UnscaledDecimal32Func extends AbstractCastToLongFunction {
+    private static class UnscaledDecimal32Func extends AbstractCastToIntFunction {
         public UnscaledDecimal32Func(Function value) {
             super(value);
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             int value = this.arg.getDecimal32(rec);
             if (value == Decimals.DECIMAL32_NULL) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
             return value;
         }
     }
 
-    private static class UnscaledDecimal64Func extends AbstractCastToLongFunction {
-        public UnscaledDecimal64Func(Function value) {
+    private static class UnscaledDecimal64Func extends AbstractCastToIntFunction {
+        private final int position;
+
+        public UnscaledDecimal64Func(Function value, int position) {
             super(value);
+            this.position = position;
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             long value = this.arg.getDecimal64(rec);
             if (value == Decimals.DECIMAL64_NULL) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
-            return value;
+            if (value > Integer.MAX_VALUE || value < Integer.MIN_VALUE) {
+                throw ImplicitCastException.inconvertibleValue(value, arg.getType(), ColumnType.INT).position(position);
+            }
+            return (int) value;
         }
     }
 
-    private static class UnscaledDecimal8Func extends AbstractCastToLongFunction {
+    private static class UnscaledDecimal8Func extends AbstractCastToIntFunction {
         public UnscaledDecimal8Func(Function value) {
             super(value);
         }
 
-        public long getLong(Record rec) {
+        public int getInt(Record rec) {
             byte value = this.arg.getDecimal8(rec);
             if (value == Decimals.DECIMAL8_NULL) {
-                return Numbers.LONG_NULL;
+                return Numbers.INT_NULL;
             }
             return value;
         }
