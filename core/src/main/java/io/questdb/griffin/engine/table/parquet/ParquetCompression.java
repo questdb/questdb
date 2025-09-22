@@ -65,6 +65,7 @@ public class ParquetCompression {
     static {
         nameToCodecMap.put("uncompressed", COMPRESSION_UNCOMPRESSED);
         nameToCodecMap.put("zstd", COMPRESSION_ZSTD);
+        nameToCodecMap.put("lz4", COMPRESSION_LZ4);
         nameToCodecMap.put("gzip", COMPRESSION_GZIP);
         nameToCodecMap.put("lz4_raw", COMPRESSION_LZ4_RAW);
         nameToCodecMap.put("lzo", COMPRESSION_LZO);
@@ -74,6 +75,7 @@ public class ParquetCompression {
 
         codecToNameMap.put(COMPRESSION_UNCOMPRESSED, "uncompressed");
         codecToNameMap.put(COMPRESSION_ZSTD, "zstd");
+        codecToNameMap.put(COMPRESSION_LZ4, "lz4");
         codecToNameMap.put(COMPRESSION_GZIP, "gzip");
         codecToNameMap.put(COMPRESSION_LZ4_RAW, "lz4_raw");
         codecToNameMap.put(COMPRESSION_LZO, "lzo");
@@ -81,11 +83,9 @@ public class ParquetCompression {
         codecToNameMap.put(COMPRESSION_BROTLI, "brotli");
 
         for (int i = 0, n = MAX_ENUM_INT; i < n; i++) {
-            if (i != 5) {
-                CODEC_NAMES.put(codecToNameMap.get(i));
-                if (i + 1 != n) {
-                    CODEC_NAMES.put(", ");
-                }
+            CODEC_NAMES.put(codecToNameMap.get(i));
+            if (i + 1 != n) {
+                CODEC_NAMES.put(", ");
             }
         }
     }

@@ -301,7 +301,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'test_table'  with compression_codec aa;",
                 56,
-                "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, lzo, brotli, zstd, lz4_raw"
+                "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
         );
 
         assertException(
@@ -758,7 +758,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'output' with format parquet compression_codec unknown",
                 66,
-                "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, lzo, brotli, zstd, lz4_raw"
+                "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw"
         );
     }
 

@@ -236,35 +236,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testParquetExportCompressionCodecGzip() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    engine.execute("CREATE TABLE codec_gzip_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
-                    params.clear();
-                    params.put("query", "SELECT * FROM codec_gzip_test");
-                    params.put("fmt", "parquet");
-                    params.put("compression_codec", "gzip");
-                    testHttpClient.assertGet("/exp", "PAR1\u0015\u0000\u0015\\\u0015", params, null, null);
-                });
-    }
-
-    @Test
-    public void testParquetExportCompressionCodecInvalid() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    engine.execute("CREATE TABLE codec_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
-
-                    params.clear();
-                    params.put("query", "SELECT * FROM codec_invalid_test");
-                    params.put("fmt", "parquet");
-                    params.put("compression_codec", "invalid_codec");
-                    String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, lzo, brotli, zstd, lz4_raw\",\"position\":0}";
-                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
-                });
-    }
-
-    @Test
-    public void testParquetExportCompressionCodecLz4o() throws Exception {
+    public void testParquetExportCompressionCode() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("CREATE TABLE codec_zstd_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
@@ -276,8 +248,24 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "lzo");
                     testHttpClient.assertGetParquet("/exp", 349, params, "SELECT * FROM codec_zstd_test");
 
+                    params.put("compression_codec", "lz4");
+                    testHttpClient.assertGetParquet("/exp", 349, params, "SELECT * FROM codec_zstd_test");
+
                     params.put("compression_codec", "brotli");
                     testHttpClient.assertGetParquet("/exp", 406, params, "SELECT * FROM codec_zstd_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportCompressionCodecGzip() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE codec_gzip_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("query", "SELECT * FROM codec_gzip_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    testHttpClient.assertGet("/exp", "PAR1\u0015\u0000\u0015\\\u0015", params, null, null);
                 });
     }
 
@@ -382,6 +370,21 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     testHttpClient.assertGetParquet("/exp", 44745, params, "SELECT * FROM page_size_valid_test");
                     params.put("data_page_size", "2048");
                     testHttpClient.assertGetParquet("/exp", 43144, params, "SELECT * FROM page_size_valid_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportInvalidCompressionCodec() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE codec_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+
+                    params.clear();
+                    params.put("query", "SELECT * FROM codec_invalid_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "invalid_codec");
+                    String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
                 });
     }
 
